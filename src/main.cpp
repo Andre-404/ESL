@@ -17,7 +17,7 @@ int main(int argc, char* argv[]) {
     compileCore::Compiler c(modules);
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
-    runtime::VM* vm = new runtime::VM(&c);
+    auto* vm = new runtime::VM(&c);
     auto t1 = std::chrono::high_resolution_clock::now();
     vm->execute();
     auto t2 = std::chrono::high_resolution_clock::now();

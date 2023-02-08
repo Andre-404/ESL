@@ -29,7 +29,6 @@ namespace memory {
 		}
 		catch (const std::bad_alloc& e) {
 			errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
-			throw errorHandler::SystemException();
 		}
 		objects.push_back(reinterpret_cast<object::Obj*>(block));
 		return block;

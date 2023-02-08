@@ -50,8 +50,8 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	for (CSLModule* unit : units) {
 		curUnit = unit;
 		sourceFiles.push_back(unit->file);
-		for (Token token : unit->topDeclarations) {
-			globals.push_back(Globalvar(token.getLexeme(), Value::nil()));
+		for (const Token& token : unit->topDeclarations) {
+			globals.emplace_back(token.getLexeme(), Value::nil());
 		}
 		for (int i = 0; i < unit->stmts.size(); i++) {
 			//doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors

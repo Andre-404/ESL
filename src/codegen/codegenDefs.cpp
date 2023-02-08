@@ -1,7 +1,6 @@
 #include "codegenDefs.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Objects/objects.h"
-#include "../MemoryManagment/garbageCollector.h"
 #include "../DebugPrinting/BytecodePrinter.h"
 #include "../Includes/fmt/format.h"
 #include <iostream>
@@ -21,7 +20,7 @@ void Chunk::writeData(uint8_t opCode, uInt line, byte fileIndex) {
 	//if we're on a new line, mark the end of the bytecode for this line
 	//when looking up the line of code for a particular OP we check if it's position in 'code' is less than .end of a line
 	lines[lines.size() - 1].end = bytecode.size() - 1;
-	lines.push_back(codeLine(line, fileIndex));
+	lines.emplace_back(line, fileIndex);
 }
 
 codeLine Chunk::getLine(uInt offset) {
@@ -30,7 +29,6 @@ codeLine Chunk::getLine(uInt offset) {
 		if (offset < line.end) return line;
 	}
 	errorHandler::addSystemError(fmt::format("Couldn't show line for bytecode at position: {}", offset));
-	throw errorHandler::SystemException();
 }
 
 void Chunk::disassemble(string name) {

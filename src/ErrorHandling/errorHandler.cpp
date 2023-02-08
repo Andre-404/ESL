@@ -64,13 +64,6 @@ void report(File* src, Token& token, string msg) {
 
 namespace errorHandler {
 	namespace {
-		struct SystemError {
-			string errorText;
-
-			SystemError(string _errorText) {
-				errorText = _errorText;
-			}
-		};
 		struct CompileTimeError {
 			string errorText;
 			File* origin;
@@ -82,24 +75,9 @@ namespace errorHandler {
 				token = _token;
 			}
 		};
-		struct RuntimeError {
-			string errorText;
-			string funcName;
-			CSLModule* origin;
-
-			RuntimeError(string _errorText, CSLModule* _origin, string _funcName) {
-				errorText = _errorText;
-				origin = _origin;
-				funcName = _funcName;
-			}
-		};
 
 		//errors during preprocessing, building of the AST tree and compiling
 		vector<CompileTimeError> compileErrors;
-		//stack trace when a runtime error occurs
-		vector<RuntimeError> runtimeErrors;
-		//system level errors(eg. not being able to access a file)
-		vector<SystemError> systemErrors;
 	}
 
 	void showCompileErrors() {
@@ -108,26 +86,15 @@ namespace errorHandler {
 		}
 	}
 
-	void showRuntimeErrors() {
-		//TODO: implement this when you get to stack tracing
-	}
-	void showSystemErrors() {
-		for (SystemError error : systemErrors) {
-			std::cout << "System error: " << error.errorText << "\n";
-		}
-	}
-
 	void addCompileError(string msg, Token token) {
-		compileErrors.push_back(CompileTimeError(msg, token.str.sourceFile, token));
-	}
-	void addRuntimeError(string msg, string funcName, CSLModule* origin) {
-		runtimeErrors.push_back(RuntimeError(msg, origin, funcName));
+		compileErrors.emplace_back(msg, token.str.sourceFile, token);
 	}
 	void addSystemError(string msg) {
-		systemErrors.push_back(SystemError(msg));
+        std::cout<<msg;
+        exit(1);
 	}
 
 	bool hasErrors() {
-		return !compileErrors.empty() || !runtimeErrors.empty() || !systemErrors.empty();
+		return !compileErrors.empty();
 	}
 }

@@ -19,21 +19,20 @@ namespace runtime {
 		int frameCount;
 
 		VM* vm;
+        string errorString;
 
-		byte getOp(uInt64 _ip);
 		void push(Value val);
 		Value pop();
 		Value peek(int depth);
 
-		void runtimeError(string err);
+		void runtimeError(string err, int errorCode);
 
-		bool callValue(Value callee, int argCount);
-		bool call(object::ObjClosure* function, int argCount);
-		object::ObjUpval* captureUpvalue(Value* local);
+		void callValue(Value callee, int argCount);
+		void call(object::ObjClosure* function, int argCount);
 
 		void defineMethod(string& name);
-		bool bindMethod(object::ObjClass* klass, string& name);
-		bool invoke(string& fieldName, int argCount);
-		bool invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
+		void bindMethod(object::ObjClass* klass, string& name);
+		void invoke(string& fieldName, int argCount);
+		void invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
 	};
 }
