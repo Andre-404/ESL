@@ -1,5 +1,4 @@
 #include "compiler.h"
-#include "../MemoryManagment/garbageCollector.h"
 #include "../ErrorHandling/errorHandler.h"
 #include <unordered_set>
 #include <iostream>
@@ -45,6 +44,8 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	curUnitIndex = 0;
 	curGlobalIndex = 0;
 	units = _units;
+    nativeFuncs = runtime::createNativeFuncs();
+    nativeFuncNames = runtime::createNativeNameTable(nativeFuncs);
 
 	for (CSLModule* unit : units) {
 		curUnit = unit;
@@ -189,12 +190,10 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 			arg = resolveLocal(left->token);
 			if (arg != -1) type = 0;
 			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 1;
-			else {
+			else if((arg = resolveGlobal(left->token, true)) != -1){
 				//all global variables have a numerical prefix which indicates which source file they came from, used for scoping
-				arg = resolveGlobal(left->token, true);
-
 				type = arg > SHORT_CONSTANT_LIMIT ? 3 : 2;
-			}
+			}else error(left->token, fmt::format("Variable '{}' isn't declared.", left->token.getLexeme()));
 		}
 		else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
 			//if a field is being incremented, compile the object, and then if it's not a dot access also compile the field
@@ -264,13 +263,13 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 	expr->callee->accept(this);
 
 	switch (expr->accessor.type) {
-		//array[index] or object["propertyAsString"]
+	//array[index] or object["propertyAsString"]
 	case TokenType::LEFT_BRACKET: {
 		expr->field->accept(this);
 		emitByte(+OpCode::GET);
 		break;
 	}
-								//object.property, we can optimize since we know the string in advance
+	//object.property, we can optimize since we know the string in advance
 	case TokenType::DOT:
 		uInt16 name = identifierConstant(dynamic_cast<AST::LiteralExpr*>(expr->field.get())->token);
 		if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
@@ -984,10 +983,8 @@ void Compiler::namedVar(Token token, bool canAssign) {
 		getOp = +OpCode::GET_UPVALUE;
 		setOp = +OpCode::SET_UPVALUE;
 	}
-	else {
-		//all global variables are stored in an array, resolveGlobal gets the array
-		arg = resolveGlobal(token, canAssign);
-
+	else if((arg = resolveGlobal(token, canAssign)) != -1){
+		// All global variables are stored in an array, resolveGlobal gets the array
 		getOp = +OpCode::GET_GLOBAL;
 		setOp = +OpCode::SET_GLOBAL;
 		if (arg > SHORT_CONSTANT_LIMIT) {
@@ -997,6 +994,14 @@ void Compiler::namedVar(Token token, bool canAssign) {
 			return;
 		}
 	}
+    else{
+        string name = token.getLexeme();
+        auto it = nativeFuncNames.find(name);
+        if(it == nativeFuncNames.end())
+            error(token, fmt::format("'{}' doesn't match any declared variable name or native function name", name));
+        emitByteAnd16Bit(+OpCode::GET_NATIVE, it->second);
+        return;
+    }
 	emitBytes(canAssign ? setOp : getOp, arg);
 }
 
@@ -1186,7 +1191,8 @@ void Compiler::method(AST::FuncDecl* _method, Token className) {
 bool Compiler::invoke(AST::CallExpr* expr) {
 	if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
 		//currently we only optimizes field invoking(struct.field() or array[field]())
-		AST::FieldAccessExpr* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+		auto* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+        if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
 
 		call->callee->accept(this);
 
@@ -1195,8 +1201,15 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			arg->accept(this);
 			argCount++;
 		}
-		call->field->accept(this);
-		emitBytes(+OpCode::INVOKE, argCount);
+        uInt16 constant = identifierConstant(dynamic_cast<AST::LiteralExpr*>(call->field.get())->token);
+        if(constant > SHORT_CONSTANT_LIMIT){
+            emitBytes(+OpCode::INVOKE_LONG, argCount);
+            emit16Bit(constant);
+        }
+        else {
+            emitBytes(+OpCode::INVOKE, argCount);
+            emitByte(constant);
+        }
 		return true;
 	}
 	else if (expr->callee->type == AST::ASTType::SUPER) {
@@ -1218,8 +1231,14 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		}
 		//super gets popped, leaving only the receiver and args on the stack
 		namedVar(syntheticToken("super"), false);
-		emitBytes(+OpCode::INVOKE, name);
-		emitByte(argCount);
+        if(name > SHORT_CONSTANT_LIMIT){
+            emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
+            emit16Bit(name);
+        }
+        else {
+            emitBytes(+OpCode::SUPER_INVOKE, argCount);
+            emitByte(name);
+        }
 		return true;
 	}
 	return false;
@@ -1276,8 +1295,8 @@ void Compiler::updateLine(Token token) {
 	current->line = token.str.line;
 }
 
-//for every dependency that's imported without an alias, check if any of its exports match 'symbol'
-uInt Compiler::checkSymbol(Token symbol) {
+// For every dependency that's imported without an alias, check if any of its exports match 'symbol', return -1 if not
+int Compiler::checkSymbol(Token symbol) {
 	std::unordered_map<string, CSLModule*> importedSymbols;
 	string lexeme = symbol.getLexeme();
 	for (Dependency dep : curUnit->deps) {
@@ -1304,12 +1323,12 @@ uInt Compiler::checkSymbol(Token symbol) {
 			}
 		}
 	}
-	error(symbol, "Variable not defined.");
-	return 0;
+    return -1;
 }
 
-//finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
-uInt Compiler::resolveGlobal(Token name, bool canAssign) {
+// Finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
+// If it doesn't find any matching names, returns -1
+int Compiler::resolveGlobal(Token name, bool canAssign) {
 	bool inThisFile = false;
 	int index = curGlobalIndex;
 	for (Token token : curUnit->topDeclarations) {
@@ -1328,7 +1347,7 @@ uInt Compiler::resolveGlobal(Token name, bool canAssign) {
 			return checkSymbol(name);
 		}
 	}
-	error(name, "Variable isn't declared.");
+    return -1;
 }
 
 //checks if 'variable' exists in a module which was imported with the alias 'moduleAlias', 

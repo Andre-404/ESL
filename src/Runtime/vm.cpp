@@ -11,6 +11,8 @@ runtime::VM::VM(compileCore::Compiler* compiler) {
 	Value val = Value(new object::ObjClosure(compiler->mainBlockFunc));
 	// Main code block
 	code = compiler->mainCodeBlock;
+    nativeFuncs = compiler->nativeFuncs;
+    nativeClasses = runtime::createBuiltinClasses();
 
 	mainThread = new Thread(this);
 	// First value on the stack is the future holding the thread, mainThread has nil
@@ -24,6 +26,11 @@ void runtime::VM::mark(memory::GarbageCollector* gc) {
 	for (Thread* t : childThreads) t->mark(gc);
 	mainThread->mark(gc);
 	for (Value& val : code.constants) val.mark();
+    for(auto& builtinClass : nativeClasses){
+        for(auto& pair : builtinClass.methods){
+            pair.second->marked = true;
+        }
+    }
 }
 
 void runtime::VM::execute() {

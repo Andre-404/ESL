@@ -1,6 +1,7 @@
 #include "objects.h"
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Runtime/thread.h"
+#include "../Includes/fmt/format.h"
 
 using namespace object;
 using namespace memory;
@@ -61,10 +62,11 @@ uInt64 ObjFunc::getSize() {
 }
 #pragma endregion
 
-#pragma region ObjNativeFn
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, byte _arity) {
+#pragma region ObjNativeFunc
+ObjNativeFunc::ObjNativeFunc(NativeFn _func, int _arity, string _name) {
 	func = _func;
 	arity = _arity;
+    name = _name;
     marked = false;
 	type = ObjType::NATIVE;
 }
@@ -74,12 +76,35 @@ void ObjNativeFunc::trace() {
 }
 
 string ObjNativeFunc::toString() {
-	return "<native function>";
+	return fmt::format("<native function {}>", name);
 }
 
 uInt64 ObjNativeFunc::getSize() {
 	return sizeof(ObjNativeFunc);
 }
+#pragma endregion
+
+#pragma region ObjBoundNativeFunc
+ObjBoundNativeFunc::ObjBoundNativeFunc(ObjNativeFunc* _func, Value& _receiver) {
+    func = _func;
+    receiver = _receiver;
+    marked = false;
+    type = ObjType::BOUND_NATIVE;
+}
+
+void ObjBoundNativeFunc::trace() {
+    receiver.mark();
+    func->marked = true;
+}
+
+string ObjBoundNativeFunc::toString() {
+    return fmt::format("<native function {}>", func->name);
+}
+
+uInt64 ObjBoundNativeFunc::getSize() {
+    return sizeof(ObjBoundNativeFunc);
+}
+
 #pragma endregion
 
 #pragma region ObjClosure

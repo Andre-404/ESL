@@ -95,6 +95,9 @@ bool Value::isFunction() const {
 bool Value::isNativeFn() const {
 	return isObj() && get<object::Obj*>(value)->type == ObjType::NATIVE;
 }
+bool Value::isBoundNativeFunc() const {
+    return isObj() && get<object::Obj*>(value)->type == ObjType::BOUND_NATIVE;
+}
 bool Value::isArray() const {
 	return isObj() && get<object::Obj*>(value)->type == ObjType::ARRAY;
 }
@@ -132,6 +135,9 @@ object::ObjFunc* Value::asFunction() {
 }
 object::ObjNativeFunc* Value::asNativeFn() {
 	return dynamic_cast<ObjNativeFunc*>(get<object::Obj*>(value));
+}
+object::ObjBoundNativeFunc* Value::asBoundNativeFunc(){
+    return dynamic_cast<ObjBoundNativeFunc*>(get<object::Obj*>(value));
 }
 object::ObjArray* Value::asArray() {
 	return dynamic_cast<ObjArray*>(get<object::Obj*>(value));

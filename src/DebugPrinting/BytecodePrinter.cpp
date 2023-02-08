@@ -15,6 +15,12 @@ static int byteInstruction(string name, Chunk* chunk, int offset) {
 	return offset + 2;
 }
 
+static int shortInstruction(string name, Chunk* chunk, int offset){
+    uint8_t slot = (chunk->bytecode[offset + 1] << 8) | chunk->bytecode[offset + 2];
+    std::cout << fmt::format("{:16} {:4d}", name, slot) << std::endl;
+    return offset + 3;
+}
+
 static int constantInstruction(string name, Chunk* chunk, int offset, bool isLong) {
 	uInt constant = 0;
 	if (!isLong) constant = chunk->bytecode[offset + 1];
@@ -31,25 +37,6 @@ static int globalInstruction(string name, Chunk* chunk, int offset, bool isLong)
 	else constant = ((chunk->bytecode[offset + 1] << 8) | chunk->bytecode[offset + 2]);
 	std::cout << fmt::format("{:16} {:4d} \n", name, constant);
 	return offset + (isLong ? 3 : 2);
-}
-
-static int doubleConstantInstruction(string name, Chunk* chunk, int offset, bool isLong) {
-	uInt constant1 = 0;
-	uInt constant2 = 0;
-	if (!isLong) {
-		constant1 = chunk->bytecode[offset + 1];
-		constant2 = chunk->bytecode[offset + 2];
-	}
-	else {
-		constant1 = ((chunk->bytecode[offset + 1] << 8) | chunk->bytecode[offset + 2]);
-		constant2 = ((chunk->bytecode[offset + 3] << 8) | chunk->bytecode[offset + 4]);
-	}
-	std::cout << fmt::format("{:16} {:4d} {:4d}", name, constant1, constant2);
-	chunk->constants[constant1].print();
-	std::cout<<"' '";
-	chunk->constants[constant2].print();
-	std::cout<<"'\n";
-	return offset + (isLong ? 5 : 3);
 }
 
 static int jumpInstruction(string name, int sign, Chunk* chunk, int offset) {
@@ -75,13 +62,6 @@ static int longInvokeInstruction(string name, Chunk* chunk, int offset) {
 	chunk->constants[constant].print();
 	std::cout << "'\n";
 	return offset + 5;
-}
-
-static int incrementInstruction(string name, Chunk* chunk, int offset) {
-	uint8_t type = chunk->bytecode[offset + 1];
-	uint8_t arg = chunk->bytecode[offset + 2];
-	std::cout << fmt::format("{:16} {:4d} {:4d}", name, type, arg);
-	return offset + 3;
 }
 
 int disassembleInstruction(Chunk* chunk, int offset) {
@@ -197,6 +177,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
 		return simpleInstruction("OP LESS EQUAL", offset);
 	case +OpCode::PRINT:
 		return simpleInstruction("OP PRINT", offset);
+    case +OpCode::GET_NATIVE:
+         return shortInstruction("OP GET NATIVE", chunk, offset);
 	case +OpCode::DEFINE_GLOBAL:
 		return globalInstruction("OP DEFINE GLOBAL", chunk, offset, false);
 	case +OpCode::DEFINE_GLOBAL_LONG:

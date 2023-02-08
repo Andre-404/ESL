@@ -13,6 +13,8 @@ namespace object {
 
 	class ObjNativeFunc;
 
+    class ObjBoundNativeFunc;
+
 	class ObjUpval;
 
 	class ObjClosure;
@@ -80,6 +82,7 @@ struct Value {
 	bool isString() const;
 	bool isFunction() const;
 	bool isNativeFn() const;
+    bool isBoundNativeFunc() const;
 	bool isArray() const;
 	bool isClosure() const;
 	bool isClass() const;
@@ -93,6 +96,7 @@ struct Value {
 	object::ObjString* asString();
 	object::ObjFunc* asFunction();
 	object::ObjNativeFunc* asNativeFn();
+    object::ObjBoundNativeFunc* asBoundNativeFunc();
 	object::ObjArray* asArray();
 	object::ObjClosure* asClosure();
 	object::ObjClass* asClass();
@@ -146,7 +150,7 @@ enum class OpCode {
 	BITSHIFT_LEFT,
 	BITSHIFT_RIGHT,
 
-	LOAD_INT,//arg: 8-bit, interger smaller than 256 to load
+	LOAD_INT,//arg: 8-bit, integer smaller than 256 to load
 	//comparisons and equality
 	EQUAL,
 	NOT_EQUAL,
@@ -159,6 +163,7 @@ enum class OpCode {
 	//temporary
 	PRINT,
 	//Variables
+    GET_NATIVE, //arg: 16-bit index
 	//all module level variables(including class and function declarations) are treated as global variables
 	//compiler has an array of all globals, and access to globals is done through an array
 	DEFINE_GLOBAL,//arg: 8-bit  index

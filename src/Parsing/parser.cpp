@@ -821,6 +821,7 @@ void Parser::sync() {
 		case TokenType::DEFAULT:
 		case TokenType::RIGHT_BRACE:
 			return;
+        default: break;
 		}
 
 		advance();
