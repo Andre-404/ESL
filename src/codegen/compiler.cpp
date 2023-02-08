@@ -42,7 +42,6 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 Compiler::Compiler(vector<CSLModule*>& _units) {
 	current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
 	currentClass = nullptr;
-	vector<File*> sourceFiles;
 	curUnitIndex = 0;
 	curGlobalIndex = 0;
 	units = _units;
@@ -65,6 +64,7 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 		curGlobalIndex += unit->topDeclarations.size();
 		curUnitIndex++;
 	}
+    mainBlockFunc = endFuncDecl();
 	std::cout << "=======global var array=======\n";
 	for (int i = 0; i < globals.size(); i++) {
 		std::cout << fmt::format("|{} {}| ", i, globals[i].name);
@@ -699,11 +699,10 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 	vector<uInt16> constants;
 	vector<uInt16> jumps;
 	bool isLong = false;
-	for (std::shared_ptr<AST::CaseStmt> _case : stmt->cases) {
-		if (_case->caseType.getLexeme().compare("default") == 0) continue;
+	for (const auto & _case : stmt->cases) {
 		//a single case can contain multiple constants(eg. case 1 | 4 | 9:), each constant is compiled and its jump will point to the 
 		//same case code block
-		for (Token constant : _case->constants) {
+		for (const Token& constant : _case->constants) {
 			Value val;
 			updateLine(constant);
 			//create constant and add it to the constants array
@@ -768,8 +767,8 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 
 	//compile the code of all cases, before each case update the jump for that case to the current ip
 	int i = 0;
-	for (std::shared_ptr<AST::CaseStmt> _case : stmt->cases) {
-		if (_case->caseType.getLexeme().compare("default") == 0) {
+	for (const std::shared_ptr<AST::CaseStmt>& _case : stmt->cases) {
+		if (_case->caseType.getLexeme() == "default") {
 			patchJump(jumps[jumps.size() - 1]);
 		}
 		else {
@@ -802,7 +801,6 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 
 void Compiler::visitCaseStmt(AST::CaseStmt* stmt) {
 	//compile every statement in the case
-	//by default no fallthrough
 	for (AST::ASTNodePtr stmt : stmt->stmts) {
 		stmt->accept(this);
 	}
@@ -1248,21 +1246,21 @@ ObjFunc* Compiler::endFuncDecl() {
 	// Get the current function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
 	ObjFunc* func = current->func;
 	Chunk& chunk = current->chunk;
-	// For the last line of code
-	chunk.lines[chunk.lines.size() - 1].end = chunk.bytecode.size();
-#ifdef COMPILER_DEBUG
-	chunk.disassemble(current->func->name.length() == 0 ? "script" : current->func->name);
-#endif
 	//Add the bytecode, lines and constants to the main code block
 	uInt64 bytecodeOffset = mainCodeBlock.bytecode.size();
 	mainCodeBlock.bytecode.insert(mainCodeBlock.bytecode.end(), chunk.bytecode.begin(), chunk.bytecode.end());
 	uInt64 constantsOffset = mainCodeBlock.constants.size();
 	mainCodeBlock.constants.insert(mainCodeBlock.constants.end(), chunk.constants.begin(), chunk.constants.end());
+    // For the last line of code
+    chunk.lines[chunk.lines.size() - 1].end = chunk.bytecode.size();
 	// Update lines to reflect the offset in the main code block
 	for (codeLine& line : chunk.lines) {
 		line.end += bytecodeOffset;
 		mainCodeBlock.lines.push_back(line);
 	}
+    #ifdef COMPILER_DEBUG
+    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset);
+    #endif
 	// Set the offsets in the function object
 	func->bytecodeOffset = bytecodeOffset;
 	func->constantsOffset = constantsOffset;

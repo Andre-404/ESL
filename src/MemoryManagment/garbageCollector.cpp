@@ -71,16 +71,8 @@ namespace memory {
 	}
 
 	void GarbageCollector::markRoots(compileCore::Compiler* compiler) {
-		compileCore::CurrentChunkInfo* c = compiler->current;
-		while (c->enclosing) {
-			c->func->marked = true;
-			c->func->trace();
-            for (Value& val : c->chunk.constants) val.mark();
-			c = c->enclosing;
-		}
-		c->func->marked = true;
-		c->func->trace();
-		for (Value& val : c->chunk.constants) val.mark();
+        for(Value& val : compiler->mainCodeBlock.constants) val.mark();
+        compiler->mainBlockFunc->marked = true;
 	}
 
 	void GarbageCollector::sweep() {

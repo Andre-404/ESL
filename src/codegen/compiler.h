@@ -80,6 +80,7 @@ namespace compileCore {
 		// Passed to the VM
 		vector<Globalvar> globals;
 		Chunk mainCodeBlock;
+        object::ObjFunc* mainBlockFunc;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();

@@ -716,7 +716,7 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
 	consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
 	vector<ASTNodePtr> stmts;
 	while (!check(TokenType::CASE) && !check(TokenType::RIGHT_BRACE) && !check(TokenType::DEFAULT)) {
-		stmts.push_back(statement());
+		stmts.push_back(localDeclaration());
 	}
 	return make_shared<CaseStmt>(matchConstants, stmts);
 }

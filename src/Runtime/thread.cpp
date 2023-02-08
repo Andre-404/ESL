@@ -3,6 +3,7 @@
 #include <iostream>
 #include <utility>
 #include "../Includes/fmt/format.h"
+#include "../Includes/fmt/color.h"
 
 using std::get;
 
@@ -193,7 +194,6 @@ void runtime::Thread::executeBytecode() {
 	#ifdef DEBUG_TRACE_EXECUTION
 	std::cout << "-------------Code execution starts-------------\n";
 	#endif // DEBUG_TRACE_EXECUTION
-	
 	// If this is the main thread fut will be nullptr
 	object::ObjFuture* fut = stack[0].asFuture();
 	// C++ is more likely to put these locals in registers which speeds things up
@@ -738,6 +738,7 @@ void runtime::Thread::executeBytecode() {
                 // Default
                 if (!jumpOffset) jumpOffset = offset + caseNum * 2;
                 ip = jumpOffset;
+                uInt debug = ip - vm->code.bytecode.data();
                 uInt jmp = READ_SHORT();
                 ip += jmp;
                 DISPATCH();
@@ -1129,11 +1130,11 @@ void runtime::Thread::executeBytecode() {
         }
     } catch(int errCode) {
         frame->ip = ip;
-        const string cyan = "\u001b[38;5;117m";
-        const string black = "\u001b[0m";
-        const string red = "\u001b[38;5;196m";
-        const string yellow = "\u001b[38;5;220m";
-        std::cout << red + "runtime error: \n" + black + errorString + "\n";
+        auto cyan = fmt::fg(fmt::color::cyan);
+        auto white = fmt::fg(fmt::color::white);
+        auto red = fmt::fg(fmt::color::red);
+        auto yellow = fmt::fg(fmt::color::yellow);
+        std::cout<<fmt::format("{} \n{}\n", fmt::styled("Runtime error: ", red), errorString);
         //prints callstack
         for (int i = frameCount - 1; i >= 0; i--) {
             CallFrame* frame = &frames[i];
@@ -1141,11 +1142,13 @@ void runtime::Thread::executeBytecode() {
             // Converts ip from a pointer to a index in the array
             uInt64 instruction = (frame->ip - 1) - vm->code.bytecode.data();
             codeLine line = vm->code.getLine(instruction);
-            //fileName:line | in <func name>()
-            string temp = yellow + line.getFileName(vm->sourceFiles) + black + ":" + cyan + std::to_string(line.line + 1) + " | " + black;
-            std::cout << temp << "in ";
-            std::cout << (function->name.length() == 0 ? "script" : function->name) << "()\n";
+            //fileName:line | in <func name>
+            std::cout<<fmt::format("{}:{} | in {}\n",
+                                   fmt::styled(line.getFileName(vm->sourceFiles), yellow),
+                                   fmt::styled(std::to_string(line.line + 1), cyan),
+                                   (function->name.length() == 0 ? "script" : function->name));
         }
+        fmt::print("\nExited with code: {}\n", errCode);
     }
 	#undef READ_BYTE
 	#undef READ_SHORT

@@ -31,10 +31,10 @@ codeLine Chunk::getLine(uInt offset) {
 	errorHandler::addSystemError(fmt::format("Couldn't show line for bytecode at position: {}", offset));
 }
 
-void Chunk::disassemble(string name) {
+void Chunk::disassemble(string name, int startingOffset) {
 	std::cout << "=======" << name << "=======\n";
 	//prints every instruction in chunk
-	for (uInt offset = 0; offset < bytecode.size();) {
+	for (uInt offset = startingOffset; offset < bytecode.size();) {
 		offset = disassembleInstruction(this, offset);
 	}
 }

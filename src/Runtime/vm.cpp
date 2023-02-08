@@ -8,7 +8,7 @@ runtime::VM::VM(compileCore::Compiler* compiler) {
 	// For stack tracing during error printing
 	sourceFiles = compiler->sourceFiles;
 	// Have to do this before assigning compiler->mainCodeBlock to code because endFuncDecl mutates mainCodeBlock
-	Value val = Value(new object::ObjClosure(compiler->endFuncDecl()));
+	Value val = Value(new object::ObjClosure(compiler->mainBlockFunc));
 	// Main code block
 	code = compiler->mainCodeBlock;
 

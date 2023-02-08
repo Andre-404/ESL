@@ -250,7 +250,7 @@ public:
 	Chunk();
 	void writeData(uint8_t opCode, uInt line, byte fileIndex);
 	codeLine getLine(uInt offset);
-	void disassemble(string name);
+	void disassemble(string name, int startingOffset);
 	uInt addConstant(Value val);
 };
 
@@ -262,16 +262,4 @@ struct CallFrame {
 	byte* ip;
 	Value* slots;
 	CallFrame() : closure(nullptr), ip(nullptr), slots(nullptr) {};
-};
-
-enum class RuntimeResult {
-	OK,
-	RUNTIME_ERROR,
-};
-
-enum class ThreadState {
-	NOT_STARTED,
-	RUNNING,
-	PAUSED,
-	FINSIHED
 };
