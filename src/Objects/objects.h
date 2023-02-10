@@ -35,7 +35,7 @@ namespace object {
 		ObjType type;
 		bool marked;
 
-		virtual string toString() = 0;
+		virtual string toString(robin_hood::unordered_set<object::Obj*>& stack) = 0;
 		virtual void trace() = 0;
 		virtual uInt64 getSize() = 0;
 		virtual ~Obj() = default;
@@ -54,7 +54,7 @@ namespace object {
 	public:
 		string str;
 
-		ObjString(string& str);
+		ObjString(string& _str);
 		~ObjString() {}
 
 		bool compare(ObjString* other);
@@ -64,7 +64,7 @@ namespace object {
 		ObjString* concat(ObjString* other);
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -78,7 +78,7 @@ namespace object {
 		~ObjArray() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -94,7 +94,7 @@ namespace object {
 		~ObjFunc() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -110,20 +110,24 @@ namespace object {
 		~ObjNativeFunc() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
     class ObjBoundNativeFunc : public Obj {
     public:
-        ObjNativeFunc* func;
+        NativeFn func;
+        // Arity of -1 means that the native function takes in a variable number of arguments
+        int arity;
+        // For debugging purposes
+        string name;
         Value receiver;
 
-        ObjBoundNativeFunc(ObjNativeFunc* _func, Value& _receiver);
+        ObjBoundNativeFunc(NativeFn _func, int _arity, string _name, Value& _receiver);
         ~ObjBoundNativeFunc() {}
 
         void trace();
-        string toString();
+        string toString(robin_hood::unordered_set<object::Obj*>& stack);
         uInt64 getSize();
     };
 
@@ -134,7 +138,7 @@ namespace object {
 		~ObjUpval() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -147,7 +151,7 @@ namespace object {
 		~ObjClosure() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -160,7 +164,7 @@ namespace object {
 		~ObjClass() {}
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -174,11 +178,11 @@ namespace object {
 		~ObjBoundMethod() = default;
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
-	//used for instances of classes and structs, if 'klass' is null then it's a struct
+	// Used for instances of classes and structs, if 'klass' is null then it's a struct
 	class ObjInstance : public Obj {
 	public:
 		ObjClass* klass;
@@ -187,7 +191,7 @@ namespace object {
 		~ObjInstance() = default;
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -200,19 +204,20 @@ namespace object {
 		~ObjFile();
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
 	//language representation of a mutex object
 	class ObjMutex : public Obj {
+    public:
 		std::shared_mutex mtx;
 
 		ObjMutex();
 		~ObjMutex();
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 
@@ -229,7 +234,7 @@ namespace object {
 		void startParallelExecution();
 
 		void trace();
-		string toString();
+		string toString(robin_hood::unordered_set<object::Obj*>& stack);
 		uInt64 getSize();
 	};
 }

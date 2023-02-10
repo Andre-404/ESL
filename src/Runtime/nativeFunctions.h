@@ -1,23 +1,37 @@
 #pragma once
+#include <utility>
+
 #include "../Includes/robinHood.h"
 #include "../Objects/objects.h"
 
 namespace runtime {
+    struct BuiltinMethod{
+        object::NativeFn func;
+        // Arity of -1 means that the native function takes in a variable number of arguments
+        int arity;
+
+        BuiltinMethod(object::NativeFn _func, int _arity){
+            func = _func;
+            arity = _arity;
+        }
+    };
     struct BuiltinClass {
         // Only store raw native function pointers, at runtime an object::ObjBoundNative is created and the caller is bound to it
-        robin_hood::unordered_map<string, object::ObjNativeFunc*> methods;
-        string name;
+        robin_hood::unordered_map<string, BuiltinMethod> methods;
 
-        BuiltinClass(string _name) : name(_name) {}
+        BuiltinClass() = default;
+        BuiltinClass(BuiltinClass* parent){
+            methods.insert(parent->methods.begin(), parent->methods.end());
+        }
     };
 
     enum class Builtin{
-        NUMBER,
+        COMMON,
         STRING,
         ARRAY,
-        INSTANCE,
         FILE,
-        MUTEX
+        MUTEX,
+        FUTURE
     };
     inline constexpr unsigned operator+ (Builtin const val) { return static_cast<byte>(val); }
 

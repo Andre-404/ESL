@@ -1,6 +1,7 @@
 #pragma once
 #include <variant>
 #include "../moduleDefs.h"
+#include "../Includes/robinHood.h"
 
 namespace object {
 	class Obj;
@@ -109,6 +110,7 @@ struct Value {
 
 	void mark();
 	string typeToStr();
+    string toString(robin_hood::unordered_set<object::Obj*>& stack);
 	#pragma endregion
 };
 
@@ -255,7 +257,7 @@ public:
 	Chunk();
 	void writeData(uint8_t opCode, uInt line, byte fileIndex);
 	codeLine getLine(uInt offset);
-	void disassemble(string name, int startingOffset);
+	void disassemble(string name, int startingOffset, int constantsOffset);
 	uInt addConstant(Value val);
 };
 

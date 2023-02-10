@@ -31,11 +31,11 @@ codeLine Chunk::getLine(uInt offset) {
 	errorHandler::addSystemError(fmt::format("Couldn't show line for bytecode at position: {}", offset));
 }
 
-void Chunk::disassemble(string name, int startingOffset) {
+void Chunk::disassemble(string name, int startingOffset, int constantsOffset) {
 	std::cout << "=======" << name << "=======\n";
 	//prints every instruction in chunk
 	for (uInt offset = startingOffset; offset < bytecode.size();) {
-		offset = disassembleInstruction(this, offset);
+		offset = disassembleInstruction(this, offset, constantsOffset);
 	}
 }
 
@@ -51,18 +51,24 @@ uInt Chunk::addConstant(Value val) {
 	return size;
 }
 
-string valueToStr(Value& val) {
+string valueToStr(Value& val, robin_hood::unordered_set<object::Obj*>& stack) {
 	switch (val.value.index()) {
 	case 0: {
-		double num = get<double>(val.value);
-		int prec = (num == static_cast<int>(num)) ? 0 : 5;
+		double num = val.asNumber();
+		int prec = IS_INT(num) ? 0 : 5;
 		return std::to_string(num).substr(0, std::to_string(num).find(".") + prec);
 	}
 	case 1:
-		return get<bool>(val.value) ? "true" : "false";
-	case 2: 
-		if (get<object::Obj*>(val.value) == nullptr) return "nil";
-		return get<object::Obj*>(val.value)->toString(); 
+		return val.asBool() ? "true" : "false";
+	case 2: {
+        auto ptr = val.asObj();
+        if (ptr == nullptr) return "nil";
+        if (stack.count(ptr) > 0) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uInt64>(ptr));
+        stack.insert(ptr);
+        string str = ptr->toString(stack);
+        stack.erase(ptr);
+        return str;
+    }
 	default:
 		std::cout << "Error printing object";
 		return "";
@@ -83,7 +89,12 @@ bool Value::operator!=(const Value& other) const {
 }
 
 void Value::print() {
-	std::cout << valueToStr(*this);
+    robin_hood::unordered_set<object::Obj*> stack;
+	std::cout << this->toString(stack);
+}
+
+string Value::toString(robin_hood::unordered_set<object::Obj*>& stack){
+    return valueToStr(*this, stack);
 }
 
 bool Value::isString() const {
@@ -173,22 +184,26 @@ void Value::mark() {
 
 string Value::typeToStr() {
 	switch (value.index()) {
-	case 0: return "number";
-	case 1: return "bool";
+	case 0: return "<number>";
+	case 1: return "<bool>";
 	case 2:
 		object::Obj* temp = get<object::Obj*>(value);
-		if (!temp) return "nil";
+		if (!temp) return "<nil>";
 		switch (temp->type) {
-		case object::ObjType::ARRAY: return "array";
-		case object::ObjType::BOUND_METHOD: return "method";
-		case object::ObjType::CLASS: return "class " + asClass()->name;
-		case object::ObjType::CLOSURE: return "function";
-		case object::ObjType::FUNC: return "function";
-		case object::ObjType::INSTANCE: return asInstance()->klass == nullptr ? "struct" : "instance";
-		case object::ObjType::NATIVE: return "native function";
-		case object::ObjType::STRING: return "string";
-		case object::ObjType::UPVALUE: return "upvalue";
-		}
+		case object::ObjType::ARRAY: return "<array>";
+		case object::ObjType::BOUND_METHOD: return "<method>";
+		case object::ObjType::CLASS: return "<class " + asClass()->name + ">";
+		case object::ObjType::CLOSURE: return "<function>";
+		case object::ObjType::FUNC: return "<function>";
+		case object::ObjType::INSTANCE: return asInstance()->klass == nullptr ? "<struct>" : "<instance>";
+		case object::ObjType::NATIVE: return "<native function>";
+		case object::ObjType::STRING: return "<string>";
+		case object::ObjType::UPVALUE: return "<upvalue>";
+        case ObjType::BOUND_NATIVE: return "<native function>";
+        case ObjType::FILE: return "<file>";
+        case ObjType::MUTEX: return "<mutex>";
+        case ObjType::FUTURE: return "<future>";
+        }
 	}
 	return "error, couldn't determine type of value";
 }

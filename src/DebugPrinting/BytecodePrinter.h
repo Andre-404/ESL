@@ -2,4 +2,4 @@
 #include "../common.h"
 #include "../codegen/codegenDefs.h"
 
-int disassembleInstruction(Chunk* chunk, int offset);
+int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset);

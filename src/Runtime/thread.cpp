@@ -10,6 +10,7 @@ using std::get;
 runtime::Thread::Thread(VM* _vm){
 	stackTop = stack;
 	frameCount = 0;
+    cancelToken.store(false);
 	vm = _vm;
 }
 // Copies the callee and all arguments, otherStack points to the callee, arguments are on top of it on the stack
@@ -30,29 +31,22 @@ static bool isFalsey(Value value) {
     return ((value.isBool() && !get<bool>(value.value)) || value.isNil());
 }
 
-object::ObjNativeFunc* runtime::Thread::findNativeMethod(Value receiver, string& name){
-    if(receiver.isNumber()){
-        auto& methods = vm->nativeClasses[+runtime::Builtin::NUMBER].methods;
-        auto it = methods.find(name);
-        if(it != methods.end()) return it->second;
-        runtimeError(fmt::format("'{}' isn't defined", name), 4);
-    }
+runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, string& name){
+    runtime::Builtin type = runtime::Builtin::COMMON;
     if(receiver.isObj()){
-        runtime::Builtin type = runtime::Builtin::NUMBER;
         switch(receiver.asObj()->type){
             case object::ObjType::STRING: type = runtime::Builtin::STRING; break;
-            case object::ObjType::ARRAY:type = runtime::Builtin::ARRAY; break;
-            case object::ObjType::INSTANCE:type = runtime::Builtin::INSTANCE; break;
+            case object::ObjType::ARRAY: type = runtime::Builtin::ARRAY; break;
             case object::ObjType::FILE: type = runtime::Builtin::FILE; break;
             case object::ObjType::MUTEX: type = runtime::Builtin::MUTEX; break;
-            default: return nullptr;
+            case object::ObjType::FUTURE: type = runtime::Builtin::FUTURE; break;
+            default: break;
         }
-        auto& methods = vm->nativeClasses[+type].methods;
-        auto it = methods.find(name);
-        if(it != methods.end()) return it->second;
-        runtimeError(fmt::format("'{}' isn't defined", name), 4);
     }
-    return nullptr;
+    auto& methods = vm->nativeClasses[+type].methods;
+    auto it = methods.find(name);
+    if(it != methods.end()) return it->second;
+    runtimeError(fmt::format("{} doesn't contain property '{}'.", receiver.typeToStr(), name), 4);
 }
 
 void runtime::Thread::mark(memory::GarbageCollector* gc) {
@@ -73,6 +67,10 @@ void runtime::Thread::push(Value val) {
 Value runtime::Thread::pop() {
 	stackTop--;
 	return *stackTop;
+}
+
+void runtime::Thread::popn(int n) {
+    stackTop-= n;
 }
 
 Value runtime::Thread::peek(int depth) {
@@ -98,24 +96,24 @@ void runtime::Thread::callValue(Value callee, int argCount) {
 			object::NativeFn native = callee.asNativeFn()->func;
             // If native returns true then the ObjNativeFunc is still on the stack and should be popped
             if(native(this, argCount)) {
-                pop();
-                push(Value::nil());
+                stackTop[-2] = stackTop[-1];
+                stackTop--;
             }
             return;
 		}
         case object::ObjType::BOUND_NATIVE:{
             object::ObjBoundNativeFunc* bound = callee.asBoundNativeFunc();
             stackTop[-argCount - 1] = bound->receiver;
-            int arity = bound->func->arity;
+            int arity = bound->arity;
             //if arity is -1 it means that the function takes in a variable number of args
             if (arity != -1 && argCount != arity) {
                 runtimeError(fmt::format("Function {} expects {} arguments but got {}.", callee.asNativeFn()->name, arity, argCount), 2);
             }
-            object::NativeFn native = bound->func->func;
+            object::NativeFn native = bound->func;
             // If native returns true then the ObjNativeFunc is still on the stack and should be popped
             if(native(this, argCount)) {
-                pop();
-                push(Value::nil());
+                stackTop[-2] = stackTop[-1];
+                stackTop--;
             }
             return;
         }
@@ -175,72 +173,55 @@ void runtime::Thread::defineMethod(string& name) {
 	pop();
 }
 
-void runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
+bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
 	//At the start the instance whose method we're binding needs to be on top of the stack
 	Value method;
 	auto it = klass->methods.find(klass->name);
-	if (it == klass->methods.end()) {
-		runtimeError(fmt::format("{} doesn't contain method '{}'.", klass->name, name), 4);
-	}
-	//peek() to get the ObjInstance
+	if (it == klass->methods.end()) return false;
+	//peek(0) to get the ObjInstance
 	auto* bound = new object::ObjBoundMethod(peek(0), method.asClosure());
     *(stackTop - 1) = Value(bound);
+    return true;
 }
-
 
 void runtime::Thread::invoke(string& fieldName, int argCount) {
 	Value receiver = peek(argCount);
 
-    object::ObjNativeFunc* native = findNativeMethod(receiver, fieldName);
-    if(native){
-        int arity = native->arity;
-        //if arity is -1 it means that the function takes in a variable number of args
-        if (arity != -1 && argCount != arity) {
-            runtimeError(fmt::format("Function {} expects {} arguments but got {}.", native->name, arity, argCount), 2);
+	if (receiver.isInstance()) {
+        object::ObjInstance* instance = receiver.asInstance();
+        auto it = instance->fields.find(fieldName);
+        if (it != instance->fields.end()) {
+            stackTop[-argCount - 1] = it->second;
+            return callValue(it->second, argCount);
         }
-        // If native returns true then the ObjNativeFunc is still on the stack and should be popped
-        if(native->func(this, argCount)) {
-            pop();
-            push(Value::nil());
-        }
-        return;
+        //this check is used because we also use objInstance to represent struct literals
+        //and if this instance is a struct it can only contain functions inside its field table
+        if (instance->klass != nullptr && invokeFromClass(instance->klass, fieldName, argCount)) return;
+	}
+    auto native = findNativeMethod(receiver, fieldName);
+    int arity = native.arity;
+    //if arity is -1 it means that the function takes in a variable number of args
+    if (arity != -1 && argCount != arity) {
+        runtimeError(fmt::format("Method {} expects {} arguments but got {}.", fieldName, arity, argCount), 2);
     }
-
-	if (!receiver.isInstance()) {
-		runtimeError(fmt::format("Only instances can call methods, got {}.", receiver.typeToStr()), 3);
-	}
-
-	object::ObjInstance* instance = receiver.asInstance();
-	auto it = instance->fields.find(fieldName);
-	if (it != instance->fields.end()) {
-		stackTop[-argCount - 1] = it->second;
-		return callValue(it->second, argCount);
-	}
-	//this check is used because we also use objInstance to represent struct literals
-	//and if this instance is a struct it can only contain functions inside its field table
-	if (instance->klass == nullptr) {
-		runtimeError(fmt::format("Undefined property '{}'.", fieldName), 4);
-	}
-
-	invokeFromClass(instance->klass, fieldName, argCount);
+    // If native returns true then the ObjNativeFunc is still on the stack and should be popped
+    if(native.func(this, argCount)) {
+        stackTop[-2] = stackTop[-1];
+        stackTop--;
+    }
 }
 
-void runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodName, int argCount) {
+bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodName, int argCount) {
 	auto it = klass->methods.find(methodName);
-	if (it == klass->methods.end()) {
-		runtimeError(fmt::format("Class '{}' doesn't contain '{}'.", klass->name, methodName), 4);
-	}
-	//the bottom of the call stack will contain the receiver instance
+	if (it == klass->methods.end()) return false;
+	// The bottom of the call stack will contain the receiver instance
 	call(it->second.asClosure(), argCount);
+    return true;
 }
 
-bool runtime::Thread::bindMethodToPrimitive(Value receiver, string& methodName){
-    auto* ptr = findNativeMethod(receiver, methodName);
-    if(ptr) {
-        push(Value(new object::ObjBoundNativeFunc(ptr, receiver)));
-        return true;
-    }
-    return false;
+void runtime::Thread::bindMethodToPrimitive(Value receiver, string& methodName){
+    auto func = findNativeMethod(receiver, methodName);
+    push(Value(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
 }
 #pragma endregion
 
@@ -271,7 +252,7 @@ void runtime::Thread::executeBytecode() {
 		//Trying to access a variable using a float is a error
 		if (!IS_INT(index)) runtimeError("Expected integer, got float.", 3);
 		if (index < 0 || index > arr->values.size() - 1)
-			runtimeError(fmt::format("Index {} outside of range [0, {}].", (uInt64)index, callee.asArray()->values.size() - 1), 4);
+			runtimeError(fmt::format("Index {} outside of range [0, {}].", (uInt64)index, callee.asArray()->values.size() - 1), 9);
 		return static_cast<uInt64>(index);
 	};
 	auto deleteThread = [](object::ObjFuture* _fut, VM* vm) {
@@ -323,6 +304,7 @@ void runtime::Thread::executeBytecode() {
     #define DISPATCH() goto loop
     try {
         loop:
+        if(cancelToken.load()) return;
         #pragma region Multithreading
         if (!fut && memory::gc.shouldCollect.load()) {
             // If fut is null, this is the main thread of execution which runs the GC
@@ -952,34 +934,26 @@ void runtime::Thread::executeBytecode() {
                 // We want to use these 2 values as args and receiver
                 Value field = pop();
                 Value callee = pop();
-                // Check for primitives before doing type checking for arrays or structs
-                if(field.isString() && bindMethodToPrimitive(callee, field.asString()->str)) DISPATCH();
 
-                if (!callee.isArray() && !callee.isInstance())
-                    runtimeError(fmt::format("Expected a array or struct, got {}.", callee.typeToStr()), 3);
-
-                if (callee.asObj()->type == object::ObjType::ARRAY) {
+                if (callee.isArray()) {
                     object::ObjArray *arr = callee.asArray();
                     uInt64 index = checkArrayBounds(field, callee);
                     push(arr->values[index]);
                     DISPATCH();
-                }
-                if (!field.isString())
-                    runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
+                }else if(callee.isInstance() && !callee.asInstance()->klass) {
+                    if (!field.isString())
+                        runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
 
-                object::ObjInstance *instance = callee.asInstance();
-                object::ObjString *name = field.asString();
-                auto it = instance->fields.find(name->str);
-                if (it != instance->fields.end()) {
-                    push(it->second);
-                    DISPATCH();
+                    object::ObjInstance *instance = callee.asInstance();
+                    object::ObjString *name = field.asString();
+                    auto it = instance->fields.find(name->str);
+                    if (it != instance->fields.end()) {
+                        push(it->second);
+                        DISPATCH();
+                    }
+                    runtimeError(fmt::format("Field '{}' doesn't exist.", name->str), 4);
                 }
-
-                if (instance->klass) {
-                    bindMethod(instance->klass, name->str);
-                    DISPATCH();
-                }
-                runtimeError(fmt::format("Field '{}' doesn't exist.", name->str), 4);
+                runtimeError(fmt::format("Expected an array or struct, got {}.", callee.typeToStr()), 3);
             }
 
             case +OpCode::SET: {
@@ -988,9 +962,7 @@ void runtime::Thread::executeBytecode() {
                 Value callee = pop();
                 Value val = peek(0);
 
-                if (!callee.isArray() && !callee.isInstance())
-                    runtimeError(fmt::format("Expected a array or struct, got {}.", callee.typeToStr()), 3);
-                if (callee.asObj()->type == object::ObjType::ARRAY) {
+                if (callee.isArray()) {
                     object::ObjArray *arr = callee.asArray();
                     uInt64 index = checkArrayBounds(field, callee);
 
@@ -999,15 +971,17 @@ void runtime::Thread::executeBytecode() {
                     else if (!val.isObj() && arr->values[index].isObj()) arr->numOfHeapPtr--;
                     arr->values[index] = val;
                     DISPATCH();
-                }
-                if (!field.isString())
-                    runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
+                }else if(callee.isInstance() && !callee.asInstance()->klass) {
+                    if (!field.isString())
+                        runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
 
-                object::ObjInstance *instance = callee.asInstance();
-                object::ObjString *str = field.asString();
-                //setting will always succeed, and we don't care if we're overriding an existing field, or creating a new one
-                instance->fields.insert_or_assign(str->str, val);
-                DISPATCH();
+                    object::ObjInstance *instance = callee.asInstance();
+                    object::ObjString *str = field.asString();
+                    //setting will always succeed, and we don't care if we're overriding an existing field, or creating a new one
+                    instance->fields.insert_or_assign(str->str, val);
+                    DISPATCH();
+                }
+                runtimeError(fmt::format("Expected an array or struct, got {}.", callee.typeToStr()), 3);
             }
 
             case +OpCode::CLASS: {
@@ -1018,47 +992,34 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_PROPERTY: {
                 Value inst = pop();
                 object::ObjString *name = READ_STRING();
-                if(bindMethodToPrimitive(inst, name->str)) DISPATCH();
 
-                if (!inst.isInstance()) {
-                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()), 3);
+                if (inst.isInstance()) {
+                    object::ObjInstance *instance = inst.asInstance();
+                    auto it = instance->fields.find(name->str);
+                    if (it != instance->fields.end()) {
+                        push(it->second);
+                        DISPATCH();
+                    }
+                    if (instance->klass && bindMethod(instance->klass, name->str)) DISPATCH();
                 }
-
-                object::ObjInstance *instance = inst.asInstance();
-                auto it = instance->fields.find(name->str);
-                if (it != instance->fields.end()) {
-                    push(it->second);
-                    DISPATCH();
-                }
-
-                if (instance->klass) {
-                    bindMethod(instance->klass, name->str);
-                    DISPATCH();
-                }
-                runtimeError(fmt::format("Field '{}' doesn't exist.", name->str), 4);
+                bindMethodToPrimitive(inst, name->str);
+                DISPATCH();
             }
             case +OpCode::GET_PROPERTY_LONG: {
                 Value inst = pop();
                 object::ObjString *name = READ_STRING_LONG();
-                if(bindMethodToPrimitive(inst, name->str)) DISPATCH();
 
-                if (!inst.isInstance()) {
-                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()), 3);
+                if (inst.isInstance()) {
+                    object::ObjInstance *instance = inst.asInstance();
+                    auto it = instance->fields.find(name->str);
+                    if (it != instance->fields.end()) {
+                        push(it->second);
+                        DISPATCH();
+                    }
+                    if (instance->klass && bindMethod(instance->klass, name->str)) DISPATCH();
                 }
-
-                object::ObjInstance *instance = inst.asInstance();
-
-                auto it = instance->fields.find(name->str);
-                if (it != instance->fields.end()) {
-                    push(it->second);
-                    DISPATCH();
-                }
-
-                if (instance->klass) {
-                    bindMethod(instance->klass, name->str);
-                    DISPATCH();
-                }
-                runtimeError(fmt::format("Field '{}' doesn't exist.", name->str), 4);
+                bindMethodToPrimitive(inst, name->str);
+                DISPATCH();
             }
 
             case +OpCode::SET_PROPERTY: {
@@ -1156,7 +1117,9 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *name = READ_STRING();
                 object::ObjClass *superclass = pop().asClass();
 
-                bindMethod(superclass, name->str);
+                if(!bindMethod(superclass, name->str)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
+                }
                 DISPATCH();
             }
             case +OpCode::GET_SUPER_LONG: {
@@ -1164,7 +1127,9 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *name = READ_STRING_LONG();
                 object::ObjClass *superclass = pop().asClass();
 
-                bindMethod(superclass, name->str);
+                if(!bindMethod(superclass, name->str)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
+                }
                 DISPATCH();
             }
 
@@ -1174,7 +1139,9 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *method = READ_STRING();
                 object::ObjClass *superclass = pop().asClass();
                 STORE_FRAME();
-                invokeFromClass(superclass, method->str, argCount);
+                if(!invokeFromClass(superclass, method->str, argCount)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);
+                }
                 LOAD_FRAME();
                 DISPATCH();
             }
@@ -1184,7 +1151,9 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *method = READ_STRING_LONG();
                 object::ObjClass *superclass = pop().asClass();
                 STORE_FRAME();
-                invokeFromClass(superclass, method->str, argCount);
+                if(!invokeFromClass(superclass, method->str, argCount)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);
+                }
                 LOAD_FRAME();
                 DISPATCH();
             }

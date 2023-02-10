@@ -1,6 +1,7 @@
 #pragma once
 #include "../codegen/codegenDefs.h"
 #include "../Objects/objects.h"
+#include "nativeFunctions.h"
 
 namespace runtime {
 	class VM;
@@ -17,7 +18,9 @@ namespace runtime {
         VM* vm;
         void push(Value val);
         Value pop();
+        void popn(int n);
         Value peek(int depth);
+        std::atomic<bool> cancelToken;
 
         void runtimeError(string err, int errorCode);
 
@@ -33,11 +36,13 @@ namespace runtime {
 		void call(object::ObjClosure* function, int argCount);
 
 		void defineMethod(string& name);
-		void bindMethod(object::ObjClass* klass, string& name);
+        // True if method exists and was bound to receiver
+		bool bindMethod(object::ObjClass* klass, string& name);
 		void invoke(string& fieldName, int argCount);
-		void invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
-        // True if binding was successful
-        bool bindMethodToPrimitive(Value receiver, string& methodName);
-        object::ObjNativeFunc* findNativeMethod(Value receiver, string& name);
+        // True if method exists and was invoked
+		bool invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
+
+        void bindMethodToPrimitive(Value receiver, string& methodName);
+        BuiltinMethod& findNativeMethod(Value receiver, string& name);
 	};
 }

@@ -239,9 +239,9 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
 	//we need all of the array member values to be on the stack prior to executing "OP_CREATE_ARRAY"
 	//compiling members in reverse order because we add to the array by popping from the stack
-	for (int i = expr->members.size() - 1; i >= 0; --i) {
-		expr->members[i]->accept(this);
-	}
+    for(auto mem : expr->members){
+        mem->accept(this);
+    }
 	emitBytes(+OpCode::CREATE_ARRAY, expr->members.size());
 }
 
@@ -878,7 +878,7 @@ uInt16 Compiler::makeConstant(Value value) {
 }
 
 void Compiler::emitConstant(Value value) {
-	//shorthand for adding a constant to the chunk and emitting it
+	// Shorthand for adding a constant to the chunk and emitting it
 	uInt16 constant = makeConstant(value);
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CONSTANT, constant);
 	else emitByteAnd16Bit(+OpCode::CONSTANT_LONG, constant);
@@ -1265,6 +1265,7 @@ ObjFunc* Compiler::endFuncDecl() {
 	// Get the current function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
 	ObjFunc* func = current->func;
 	Chunk& chunk = current->chunk;
+
 	//Add the bytecode, lines and constants to the main code block
 	uInt64 bytecodeOffset = mainCodeBlock.bytecode.size();
 	mainCodeBlock.bytecode.insert(mainCodeBlock.bytecode.end(), chunk.bytecode.begin(), chunk.bytecode.end());
@@ -1278,7 +1279,7 @@ ObjFunc* Compiler::endFuncDecl() {
 		mainCodeBlock.lines.push_back(line);
 	}
     #ifdef COMPILER_DEBUG
-    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset);
+    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset, constantsOffset);
     #endif
 	// Set the offsets in the function object
 	func->bytecodeOffset = bytecodeOffset;
