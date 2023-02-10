@@ -1,5 +1,4 @@
 #include "compiler.h"
-#include "../MemoryManagment/garbageCollector.h"
 #include "../ErrorHandling/errorHandler.h"
 #include <unordered_set>
 #include <iostream>
@@ -10,7 +9,7 @@ using namespace object;
 
 #ifdef COMPILER_USE_LONG_INSTRUCTION
 #define SHORT_CONSTANT_LIMIT 0
-#else 
+#else
 #define SHORT_CONSTANT_LIMIT UINT8_MAX
 #endif
 
@@ -45,6 +44,8 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	curUnitIndex = 0;
 	curGlobalIndex = 0;
 	units = _units;
+    nativeFuncs = runtime::createNativeFuncs();
+    nativeFuncNames = runtime::createNativeNameTable(nativeFuncs);
 
 	for (CSLModule* unit : units) {
 		curUnit = unit;
@@ -65,6 +66,7 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 		curUnitIndex++;
 	}
     mainBlockFunc = endFuncDecl();
+    mainBlockFunc->name = "script";
 	std::cout << "=======global var array=======\n";
 	for (int i = 0; i < globals.size(); i++) {
 		std::cout << fmt::format("|{} {}| ", i, globals[i].name);
@@ -189,12 +191,10 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 			arg = resolveLocal(left->token);
 			if (arg != -1) type = 0;
 			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 1;
-			else {
+			else if((arg = resolveGlobal(left->token, true)) != -1){
 				//all global variables have a numerical prefix which indicates which source file they came from, used for scoping
-				arg = resolveGlobal(left->token, true);
-
 				type = arg > SHORT_CONSTANT_LIMIT ? 3 : 2;
-			}
+			}else error(left->token, fmt::format("Variable '{}' isn't declared.", left->token.getLexeme()));
 		}
 		else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
 			//if a field is being incremented, compile the object, and then if it's not a dot access also compile the field
@@ -240,9 +240,9 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
 	//we need all of the array member values to be on the stack prior to executing "OP_CREATE_ARRAY"
 	//compiling members in reverse order because we add to the array by popping from the stack
-	for (int i = expr->members.size() - 1; i >= 0; --i) {
-		expr->members[i]->accept(this);
-	}
+    for(auto mem : expr->members){
+        mem->accept(this);
+    }
 	emitBytes(+OpCode::CREATE_ARRAY, expr->members.size());
 }
 
@@ -264,13 +264,13 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 	expr->callee->accept(this);
 
 	switch (expr->accessor.type) {
-		//array[index] or object["propertyAsString"]
+	//array[index] or object["propertyAsString"]
 	case TokenType::LEFT_BRACKET: {
 		expr->field->accept(this);
 		emitByte(+OpCode::GET);
 		break;
 	}
-								//object.property, we can optimize since we know the string in advance
+	//object.property, we can optimize since we know the string in advance
 	case TokenType::DOT:
 		uInt16 name = identifierConstant(dynamic_cast<AST::LiteralExpr*>(expr->field.get())->token);
 		if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
@@ -388,7 +388,7 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 	uInt16 constant = makeConstant(Value(func));
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
 	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them, 
+	//if this function does capture any upvalues, we emit the code for getting them,
 	//when we execute "OP_CLOSURE" we will check to see how many upvalues the function captures by going directly to the func->upvalueCount
 	for (int i = 0; i < func->upvalueCount; i++) {
 		emitByte(upvals[i].isLocal ? 1 : 0);
@@ -478,7 +478,7 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 	uInt16 constant = makeConstant(Value(func));
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
 	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them, 
+	//if this function does capture any upvalues, we emit the code for getting them,
 	//when "OP_CLOSURE" is executed it will check to see how many upvalues the function captures by going directly to the func->upvalueCount
 	for (int i = 0; i < func->upvalueCount; i++) {
 		emitByte(upvals[i].isLocal ? 1 : 0);
@@ -694,7 +694,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 	vector<uInt16> jumps;
 	bool isLong = false;
 	for (const auto & _case : stmt->cases) {
-		//a single case can contain multiple constants(eg. case 1 | 4 | 9:), each constant is compiled and its jump will point to the 
+		//a single case can contain multiple constants(eg. case 1 | 4 | 9:), each constant is compiled and its jump will point to the
 		//same case code block
 		for (const Token& constant : _case->constants) {
 			Value val;
@@ -873,7 +873,7 @@ uInt16 Compiler::makeConstant(Value value) {
 }
 
 void Compiler::emitConstant(Value value) {
-	//shorthand for adding a constant to the chunk and emitting it
+	// Shorthand for adding a constant to the chunk and emitting it
 	uInt16 constant = makeConstant(value);
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CONSTANT, constant);
 	else emitByteAnd16Bit(+OpCode::CONSTANT_LONG, constant);
@@ -978,10 +978,8 @@ void Compiler::namedVar(Token token, bool canAssign) {
 		getOp = +OpCode::GET_UPVALUE;
 		setOp = +OpCode::SET_UPVALUE;
 	}
-	else {
-		//all global variables are stored in an array, resolveGlobal gets the array
-		arg = resolveGlobal(token, canAssign);
-
+	else if((arg = resolveGlobal(token, canAssign)) != -1){
+		// All global variables are stored in an array, resolveGlobal gets the array
 		getOp = +OpCode::GET_GLOBAL;
 		setOp = +OpCode::SET_GLOBAL;
 		if (arg > SHORT_CONSTANT_LIMIT) {
@@ -991,6 +989,14 @@ void Compiler::namedVar(Token token, bool canAssign) {
 			return;
 		}
 	}
+    else{
+        string name = token.getLexeme();
+        auto it = nativeFuncNames.find(name);
+        if(it == nativeFuncNames.end())
+            error(token, fmt::format("'{}' doesn't match any declared variable name or native function name", name));
+        emitByteAnd16Bit(+OpCode::GET_NATIVE, it->second);
+        return;
+    }
 	emitBytes(canAssign ? setOp : getOp, arg);
 }
 
@@ -1168,7 +1174,7 @@ void Compiler::method(AST::FuncDecl* _method, Token className) {
 
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
 	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them, 
+	//if this function does capture any upvalues, we emit the code for getting them,
 	//when we execute "OP_CLOSURE" we will check to see how many upvalues the function captures by going directly to the func->upvalueCount
 	for (int i = 0; i < func->upvalueCount; i++) {
 		emitByte(upvals[i].isLocal ? 1 : 0);
@@ -1180,7 +1186,8 @@ void Compiler::method(AST::FuncDecl* _method, Token className) {
 bool Compiler::invoke(AST::CallExpr* expr) {
 	if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
 		//currently we only optimizes field invoking(struct.field() or array[field]())
-		AST::FieldAccessExpr* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+		auto* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+        if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
 
 		call->callee->accept(this);
 
@@ -1189,8 +1196,15 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			arg->accept(this);
 			argCount++;
 		}
-		call->field->accept(this);
-		emitBytes(+OpCode::INVOKE, argCount);
+        uInt16 constant = identifierConstant(dynamic_cast<AST::LiteralExpr*>(call->field.get())->token);
+        if(constant > SHORT_CONSTANT_LIMIT){
+            emitBytes(+OpCode::INVOKE_LONG, argCount);
+            emit16Bit(constant);
+        }
+        else {
+            emitBytes(+OpCode::INVOKE, argCount);
+            emitByte(constant);
+        }
 		return true;
 	}
 	else if (expr->callee->type == AST::ASTType::SUPER) {
@@ -1212,8 +1226,14 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		}
 		//super gets popped, leaving only the receiver and args on the stack
 		namedVar(syntheticToken("super"), false);
-		emitBytes(+OpCode::INVOKE, name);
-		emitByte(argCount);
+        if(name > SHORT_CONSTANT_LIMIT){
+            emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
+            emit16Bit(name);
+        }
+        else {
+            emitBytes(+OpCode::SUPER_INVOKE, argCount);
+            emitByte(name);
+        }
 		return true;
 	}
 	return false;
@@ -1240,6 +1260,7 @@ ObjFunc* Compiler::endFuncDecl() {
 	// Get the parserCurrent function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
 	ObjFunc* func = current->func;
 	Chunk& chunk = current->chunk;
+
 	//Add the bytecode, lines and constants to the main code block
 	uInt64 bytecodeOffset = mainCodeBlock.bytecode.size();
 	mainCodeBlock.bytecode.insert(mainCodeBlock.bytecode.end(), chunk.bytecode.begin(), chunk.bytecode.end());
@@ -1253,7 +1274,7 @@ ObjFunc* Compiler::endFuncDecl() {
 		mainCodeBlock.lines.push_back(line);
 	}
     #ifdef COMPILER_DEBUG
-    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset);
+    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset, constantsOffset);
     #endif
 	// Set the offsets in the function object
 	func->bytecodeOffset = bytecodeOffset;
@@ -1270,8 +1291,8 @@ void Compiler::updateLine(Token token) {
 	current->line = token.str.line;
 }
 
-//for every dependency that's imported without an alias, check if any of its exports match 'symbol'
-uInt Compiler::checkSymbol(Token symbol) {
+// For every dependency that's imported without an alias, check if any of its exports match 'symbol', return -1 if not
+int Compiler::checkSymbol(Token symbol) {
 	std::unordered_map<string, CSLModule*> importedSymbols;
 	string lexeme = symbol.getLexeme();
 	for (Dependency dep : curUnit->deps) {
@@ -1298,12 +1319,12 @@ uInt Compiler::checkSymbol(Token symbol) {
 			}
 		}
 	}
-	error(symbol, "Variable not defined.");
-	return 0;
+    return -1;
 }
 
-//finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
-uInt Compiler::resolveGlobal(Token name, bool canAssign) {
+// Finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
+// If it doesn't find any matching names, returns -1
+int Compiler::resolveGlobal(Token name, bool canAssign) {
 	bool inThisFile = false;
 	int index = curGlobalIndex;
 	for (Token token : curUnit->topDeclarations) {
@@ -1326,7 +1347,7 @@ uInt Compiler::resolveGlobal(Token name, bool canAssign) {
     return -1;
 }
 
-//checks if 'variable' exists in a module which was imported with the alias 'moduleAlias', 
+//checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
 //if it exists append that modules index to the variable
 uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 	//first find the module with the correct alias
@@ -1364,5 +1385,5 @@ uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 //only used when debugging _LONG versions of op codes
 #undef SHORT_CONSTANT_LIMIT
 
-#undef CHECK_SCOPE_FOR_LOOP 
+#undef CHECK_SCOPE_FOR_LOOP
 #undef CHECK_SCOPE_FOR_SWITCH

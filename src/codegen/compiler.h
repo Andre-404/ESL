@@ -3,6 +3,7 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
+#include "../Runtime/nativeFunctions.h"
 #include <array>
 
 namespace compileCore {
@@ -81,6 +82,9 @@ namespace compileCore {
 		vector<Globalvar> globals;
 		Chunk mainCodeBlock;
         object::ObjFunc* mainBlockFunc;
+        // Here to do name checking at compile time
+        vector<object::ObjNativeFunc*> nativeFuncs;
+        robin_hood::unordered_map<string, uInt> nativeFuncNames;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();
@@ -163,11 +167,11 @@ namespace compileCore {
 		void updateLine(Token token);
 		void error(Token token, const string& msg) noexcept(false);
 		void error(const string& message) noexcept(false);
-		//checks all imports to see if the symbol 'token' is imported
-		uInt checkSymbol(Token token);
-		//given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
-		uInt resolveGlobal(Token token, bool canAssign);
-		//given a token for module alias and a token for variable name, returns correct symbol to use 
+		// Checks all imports to see if the symbol 'token' is imported
+		int checkSymbol(Token token);
+		// Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
+		int resolveGlobal(Token token, bool canAssign);
+		// Given a token for module alias and a token for variable name, returns correct symbol to use
 		uInt resolveModuleVariable(Token moduleAlias, Token variable);
 		#pragma endregion
 	};

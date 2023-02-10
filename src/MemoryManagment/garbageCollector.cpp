@@ -72,6 +72,7 @@ namespace memory {
 
 	void GarbageCollector::markRoots(compileCore::Compiler* compiler) {
         for(Value& val : compiler->mainCodeBlock.constants) val.mark();
+        for(auto func : compiler->nativeFuncs) func->marked = true;
         compiler->mainBlockFunc->marked = true;
 	}
 

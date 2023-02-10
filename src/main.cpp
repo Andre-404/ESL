@@ -5,8 +5,11 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "Runtime/vm.h"
+<<<<<<< HEAD
 
 #include <chrono>
+=======
+>>>>>>> cdfe446182b27cb4f97064b1a46a8899dcb9028b
 #include <windows.h>
 
 static void windowsSetTerminalProcessing(){
@@ -19,6 +22,7 @@ static void windowsSetTerminalProcessing(){
     SetConsoleMode( handleOut , consoleMode );
 };
 
+<<<<<<< HEAD
 int main() {
     windowsSetTerminalProcessing();
     preprocessing::Preprocessor preprocessor;
@@ -30,6 +34,29 @@ int main() {
     parser.parse(modules);
 
 
+=======
+
+int main(int argc, char* argv[]) {
+
+    string path;
+    // For ease of use during development
+    #ifdef DEBUG_MODE
+    path = "C:\\Temp\\main.csl";
+    #elif
+    if(argc == 2) path = string(argv[1]);
+    else{
+        std::cout<<"Enter file path.\n";
+        return 1;
+    }
+    #endif
+
+    windowsSetTerminalProcessing();
+    preprocessing::Preprocessor p;
+    p.preprocessProject(path);
+    vector<CSLModule*> modules = p.getSortedUnits();
+    AST::Parser pa;
+    pa.parse(modules);
+>>>>>>> cdfe446182b27cb4f97064b1a46a8899dcb9028b
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
 
@@ -37,6 +64,7 @@ int main() {
 
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
+<<<<<<< HEAD
 
     auto vm = new runtime::VM(&compiler);
 
@@ -45,5 +73,9 @@ int main() {
     auto t2 = std::chrono::high_resolution_clock::now();
 
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
+=======
+    auto* vm = new runtime::VM(&c);
+    vm->execute();
+>>>>>>> cdfe446182b27cb4f97064b1a46a8899dcb9028b
     return 0;
 }

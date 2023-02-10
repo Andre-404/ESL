@@ -1,6 +1,7 @@
 #pragma once
 #include <variant>
 #include "../moduleDefs.h"
+#include "../Includes/robinHood.h"
 
 namespace object {
 	class Obj;
@@ -12,6 +13,8 @@ namespace object {
 	class ObjFunc;
 
 	class ObjNativeFunc;
+
+    class ObjBoundNativeFunc;
 
 	class ObjUpval;
 
@@ -80,6 +83,7 @@ struct Value {
 	bool isString() const;
 	bool isFunction() const;
 	bool isNativeFn() const;
+    bool isBoundNativeFunc() const;
 	bool isArray() const;
 	bool isClosure() const;
 	bool isClass() const;
@@ -93,6 +97,7 @@ struct Value {
 	object::ObjString* asString();
 	object::ObjFunc* asFunction();
 	object::ObjNativeFunc* asNativeFn();
+    object::ObjBoundNativeFunc* asBoundNativeFunc();
 	object::ObjArray* asArray();
 	object::ObjClosure* asClosure();
 	object::ObjClass* asClass();
@@ -105,6 +110,7 @@ struct Value {
 
 	void mark();
 	string typeToStr();
+    string toString(robin_hood::unordered_set<object::Obj*>& stack);
 	#pragma endregion
 };
 
@@ -146,7 +152,7 @@ enum class OpCode {
 	BITSHIFT_LEFT,
 	BITSHIFT_RIGHT,
 
-	LOAD_INT,//arg: 8-bit, interger smaller than 256 to load
+	LOAD_INT,//arg: 8-bit, integer smaller than 256 to load
 	//comparisons and equality
 	EQUAL,
 	NOT_EQUAL,
@@ -159,6 +165,7 @@ enum class OpCode {
 	//temporary
 	PRINT,
 	//Variables
+    GET_NATIVE, //arg: 16-bit index
 	//all module level variables(including class and function declarations) are treated as global variables
 	//compiler has an array of all globals, and access to globals is done through an array
 	DEFINE_GLOBAL,//arg: 8-bit  index
@@ -250,7 +257,7 @@ public:
 	Chunk();
 	void writeData(uint8_t opCode, uInt line, byte fileIndex);
 	codeLine getLine(uInt offset);
-	void disassemble(string name, int startingOffset);
+	void disassemble(string name, int startingOffset, int constantsOffset);
 	uInt addConstant(Value val);
 };
 

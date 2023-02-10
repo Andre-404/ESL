@@ -2,11 +2,11 @@
 #include "../codegen/codegenDefs.h"
 #include "../Objects/objects.h"
 #include "thread.h"
+#include "nativeFunctions.h"
 #include <condition_variable>
+#include <random>
 
 namespace runtime {
-	string expectedType(string msg, Value val);
-	
 	class VM {
 	public:
 		VM(compileCore::Compiler* compiler);
@@ -16,6 +16,10 @@ namespace runtime {
 		// Used by all threads
 		vector<Globalvar> globals;
 		vector<File*> sourceFiles;
+        vector<object::ObjNativeFunc *> nativeFuncs;
+        vector<BuiltinClass> nativeClasses;
+
+        std::mt19937_64 rng;
 		// Main code block, all function look into this vector at some offset
 		Chunk code;
 		// For adding/removing threads

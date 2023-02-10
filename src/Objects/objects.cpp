@@ -1,6 +1,7 @@
 #include "objects.h"
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Runtime/thread.h"
+#include "../Includes/fmt/format.h"
 
 using namespace object;
 using namespace memory;
@@ -19,7 +20,7 @@ void ObjString::trace() {
 	//nothing to mark
 }
 
-string ObjString::toString() {
+string ObjString::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return str;
 }
 
@@ -52,7 +53,7 @@ void ObjFunc::trace() {
 	// Nothing
 }
 
-string ObjFunc::toString() {
+string ObjFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<" + name + ">";
 }
 
@@ -61,10 +62,11 @@ uInt64 ObjFunc::getSize() {
 }
 #pragma endregion
 
-#pragma region ObjNativeFn
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, byte _arity) {
+#pragma region ObjNativeFunc
+ObjNativeFunc::ObjNativeFunc(NativeFn _func, int _arity, string _name) {
 	func = _func;
 	arity = _arity;
+    name = _name;
     marked = false;
 	type = ObjType::NATIVE;
 }
@@ -73,13 +75,37 @@ void ObjNativeFunc::trace() {
 	//nothing
 }
 
-string ObjNativeFunc::toString() {
-	return "<native function>";
+string ObjNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+	return fmt::format("<native function {}>", name);
 }
 
 uInt64 ObjNativeFunc::getSize() {
 	return sizeof(ObjNativeFunc);
 }
+#pragma endregion
+
+#pragma region ObjBoundNativeFunc
+ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int _arity, string _name, Value& _receiver) {
+    func = _func;
+    arity = _arity;
+    name = _name;
+    receiver = _receiver;
+    marked = false;
+    type = ObjType::BOUND_NATIVE;
+}
+
+void ObjBoundNativeFunc::trace() {
+    receiver.mark();
+}
+
+string ObjBoundNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+    return fmt::format("<native function {}>", name);
+}
+
+uInt64 ObjBoundNativeFunc::getSize() {
+    return sizeof(ObjBoundNativeFunc);
+}
+
 #pragma endregion
 
 #pragma region ObjClosure
@@ -97,8 +123,8 @@ void ObjClosure::trace() {
 	gc.markObj(func);
 }
 
-string ObjClosure::toString() {
-	return func->toString();
+string ObjClosure::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+	return func->toString(stack);
 }
 
 uInt64 ObjClosure::getSize() {
@@ -117,7 +143,7 @@ void ObjUpval::trace() {
 	val.mark();
 }
 
-string ObjUpval::toString() {
+string ObjUpval::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<upvalue>";
 }
 
@@ -150,8 +176,13 @@ void ObjArray::trace() {
 	}
 }
 
-string ObjArray::toString() {
-	return "<array>";
+string ObjArray::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+	string str = "[";
+    for(Value& val : values){
+        str.append(" " + val.toString(stack)).append(",");
+    }
+    str.erase(str.size() - 1).append(" ]");
+    return str;
 }
 
 uInt64 ObjArray::getSize() {
@@ -161,18 +192,18 @@ uInt64 ObjArray::getSize() {
 
 #pragma region ObjClass
 ObjClass::ObjClass(string _name) {
-	name = _name;
+	name = std::move(_name);
     marked = false;
 	type = ObjType::CLASS;
 }
 
 void ObjClass::trace() {
-	for (auto it = methods.begin(); it != methods.end(); it++) {
-		it->second.mark();
+	for (auto & method : methods) {
+		method.second.mark();
 	}
 }
 
-string ObjClass::toString() {
+string ObjClass::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<class " + name + ">";
 }
 
@@ -189,15 +220,21 @@ ObjInstance::ObjInstance(ObjClass* _klass) {
 }
 
 void ObjInstance::trace() {
-	for (auto it = fields.begin(); it != fields.end(); it++) {
-		it->second.mark();
+	for (auto & field : fields) {
+		field.second.mark();
 	}
 	if(klass) gc.markObj(klass);
 }
 
-string ObjInstance::toString() {
-	if (!klass) return "<struct>";
-	return "<" + klass->name + " instance>";
+string ObjInstance::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+	if(klass) "<" + klass->name + " instance>";
+    string str = "{";
+    for(auto it : fields){
+        str.append(" \"").append(it.first).append("\" : ");
+        str.append(it.second.toString(stack)).append(",");
+    }
+    str.erase(str.size() - 1).append(" }");
+    return str;
 }
 
 uInt64 ObjInstance::getSize() {
@@ -218,8 +255,8 @@ void ObjBoundMethod::trace() {
 	gc.markObj(method);
 }
 
-string ObjBoundMethod::toString() {
-	return method->func->toString();
+string ObjBoundMethod::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+	return method->func->toString(stack);
 }
 
 uInt64 ObjBoundMethod::getSize() {
@@ -228,10 +265,11 @@ uInt64 ObjBoundMethod::getSize() {
 #pragma endregion
 
 #pragma region ObjFile
-ObjFile::ObjFile(string& _path) {
+ObjFile::ObjFile(string& _path, int _openType) {
 	path = _path;
     marked = false;
-	stream.open(path);
+    openType = _openType;
+	stream.open(path, std::ios::in | std::ios::out);
 	type = ObjType::FILE;
 }
 ObjFile::~ObjFile() {
@@ -242,7 +280,7 @@ void ObjFile::trace() {
 	//nothing
 }
 
-string ObjFile::toString() {
+string ObjFile::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<file>";
 }
 
@@ -264,7 +302,7 @@ void ObjMutex::trace() {
 	//nothing
 }
 
-string ObjMutex::toString() {
+string ObjMutex::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<mutex>";
 }
 
@@ -293,7 +331,7 @@ void ObjFuture::trace() {
 	val.mark();
 }
 
-string ObjFuture::toString() {
+string ObjFuture::toString(robin_hood::unordered_set<object::Obj*>& stack) {
 	return "<future>";
 }
 

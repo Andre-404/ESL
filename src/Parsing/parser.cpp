@@ -132,11 +132,11 @@ namespace AST {
 			if (left->type != ASTType::LITERAL) throw cur->error(token, "Left side is not assignable");
 
 			left->accept(cur->probe);
-			if (cur->probe->getProbedToken().type != TokenType::IDENTIFIER) throw cur->error(token, "Left side is not assignable");
-
+            Token temp = cur->probe->getProbedToken();
+			if (temp.type != TokenType::IDENTIFIER) throw cur->error(token, "Left side is not assignable");
 			//makes it right associative
 			ASTNodePtr right = parseAssign(left, token);
-			return make_shared<AssignmentExpr>(cur->probe->getProbedToken(), right);
+			return make_shared<AssignmentExpr>(temp, right);
 		}
 
 		//used for parsing assignment tokens(eg. =, +=, *=...)
@@ -929,6 +929,7 @@ void Parser::sync() {
 		case TokenType::DEFAULT:
 		case TokenType::RIGHT_BRACE:
 			return;
+        default: break;
 		}
 
 		advance();
