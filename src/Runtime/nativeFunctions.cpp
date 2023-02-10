@@ -268,6 +268,8 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         t->push(Value(new object::ObjMutex()));
         return true;
     });
+
+    // Files
     NATIVE_FUNC("open_file_read", 1, [](Thread* t, int argCount) {
         Value path = t->pop();
         if(!path.isString()) TYPE_ERROR("string", 0, path);
@@ -776,6 +778,12 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         auto fut = t->pop().asFuture();
         fut->thread->cancelToken.store(true);
         t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("is_done", 0, [](Thread*t, int argCount){
+        auto fut = t->pop().asFuture();
+        auto done = fut->fut.wait_until(std::chrono::system_clock::time_point::min());
+        t->push(Value(!(done == std::future_status::timeout)));
         return false;
     });
 

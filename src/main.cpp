@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
     // For ease of use during development
     #ifdef DEBUG_MODE
     path = "C:\\Temp\\main.csl";
-    #elif
+    #else
     if(argc == 2) path = string(argv[1]);
     else{
         std::cout<<"Enter file path.\n";

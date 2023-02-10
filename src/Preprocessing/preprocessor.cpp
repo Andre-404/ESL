@@ -3,6 +3,7 @@
 #include "../files.h"
 #include <iostream>
 #include "../ErrorHandling/errorHandler.h"
+#include "../Includes/fmt/format.h"
 
 
 using std::unordered_set;
@@ -23,7 +24,6 @@ bool match(TokenType type, const vector<Token>& tokens, const int pos) {
 
 Preprocessor::Preprocessor(){
     projectRootPath = "";
-    curUnit = nullptr;
 }
 
 Preprocessor::~Preprocessor() {
@@ -33,13 +33,13 @@ void Preprocessor::preprocessProject(string mainFilePath) {
     path p(mainFilePath);
 
     // Check file validity
-    if (p.extension().string() != ".csl" || p.stem().string() != "main" || !exists(p)) {
-        errorHandler::addSystemError("Couldn't find main.csl");
+    if (p.extension().string() != ".esl" || !exists(p)) {
+        errorHandler::addSystemError(fmt::format("Couldn't find {}.esl", p.stem().string()));
         return;
     }
 
     projectRootPath = p.parent_path().string() + "/";
-    CSLModule* mainModule = scanFile("main.csl");
+    CSLModule* mainModule = scanFile(p.stem().string() + ".esl");
     toposort(mainModule);
 }
 
@@ -48,10 +48,6 @@ CSLModule* Preprocessor::scanFile(string moduleName) {
     vector<Token> tokens = scanner.tokenizeSource(readFile(fullPath), moduleName);
     CSLModule* unit = new CSLModule(tokens, scanner.getFile());
     allUnits[moduleName] = unit;
-    curUnit = unit;
-
-    // Macros
-
 
     // Dependencies
     vector<pair<Token, Token>> depsToParse = retrieveDirectives(unit);
