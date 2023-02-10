@@ -22,7 +22,6 @@ namespace preprocessing {
 	private:
 		string projectRootPath;
 		Scanner scanner;
-		CSLModule* curUnit;
 
 		unordered_map<string, CSLModule*> allUnits;
 		vector<CSLModule*> sortedUnits;

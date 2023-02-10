@@ -20,5 +20,6 @@ typedef unsigned char byte;
 
 #define AST_DEBUG
 #define COMPILER_DEBUG
+#define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
-#define GC_PRINT_HEAP
+//#define DEBUG_TRACE_EXECUTION

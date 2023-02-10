@@ -5,7 +5,6 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "Runtime/vm.h"
-#include <chrono>
 #include <windows.h>
 
 static void windowsSetTerminalProcessing(){
@@ -20,9 +19,22 @@ static void windowsSetTerminalProcessing(){
 
 
 int main(int argc, char* argv[]) {
+
+    string path;
+    // For ease of use during development
+    #ifdef DEBUG_MODE
+    path = "C:\\Temp\\main.csl";
+    #elif
+    if(argc == 2) path = string(argv[1]);
+    else{
+        std::cout<<"Enter file path.\n";
+        return 1;
+    }
+    #endif
+
     windowsSetTerminalProcessing();
     preprocessing::Preprocessor p;
-    p.preprocessProject("C:\\Temp\\main.csl");
+    p.preprocessProject(path);
     vector<CSLModule*> modules = p.getSortedUnits();
     AST::Parser pa;
     pa.parse(modules);
@@ -32,9 +44,6 @@ int main(int argc, char* argv[]) {
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
     auto* vm = new runtime::VM(&c);
-    auto t1 = std::chrono::high_resolution_clock::now();
     vm->execute();
-    auto t2 = std::chrono::high_resolution_clock::now();
-    std::cout << duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms"<<std::endl;
     return 0;
 }

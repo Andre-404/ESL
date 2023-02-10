@@ -4,6 +4,7 @@
 #include <utility>
 #include "../Includes/fmt/format.h"
 #include "../Includes/fmt/color.h"
+#include "../DebugPrinting/BytecodePrinter.h"
 
 using std::get;
 
@@ -256,16 +257,23 @@ void runtime::Thread::executeBytecode() {
 		return static_cast<uInt64>(index);
 	};
 	auto deleteThread = [](object::ObjFuture* _fut, VM* vm) {
-		std::scoped_lock<std::mutex> lk(vm->mtx);
-		// Immediately delete the thread object to conserve memory
-		for (auto it = vm->childThreads.begin(); it != vm->childThreads.end(); it++) {
-			if (*it == _fut->thread) {
-				delete* it;
-				_fut->thread = nullptr;
-				vm->childThreads.erase(it);
-				break;
-			}
-		}
+        std::condition_variable &cv = vm->mainThreadCv;
+        // If execution is finishing and the main thread is waiting to run the gc
+        // notify the main thread after deleting this thread object
+        {
+            // vm->pauseMtx to notify the main thread that this thread doesn't exist anymore,
+            std::scoped_lock lk(vm->pauseMtx, vm->mtx);
+            // Immediately delete the thread object to conserve memory
+            for (auto it = vm->childThreads.begin(); it != vm->childThreads.end(); it++) {
+                if (*it == _fut->thread) {
+                    delete* it;
+                    _fut->thread = nullptr;
+                    vm->childThreads.erase(it);
+                    break;
+                }
+            }
+        }
+        cv.notify_one();
 	};
 
 	// Stores the ip to the current frame before a new one is pushed
@@ -304,7 +312,22 @@ void runtime::Thread::executeBytecode() {
     #define DISPATCH() goto loop
     try {
         loop:
-        if(cancelToken.load()) return;
+        if(cancelToken.load()) {
+            // If this is a child thread that has a future attached to it, assign the value to the future
+            fut->val = Value::nil();
+            // Since this thread gets deleted by deleteThread, cond var to notify the main thread must be cached in the function
+            std::condition_variable &cv = vm->mainThreadCv;
+            // If execution is finishing and the main thread is waiting to run the gc
+            // notify the main thread after deleting this thread object
+            {
+                // vm->pauseMtx to notify the main thread that this thread doesn't exist anymore,
+                std::scoped_lock<std::mutex> lk(vm->pauseMtx);
+                // deleteThread locks vm->mtx to delete itself from the pool
+                deleteThread(fut, vm);
+            }
+            cv.notify_one();
+            return;
+        }
         #pragma region Multithreading
         if (!fut && memory::gc.shouldCollect.load()) {
             // If fut is null, this is the main thread of execution which runs the GC
@@ -314,7 +337,7 @@ void runtime::Thread::executeBytecode() {
                 // If some threads aren't sleeping yet, use a cond var to wait, every child thread will notify the var when it goes to sleep
                 std::unique_lock lk(vm->pauseMtx);
                 vm->mainThreadCv.wait(lk, [&] { return vm->allThreadsPaused(); });
-                // Release the mutex here so that GC can aquire it
+                // Release the mutex here so that GC can acquire it
                 lk.unlock();
                 // After all threads are asleep, run the GC and subsequently awaken all child threads
                 memory::gc.collect(vm);
@@ -323,7 +346,7 @@ void runtime::Thread::executeBytecode() {
             // If this is a child thread and the GC must run, notify the main thread that this one is paused
             // Main thread sends the notification when to awaken
             {
-                std::lock_guard<std::mutex> lk(vm->pauseMtx);
+                std::scoped_lock lk(vm->pauseMtx);
                 vm->threadsPaused.fetch_add(1);
             }
             // Only the main thread waits for mainThreadCv
@@ -344,7 +367,7 @@ void runtime::Thread::executeBytecode() {
                 std::cout << "] ";
             }
             std::cout << "\n";
-            disassembleInstruction(&frame->closure->func->body, frames[frameCount - 1].ip);
+            disassembleInstruction(&vm->code, ip - vm->code.bytecode.data(), frame->closure->func->constantsOffset);
         #endif
         switch (READ_BYTE()) {
             #pragma region Helper opcodes
@@ -422,19 +445,19 @@ void runtime::Thread::executeBytecode() {
 
                 byte type = arg >> 2;
 
-                auto tryIncrement = [&](Value &val) {
+                auto tryIncrement = [](runtime::Thread* t, bool isPrefix, int sign, Value &val) {
                     if (!val.isNumber())
-                        runtimeError(fmt::format("Operand must be a number, got {}.", val.typeToStr()), 3);
+                        t->runtimeError(fmt::format("Operand must be a number, got {}.", val.typeToStr()), 3);
                     if (isPrefix) {
                         val.value = get<double>(val.value) + sign;
-                        push(val);
+                        t->push(val);
                     } else {
-                        push(val);
+                        t->push(val);
                         val.value = get<double>(val.value) + sign;
                     }
                 };
 
-                #define INCREMENT(val) tryIncrement(val); DISPATCH();
+                #define INCREMENT(val) tryIncrement(this, isPrefix, sign, val); DISPATCH();
 
 
                 switch (type) {
@@ -826,17 +849,7 @@ void runtime::Thread::executeBytecode() {
 
                     // If this is a child thread that has a future attached to it, assign the value to the future
                     fut->val = result;
-                    // Since this thread gets deleted by deleteThread, cond var to notify the main thread must be cached in the function
-                    std::condition_variable &cv = vm->mainThreadCv;
-                    // If execution is finishing and the main thread is waiting to run the gc
-                    // notify the main thread after deleting this thread object
-                    {
-                        // vm->pauseMtx to notify the main thread that this thread doesn't exist anymore,
-                        std::scoped_lock<std::mutex> lk(vm->pauseMtx);
-                        // deleteThread locks vm->mtx to delete itself from the pool
-                        deleteThread(fut, vm);
-                    }
-                    cv.notify_one();
+                    deleteThread(fut, vm);
                     return;
                 }
                 stackTop = slotStart;

@@ -268,11 +268,21 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         t->push(Value(new object::ObjMutex()));
         return true;
     });
-    NATIVE_FUNC("open_file", 1, [](Thread* t, int argCount) {
+    NATIVE_FUNC("open_file_read", 1, [](Thread* t, int argCount) {
         Value path = t->pop();
         if(!path.isString()) TYPE_ERROR("string", 0, path);
-        auto file = new object::ObjFile(path.asString()->str);
+        auto file = new object::ObjFile(path.asString()->str, 0);
         if(!file->stream.good()) t->runtimeError(fmt::format("File in path {} doesn't exist.", file->path), 7);
+        file->stream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        t->push(Value(file));
+        return true;
+    });
+    NATIVE_FUNC("open_file_write", 1, [](Thread* t, int argCount) {
+        Value path = t->pop();
+        if(!path.isString()) TYPE_ERROR("string", 0, path);
+        auto file = new object::ObjFile(path.asString()->str, 1);
+        if(!file->stream.good()) t->runtimeError(fmt::format("File in path {} doesn't exist.", file->path), 7);
+        file->stream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
         t->push(Value(file));
         return true;
     });
@@ -299,7 +309,23 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         t->push(Value::nil());
         return true;
     });
+    NATIVE_FUNC("file_rename", 2, [](Thread* t, int argCount) {
+        Value newName = t->pop();
+        if(!newName.isString()) TYPE_ERROR("string", 1, newName);
+        Value path = t->pop();
+        if(!path.isString()) TYPE_ERROR("string", 0, path);
+        std::filesystem::path p = path.asString()->str;
+        if(!std::filesystem::exists(p)) t->runtimeError(fmt::format("File/directory in path '{}' doesn't exist.", p.string()), 7);
 
+        try{
+            std::filesystem::rename(p, newName.asString()->str);
+        }catch(std::filesystem::filesystem_error& err){
+            t->runtimeError(fmt::format("OS level error: {}", err.what()), 8);
+        }
+
+        t->push(Value::nil());
+        return true;
+    });
 
     return vector;
 }
@@ -309,6 +335,31 @@ void strRangeCheck(runtime::Thread* t, uInt argNum, Value indexVal, uInt64 end) 
     if (index >= 0 && index <= end) return;
     t->runtimeError(fmt::format("String length is {}, argument {} is {}", end, argNum, static_cast<uInt64>(index)), 9);
 };
+
+// These are required because the main thread might want to start a GC run while this thread is in the process of acquiring a mutex
+// If this blocks, main thread needs to know that it can safely run GC since this thread is blocked
+static void incThreadWait(runtime::Thread* t){
+    if(t == t->vm->mainThread) return;
+    // If this is a child thread and the GC must run, notify the main thread that this one is paused
+    // Main thread sends the notification when to awaken
+    {
+        std::scoped_lock lk(t->vm->pauseMtx);
+        t->vm->threadsPaused.fetch_add(1);
+    }
+    // Only the main thread waits for mainThreadCv
+    t->vm->mainThreadCv.notify_one();
+}
+static void decThreadWait(runtime::Thread* t){
+    if(t == t->vm->mainThread) return;
+    // If this is a child thread and the GC must run, notify the main thread that this one is paused
+    // Main thread sends the notification when to awaken
+    {
+        std::scoped_lock lk(t->vm->pauseMtx);
+        t->vm->threadsPaused.fetch_sub(1);
+    }
+    // Only the main thread waits for mainThreadCv
+    t->vm->mainThreadCv.notify_one();
+}
 
 #define BOUND_NATIVE(name, arity, func) classes.back().methods.insert_or_assign(name, BuiltinMethod(func, arity))
 vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
@@ -529,7 +580,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     });
     // Array
     classes.emplace_back(&classes[0]);
-    BOUND_NATIVE("append", 1, [](Thread*t, int argCount){
+    BOUND_NATIVE("push", 1, [](Thread*t, int argCount){
         Value val = t->pop();
         t->peek(0).asArray()->values.push_back(val);
         return false;
@@ -570,14 +621,13 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     BOUND_NATIVE("insert", 2, [](Thread*t, int argCount){
         Value val = t->pop();
         Value index = t->pop();
-        auto arr = t->pop().asArray();
+        auto arr = t->peek(0).asArray();
         isNumAndInt(t, index, 0);
         double ind = index.asNumber();
         if(ind < 0 || ind > arr->values.size())
             t->runtimeError(fmt::format("Index {} outside of range [0, {}]", ind, arr->values.size()), 3);
 
         arr->values.insert(arr->values.begin() + ind, val);
-        t->peek(0).asArray()->values.push_back(val);
         return false;
     });
     BOUND_NATIVE("erase", 2, [](Thread*t, int argCount){
@@ -601,7 +651,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         if(!other.isArray()) TYPE_ERROR("array", 0, other);
         auto& arr1 = t->peek(0).asArray()->values;
         auto& arr2 = other.asArray()->values;
-        arr1.insert(arr1.begin(), arr2.begin(), arr2.end());
+        arr1.insert(arr1.end(), arr2.begin(), arr2.end());
         return false;
     });
     BOUND_NATIVE("reverse", 0, [](Thread*t, int argCount){
@@ -630,8 +680,96 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
 
     // File
     classes.emplace_back(&classes[0]);
+    BOUND_NATIVE("open_read", 0, [](Thread*t, int argCount){
+        auto file = t->pop().asFile();
+        std::fstream& stream = file->stream;
+        if(stream.is_open()) t->runtimeError("Trying to open a file that is already opened", 8);
+        stream.open(file->path);
+        file->openType = 0;
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("open_write", 0, [](Thread*t, int argCount){
+        auto file = t->pop().asFile();
+        std::fstream& stream = file->stream;
+        if(stream.is_open()) t->runtimeError("Trying to open a file that is already opened", 8);
+        stream.open(file->path);
+        file->openType = 1;
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("close", 0, [](Thread*t, int argCount){
+        std::fstream& stream = t->pop().asFile()->stream;
+        if(!stream.is_open()) t->runtimeError("Trying to close a file that isn't opened", 8);
+        stream.close();
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("path", 0, [](Thread*t, int argCount){
+        t->push(Value(new object::ObjString(t->pop().asFile()->path)));
+        return false;
+    });
+    BOUND_NATIVE("readln", 0, [](Thread*t, int argCount){
+        auto f = t->pop().asFile();
+        if(f->openType != 0) t->runtimeError("File open for reading, not writing.", 8);
+        std::fstream& stream = f->stream;
+        string str;
+        std::getline(stream, str);
+        t->push(Value(new object::ObjString(str)));
+        return false;
+    });
+    BOUND_NATIVE("write", 1, [](Thread*t, int argCount){
+        Value str = t->pop();
+        if(!str.isString()) TYPE_ERROR("string", 0, str);
+        auto f = t->pop().asFile();
+        if(f->openType != 1) t->runtimeError("File open for writing, not reading.", 8);
+        std::fstream& stream =f->stream;
+        stream << str.asString()->str;
+        t->push(Value::nil());
+        return false;
+    });
+
     // Mutex
     classes.emplace_back(&classes[0]);
+    BOUND_NATIVE("exclusive_lock", 0, [](Thread*t, int argCount){
+        Value mutex = t->pop();
+        // If this thread is waiting for a mutex, it can be considered paused and a GC can run
+        incThreadWait(t);
+        mutex.asMutex()->mtx.lock();
+        decThreadWait(t);
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("try_exclusive_lock", 0, [](Thread*t, int argCount){
+        Value mutex = t->pop();
+        // Try_lock doesn't block
+        bool res = mutex.asMutex()->mtx.try_lock();
+        t->push(Value(res));
+        return false;
+    });
+    BOUND_NATIVE("shared_lock", 0, [](Thread*t, int argCount){
+        Value mutex = t->pop();
+        // If this thread is waiting for a mutex, it can be considered paused and a GC can run
+        incThreadWait(t);
+        mutex.asMutex()->mtx.lock_shared();
+        decThreadWait(t);
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("try_shared_lock", 0, [](Thread*t, int argCount){
+        Value mutex = t->pop();
+        // Try_lock_shared doesn't block
+        mutex.asMutex()->mtx.try_lock_shared();;
+        t->push(Value::nil());
+        return false;
+    });
+    BOUND_NATIVE("unlock", 0, [](Thread*t, int argCount){
+        Value mutex = t->pop();
+        // If this thread is waiting for a mutex, it can be considered paused and a GC can run
+        mutex.asMutex()->mtx.unlock();
+        t->push(Value::nil());
+        return false;
+    });
     // Future
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("cancel", 0, [](Thread*t, int argCount){

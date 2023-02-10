@@ -66,6 +66,7 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 		curUnitIndex++;
 	}
     mainBlockFunc = endFuncDecl();
+    mainBlockFunc->name = "script";
 	std::cout << "=======global var array=======\n";
 	for (int i = 0; i < globals.size(); i++) {
 		std::cout << fmt::format("|{} {}| ", i, globals[i].name);

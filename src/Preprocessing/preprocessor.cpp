@@ -19,7 +19,6 @@ TokenType getTypeAt(const vector<Token>& tokens, const int pos) {
 
 Preprocessor::Preprocessor(){
 	projectRootPath = "";
-	curUnit = nullptr;
 }
 
 Preprocessor::~Preprocessor() {
@@ -30,13 +29,13 @@ void Preprocessor::preprocessProject(string mainFilePath) {
 	path p(mainFilePath);
 
 	// Check file validity
-	if (p.extension().string() != ".csl" || p.stem().string() != "main" || !exists(p)) {
-		errorHandler::addSystemError("Couldn't find main.csl");
+	if (p.extension().string() != ".csl" || !exists(p)) {
+		errorHandler::addSystemError("Invalid file.");
 		return;
 	}
 
 	projectRootPath = p.parent_path().string() + "/";
-	CSLModule* mainModule = scanFile("main.csl");
+	CSLModule* mainModule = scanFile(p.stem().string() + ".csl");
 	topsort(mainModule);
 }
 
@@ -45,7 +44,6 @@ CSLModule* Preprocessor::scanFile(string moduleName) {
 	vector<Token> tokens = scanner.tokenizeSource(readFile(fullPath), moduleName);
 	CSLModule* unit = new CSLModule(tokens, scanner.getFile());
 	allUnits[moduleName] = unit;
-	curUnit = unit;
 	
 	vector<pair<Token, Token>> depsToParse = processDirectives(unit);
 

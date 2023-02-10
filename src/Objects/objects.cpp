@@ -265,10 +265,11 @@ uInt64 ObjBoundMethod::getSize() {
 #pragma endregion
 
 #pragma region ObjFile
-ObjFile::ObjFile(string& _path) {
+ObjFile::ObjFile(string& _path, int _openType) {
 	path = _path;
     marked = false;
-	stream.open(path);
+    openType = _openType;
+	stream.open(path, std::ios::in | std::ios::out);
 	type = ObjType::FILE;
 }
 ObjFile::~ObjFile() {

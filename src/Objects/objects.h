@@ -199,8 +199,10 @@ namespace object {
 	public:
 		std::fstream stream;
 		string path;
+        // 0: read, 1: write
+        int openType;
 
-		ObjFile(string& path);
+		ObjFile(string& path, int _openType);
 		~ObjFile();
 
 		void trace();

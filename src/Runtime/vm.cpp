@@ -29,6 +29,7 @@ void runtime::VM::mark(memory::GarbageCollector* gc) {
 	for (Thread* t : childThreads) t->mark(gc);
 	mainThread->mark(gc);
 	for (Value& val : code.constants) val.mark();
+    for (auto func : nativeFuncs) func->marked = true;
 }
 
 void runtime::VM::execute() {

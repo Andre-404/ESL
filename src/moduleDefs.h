@@ -40,7 +40,7 @@ struct File {
     //file name
     string name;
     string sourceFile;
-    //number that represends start of each line in the source string
+    //number that represents start of each line in the source string
     std::vector<uInt> lines;
     File(string& src, string& _name) : sourceFile(src), name(_name) {};
     File() {}
