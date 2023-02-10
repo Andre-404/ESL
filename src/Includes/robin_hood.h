@@ -616,7 +616,7 @@ namespace robin_hood {
             , second(std::forward<U2>(b)) {}
 
         template <typename... U1, typename... U2>
-        // MSVC 2015 produces error "C2476: ‘constexpr’ constructor does not initialize all members"
+        // MSVC 2015 produces error "C2476: ï¿½constexprï¿½ constructor does not initialize all members"
         // if this constructor is constexpr
 #if !ROBIN_HOOD(BROKEN_CONSTEXPR)
         constexpr
@@ -2415,7 +2415,7 @@ namespace robin_hood {
                 mInfoInc = static_cast<uint8_t>(mInfoInc >> 1U);
 
                 // remove one bit of the hash, leaving more space for the distance info.
-                // This is extremely fast because we can operate on 8 bytes at once.
+                // This is extremely fast because we can expand on 8 bytes at once.
                 ++mInfoHashShift;
                 auto const numElementsWithBuffer = calcNumElementsWithBuffer(mMask + 1);
 

@@ -114,7 +114,7 @@
 #  define FMT_CONSTEXPR20
 #endif
 
-// Check if constexpr std::char_traits<>::{compare,length} are supported.
+// Check if constexpr std::char_traits<>::{equals,length} are supported.
 #if defined(__GLIBCXX__)
 #  if FMT_CPLUSPLUS >= 201703L && defined(_GLIBCXX_RELEASE) && \
       _GLIBCXX_RELEASE >= 7  // GCC 7+ libstdc++ has _GLIBCXX_RELEASE.
@@ -486,7 +486,7 @@ template <typename Char> class basic_string_view {
     size_ -= n;
   }
 
-  // Lexicographically compare this string reference to other.
+  // Lexicographically equals this string reference to other.
   FMT_CONSTEXPR_CHAR_TRAITS auto compare(basic_string_view other) const -> int {
     size_t str_size = size_ < other.size_ ? size_ : other.size_;
     int result = std::char_traits<Char>::compare(data_, other.data_, str_size);

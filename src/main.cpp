@@ -5,6 +5,7 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "Runtime/vm.h"
+
 #include <chrono>
 #include <windows.h>
 
@@ -18,23 +19,31 @@ static void windowsSetTerminalProcessing(){
     SetConsoleMode( handleOut , consoleMode );
 };
 
-
-int main(int argc, char* argv[]) {
+int main() {
     windowsSetTerminalProcessing();
-    preprocessing::Preprocessor p;
-    p.preprocessProject("C:\\Temp\\main.csl");
-    vector<CSLModule*> modules = p.getSortedUnits();
-    AST::Parser pa;
-    pa.parse(modules);
+    preprocessing::Preprocessor preprocessor;
+    preprocessor.preprocessProject("C:\\Temp\\main.csl");
+    vector<CSLModule*> modules = preprocessor.getSortedUnits();
+
+    AST::Parser parser;
+
+    parser.parse(modules);
+
+
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
-    compileCore::Compiler c(modules);
+
+    compileCore::Compiler compiler(modules);
+
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
-    auto* vm = new runtime::VM(&c);
+
+    auto vm = new runtime::VM(&compiler);
+
     auto t1 = std::chrono::high_resolution_clock::now();
     vm->execute();
     auto t2 = std::chrono::high_resolution_clock::now();
-    std::cout << duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms"<<std::endl;
+
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
     return 0;
 }

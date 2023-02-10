@@ -279,10 +279,6 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 	}
 }
 
-void Compiler::visitGroupingExpr(AST::GroupingExpr* expr) {
-	expr->expr->accept(this);//grouping is only important during parsing for precedence levels
-}
-
 void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
 	vector<int> constants;
 
@@ -364,7 +360,7 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
 
 void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-	//is stored in current->enclosing
+	//is stored in parserCurrent->enclosing
 	current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
 	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
@@ -411,6 +407,11 @@ void Compiler::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
 	emitBytes(+OpCode::GET_GLOBAL, arg);
 }
 
+// This shouldn't ever be visited as every macro should be expanded before compilation
+void Compiler::visitMacroExpr(AST::MacroExpr* expr) {
+    error("Non-expanded macro encountered during compilation.");
+}
+
 void Compiler::visitAsyncExpr(AST::AsyncExpr* expr) {
 	updateLine(expr->token);
 	expr->callee->accept(this);
@@ -448,7 +449,7 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 	uInt16 name = parseVar(decl->getName());
 	markInit();
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-	//is stored in current->enclosing
+	//is stored in parserCurrent->enclosing
 	current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
 	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
@@ -507,7 +508,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 		//undefined behavior (eg. class a : a)
 		if (decl->inheritedClass->type == AST::ASTType::LITERAL) {
 			AST::LiteralExpr* expr = dynamic_cast<AST::LiteralExpr*>(decl->inheritedClass.get());
-			if (className.compare(expr->token)) {
+			if (className.equals(expr->token)) {
 				error(expr->token, "A class can't inherit from itself.");
 			}
 		}
@@ -530,7 +531,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	for (AST::ASTNodePtr _method : decl->methods) {
 		method(dynamic_cast<AST::FuncDecl*>(_method.get()), className);
 	}
-	//pop the current class
+	//pop the parserCurrent class
 	emitByte(+OpCode::POP);
 
 	if (currentClass->hasSuperclass) {
@@ -538,13 +539,6 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	}
 
 	currentClass = currentClass->enclosing;
-}
-
-
-//TODO: replace this with a native function
-void Compiler::visitPrintStmt(AST::PrintStmt* stmt) {
-	stmt->expr->accept(this);
-	emitByte(+OpCode::PRINT);
 }
 
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
@@ -765,7 +759,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 	//at the end of each case is a implicit break
 	vector<uInt> implicitBreaks;
 
-	//compile the code of all cases, before each case update the jump for that case to the current ip
+	//compile the code of all cases, before each case update the jump for that case to the parserCurrent ip
 	int i = 0;
 	for (const std::shared_ptr<AST::CaseStmt>& _case : stmt->cases) {
 		if (_case->caseType.getLexeme() == "default") {
@@ -927,7 +921,7 @@ void Compiler::patchScopeJumps(ScopeJumpType type) {
 		uInt jumpDepth = (getChunk()->bytecode[jumpPatchPos] << 8) | getChunk()->bytecode[jumpPatchPos + 1];
 		uInt toPop = getChunk()->bytecode[jumpPatchPos + 2];
 		//break and advance statements which are in a strictly deeper scope get patched, on the other hand
-		//continue statements which are in current or a deeper scope get patched
+		//continue statements which are in parserCurrent or a deeper scope get patched
 		if (jumpDepth > current->scopeDepth && +type == jumpType) {
 			int jumpLenght = curCode - jumpPatchPos - 3;
 			if (jumpLenght > UINT16_MAX) error("Too much code to jump over.");
@@ -942,7 +936,7 @@ void Compiler::patchScopeJumps(ScopeJumpType type) {
 
 			current->scopeJumps.erase(current->scopeJumps.begin() + i);
 		}
-		//any jump after the one that has a depth lower than the current one will also have a lower depth, thus we bail
+		//any jump after the one that has a depth lower than the parserCurrent one will also have a lower depth, thus we bail
 		else if (jumpDepth < current->scopeDepth) break;
 	}
 }
@@ -1009,10 +1003,10 @@ uInt16 Compiler::parseVar(Token name) {
 	//if this is a global variable, we tack on the index of this CSLModule at the start of the variable name(variable names can't start with numbers)
 	//used to differentiate variables of the same name from different souce files
 
-	//tacking on the current index since parseVar is only used for declaring a variable, which can only be done in the current source file
+	//tacking on the parserCurrent index since parseVar is only used for declaring a variable, which can only be done in the parserCurrent source file
 	int index = curGlobalIndex;
 	for (Token token : curUnit->topDeclarations) {
-		if (name.compare(token)) return index;
+		if (name.equals(token)) return index;
 		index++;
 	}
 	error(name, "Couldn't find variable.");
@@ -1055,7 +1049,7 @@ void Compiler::beginScope() {
 
 void Compiler::endScope() {
 	//Pop every variable that was declared in this scope
-	current->scopeDepth--;//first lower the scope, the check for every var that is deeper than the current scope
+	current->scopeDepth--;//first lower the scope, the check for every var that is deeper than the parserCurrent scope
 	int toPop = 0;
 	while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth) {
 		toPop++;
@@ -1143,10 +1137,10 @@ void Compiler::method(AST::FuncDecl* _method, Token className) {
 	updateLine(_method->getName());
 	uInt16 name = identifierConstant(_method->getName());
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-	//is stored in current->enclosing
+	//is stored in parserCurrent->enclosing
 	FuncType type = FuncType::TYPE_METHOD;
 	//constructors are treated separatly, but are still methods
-	if (_method->getName().compare(className)) type = FuncType::TYPE_CONSTRUCTOR;
+	if (_method->getName().equals(className)) type = FuncType::TYPE_CONSTRUCTOR;
 	current = new CurrentChunkInfo(current, type);
 	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
@@ -1243,7 +1237,7 @@ void Compiler::error(Token token, const string& msg) noexcept(false) {
 
 ObjFunc* Compiler::endFuncDecl() {
 	if (!current->hasReturnStmt) emitReturn();
-	// Get the current function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
+	// Get the parserCurrent function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
 	ObjFunc* func = current->func;
 	Chunk& chunk = current->chunk;
 	//Add the bytecode, lines and constants to the main code block
@@ -1284,7 +1278,7 @@ uInt Compiler::checkSymbol(Token symbol) {
 		if (dep.alias.type == TokenType::NONE) {
 			for (Token token : dep.module->exports) {
 
-				if (token.compare(symbol)) {
+				if (token.equals(symbol)) {
 					//if the correct symbol is found, find the index of the global variable inside of globals array
 					int globalIndex = 0;
 					for (int i = 0; i < units.size(); i++) {
@@ -1293,7 +1287,7 @@ uInt Compiler::checkSymbol(Token symbol) {
 							continue;
 						}
 						for (Token token : units[i]->topDeclarations) {
-							if (token.compare(symbol)) {
+							if (token.equals(symbol)) {
 								return globalIndex;
 							}
 							globalIndex++;
@@ -1329,6 +1323,7 @@ uInt Compiler::resolveGlobal(Token name, bool canAssign) {
 		}
 	}
 	error(name, "Variable isn't declared.");
+    return -1;
 }
 
 //checks if 'variable' exists in a module which was imported with the alias 'moduleAlias', 
@@ -1337,7 +1332,7 @@ uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 	//first find the module with the correct alias
 	Dependency* depPtr = nullptr;
 	for (Dependency dep : curUnit->deps) {
-		if (dep.alias.compare(moduleAlias)) {
+		if (dep.alias.equals(moduleAlias)) {
 			depPtr = &dep;
 			break;
 		}
@@ -1353,14 +1348,16 @@ uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 			index += i->topDeclarations.size();
 			continue;
 		}
-		//compare every export of said module against 'variable'
+		//equals every export of said module against 'variable'
 		for (Token& token : unit->exports) {
-			if (token.compare(variable)) return index;
+			if (token.equals(variable)) return index;
 			index++;
 		}
 	}
 
 	error(variable, fmt::format("Module {} doesn't export this symbol.", depPtr->alias.getLexeme()));
+
+    return -1;
 }
 #pragma endregion
 

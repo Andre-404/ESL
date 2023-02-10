@@ -36,7 +36,7 @@ namespace compileCore {
 	inline constexpr unsigned operator+ (ScopeJumpType const val) { return static_cast<byte>(val); }
 
 
-	//information about the current code chunk we're compiling, contains a reference to the enclosing code chunk which created this one
+	//information about the parserCurrent code chunk we're compiling, contains a reference to the enclosing code chunk which created this one
 	struct CurrentChunkInfo {
 		//for closures
 		CurrentChunkInfo* enclosing;
@@ -94,7 +94,6 @@ namespace compileCore {
 		void visitUnaryExpr(AST::UnaryExpr* expr);
 		void visitCallExpr(AST::CallExpr* expr);
 		void visitFieldAccessExpr(AST::FieldAccessExpr* expr);
-		void visitGroupingExpr(AST::GroupingExpr* expr);
 		void visitAsyncExpr(AST::AsyncExpr* expr);
 		void visitAwaitExpr(AST::AwaitExpr* expr);
 		void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr);
@@ -103,12 +102,12 @@ namespace compileCore {
 		void visitSuperExpr(AST::SuperExpr* expr);
 		void visitFuncLiteral(AST::FuncLiteral* expr);
 		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr);
+        void visitMacroExpr(AST::MacroExpr* expr);
 
 		void visitVarDecl(AST::VarDecl* decl);
 		void visitFuncDecl(AST::FuncDecl* decl);
 		void visitClassDecl(AST::ClassDecl* decl);
 
-		void visitPrintStmt(AST::PrintStmt* stmt);
 		void visitExprStmt(AST::ExprStmt* stmt);
 		void visitBlockStmt(AST::BlockStmt* stmt);
 		void visitIfStmt(AST::IfStmt* stmt);

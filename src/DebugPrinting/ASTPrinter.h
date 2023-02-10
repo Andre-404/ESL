@@ -11,7 +11,6 @@ namespace AST {
 		void visitUnaryExpr(UnaryExpr* expr);
 		void visitCallExpr(CallExpr* expr);
 		void visitFieldAccessExpr(FieldAccessExpr* expr);
-		void visitGroupingExpr(GroupingExpr* expr);
 		void visitAsyncExpr(AsyncExpr* expr);
 		void visitAwaitExpr(AwaitExpr* expr);
 		void visitArrayLiteralExpr(ArrayLiteralExpr* expr);
@@ -20,12 +19,12 @@ namespace AST {
 		void visitFuncLiteral(FuncLiteral* expr);
 		void visitSuperExpr(SuperExpr* expr);
 		void visitModuleAccessExpr(ModuleAccessExpr* expr);
+        void visitMacroExpr(MacroExpr* expr);
 
 		void visitVarDecl(VarDecl* decl);
 		void visitFuncDecl(FuncDecl* decl);
 		void visitClassDecl(ClassDecl* decl);
 
-		void visitPrintStmt(PrintStmt* stmt);
 		void visitExprStmt(ExprStmt* stmt);
 		void visitBlockStmt(BlockStmt* stmt);
 		void visitIfStmt(IfStmt* stmt);

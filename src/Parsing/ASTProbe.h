@@ -2,10 +2,11 @@
 #include "ASTDefs.h"
 
 namespace AST {
-	//used for probing AST nodes for fetching identifier names
+	//used for probing AST nodes for fetching identifier names (and doing other useful stuff)
 	class ASTProbe : public Visitor {
 	private:
 		Token probedToken = Token();
+        ASTNodePtr expr = nullptr;
 	public:
 		void visitAssignmentExpr(AssignmentExpr* expr);
 		void visitSetExpr(SetExpr* expr);
@@ -14,7 +15,6 @@ namespace AST {
 		void visitUnaryExpr(UnaryExpr* expr);
 		void visitCallExpr(CallExpr* expr);
 		void visitFieldAccessExpr(FieldAccessExpr* expr);
-		void visitGroupingExpr(GroupingExpr* expr);
 		void visitAsyncExpr(AsyncExpr* expr);
 		void visitAwaitExpr(AwaitExpr* expr);
 		void visitArrayLiteralExpr(ArrayLiteralExpr* expr);
@@ -23,12 +23,12 @@ namespace AST {
 		void visitFuncLiteral(FuncLiteral* expr);
 		void visitSuperExpr(SuperExpr* expr);
 		void visitModuleAccessExpr(ModuleAccessExpr* expr);
+        void visitMacroExpr(MacroExpr* expr);
 
 		void visitVarDecl(VarDecl* decl);
 		void visitFuncDecl(FuncDecl* decl);
 		void visitClassDecl(ClassDecl* decl);
 
-		void visitPrintStmt(PrintStmt* stmt);
 		void visitExprStmt(ExprStmt* stmt);
 		void visitBlockStmt(BlockStmt* stmt);
 		void visitIfStmt(IfStmt* stmt);
@@ -42,5 +42,6 @@ namespace AST {
 		void visitReturnStmt(ReturnStmt* stmt);
 
 		Token getProbedToken();
-	};
+	    ASTNodePtr getExtractedExpr();
+    };
 }

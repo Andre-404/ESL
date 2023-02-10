@@ -2,6 +2,7 @@
 #include "../common.h"
 #include "ASTDefs.h"
 #include "ASTProbe.h"
+#include "MacroExpander.h"
 #include <initializer_list>
 #include <map>
 #include <unordered_map>
@@ -9,6 +10,13 @@
 namespace AST {
 	using std::unique_ptr;
 	class Parser;
+    class Macro;
+    class MacroExpr;
+    class MacroExpander;
+    class MatchPattern;
+    class ExprMetaVar;
+    class TTMetaVar;
+    class ASTPrinter;
 
 	enum class Precedence {
 		NONE,
@@ -47,9 +55,15 @@ namespace AST {
 		int prec;
 	};
 
-	class ParserException {
+    struct ParserException : public std::exception {
+        bool macroRecursionLimitExceeded = false;
+    };
 
-	};
+    enum class ParseMode{
+        Standard,
+        Macro,
+        Matcher
+    };
 
 	class Parser {
 	public:
@@ -58,26 +72,38 @@ namespace AST {
 
 	private:
 		ASTProbe* probe;
+		MacroExpander* macroExpander;
 
-		CSLModule* curUnit;
-		uInt64 current;
+		CSLModule* parsedUnit;
+
+        vector<Token>* currentContainer;
+        int currentPtr;
 
 		int loopDepth;
 		int switchDepth;
 
-		std::unordered_map<TokenType, unique_ptr<PrefixParselet>> prefixParselets;
-		std::unordered_map<TokenType, unique_ptr<InfixParselet>> infixParselets;
+		unordered_map<TokenType, unique_ptr<PrefixParselet>> prefixParselets;
+		unordered_map<TokenType, unique_ptr<InfixParselet>> infixParselets;
+
+        // For macro expansions
+		unordered_map<string, unique_ptr<Macro>> macros;
+        unordered_map<string, unique_ptr<ExprMetaVar>> exprMetaVars;
+        unordered_map<string, unique_ptr<TTMetaVar>> ttMetaVars;
+
+		ParseMode parseMode = ParseMode::Standard;
 
 		template<typename ParsletType>
 		void addPrefix(TokenType type, Precedence prec);
 		template<typename ParsletType>
 		void addInfix(TokenType type, Precedence prec);
 
+		void defineMacro();
+
 #pragma region Expressions
 		ASTNodePtr expression(int prec);
 		ASTNodePtr expression();
 
-		//parselets that need to have access to private methods of parser
+		// Parselets that need to have access to private methods of parser
 		friend class FieldAccessParselet;
 		friend class CallParselet;
 		friend class BinaryParselet;
@@ -86,6 +112,16 @@ namespace AST {
 		friend class LiteralParselet;
 		friend class UnaryPrefixParselet;
 		friend class UnaryPostfixParselet;
+
+		// Macro expander needs to be able to parse additional tokens and report errors
+		friend class MacroExpander;
+
+        // Macro should be able to report errors in expansion
+        friend class Macro;
+
+        // Match pattern needs to be able to attempt to generate an expression
+        friend class MatchPattern;
+
 #pragma endregion
 
 #pragma region Statements
@@ -96,7 +132,6 @@ namespace AST {
 		shared_ptr<ASTDecl> classDecl();
 
 		ASTNodePtr statement();
-		ASTNodePtr printStmt();
 		ASTNodePtr exprStmt();
 		ASTNodePtr blockStmt();
 		ASTNodePtr ifStmt();
@@ -119,7 +154,9 @@ namespace AST {
 
 		bool isAtEnd();
 
-		bool check(TokenType type);
+        bool check(const std::initializer_list<TokenType>& tokenTypes);
+
+		bool check(const TokenType type);
 
 		Token advance();
 
@@ -132,6 +169,10 @@ namespace AST {
 		Token consume(TokenType type, string msg);
 
 		ParserException error(Token token, string msg);
+
+		vector<Token> readTokenTree(bool isNonLeaf = true);
+
+		void expandMacros();
 
 		void sync();
 

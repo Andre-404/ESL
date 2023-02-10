@@ -58,12 +58,6 @@ void ASTPrinter::visitFieldAccessExpr(FieldAccessExpr* expr) {
 	cout << (expr->accessor.type == TokenType::LEFT_BRACKET ? "]" : "");
 }
 
-void ASTPrinter::visitGroupingExpr(GroupingExpr* expr) {
-	cout << "(group ";
-	expr->expr->accept(this);
-	cout << ")";
-}
-
 void ASTPrinter::visitAsyncExpr(AsyncExpr* expr) {
 	cout << "await ";
 	expr->callee->accept(this);
@@ -115,6 +109,14 @@ void ASTPrinter::visitModuleAccessExpr(ModuleAccessExpr* expr) {
 	cout << expr->moduleName.getLexeme() << "::" << expr->ident.getLexeme();
 }
 
+void ASTPrinter::visitMacroExpr(MacroExpr* expr)
+{
+    cout << "macro invocation: " << expr->macroName.getLexeme() << " ";
+    for (Token token : expr->args) {
+        cout << token.getLexeme() << " ";
+    }
+    cout << endl;
+}
 
 
 void ASTPrinter::visitVarDecl(VarDecl* decl) {
@@ -147,14 +149,6 @@ void ASTPrinter::visitClassDecl(ClassDecl* decl) {
 		method->accept(this);
 	}
 	cout << "}" << endl;
-}
-
-
-
-void ASTPrinter::visitPrintStmt(PrintStmt* stmt) {
-	cout << "print: ";
-	stmt->expr->accept(this);
-	cout << endl;
 }
 
 void ASTPrinter::visitExprStmt(ExprStmt* stmt) {

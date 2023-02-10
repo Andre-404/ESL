@@ -17,11 +17,16 @@ void highlightToken(Token token) {
 	File* src = token.str.sourceFile;
 
 	string lineNumber = std::to_string(token.str.line + 1);
-	std::cout << yellow << src->name << black << ":" << cyan << lineNumber << " | " << black;
-	std::cout << token.str.getLine() << std::endl;
+	string line = token.str.getLine();
+    std::cout << yellow << src->name << black << ":" << cyan << lineNumber << " | " << black;
+	std::cout << line << std::endl;
 
-	string highlight;
-	highlight.insert(highlight.end(), src->name.length() + lineNumber.length() + 4 + token.str.column, ' ');
+	string highlight = "";
+    highlight.insert(highlight.end(), src->name.length() + lineNumber.length() + 4, ' ');
+    for (int i = 0; i < token.str.column; i++){
+        if (line[i] == '\t') highlight += '\t';
+        else highlight += ' ';
+    }
 	highlight.insert(highlight.end(), token.str.length, '^');
 
 	std::cout << red << highlight << black << "\n";
@@ -49,10 +54,6 @@ void logDefinitionPath(Token token) {
 }
 */
 void report(File* src, Token& token, string msg) {
-	if (token.type == TokenType::TOKEN_EOF) {
-		std::cout << "End of file. \n" << msg;
-		return;
-	}
 	string name = "\u001b[38;5;220m" + src->name + black;
 	std::cout << red + "error: " + black + msg + "\n";
 

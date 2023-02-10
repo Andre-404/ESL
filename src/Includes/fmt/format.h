@@ -2854,7 +2854,7 @@ class bigint {
     return 0;
   }
 
-  // Returns compare(lhs1 + lhs2, rhs).
+  // Returns equals(lhs1 + lhs2, rhs).
   friend FMT_CONSTEXPR20 int add_compare(const bigint& lhs1, const bigint& lhs2,
                                          const bigint& rhs) {
     auto minimum = [](int a, int b) { return a < b ? a : b; };

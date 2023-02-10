@@ -29,6 +29,7 @@ codeLine Chunk::getLine(uInt offset) {
 		if (offset < line.end) return line;
 	}
 	errorHandler::addSystemError(fmt::format("Couldn't show line for bytecode at position: {}", offset));
+    return codeLine();
 }
 
 void Chunk::disassemble(string name, int startingOffset) {
@@ -76,6 +77,7 @@ bool Value::operator== (const Value& other) const {
 	case +ValueType::BOOL: return this->value == other.value;
 	case +ValueType::OBJ: return this->value == other.value;
 	}
+    return false;
 }
 
 bool Value::operator!=(const Value& other) const {

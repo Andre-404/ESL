@@ -278,7 +278,7 @@ void runtime::Thread::executeBytecode() {
                 // If some threads aren't sleeping yet, use a cond var to wait, every child thread will notify the var when it goes to sleep
                 std::unique_lock lk(vm->pauseMtx);
                 vm->mainThreadCv.wait(lk, [&] { return vm->allThreadsPaused(); });
-                // Release the mutex here so that GC can aquire it
+                // Release the mutex here so that GC can acquire it
                 lk.unlock();
                 // After all threads are asleep, run the GC and subsequently awaken all child threads
                 memory::gc.collect(vm);

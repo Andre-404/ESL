@@ -9,7 +9,7 @@ enum class TokenType {
     LEFT_BRACKET, RIGHT_BRACKET,
     COMMA, DOT, MINUS, PLUS,
     SEMICOLON, SLASH, STAR, PERCENTAGE,
-    QUESTIONMARK, COLON, TILDA,
+    QUESTIONMARK, COLON, TILDA, DOLLAR,
     // One or two character tokens.
     BITWISE_AND, BITWISE_OR, BITWISE_XOR,
     BANG, BANG_EQUAL,
@@ -18,7 +18,7 @@ enum class TokenType {
     GREATER, GREATER_EQUAL,
     LESS, LESS_EQUAL,
     BITSHIFT_LEFT, BITSHIFT_RIGHT,
-    INCREMENT, DECREMENT, DOUBLE_COLON,
+    INCREMENT, DECREMENT, DOUBLE_COLON, ARROW,
     // Literals.
     IDENTIFIER, STRING, NUMBER,
     // Keywords.
@@ -29,21 +29,21 @@ enum class TokenType {
     WHILE, FOR, CONTINUE, BREAK, ADVANCE,
     CLASS, THIS, SUPER,
     SWITCH, CASE, DEFAULT,
-    PRINT, VAR,
+    VAR,
     IMPORT, EXPORT, AS,
-    AWAIT, ASYNC,
+    AWAIT, ASYNC, ADDMACRO, EXPR, TT,
 
-    NEWLINE, ERROR, TOKEN_EOF, NONE
+    NEWLINE, ERROR, NONE
 };
 
 struct File {
     //file name
     string name;
     string sourceFile;
-    //number that represends start of each line in the source string
+    //number that represents start of each line in the source string
     std::vector<uInt> lines;
     File(string& src, string& _name) : sourceFile(src), name(_name) {};
-    File() {}
+    File() = default;
 };
 
 //span of characters in a source file of code
@@ -55,11 +55,11 @@ struct Span {
 
     File* sourceFile = nullptr;
 
-    Span() {};
+    Span() = default;
     Span(int _line, int _column, int _len, File* _src) : line(_line), column(_column), length(_len), sourceFile(_src) {};
 
     // Get string corresponding to this Span
-    string getStr() const {
+    [[nodiscard]] string getStr() const {
         int start = sourceFile->lines[line] + column;
         return sourceFile->sourceFile.substr(start, length);
     }
@@ -113,13 +113,12 @@ struct Token {
         syntheticStr = str;
     }
     string getLexeme() const {
-        if (type == TokenType::ERROR) return "Unexpected character.";
-        else if (isSynthetic) return syntheticStr;
-        else if (type == TokenType::TOKEN_EOF) return "EOF";
+        if (type == TokenType::ERROR) { return "Unexpected character."; }
+        else if (isSynthetic) { return syntheticStr; }
         return str.getStr();
     }
 
-    bool compare(Token token) {
+    bool equals(const Token& token) const {
         return getLexeme().compare(token.getLexeme()) == 0 && type == token.type;
     }
 };
@@ -145,7 +144,7 @@ struct CSLModule {
     //whether the dependency tree of this module has been resolved, if it hasn't and we try to parse
     //this module again we have a circular dependency and an error will be thrown
     bool resolvedDeps;
-    //used for topsort once we have resolved all dependencies
+    //used for toposort once we have resolved all dependencies
     bool traversed;
 
     //AST of this file
@@ -161,5 +160,4 @@ struct CSLModule {
         resolvedDeps = false;
         traversed = false;
     };
-
 };

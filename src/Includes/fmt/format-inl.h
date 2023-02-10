@@ -1345,7 +1345,7 @@ template <typename T> decimal_fp<T> to_decimal(T x) noexcept {
   } else if (r > deltai) {
     goto small_divisor_case_label;
   } else {
-    // r == deltai; compare fractional parts.
+    // r == deltai; equals fractional parts.
     const typename cache_accessor<T>::compute_mul_parity_result x_mul =
         cache_accessor<T>::compute_mul_parity(two_fc - 1, cache, beta);
 
