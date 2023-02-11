@@ -28,7 +28,7 @@ namespace preprocessing {
 
         vector<pair<Token, Token>> retrieveDirectives(CSLModule* unit);
 
-        void processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse);
+        void processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath);
 
         CSLModule* scanFile(string unitName);
         void toposort(CSLModule* unit);

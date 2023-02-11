@@ -29,7 +29,6 @@ static void isNumAndInt(runtime::Thread* t, Value val, uInt argNum){
 
 
 vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
-    string s;
     vector<object::ObjNativeFunc*> vector;
     NATIVE_FUNC("print", -1, [](Thread* t, int argCount) {
         for(int i = argCount - 1; i >= 0; i--){
@@ -59,7 +58,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
     });
     // Random number generator
     NATIVE_FUNC("random_num", 0, [](Thread* t, int argCount) {
-        double randomNumber = std::uniform_int_distribution<uInt64>(0, UINT64_MAX)(t->vm->rng);
+        double randomNumber = std::uniform_int_distribution<long long>(-INT64_MAX, INT64_MAX)(t->vm->rng);
         t->push(Value(randomNumber));
         return true;
     });
@@ -68,7 +67,9 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num1 = t->pop();
         if(!num1.isNumber()) TYPE_ERROR("number", 0, num1);
         if(!num2.isNumber()) TYPE_ERROR("number", 1, num2);
-        double randomNumber = std::uniform_int_distribution<uInt64>(num1.asNumber(), num2.asNumber())(t->vm->rng);
+        if(num1.asNumber() > num2.asNumber())
+            t->runtimeError(fmt::format("Argument 0 is {}, must be less than argument 1 which is {}.", num1.asNumber(), num2.asNumber()), 3);
+        double randomNumber = std::uniform_int_distribution<long long>(num1.asNumber(), num2.asNumber())(t->vm->rng);
         t->push(Value(randomNumber));
         return true;
     });
@@ -186,7 +187,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         t->push(Value(cos(num.asNumber())));
         return true;
     });
-    NATIVE_FUNC("dsin", 1, [](Thread* t, int argCount) {
+    NATIVE_FUNC("dcos", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!num.isNumber()) TYPE_ERROR("number", 0, num);
 
@@ -392,12 +393,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     });
     BOUND_NATIVE("is_function", 0, [](Thread*t, int argCount){
         Value val = t->pop();
-        t->push(Value(val.isClosure() || val.isBoundMethod()));
-        return false;
-    });
-    BOUND_NATIVE("is_native_function", 0, [](Thread*t, int argCount){
-        Value val = t->pop();
-        t->push(Value(val.isNativeFn() || val.isBoundNativeFunc()));
+        t->push(Value(val.isClosure() || val.isBoundMethod() || val.isNativeFn() || val.isBoundNativeFunc()));
         return false;
     });
     BOUND_NATIVE("is_class", 0, [](Thread*t, int argCount){
@@ -439,7 +435,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         t->push(Value(static_cast<double>(t->pop().asString()->str.length())));
         return false;
     });
-    BOUND_NATIVE("append", 1, [](Thread*t, int argCount){
+    BOUND_NATIVE("concat", 1, [](Thread*t, int argCount){
         Value toAppend = t->pop();
         Value str = t->pop();
         if(!toAppend.isString()) TYPE_ERROR("string", 0, toAppend);
@@ -657,6 +653,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     BOUND_NATIVE("concat", 1, [](Thread*t, int argCount){
         Value other = t->pop();
         if(!other.isArray()) TYPE_ERROR("array", 0, other);
+        if(t->peek(0) == other) t->runtimeError("Cannot concat array to itself.", 3);
         auto& arr1 = t->peek(0).asArray()->values;
         auto& arr2 = other.asArray()->values;
         arr1.insert(arr1.end(), arr2.begin(), arr2.end());
@@ -689,28 +686,25 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     // File
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("open_read", 0, [](Thread*t, int argCount){
-        auto file = t->pop().asFile();
+        auto file = t->peek(0).asFile();
         std::fstream& stream = file->stream;
         if(stream.is_open()) t->runtimeError("Trying to open a file that is already opened", 8);
         stream.open(file->path);
         file->openType = 0;
-        t->push(Value::nil());
         return false;
     });
     BOUND_NATIVE("open_write", 0, [](Thread*t, int argCount){
-        auto file = t->pop().asFile();
+        auto file = t->peek(0).asFile();
         std::fstream& stream = file->stream;
         if(stream.is_open()) t->runtimeError("Trying to open a file that is already opened", 8);
         stream.open(file->path);
         file->openType = 1;
-        t->push(Value::nil());
         return false;
     });
     BOUND_NATIVE("close", 0, [](Thread*t, int argCount){
-        std::fstream& stream = t->pop().asFile()->stream;
+        std::fstream& stream = t->peek(0).asFile()->stream;
         if(!stream.is_open()) t->runtimeError("Trying to close a file that isn't opened", 8);
         stream.close();
-        t->push(Value::nil());
         return false;
     });
     BOUND_NATIVE("path", 0, [](Thread*t, int argCount){
@@ -729,11 +723,10 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     BOUND_NATIVE("write", 1, [](Thread*t, int argCount){
         Value str = t->pop();
         if(!str.isString()) TYPE_ERROR("string", 0, str);
-        auto f = t->pop().asFile();
+        auto f = t->peek(0).asFile();
         if(f->openType != 1) t->runtimeError("File open for writing, not reading.", 8);
         std::fstream& stream =f->stream;
         stream << str.asString()->str;
-        t->push(Value::nil());
         return false;
     });
 

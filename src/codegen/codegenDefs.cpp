@@ -81,7 +81,16 @@ bool Value::operator== (const Value& other) const {
 	switch (this->value.index()) {
 	case +ValueType::NUM: return FLOAT_EQ(get<double>(this->value), get<double>(other.value));
 	case +ValueType::BOOL: return this->value == other.value;
-	case +ValueType::OBJ: return this->value == other.value;
+	case +ValueType::OBJ: {
+        switch(get<object::Obj*>(this->value)->type){
+            case object::ObjType::STRING:{
+                string& str1 = dynamic_cast<ObjString*>(get<object::Obj*>(this->value))->str;
+                string& str2 = dynamic_cast<ObjString*>(get<object::Obj*>(other.value))->str;
+                return str1 == str2;
+            }
+            default: return this->value == other.value;
+        }
+    }
 	}
     return false;
 }

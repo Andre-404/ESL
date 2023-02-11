@@ -20,6 +20,15 @@ bool match(TokenType type, const vector<Token>& tokens, const int pos) {
     if (pos < 0 || isAtEnd(tokens, pos)) return false;
     return tokens[pos].type == type;
 }
+// Converts relative path that appears after 'import' to an absolute path to be used by preprocessor
+string parsePath(path& absP, string relativeP){
+    path p = absP;
+    while(relativeP.substr(0, 3) == "../"){
+        p = p.parent_path();
+        relativeP.erase(0, 3);
+    }
+    return p.string() + "\\" + relativeP;
+}
 
 Preprocessor::Preprocessor(){
     projectRootPath = "";
@@ -38,20 +47,20 @@ void Preprocessor::preprocessProject(string mainFilePath) {
     }
 
     projectRootPath = p.parent_path().string() + "/";
-    CSLModule* mainModule = scanFile(p.stem().string() + ".esl");
+    CSLModule* mainModule = scanFile(p.string());
     toposort(mainModule);
 }
 
-CSLModule* Preprocessor::scanFile(string moduleName) {
-    string fullPath = projectRootPath + moduleName;
-    vector<Token> tokens = scanner.tokenizeSource(readFile(fullPath), moduleName);
+CSLModule* Preprocessor::scanFile(string filePath) {
+    path p(filePath);
+    vector<Token> tokens = scanner.tokenizeSource(readFile(filePath), p.stem().string());
     CSLModule* unit = new CSLModule(tokens, scanner.getFile());
-    allUnits[moduleName] = unit;
+    allUnits[filePath] = unit;
 
     // Dependencies
     vector<pair<Token, Token>> depsToParse = retrieveDirectives(unit);
 
-    processDirectives(unit, depsToParse);
+    processDirectives(unit, depsToParse, p.string());
 
     return unit;
 }
@@ -85,12 +94,12 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
         if (token.type == TokenType::IMPORT) {
             // Move to dependency name
             if (!match(TokenType::STRING, tokens, ++i)) {
-                addCompileError("Expected a module name.", getErrorToken(i));
+                addCompileError("Expected a module path.", getErrorToken(i));
                 continue;
             }
 
             // Add dependency to list of dependencies
-            Token dependencyName = tokens[i];
+            Token dependencyPath = tokens[i];
             Token alias;
             if (match(TokenType::AS, tokens, i + 1)) {
                 if (match(TokenType::IDENTIFIER, tokens, i + 2)) alias = tokens[i + 2];
@@ -101,7 +110,7 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
                 i += 2;
             }
 
-            importTokens.emplace_back(dependencyName, alias);
+            importTokens.emplace_back(dependencyPath, alias);
         }
         else resultTokens.push_back(token);
     }
@@ -112,31 +121,35 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
 }
 
 // Processes directives to import into the parserCurrent file
-void Preprocessor::processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse) {
-    for (auto& [path, alias] : depsToParse) {
-        string depName = path.getLexeme();
-        std::cout << depName << '\n';
-        depName = depName.substr(1, depName.size() - 2); // Extract dependency name from "" (it's a string)
+void Preprocessor::processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath) {
+    // Absolute path to the same directory as the unit that these directives belong to
+    path absP = path(absolutePath).parent_path();
+    for (auto& [pathToken, alias] : depsToParse) {
+        string path = pathToken.getLexeme();
+        std::cout << path << '\n';
+        // Calculates absolute path to the file with the relative path given by pathToken
+        path = parsePath(absP, path.substr(1, path.size() - 2)); // Extract dependency path from "" (it's a string)
+
 
         // If we have already scanned module with name 'dep' we add it to the deps list of this module to topsort it later
-        if (allUnits.count(depName)) {
+        if (allUnits.count(path)) {
             // If we detect a cyclical import we still continue parsing other files to detect as many errors as possible
-            if (!allUnits[depName]->resolvedDeps) {
-                addCompileError("Cyclical importing detected.", path);
+            if (!allUnits[path]->resolvedDeps) {
+                addCompileError("Cyclical importing detected.", pathToken);
                 continue;
             }
-            unit->deps.push_back(Dependency(alias, path, allUnits[depName]));
+            unit->deps.push_back(Dependency(alias, pathToken, allUnits[path]));
 
             continue;
         }
 
-        std::filesystem::path p(projectRootPath + depName);
+        std::filesystem::path p(path);
         if (std::filesystem::exists(p)) {
-            Dependency dep = Dependency(alias, path, scanFile(depName));
+            Dependency dep = Dependency(alias, pathToken, scanFile(path));
             unit->deps.push_back(dep);
         }
         else {
-            addCompileError("File " + depName + " doesn't exist.", path);
+            addCompileError("File " + path + " doesn't exist.", pathToken);
         }
     }
 
