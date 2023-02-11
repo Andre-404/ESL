@@ -16,10 +16,9 @@ using namespace std::filesystem;
 bool isAtEnd(const vector<Token>& tokens, const int pos) {
     return pos >= tokens.size();
 }
-
 bool match(TokenType type, const vector<Token>& tokens, const int pos) {
     if (pos < 0 || isAtEnd(tokens, pos)) return false;
-    return true;
+    return tokens[pos].type == type;
 }
 
 Preprocessor::Preprocessor(){
@@ -85,7 +84,7 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
         // Add a dependency
         if (token.type == TokenType::IMPORT) {
             // Move to dependency name
-            if (match(TokenType::STRING, tokens, ++i)) {
+            if (!match(TokenType::STRING, tokens, ++i)) {
                 addCompileError("Expected a module name.", getErrorToken(i));
                 continue;
             }

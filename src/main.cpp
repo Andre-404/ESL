@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
     string path;
     // For ease of use during development
     #ifdef DEBUG_MODE
-    path = "C:\\Temp\\main.csl";
+    path = "C:\\Temp\\main.esl";
     #else
     if(argc == 2) path = string(argv[1]);
     else{
@@ -52,10 +52,6 @@ int main(int argc, char* argv[]) {
 
     auto vm = new runtime::VM(&compiler);
 
-    auto t1 = std::chrono::high_resolution_clock::now();
     vm->execute();
-    auto t2 = std::chrono::high_resolution_clock::now();
-
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
     return 0;
 }

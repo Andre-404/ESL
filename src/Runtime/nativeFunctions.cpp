@@ -31,13 +31,19 @@ static void isNumAndInt(runtime::Thread* t, Value val, uInt argNum){
 vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
     string s;
     vector<object::ObjNativeFunc*> vector;
-    NATIVE_FUNC("native_print", -1, [](Thread* t, int argCount) {
+    NATIVE_FUNC("print", -1, [](Thread* t, int argCount) {
         for(int i = argCount - 1; i >= 0; i--){
             t->peek(i).print();
         }
         std::cout << "\n";
         t->popn(argCount);
         t->push(Value::nil());
+        return true;
+    });
+    NATIVE_FUNC("input", 0, [](Thread* t, int argCount) {
+        string str;
+        std::getline(std::cin, str);
+        t->push(Value(new object::ObjString(str)));
         return true;
     });
 

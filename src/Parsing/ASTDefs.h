@@ -26,8 +26,7 @@ namespace AST {
 		VAR,
 		FUNC,
 		CLASS,
-		
-		PRINT,
+
 		EXPR_STMT,
 		BLOCK,
 		IF,
