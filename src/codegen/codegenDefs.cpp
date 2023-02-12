@@ -85,8 +85,8 @@ bool Value::operator== (const Value& other) const {
         switch(get<object::Obj*>(this->value)->type){
             case object::ObjType::STRING:{
                 if (get<object::Obj*>(other.value)->type != object::ObjType::STRING) return false;
-                string& str1 = dynamic_cast<ObjString*>(get<object::Obj*>(this->value))->str;
-                string& str2 = dynamic_cast<ObjString*>(get<object::Obj*>(other.value))->str;
+                string& str1 = reinterpret_cast<ObjString*>(get<object::Obj*>(this->value))->str;
+                string& str2 = reinterpret_cast<ObjString*>(get<object::Obj*>(other.value))->str;
                 return str1 == str2;
             }
             default: return this->value == other.value;
@@ -149,45 +149,45 @@ bool Value::isFuture() const {
 	return isObj() && get<object::Obj*>(value)->type == ObjType::FUTURE;
 }
 
-
+// Uses reinterpret cast since we already check if the value is of the correct type
 object::ObjString* Value::asString() {
-	return dynamic_cast<ObjString*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjString*>(get<object::Obj*>(value));
 }
 object::ObjFunc* Value::asFunction() {
-	return dynamic_cast<ObjFunc*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjFunc*>(get<object::Obj*>(value));
 }
 object::ObjNativeFunc* Value::asNativeFn() {
-	return dynamic_cast<ObjNativeFunc*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjNativeFunc*>(get<object::Obj*>(value));
 }
 object::ObjBoundNativeFunc* Value::asBoundNativeFunc(){
-    return dynamic_cast<ObjBoundNativeFunc*>(get<object::Obj*>(value));
+    return reinterpret_cast<ObjBoundNativeFunc*>(get<object::Obj*>(value));
 }
 object::ObjArray* Value::asArray() {
-	return dynamic_cast<ObjArray*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjArray*>(get<object::Obj*>(value));
 }
 object::ObjClosure* Value::asClosure() {
-	return dynamic_cast<ObjClosure*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjClosure*>(get<object::Obj*>(value));
 }
 object::ObjClass* Value::asClass() {
-	return dynamic_cast<ObjClass*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjClass*>(get<object::Obj*>(value));
 }
 object::ObjInstance* Value::asInstance() {
-	return dynamic_cast<ObjInstance*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjInstance*>(get<object::Obj*>(value));
 }
 object::ObjBoundMethod* Value::asBoundMethod() {
-	return dynamic_cast<ObjBoundMethod*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjBoundMethod*>(get<object::Obj*>(value));
 }
 object::ObjUpval* Value::asUpvalue() {
-	return dynamic_cast<ObjUpval*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjUpval*>(get<object::Obj*>(value));
 }
 object::ObjFile* Value::asFile() {
-	return dynamic_cast<ObjFile*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjFile*>(get<object::Obj*>(value));
 }
 object::ObjMutex* Value::asMutex() {
-	return dynamic_cast<ObjMutex*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjMutex*>(get<object::Obj*>(value));
 }
 object::ObjFuture* Value::asFuture() {
-	return dynamic_cast<ObjFuture*>(get<object::Obj*>(value));
+	return reinterpret_cast<ObjFuture*>(get<object::Obj*>(value));
 }
 
 void Value::mark() {
