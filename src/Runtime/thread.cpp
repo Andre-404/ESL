@@ -78,6 +78,11 @@ Value runtime::Thread::peek(int depth) {
 	return stackTop[-1 - depth];
 }
 
+Value& runtime::Thread::peekRef(int depth) {
+    return stackTop[-1 - depth];
+}
+
+
 void runtime::Thread::runtimeError(string err, int errorCode) {
     errorString = std::move(err);
     throw errorCode;
@@ -286,11 +291,11 @@ void runtime::Thread::executeBytecode() {
 
 	#define BINARY_OP(valueType, op) \
 		do { \
-			if (!peek(0).isNumber() || !peek(1).isNumber()) { \
-				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peek(1).typeToStr(), peek(0).typeToStr()), 3); \
+			if (!peekRef(0).isNumber() || !peekRef(1).isNumber()) { \
+				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peekRef(1).typeToStr(), peekRef(0).typeToStr()), 3); \
 			} \
-			double b = get<double>(pop().value); \
-			Value* a = stackTop - 1; \
+			double b = get<double>(peekRef(0).value); \
+			Value* a = (--stackTop) - 1; \
 			a->value = get<double>(a->value) op b; \
 		} while (false)
 
@@ -648,13 +653,7 @@ void runtime::Thread::executeBytecode() {
             }
             #pragma endregion
 
-            #pragma region Statements and vars
-            case +OpCode::PRINT: {
-                pop().print();
-                std::cout << "\n";
-                DISPATCH();
-            }
-
+            #pragma region Statements and var
             case +OpCode::GET_NATIVE: {
                 push(Value(vm->nativeFuncs[READ_SHORT()]));
                 DISPATCH();

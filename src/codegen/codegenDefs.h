@@ -162,8 +162,6 @@ enum class OpCode {
 	LESS_EQUAL,
 
 
-	//temporary
-	PRINT,
 	//Variables
     GET_NATIVE, //arg: 16-bit index
 	//all module level variables(including class and function declarations) are treated as global variables

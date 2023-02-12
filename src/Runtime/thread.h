@@ -20,6 +20,7 @@ namespace runtime {
         Value pop();
         void popn(int n);
         Value peek(int depth);
+        Value& peekRef(int depth);
         std::atomic<bool> cancelToken;
 
         void runtimeError(string err, int errorCode);

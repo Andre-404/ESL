@@ -175,8 +175,6 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return simpleInstruction("OP LESS", offset);
 	case +OpCode::LESS_EQUAL:
 		return simpleInstruction("OP LESS EQUAL", offset);
-	case +OpCode::PRINT:
-		return simpleInstruction("OP PRINT", offset);
     case +OpCode::GET_NATIVE:
          return shortInstruction("OP GET NATIVE", chunk, offset);
 	case +OpCode::DEFINE_GLOBAL:
