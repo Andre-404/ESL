@@ -67,11 +67,6 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	}
     mainBlockFunc = endFuncDecl();
     mainBlockFunc->name = "script";
-	std::cout << "=======global var array=======\n";
-	for (int i = 0; i < globals.size(); i++) {
-		std::cout << fmt::format("|{} {}| ", i, globals[i].name);
-	}
-	std::cout << "\n";
 	memory::gc.collect(this);
 	for (CSLModule* unit : units) delete unit;
 }

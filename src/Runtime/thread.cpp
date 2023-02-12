@@ -121,11 +121,10 @@ void runtime::Thread::callValue(Value& callee, int argCount) {
         }
 		case object::ObjType::CLASS: {
 			// We do this so if a GC runs we safely update all the pointers(since the stack is considered a root)
-			stackTop[-argCount - 1] = Value(new object::ObjInstance(peek(0).asClass()));
-			object::ObjClass* klass = callee.asClass();
-			auto it = klass->methods.find(klass->name);
-			if (it != klass->methods.end()) {
-				return call(it->second.asClosure(), argCount);
+            object::ObjClass* klass = callee.asClass();
+			stackTop[-argCount - 1] = Value(new object::ObjInstance(klass));
+			if (klass->methods.contains(klass->name)) {
+				return call(klass->methods[klass->name].asClosure(), argCount);
 			}
 			else if (argCount != 0) {
 				runtimeError(fmt::format("Class constructor expects 0 arguments but got {}.", argCount), 2);
