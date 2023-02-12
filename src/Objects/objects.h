@@ -159,7 +159,7 @@ namespace object {
 	class ObjClass : public Obj {
 	public:
 		string name;
-		robin_hood::unordered_node_map<string, Value> methods;
+		robin_hood::unordered_map<string, Value> methods;
 		ObjClass(string _name);
 		~ObjClass() {}
 

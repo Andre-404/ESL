@@ -20,8 +20,8 @@ typedef unsigned char byte;
 #define FLOAT_EQ(x,v) (fabs(x - v) <= DBL_EPSILON)
 #define IS_INT(num) (FLOAT_EQ(std::floor(num), num))
 
-#define AST_DEBUG
-#define COMPILER_DEBUG
-#define DEBUG_MODE
+//#define AST_DEBUG
+//#define COMPILER_DEBUG
+//#define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
 //#define DEBUG_TRACE_EXECUTION
