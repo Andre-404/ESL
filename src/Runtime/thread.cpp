@@ -32,7 +32,7 @@ static bool isFalsey(Value value) {
     return ((value.isBool() && !get<bool>(value.value)) || value.isNil());
 }
 
-runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, string& name){
+runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value& receiver, string& name){
     runtime::Builtin type = runtime::Builtin::COMMON;
     if(receiver.isObj()){
         switch(receiver.asObj()->type){
@@ -74,11 +74,7 @@ void runtime::Thread::popn(int n) {
     stackTop-= n;
 }
 
-Value runtime::Thread::peek(int depth) {
-	return stackTop[-1 - depth];
-}
-
-Value& runtime::Thread::peekRef(int depth) {
+Value& runtime::Thread::peek(int depth) {
     return stackTop[-1 - depth];
 }
 
@@ -88,7 +84,7 @@ void runtime::Thread::runtimeError(string err, int errorCode) {
     throw errorCode;
 }
 
-void runtime::Thread::callValue(Value callee, int argCount) {
+void runtime::Thread::callValue(Value& callee, int argCount) {
 	if (callee.isObj()) {
 		switch (get<object::Obj*>(callee.value)->type) {
 		case object::ObjType::CLOSURE:
@@ -172,7 +168,7 @@ object::ObjUpval* captureUpvalue(Value* local) {
 
 void runtime::Thread::defineMethod(string& name) {
 	//no need to type check since the compiler made sure to emit code in this order
-	Value method = peek(0);
+	Value& method = peek(0);
 	object::ObjClass* klass = peek(1).asClass();
 	klass->methods.insert_or_assign(name, method);
 	//we only pop the method, since other methods we're compiling will also need to know their class
@@ -180,18 +176,16 @@ void runtime::Thread::defineMethod(string& name) {
 }
 
 bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
-	//At the start the instance whose method we're binding needs to be on top of the stack
-	Value method;
 	auto it = klass->methods.find(klass->name);
 	if (it == klass->methods.end()) return false;
 	//peek(0) to get the ObjInstance
-	auto* bound = new object::ObjBoundMethod(peek(0), method.asClosure());
+	auto* bound = new object::ObjBoundMethod(peek(0), it->second.asClosure());
     *(stackTop - 1) = Value(bound);
     return true;
 }
 
 void runtime::Thread::invoke(string& fieldName, int argCount) {
-	Value receiver = peek(argCount);
+	Value& receiver = peek(argCount);
 
 	if (receiver.isInstance()) {
         object::ObjInstance* instance = receiver.asInstance();
@@ -225,7 +219,7 @@ bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodNam
     return true;
 }
 
-void runtime::Thread::bindMethodToPrimitive(Value receiver, string& methodName){
+void runtime::Thread::bindMethodToPrimitive(Value& receiver, string& methodName){
     auto func = findNativeMethod(receiver, methodName);
     push(Value(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
 }
@@ -251,7 +245,7 @@ void runtime::Thread::executeBytecode() {
 	#define READ_CONSTANT_LONG() (vm->code.constants[constantOffset + READ_SHORT()])
 	#define READ_STRING() (READ_CONSTANT().asString())
 	#define READ_STRING_LONG() (READ_CONSTANT_LONG().asString())
-	auto checkArrayBounds = [](runtime::Thread* t, Value field, Value callee, object::ObjArray* arr) {
+	auto checkArrayBounds = [](runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
 		if (!field.isNumber()) t->runtimeError(fmt::format("Index must be a number, got {}.", callee.typeToStr()), 3);
 		double index = get<double>(field.value);
 		//Trying to access a variable using a float is a error
@@ -291,10 +285,10 @@ void runtime::Thread::executeBytecode() {
 
 	#define BINARY_OP(valueType, op) \
 		do { \
-			if (!peekRef(0).isNumber() || !peekRef(1).isNumber()) { \
-				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peekRef(1).typeToStr(), peekRef(0).typeToStr()), 3); \
+			if (!peek(0).isNumber() || !peek(1).isNumber()) { \
+				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peek(1).typeToStr(), peek(0).typeToStr()), 3); \
 			} \
-			double b = get<double>(peekRef(0).value); \
+			double b = peek(0).asNumber(); \
 			Value* a = (--stackTop) - 1; \
 			a->value = get<double>(a->value) op b; \
 		} while (false)
@@ -307,8 +301,8 @@ void runtime::Thread::executeBytecode() {
 			if (!IS_INT(get<double>(peek(0).value)) || !IS_INT(get<double>(peek(1).value))) { \
 				runtimeError("Operands must be a integers, got floats.", 3); \
 			} \
-			uInt64 b = static_cast<uInt64>(get<double>(pop().value)); \
-			Value* a = stackTop - 1; \
+			uInt64 b = static_cast<uInt64>(peek(0).asNumber()); \
+			Value* a = (--stackTop) - 1; \
 			a->value = static_cast<double>(static_cast<uInt64>(get<double>(a->value)) op b); \
 		} while (false)
     #pragma endregion
@@ -392,12 +386,12 @@ void runtime::Thread::executeBytecode() {
 
             #pragma region Constant opcodes
             case +OpCode::CONSTANT: {
-                Value constant = READ_CONSTANT();
+                Value& constant = READ_CONSTANT();
                 push(constant);
                 DISPATCH();
             }
             case +OpCode::CONSTANT_LONG: {
-                Value constant = READ_CONSTANT_LONG();
+                Value& constant = READ_CONSTANT_LONG();
                 push(constant);
                 DISPATCH();
             }
@@ -534,15 +528,15 @@ void runtime::Thread::executeBytecode() {
                     case 6: {
                         Value field = pop();
                         Value callee = pop();
-                        if (!callee.isArray() && !callee.isInstance())
-                            runtimeError(fmt::format("Expected a array or struct, got {}.", callee.typeToStr()), 3);
 
-                        if (get<object::Obj *>(callee.value)->type == object::ObjType::ARRAY) {
+                        if (callee.isArray()) {
                             object::ObjArray *arr = callee.asArray();
                             uInt64 index = checkArrayBounds(this, field, callee, arr);
                             Value &num = arr->values[index];
                             INCREMENT(num);
                         }
+                        // If it's not an array nor a instance, throw type error
+                        if (!callee.isInstance()) runtimeError(fmt::format("Expected a array or struct, got {}.", callee.typeToStr()), 3);
                         if (!field.isString())
                             runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
 
@@ -951,6 +945,7 @@ void runtime::Thread::executeBytecode() {
                     uInt64 index = checkArrayBounds(this, field, callee, arr);
                     push(arr->values[index]);
                     DISPATCH();
+                    // Only structs can be access with [](eg. struct["field"]
                 }else if(callee.isInstance() && !callee.asInstance()->klass) {
                     if (!field.isString())
                         runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);

@@ -19,13 +19,12 @@ namespace runtime {
         void push(Value val);
         Value pop();
         void popn(int n);
-        Value peek(int depth);
-        Value& peekRef(int depth);
+        Value& peek(int depth);
         std::atomic<bool> cancelToken;
 
         void runtimeError(string err, int errorCode);
 
-        void callValue(Value callee, int argCount);
+        void callValue(Value& callee, int argCount);
 	private:
 		Value stack[STACK_MAX];
 		Value* stackTop;
@@ -43,7 +42,7 @@ namespace runtime {
         // True if method exists and was invoked
 		bool invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
 
-        void bindMethodToPrimitive(Value receiver, string& methodName);
-        BuiltinMethod& findNativeMethod(Value receiver, string& name);
+        void bindMethodToPrimitive(Value& receiver, string& methodName);
+        BuiltinMethod& findNativeMethod(Value& receiver, string& name);
 	};
 }
