@@ -29,6 +29,7 @@ namespace AST {
         Iterate,
         Skippable,
         LoopEnd,
+        LoopBegin,
         Ignore
     };
 

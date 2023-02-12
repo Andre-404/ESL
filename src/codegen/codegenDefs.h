@@ -45,7 +45,7 @@ struct Value {
 	std::variant<double, bool, object::Obj*> value;
 
 	Value() {
-		value = static_cast<object::Obj*>(nullptr);
+		value = nullptr;
 	}
 
 	Value(double num) {

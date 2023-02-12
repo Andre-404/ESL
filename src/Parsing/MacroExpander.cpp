@@ -8,7 +8,6 @@ void AST::MacroExpander::expand(ASTNodePtr& node){
     if (!node) return;
     node->accept(this);
     if (expansion != nullptr) {
-        std::cout << "yuuh??\n";
         node = expansion;
     }
     expansion = nullptr;
@@ -217,14 +216,20 @@ vector<Token> AST::Macro::expandLoops(vector<Token>& readFrom, int begin, int en
             // Meta variables
             if (check(i + 1, TokenType::IDENTIFIER)){
                 string varName = readFrom[i + 1].getLexeme();
+                if (!parser->ttMetaVars.contains(varName) && !parser->exprMetaVars.contains(varName)) {
+                    throw parser->error(readFrom[i + 1],
+                                        fmt::format("Meta variable {} doesn't appear in matcher pattern.", varName));
+                }
                 // Token tree meta variable
-                variables++;
                 if (parser->ttMetaVars.contains(varName)){
                     std::unique_ptr<TTMetaVar>& var = parser->ttMetaVars[varName];
-                    if (var->loopDepth != loopDepth){
+                    if (var->loopDepth > loopDepth){
                         throw parser->error(readFrom[i + 1], "Macro variable is at incorrect loop depth.");
                     }
-                    if (!var->values.contains(loopIndices)) {
+                    if (var->loopDepth == loopDepth) variables++;
+                    vector<int> curIndices = loopIndices;
+                    while (curIndices.size() > var->loopDepth) curIndices.pop_back();
+                    if (!var->values.contains(curIndices)) {
                         badVariables++;
                         break;
                     }
@@ -232,17 +237,20 @@ vector<Token> AST::Macro::expandLoops(vector<Token>& readFrom, int begin, int en
                     expansion.insert(expansion.end(), tokenTree.begin(), tokenTree.end());
                 }
                 else if (parser->exprMetaVars.contains(varName)) {
-                    if (parser->exprMetaVars[varName]->loopDepth != loopDepth){
+                    std::unique_ptr<ExprMetaVar>& var = parser->exprMetaVars[varName];
+                    if (var->loopDepth > loopDepth){
                         throw parser->error(readFrom[i + 1], "Macro variables is at incorrect loop depth.");
                     }
-                    if (!parser->exprMetaVars[varName]->values.contains(loopIndices)){
+                    if (var->loopDepth == loopDepth) variables++;
+                    vector<int> curIndices = loopIndices;
+                    while (curIndices.size() > var->loopDepth) curIndices.pop_back();
+                    if (!var->values.contains(curIndices)){
                         badVariables++;
                         break;
                     }
                     expansion.push_back(readFrom[i]);
                     expansion.push_back(readFrom[i+1]);
-                } else {
-                    throw parser->error(readFrom[i + 1], fmt::format("Meta variable {} doesn't appear in matcher pattern.", varName));
+                    var->valueList.push_back(var->values[curIndices]);
                 }
                 i++;
             }
@@ -264,7 +272,6 @@ vector<Token> AST::Macro::expandLoops(vector<Token>& readFrom, int begin, int en
                 vector<Token> expandedLoop;
                 loopIndices.push_back(0);
                 do {
-                    std::cout << loopIndices.back() << "\n";
                     expandedLoop = expandLoops(readFrom, loopStart, i - 2 - hasDelim, loopIndices);
                     if (hasDelim && loopIndices.back() > 0 && !expandedLoop.empty()) { expansion.push_back(readFrom[i-1]); }
                     expansion.insert(expansion.end(), expandedLoop.begin(), expandedLoop.end());
@@ -343,8 +350,8 @@ bool AST::MatchPattern::interpret(vector<Token> &args) const {
                     transition(i, j + 1, TransitionType::None);
                 }
                 else if (tokenTypes[j] == MatcherTokenType::Skippable){
-                    transition(i, j + 1, TransitionType::LoopBegin);
                     transition(i, loopJumps[j], TransitionType::None);
+                    transition(i, j + 1, TransitionType::None);
                 }
                 else if (tokenTypes[j] == MatcherTokenType::Iterate){
                     transition(i, loopJumps[j], TransitionType::LoopIterate);
@@ -352,6 +359,9 @@ bool AST::MatchPattern::interpret(vector<Token> &args) const {
                 else if (tokenTypes[j] == MatcherTokenType::LoopEnd){
                     transition(i, loopJumps[j], TransitionType::LoopEnd);
                     transition(i, j + 1, TransitionType::None);
+                }
+                else if (tokenTypes[j] == MatcherTokenType::LoopBegin){
+                    transition(i, j + 1, TransitionType::LoopBegin);
                 }
                 continue;
             }
@@ -433,7 +443,6 @@ bool AST::MatchPattern::interpret(vector<Token> &args) const {
                 parser->exprMetaVars.insert(std::make_pair(metaVarName, std::make_unique<ExprMetaVar>()));
             }
             parser->exprMetaVars[metaVarName]->values[loopIndices] = expr;
-            parser->exprMetaVars[metaVarName]->valueList.push_back(expr);
             parser->exprMetaVars[metaVarName]->loopDepth = loopIndices.size();
         } else if (t.type == TransitionType::ConsumeTT){
             // Fetch the token tree
@@ -524,12 +533,12 @@ void AST::MatchPattern::processPattern() {
                     if (check(i, TokenType::COMMA) || check(i, TokenType::ARROW) || check(i, TokenType::SEMICOLON)){ i++; }
 
                     // Starting loop paren should be ignored
-                    tokenTypes[startParenIdx] = MatcherTokenType::Ignore;
+                    tokenTypes[startParenIdx] = MatcherTokenType::LoopBegin;
                     addEdge(startParenIdx, startParenIdx + 1);
 
                     // Skippable loop
                     if (check(i, TokenType::STAR)) {
-                        // Start / Skip loop
+                        // Skip loop
                         tokenTypes[startParenIdx - 1] = MatcherTokenType::Skippable;
                         loopJumps[startParenIdx - 1] = i + 1;
                         addEdge(startParenIdx - 1, i + 1);
@@ -537,8 +546,8 @@ void AST::MatchPattern::processPattern() {
 
                         // Iterate loop
                         tokenTypes[i] = MatcherTokenType::Iterate;
-                        loopJumps[i] = startParenIdx;
-                        addEdge(i, startParenIdx);
+                        loopJumps[i] = startParenIdx + 1;
+                        addEdge(i, startParenIdx + 1);
 
                         // End loop
                         tokenTypes[endParenIdx] = MatcherTokenType::LoopEnd;
@@ -554,8 +563,8 @@ void AST::MatchPattern::processPattern() {
 
                         // Iterate loop
                         tokenTypes[i] = MatcherTokenType::Iterate;
-                        loopJumps[i] = startParenIdx;
-                        addEdge(i, startParenIdx);
+                        loopJumps[i] = startParenIdx + 1;
+                        addEdge(i, startParenIdx + 1);
 
                         // End loop
                         tokenTypes[endParenIdx] = MatcherTokenType::LoopEnd;
@@ -578,7 +587,6 @@ void AST::MatchPattern::processPattern() {
                         addEdge(endParenIdx, endParenIdx + 1);
                     }
                     else {
-                        std::cout << pattern[i].getLexeme() << "\n";
                         throw parser->error(pattern[i], "Expected '*', '+' or '?' after macro loop");
                     }
                 }
