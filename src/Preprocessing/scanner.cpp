@@ -13,7 +13,7 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"export", TokenType::EXPORT},
         {"if", TokenType::IF},
         {"import", TokenType::IMPORT},
-        {"nil", TokenType::NIL},
+        {"null", TokenType::NIL},
         {"advance", TokenType::ADVANCE},
         {"or", TokenType::OR},
         {"return", TokenType::RETURN},
