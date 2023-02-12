@@ -22,17 +22,23 @@ namespace AST {
                 return cur->exprMetaVars[metaVar.getLexeme()]->get();
             }
 
-            ASTNodePtr expr = cur->expression(prec);
+
 			switch (token.type) {
-			case TokenType::AWAIT:
-				return make_shared<AwaitExpr>(token, expr);
+			case TokenType::AWAIT: {
+                // Parse a new expression with 0 precedence
+                ASTNodePtr expr = cur->expression();
+                return make_shared<AwaitExpr>(token, expr);
+            }
 			case TokenType::ASYNC: {
+                ASTNodePtr expr = cur->expression(prec);
 				if (expr->type != ASTType::CALL) throw cur->error(token, "Expected a call after 'thread'.");
 				CallExpr* call = dynamic_cast<CallExpr*>(expr.get());
 				return make_shared<AsyncExpr>(token, call->callee, call->args);
 			}
-			default:
-				return make_shared<UnaryExpr>(token, expr, true);
+			default: {
+                ASTNodePtr expr = cur->expression(prec);
+                return make_shared<UnaryExpr>(token, expr, true);
+            }
 			}
 		}
 	};

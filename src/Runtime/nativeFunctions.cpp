@@ -586,7 +586,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("push", 1, [](Thread*t, int argCount){
         Value val = t->pop();
-        t->peek(0).asArray()->values.push_back(val);
+        t->peek(0).asArray()->values.emplace_back(val);
         return false;
     });
     BOUND_NATIVE("pop", 0, [](Thread*t, int argCount){
@@ -699,6 +699,18 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         if(stream.is_open()) t->runtimeError("Trying to open a file that is already opened", 8);
         stream.open(file->path);
         file->openType = 1;
+        return false;
+    });
+    BOUND_NATIVE("is_open_read", 0, [](Thread*t, int argCount){
+        auto file = t->pop().asFile();
+        std::fstream& stream = file->stream;
+        t->push(Value(stream.is_open() && file->openType == 0));
+        return false;
+    });
+    BOUND_NATIVE("is_open_write", 0, [](Thread*t, int argCount){
+        auto file = t->pop().asFile();
+        std::fstream& stream = file->stream;
+        t->push(Value(stream.is_open() && file->openType == 1));
         return false;
     });
     BOUND_NATIVE("close", 0, [](Thread*t, int argCount){

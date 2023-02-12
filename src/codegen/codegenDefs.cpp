@@ -84,6 +84,7 @@ bool Value::operator== (const Value& other) const {
 	case +ValueType::OBJ: {
         switch(get<object::Obj*>(this->value)->type){
             case object::ObjType::STRING:{
+                if (get<object::Obj*>(other.value)->type != object::ObjType::STRING) return false;
                 string& str1 = dynamic_cast<ObjString*>(get<object::Obj*>(this->value))->str;
                 string& str2 = dynamic_cast<ObjString*>(get<object::Obj*>(other.value))->str;
                 return str1 == str2;

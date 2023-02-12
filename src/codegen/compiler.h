@@ -27,7 +27,6 @@ namespace compileCore {
 		uint8_t index = 0;
 		bool isLocal = false;
 	};
-	//TODO: remember to close any upvalues these jumps pop from the stack
 	enum class ScopeJumpType {
 		BREAK,
 		CONTINUE,

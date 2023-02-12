@@ -246,14 +246,14 @@ void runtime::Thread::executeBytecode() {
 	#define READ_CONSTANT_LONG() (vm->code.constants[constantOffset + READ_SHORT()])
 	#define READ_STRING() (READ_CONSTANT().asString())
 	#define READ_STRING_LONG() (READ_CONSTANT_LONG().asString())
-	auto checkArrayBounds = [&](Value field, Value callee) {
-		if (!field.isNumber()) runtimeError(fmt::format("Index must be a number, got {}.", callee.typeToStr()), 3);
+	auto checkArrayBounds = [](runtime::Thread* t, Value field, Value callee) {
+		if (!field.isNumber()) t->runtimeError(fmt::format("Index must be a number, got {}.", callee.typeToStr()), 3);
 		double index = get<double>(field.value);
 		object::ObjArray* arr = callee.asArray();
 		//Trying to access a variable using a float is a error
-		if (!IS_INT(index)) runtimeError("Expected integer, got float.", 3);
+		if (!IS_INT(index)) t->runtimeError("Expected integer, got float.", 3);
 		if (index < 0 || index > arr->values.size() - 1)
-			runtimeError(fmt::format("Index {} outside of range [0, {}].", (uInt64)index, callee.asArray()->values.size() - 1), 9);
+			t->runtimeError(fmt::format("Index {} outside of range [0, {}].", (uInt64)index, callee.asArray()->values.size() - 1), 9);
 		return static_cast<uInt64>(index);
 	};
 	auto deleteThread = [](object::ObjFuture* _fut, VM* vm) {
@@ -535,7 +535,7 @@ void runtime::Thread::executeBytecode() {
 
                         if (get<object::Obj *>(callee.value)->type == object::ObjType::ARRAY) {
                             object::ObjArray *arr = callee.asArray();
-                            uInt64 index = checkArrayBounds(field, callee);
+                            uInt64 index = checkArrayBounds(this, field, callee);
                             Value &num = arr->values[index];
                             INCREMENT(num);
                         }
@@ -950,7 +950,7 @@ void runtime::Thread::executeBytecode() {
 
                 if (callee.isArray()) {
                     object::ObjArray *arr = callee.asArray();
-                    uInt64 index = checkArrayBounds(field, callee);
+                    uInt64 index = checkArrayBounds(this, field, callee);
                     push(arr->values[index]);
                     DISPATCH();
                 }else if(callee.isInstance() && !callee.asInstance()->klass) {
@@ -977,7 +977,7 @@ void runtime::Thread::executeBytecode() {
 
                 if (callee.isArray()) {
                     object::ObjArray *arr = callee.asArray();
-                    uInt64 index = checkArrayBounds(field, callee);
+                    uInt64 index = checkArrayBounds(this, field, callee);
 
                     //if numOfHeapPtr is 0 we don't trace or update the array when garbage collecting
                     if (val.isObj() && !arr->values[index].isObj()) arr->numOfHeapPtr++;
