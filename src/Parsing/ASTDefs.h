@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 #include "../moduleDefs.h"
 
 namespace AST {
@@ -343,9 +342,9 @@ namespace AST {
 	public:
 		vector<Token> args;
 		int arity;
-		ASTNodePtr body;
+		shared_ptr<BlockStmt> body;
 
-		FuncLiteral(vector<Token> _args, ASTNodePtr _body) {
+		FuncLiteral(vector<Token> _args, shared_ptr<BlockStmt> _body) {
 			args = _args;
 			arity = _args.size();
 			body = _body;
@@ -561,10 +560,10 @@ namespace AST {
 	public:
 		vector<Token> args;
 		uInt arity;
-		ASTNodePtr body;
+		shared_ptr<BlockStmt> body;
 		Token name;
 
-		FuncDecl(Token _name, vector<Token> _args, ASTNodePtr _body) {
+		FuncDecl(Token _name, vector<Token> _args, shared_ptr<BlockStmt> _body) {
 			name = _name;
 			args = _args;
 			arity = _args.size();
