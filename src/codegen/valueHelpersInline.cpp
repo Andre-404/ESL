@@ -25,11 +25,11 @@ using namespace object;
 
 // Signatures
 #define MASK_SIGNATURE_NAN MASK_NAN
-#define MASK_SIGNATURE_FALSE MASK_NAN | MASK_TYPE_FALSE
-#define MASK_SIGNATURE_TRUE MASK_NAN | MASK_TYPE_TRUE
-#define MASK_SIGNATURE_NIL MASK_NAN | MASK_TYPE_NIL
-#define MASK_SIGNATURE_INT MASK_NAN | MASK_TYPE_INT
-#define MASK_SIGNATURE_OBJ MASK_SIGN | MASK_NAN | MASK_TYPE_OBJ
+#define MASK_SIGNATURE_FALSE (MASK_NAN | MASK_TYPE_FALSE)
+#define MASK_SIGNATURE_TRUE (MASK_NAN | MASK_TYPE_TRUE)
+#define MASK_SIGNATURE_NIL (MASK_NAN | MASK_TYPE_NIL)
+#define MASK_SIGNATURE_INT (MASK_NAN | MASK_TYPE_INT)
+#define MASK_SIGNATURE_OBJ (MASK_SIGN | MASK_NAN | MASK_TYPE_OBJ)
 
 // Things with values (NaN boxing)
 inline ValueType getType(Value x){
@@ -54,11 +54,11 @@ inline int32_t decodeInt(Value x){ return x & MASK_PAYLOAD_INT; }
 inline bool decodeBool(Value x){ return x & MASK_TYPE_TRUE; }
 inline object::Obj* decodeObj(Value x){ return reinterpret_cast<object::Obj*>(x & MASK_PAYLOAD_OBJ); }
 
-inline bool isDouble(Value x){ return getType(x) == ValueType::DOUBLE; }
-inline bool isBool(Value x){ return getType(x) == ValueType::BOOL; }
-inline bool isNil(Value x){ return getType(x) == ValueType::NIL; }
-inline bool isInt(Value x){ return getType(x) == ValueType::INT; }
-inline bool isObj(Value x){ return getType(x) == ValueType::OBJ; }
+inline bool isDouble(Value x){ return ((~x) & MASK_EXPONENT) != 0 || (x & MASK_SIGNATURE) == MASK_SIGNATURE_NAN; }
+inline bool isBool(Value x){ return ((x & MASK_SIGNATURE) == MASK_SIGNATURE_TRUE || (x & MASK_SIGNATURE) == MASK_SIGNATURE_FALSE); }
+inline bool isNil(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_NIL; }
+inline bool isInt(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_INT; }
+inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
 inline bool isNumber(Value x) { return isDouble(x) || isInt(x); }
 
 inline bool isString(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::STRING; }
