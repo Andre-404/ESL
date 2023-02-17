@@ -127,11 +127,12 @@ struct CSLModule;
 
 namespace AST {
     class ASTNode;
+    class ASTDecl;
 }
 
 struct Dependency {
     Token alias;
-    Token pathString;//for error reporting in the compiler
+    Token pathString;// For error reporting in the compiler
     CSLModule* module;
 
     Dependency(Token _alias, Token _pathString, CSLModule* _module) : alias(_alias), pathString(_pathString), module(_module) {};
@@ -141,18 +142,18 @@ struct CSLModule {
     File* file;
     vector<Token> tokens;
     vector<Dependency> deps;
-    //whether the dependency tree of this module has been resolved, if it hasn't and we try to parse
-    //this module again we have a circular dependency and an error will be thrown
+    // Whether the dependency tree of this module has been resolved, if it hasn't and we try to parse
+    // this module again we have a circular dependency and an error will be thrown
     bool resolvedDeps;
-    //used for toposort once we have resolved all dependencies
+    // Used for topsort once we have resolved all dependencies
     bool traversed;
 
-    //AST of this file
+    // AST of this file
     vector<std::shared_ptr<AST::ASTNode>> stmts;
-    //exported declarations
-    vector<Token> exports;
-    //used by the compiler to look up if a global variable exists since globals are late bound
-    vector<Token> topDeclarations;
+    // Exported declarations
+    vector<std::shared_ptr<AST::ASTDecl>> exports;
+    // Used by the compiler to look up if a global variable exists since globals are late bound
+    vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
 
     CSLModule(vector<Token> _tokens, File* _file) {
         tokens = _tokens;

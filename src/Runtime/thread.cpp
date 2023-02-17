@@ -175,10 +175,11 @@ void runtime::Thread::defineMethod(string& name) {
 }
 
 bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
-	auto it = klass->methods.find(klass->name);
+	auto it = klass->methods.find(name);
 	if (it == klass->methods.end()) return false;
 	//peek(0) to get the ObjInstance
 	auto* bound = new object::ObjBoundMethod(peek(0), it->second.asClosure());
+    // Replace top of the stack
     *(stackTop - 1) = Value(bound);
     return true;
 }
@@ -189,17 +190,19 @@ void runtime::Thread::invoke(string& fieldName, int argCount) {
 	if (receiver.isInstance()) {
         object::ObjInstance* instance = receiver.asInstance();
         auto it = instance->fields.find(fieldName);
+        // Invoke can be used on functions that are part of a struct or in a instances field
+        // when not used for methods they need to replace the instance
         if (it != instance->fields.end()) {
             stackTop[-argCount - 1] = it->second;
             return callValue(it->second, argCount);
         }
-        //this check is used because we also use objInstance to represent struct literals
-        //and if this instance is a struct it can only contain functions inside its field table
+        // This check is used because we also use objInstance to represent struct literals
+        // and if this instance is a struct it can only contain functions inside its field table
         if (instance->klass != nullptr && invokeFromClass(instance->klass, fieldName, argCount)) return;
 	}
     auto native = findNativeMethod(receiver, fieldName);
     int arity = native.arity;
-    //if arity is -1 it means that the function takes in a variable number of args
+    // If arity is -1 it means that the function takes in a variable number of args
     if (arity != -1 && argCount != arity) {
         runtimeError(fmt::format("Method {} expects {} arguments but got {}.", fieldName, arity, argCount), 2);
     }
@@ -476,17 +479,11 @@ void runtime::Thread::executeBytecode() {
                     case 2: {
                         byte index = READ_BYTE();
                         Globalvar &var = vm->globals[index];
-                        if (!var.isDefined) {
-                            runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                        }
                         INCREMENT(var.val);
                     }
                     case 3: {
                         byte index = READ_SHORT();
                         Globalvar &var = vm->globals[index];
-                        if (!var.isDefined) {
-                            runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                        }
                         INCREMENT(var.val);
                     }
                     case 4: {
@@ -655,31 +652,23 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::DEFINE_GLOBAL: {
                 byte index = READ_BYTE();
                 vm->globals[index].val = pop();
-                vm->globals[index].isDefined = true;
                 DISPATCH();
             }
             case +OpCode::DEFINE_GLOBAL_LONG: {
                 uInt index = READ_SHORT();
                 vm->globals[index].val = pop();
-                vm->globals[index].isDefined = true;
                 DISPATCH();
             }
 
             case +OpCode::GET_GLOBAL: {
                 byte index = READ_BYTE();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 push(var.val);
                 DISPATCH();
             }
             case +OpCode::GET_GLOBAL_LONG: {
                 uInt index = READ_SHORT();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 push(var.val);
                 DISPATCH();
             }
@@ -687,18 +676,12 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SET_GLOBAL: {
                 byte index = READ_BYTE();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 var.val = peek(0);
                 DISPATCH();
             }
             case +OpCode::SET_GLOBAL_LONG: {
                 uInt index = READ_SHORT();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 var.val = peek(0);
                 DISPATCH();
             }

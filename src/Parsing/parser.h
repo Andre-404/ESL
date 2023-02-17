@@ -132,17 +132,17 @@ namespace AST {
 		shared_ptr<ASTDecl> classDecl();
 
 		ASTNodePtr statement();
-		ASTNodePtr exprStmt();
-		ASTNodePtr blockStmt();
-		ASTNodePtr ifStmt();
-		ASTNodePtr whileStmt();
-		ASTNodePtr forStmt();
-		ASTNodePtr breakStmt();
-		ASTNodePtr continueStmt();
-		ASTNodePtr switchStmt();
+        shared_ptr<ExprStmt> exprStmt();
+		shared_ptr<BlockStmt> blockStmt();
+        shared_ptr<IfStmt> ifStmt();
+        shared_ptr<WhileStmt> whileStmt();
+        shared_ptr<ForStmt> forStmt();
+        shared_ptr<BreakStmt> breakStmt();
+        shared_ptr<ContinueStmt> continueStmt();
+        shared_ptr<SwitchStmt> switchStmt();
 		shared_ptr<CaseStmt> caseStmt();
-		ASTNodePtr advanceStmt();
-		ASTNodePtr returnStmt();
+        shared_ptr<AdvanceStmt> advanceStmt();
+        shared_ptr<ReturnStmt> returnStmt();
 
 #pragma endregion
 

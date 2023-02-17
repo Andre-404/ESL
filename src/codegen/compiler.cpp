@@ -50,8 +50,9 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	for (CSLModule* unit : units) {
 		curUnit = unit;
 		sourceFiles.push_back(unit->file);
-		for (const Token& token : unit->topDeclarations) {
-			globals.emplace_back(token.getLexeme(), Value::nil());
+		for (const auto decl : unit->topDeclarations) {
+			globals.emplace_back(decl->getName().getLexeme(), Value::nil());
+            definedGlobals.push_back(false);
 		}
 		for (int i = 0; i < unit->stmts.size(); i++) {
 			//doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
@@ -59,10 +60,10 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 				unit->stmts[i]->accept(this);
 			}
 			catch (CompilerException e) {
-				int a = 1;
+                // Do nothing, only used for unwinding the stack
 			}
 		}
-		curGlobalIndex += unit->topDeclarations.size();
+		curGlobalIndex = globals.size();
 		curUnitIndex++;
 	}
     mainBlockFunc = endFuncDecl();
@@ -144,24 +145,24 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 	uint8_t op = 0;
 	switch (expr->op.type) {
 		//take in double or string(in case of add)
-	case TokenType::PLUS:	op = +OpCode::ADD; break;
-	case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
-	case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
-	case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
+        case TokenType::PLUS:	op = +OpCode::ADD; break;
+        case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
+        case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
+        case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
 		//for these operators, a check is preformed to confirm both numbers are integers, not decimals
-	case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
-	case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
-	case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
-	case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
-	case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
-	case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
+        case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
+        case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
+        case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
+        case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
+        case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
+        case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
 		//these return bools and use an epsilon value when comparing
-	case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
-	case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
-	case TokenType::GREATER:		 op = +OpCode::GREATER; break;
-	case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
-	case TokenType::LESS:			 op = +OpCode::LESS; break;
-	case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+        case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
+        case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
+        case TokenType::GREATER:		 op = +OpCode::GREATER; break;
+        case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
+        case TokenType::LESS:			 op = +OpCode::LESS; break;
+        case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
 	}
 	expr->right->accept(this);
 	emitByte(op);
@@ -187,7 +188,8 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 			if (arg != -1) type = 0;
 			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 1;
 			else if((arg = resolveGlobal(left->token, true)) != -1){
-				//all global variables have a numerical prefix which indicates which source file they came from, used for scoping
+                if(arg == -2) error(left->token, fmt::format("Trying to access variable '{}' before it's initialized.", left->token.getLexeme()));
+				if(!definedGlobals[arg]) error(left->token, fmt::format("Use of undefined variable '{}'.", left->token.getLexeme()));
 				type = arg > SHORT_CONSTANT_LIMIT ? 3 : 2;
 			}else error(left->token, fmt::format("Variable '{}' isn't declared.", left->token.getLexeme()));
 		}
@@ -305,12 +307,12 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
 	if (currentClass == nullptr) {
 		error(expr->methodName, "Can't use 'super' outside of a class.");
 	}
-	else if (!currentClass->hasSuperclass) {
+	else if (!currentClass->superclass) {
 		error(expr->methodName, "Can't use 'super' in a class with no superclass.");
 	}
-	//we use syntethic tokens since we know that 'super' and 'this' are defined if we're currently compiling a class method
+	// We use a synthetic token since 'this' is defined if we're currently compiling a class method
 	namedVar(syntheticToken("this"), false);
-	namedVar(syntheticToken("super"), false);
+    emitConstant(Value(currentClass->superclass));
 	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
 	else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
 }
@@ -366,7 +368,9 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 		uint8_t constant = parseVar(var);
 		defineVar(constant);
 	}
-	expr->body->accept(this);
+    for(auto stmt : expr->body->statements){
+        stmt->accept(this);
+    }
 	current->func->arity = expr->args.size();
 	current->func->name = "Anonymous function";
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -425,9 +429,9 @@ void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
 
 
 void Compiler::visitVarDecl(AST::VarDecl* decl) {
-	//if this is a global, we get a string constant index, if it's a local, it returns a dummy 0
+	// If this is a global, we get a index into global array, if it's a local, it returns a dummy 0
 	uInt16 global = parseVar(decl->name);
-	//compile the right side of the declaration, if there is no right side, the variable is initialized as nil
+	// Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 	AST::ASTNodePtr expr = decl->value;
 	if (expr == nullptr) {
 		emitByte(+OpCode::NIL);
@@ -435,14 +439,19 @@ void Compiler::visitVarDecl(AST::VarDecl* decl) {
 	else {
 		expr->accept(this);
 	}
-	//if this is a global var, we emit the code to define it in the VMs global hash table, if it's a local, do nothing
-	//the slot that the compiled value is at becomes a local var
+	// If it's a local, do nothing the slot that the compiled value is at becomes a local var
 	defineVar(global);
+    // Put the value into the global array if we're in global scope
+    if(current->scopeDepth > 0) return;
+    if(global <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, global);
+    else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, global);
+    emitByte(+OpCode::POP);
 }
 
 void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
-	uInt16 name = parseVar(decl->getName());
-	markInit();
+	uInt16 index = parseVar(decl->getName());
+    // Defining the function here to allow for recursion
+    defineVar(index);
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
 	//is stored in parserCurrent->enclosing
 	current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
@@ -455,7 +464,9 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 		uint8_t constant = parseVar(var);
 		defineVar(constant);
 	}
-	decl->body->accept(this);
+    for(auto stmt : decl->body->statements){
+        stmt->accept(this);
+    }
 	current->func->arity = decl->args.size();
 	current->func->name = decl->getName().getLexeme();
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -463,37 +474,21 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 
 	ObjFunc* func = endFuncDecl();
 
-	if (func->upvalueCount == 0) {
-		ObjClosure* closure = new ObjClosure(dynamic_cast<ObjFunc*>(func));
-		emitConstant(Value(closure));
-		defineVar(name);
-		return;
-	}
-
-	uInt16 constant = makeConstant(Value(func));
-	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
-	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them,
-	//when "OP_CLOSURE" is executed it will check to see how many upvalues the function captures by going directly to the func->upvalueCount
-	for (int i = 0; i < func->upvalueCount; i++) {
-		emitByte(upvals[i].isLocal ? 1 : 0);
-		emitByte(upvals[i].index);
-	}
-	defineVar(name);
+    //Not possible but just in case
+    if(func->upvalueCount != 0){
+        error(decl->getName(), "Global function with upvalues detected, aborting...");
+    }
+    // Assigning at compile time to save on bytecode
+    globals[index].val = Value(new ObjClosure(func));
 }
 
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	Token className = decl->getName();
-	uInt16 constant = parseVar(className);
+	uInt16 index = parseVar(className);
+    auto klass = new object::ObjClass(className.getLexeme());
 
-	//name of the class is different than the name of the variable containing the class(global vars get a prefix)
-	emitByteAnd16Bit(+OpCode::CLASS, identifierConstant(className));
-
-	ClassChunkInfo temp(currentClass, false);
+	ClassChunkInfo temp(currentClass, nullptr);
 	currentClass = &temp;
-
-	//define the class here, so that we can use it inside it's own methods
-	defineVar(constant);
 
 	if (decl->inherits) {
 		//if the class inherits from some other class, load the parent class and declare 'super' as a local variable which holds the superclass
@@ -501,40 +496,41 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 
 		//if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
 		//undefined behavior (eg. class a : a)
+        uInt16 superclassIndex = 0;
+        Token token;
 		if (decl->inheritedClass->type == AST::ASTType::LITERAL) {
 			AST::LiteralExpr* expr = dynamic_cast<AST::LiteralExpr*>(decl->inheritedClass.get());
-			if (className.equals(expr->token)) {
-				error(expr->token, "A class can't inherit from itself.");
-			}
+            // Gets the index into globals in which the superclass is stored
+            int arg = resolveGlobal(expr->token, false);
+            if(arg == -1) error(expr->token, "Variable isn't defined.");
+            else if(arg == -2) error(expr->token, fmt::format("Trying to access variable '{}' before it's initialized.", expr->token.getLexeme()));
+            superclassIndex = arg;
+            token = expr->token;
 		}
-		decl->inheritedClass->accept(this);
-		//when compiling methods, "this" is implicitly defined as the first local, "super" gets accessed as an upvalue
-		beginScope();
-		addLocal(syntheticToken("super"));
-		defineVar(0);//0 is a dummy number, all this does it mark the latest local variable as ready to use
+        else if(decl->inheritedClass->type == AST::ASTType::MODULE_ACCESS){
+            AST::ModuleAccessExpr* expr = dynamic_cast<AST::ModuleAccessExpr*>(decl->inheritedClass.get());
+            superclassIndex = resolveModuleVariable(expr->moduleName, expr->ident);
+            token = expr->ident;
+        }
 
-		namedVar(className, false);
-		emitByte(+OpCode::INHERIT);
-		currentClass->hasSuperclass = true;
+        if(!globals[superclassIndex].val.isClass()){
+            error(token,"Variable isn't a class(perhaps you tried inheriting from class stored in a global variable, which is illegal, please use the class name).");
+        }
+        currentClass->superclass = globals[superclassIndex].val.asClass();
 	}
-	else {
-		//we need to load the class onto the top of the stack so that 'this' keyword can work correctly inside of methods
-		//the class that 'this' refers to is captured as a upvalue inside of methods
-		if (!decl->inherits) namedVar(className, false);
-	}
+    // Define the class here, so that it can be called inside its own methods
+    // Defining after inheriting so that a class can't be used as its own parent
+    defineVar(index);
 
 	for (AST::ASTNodePtr _method : decl->methods) {
-		method(dynamic_cast<AST::FuncDecl*>(_method.get()), className);
+        auto m = dynamic_cast<AST::FuncDecl*>(_method.get());
+		klass->methods.insert_or_assign(m->getName().getLexeme(), method(m, className));
 	}
-	//pop the parserCurrent class
-	emitByte(+OpCode::POP);
-
-	if (currentClass->hasSuperclass) {
-		endScope();//pops the superclass variable
-	}
-
-	currentClass = currentClass->enclosing;
+	currentClass = nullptr;
+    // Assigning at compile time to save on bytecode
+    globals[index].val = Value(klass);
 }
+
 
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
 	stmt->expr->accept(this);
@@ -948,15 +944,12 @@ uInt16 Compiler::identifierConstant(Token name) {
 }
 
 //if this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
-void Compiler::defineVar(uInt16 name) {
+void Compiler::defineVar(uInt16 index) {
 	if (current->scopeDepth > 0) {
 		markInit();
 		return;
 	}
-	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::DEFINE_GLOBAL, name);
-	else {
-		emitByteAnd16Bit(+OpCode::DEFINE_GLOBAL_LONG, name);
-	}
+    definedGlobals[index] = true;
 }
 
 //gets/sets a variable, respects the scoping rules(locals->upvalues->globals)
@@ -973,8 +966,8 @@ void Compiler::namedVar(Token token, bool canAssign) {
 		getOp = +OpCode::GET_UPVALUE;
 		setOp = +OpCode::SET_UPVALUE;
 	}
-	else if((arg = resolveGlobal(token, canAssign)) != -1){
-		// All global variables are stored in an array, resolveGlobal gets the array
+	else if((arg = resolveGlobal(token, canAssign)) != -1 && arg != -2){
+		// All global variables are stored in an array, resolveGlobal gets index into the array
 		getOp = +OpCode::GET_GLOBAL;
 		setOp = +OpCode::SET_GLOBAL;
 		if (arg > SHORT_CONSTANT_LIMIT) {
@@ -987,37 +980,39 @@ void Compiler::namedVar(Token token, bool canAssign) {
     else{
         string name = token.getLexeme();
         auto it = nativeFuncNames.find(name);
-        if(it == nativeFuncNames.end())
-            error(token, fmt::format("'{}' doesn't match any declared variable name or native function name", name));
+        if(it == nativeFuncNames.end()){
+            if(arg == -1) error(token, fmt::format("'{}' doesn't match any declared variable name or native function name.", name));
+            else if(arg == -2) error(token, fmt::format("Trying to access variable '{}' before it's initialized.", name));
+        }
+
         emitByteAnd16Bit(+OpCode::GET_NATIVE, it->second);
         return;
     }
 	emitBytes(canAssign ? setOp : getOp, arg);
 }
 
-//if 'name' is a global variable it's parsed and a string constant is returned
-//otherwise, if 'name' is a local variable it's passed to declareVar()
+// If 'name' is a global variable it's index in the globals array is returned
+// Otherwise, if 'name' is a local variable it's passed to declareVar()
 uInt16 Compiler::parseVar(Token name) {
 	updateLine(name);
 	declareVar(name);
 	if (current->scopeDepth > 0) return 0;
-	//if this is a global variable, we tack on the index of this CSLModule at the start of the variable name(variable names can't start with numbers)
-	//used to differentiate variables of the same name from different souce files
 
-	//tacking on the parserCurrent index since parseVar is only used for declaring a variable, which can only be done in the parserCurrent source file
+	// Searches for the index of the global variable in the current file
+    // (globals.size() - curGlobalIndex = globals declared in current file)
 	int index = curGlobalIndex;
-	for (Token token : curUnit->topDeclarations) {
-		if (name.equals(token)) return index;
-		index++;
+	for (int i = curGlobalIndex; i < globals.size(); i++) {
+		if (name.getLexeme() == globals[i].name) return i;
 	}
+    // Should never be hit, but here just in case
 	error(name, "Couldn't find variable.");
 	return 0;
 }
 
-//makes sure the compiler is aware that a stack slot is occupied by this local variable
+// Makes sure the compiler is aware that a stack slot is occupied by this local variable
 void Compiler::declareVar(Token& name) {
 	updateLine(name);
-	//if we are currently in global scope, this has no use
+	// If we are currently in global scope, this has no use
 	if (current->scopeDepth == 0) return;
 	for (int i = current->localCount - 1; i >= 0; i--) {
 		Local* local = &current->locals[i];
@@ -1134,48 +1129,29 @@ Token Compiler::syntheticToken(string str) {
 #pragma endregion
 
 #pragma region Classes and methods
-void Compiler::method(AST::FuncDecl* _method, Token className) {
+object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
 	updateLine(_method->getName());
 	uInt16 name = identifierConstant(_method->getName());
-	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-	//is stored in parserCurrent->enclosing
 	FuncType type = FuncType::TYPE_METHOD;
-	//constructors are treated separatly, but are still methods
+	// Constructors are treated separately, but are still methods
 	if (_method->getName().equals(className)) type = FuncType::TYPE_CONSTRUCTOR;
+    // "this" gets implicitly defined as the first local in methods and the constructor
 	current = new CurrentChunkInfo(current, type);
-	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
-	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
-	//we just assign those positions to each arg
+	// Args defined as local in order they were passed to the function
 	for (Token& var : _method->args) {
 		uInt16 constant = parseVar(var);
 		defineVar(constant);
 	}
-	_method->body->accept(this);
+    for(auto stmt : _method->body->statements){
+        stmt->accept(this);
+    }
 	current->func->arity = _method->arity;
 
 	current->func->name = _method->getName().getLexeme();
-	//have to do this here since endFuncDecl() deletes the compilerInfo
-	std::array<Upvalue, UPVAL_MAX> upvals = current->upvalues;
-
 	ObjFunc* func = endFuncDecl();
-	if (func->upvalueCount == 0) {
-		ObjClosure* closure = new ObjClosure(dynamic_cast<ObjFunc*>(func));
-		emitConstant(Value(closure));
-		emitByteAnd16Bit(+OpCode::METHOD, name);
-		return;
-	}
-	uInt16 constant = makeConstant(Value(func));
-
-	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
-	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them,
-	//when we execute "OP_CLOSURE" we will check to see how many upvalues the function captures by going directly to the func->upvalueCount
-	for (int i = 0; i < func->upvalueCount; i++) {
-		emitByte(upvals[i].isLocal ? 1 : 0);
-		emitByte(upvals[i].index);
-	}
-	emitByteAnd16Bit(+OpCode::METHOD, name);
+	if (func->upvalueCount != 0) error(_method->getName(), "Upvalues captured in method, aborting...");
+    return new ObjClosure(func);
 }
 
 bool Compiler::invoke(AST::CallExpr* expr) {
@@ -1209,7 +1185,7 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		if (currentClass == nullptr) {
 			error(superCall->methodName, "Can't use 'super' outside of a class.");
 		}
-		else if (!currentClass->hasSuperclass) {
+		else if (!currentClass->superclass) {
 			error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
 		}
 		//in methods and constructors, "this" is implicitly defined as the first local
@@ -1219,8 +1195,8 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			arg->accept(this);
 			argCount++;
 		}
-		//super gets popped, leaving only the receiver and args on the stack
-		namedVar(syntheticToken("super"), false);
+		// superclass gets popped, leaving only the receiver and args on the stack
+        emitConstant(Value(currentClass->superclass));
         if(name > SHORT_CONSTANT_LIMIT){
             emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
             emit16Bit(name);
@@ -1288,62 +1264,69 @@ void Compiler::updateLine(Token token) {
 
 // For every dependency that's imported without an alias, check if any of its exports match 'symbol', return -1 if not
 int Compiler::checkSymbol(Token symbol) {
-	std::unordered_map<string, CSLModule*> importedSymbols;
 	string lexeme = symbol.getLexeme();
 	for (Dependency dep : curUnit->deps) {
+        auto& decls = dep.module->topDeclarations;
 		if (dep.alias.type == TokenType::NONE) {
-			for (Token token : dep.module->exports) {
-
-				if (token.equals(symbol)) {
-					//if the correct symbol is found, find the index of the global variable inside of globals array
-					int globalIndex = 0;
-					for (int i = 0; i < units.size(); i++) {
-						if (units[i] != dep.module) {
-							globalIndex += units[i]->topDeclarations.size();
-							continue;
-						}
-						for (Token token : units[i]->topDeclarations) {
-							if (token.equals(symbol)) {
-								return globalIndex;
-							}
-							globalIndex++;
-						}
-					}
-					error(symbol, "Couldn't find source file of the definition.");
-				}
+            int globalIndex = 0;
+            for (int i = 0; i < units.size(); i++) {
+                if (units[i] == dep.module) break;
+                globalIndex += units[i]->topDeclarations.size();
+            }
+            int upperLimit = globalIndex + decls.size();
+			for (auto it = decls.begin(); it != decls.end(); it++) {
+                if(!(*it)->getName().equals(symbol)) continue;
+                // If the correct symbol is found, find the index of the global variable inside globals array
+                for(int i = globalIndex; i < upperLimit; i++){
+                    if (lexeme == globals[i].name) return i;
+                }
+                // Should never be hit
+                error(symbol, "Error, variable wasn't loaded into globals array.");
 			}
 		}
 	}
     return -1;
 }
 
-// Finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
-// If it doesn't find any matching names, returns -1
-int Compiler::resolveGlobal(Token name, bool canAssign) {
+// Checks if 'symbol' is declared in the current file, if not passes it to checkSymbol
+// -1 is returned only if no global variable 'symbol' exists, which is checked by checkSymbol
+// -2 if variable exists but isn't defined
+int Compiler::resolveGlobal(Token symbol, bool canAssign) {
 	bool inThisFile = false;
 	int index = curGlobalIndex;
-	for (Token token : curUnit->topDeclarations) {
-		if (name.getLexeme().compare(token.getLexeme()) == 0) {
+    std::shared_ptr<AST::ASTDecl> ptr = nullptr;
+	for (auto decl : curUnit->topDeclarations) {
+		if (symbol.equals(decl->getName())) {
+            // It's an error to read from a variable during its initialization
+            if(!definedGlobals[index]) return -2;
 			inThisFile = true;
+            ptr = decl;
 			break;
 		}
 		index++;
 	}
 	if (canAssign) {
-		if (inThisFile) return index;
+		if (inThisFile){
+            if(ptr->type == AST::ASTType::FUNC) error(symbol, "Cannot assign to a function.");
+            else if(ptr->type == AST::ASTType::CLASS) error(symbol, "Cannot assign to a class.");
+
+            return index;
+        }
+        error(symbol, "Cannot assign to a variable not declared in this module.");
 	}
 	else {
 		if (inThisFile) return index;
 		else {
-			return checkSymbol(name);
+            // Global variables defined in an imported file are guaranteed to be already defined
+			return checkSymbol(symbol);
 		}
 	}
-	error(name, "Variable isn't declared.");
-    return -1;
+    // Never hit, checkSymbol returns -1 upon failure
+	return -1;
 }
 
-//checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
-//if it exists append that modules index to the variable
+// Checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
+// If it exists return the index of the 'variable' in globals array
 uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 	//first find the module with the correct alias
 	Dependency* depPtr = nullptr;
@@ -1364,20 +1347,20 @@ uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 			index += i->topDeclarations.size();
 			continue;
 		}
-		//equals every export of said module against 'variable'
-		for (Token& token : unit->exports) {
-			if (token.equals(variable)) return index;
+		// Checks every export of said module against 'variable'
+		for (auto decl : unit->exports) {
+			if (decl->getName().equals(variable)) return index;
 			index++;
 		}
 	}
 
 	error(variable, fmt::format("Module {} doesn't export this symbol.", depPtr->alias.getLexeme()));
-
+    // Never hit
     return -1;
 }
 #pragma endregion
 
-//only used when debugging _LONG versions of op codes
+// Only used when debugging _LONG versions of op codes
 #undef SHORT_CONSTANT_LIMIT
 
 #undef CHECK_SCOPE_FOR_LOOP
