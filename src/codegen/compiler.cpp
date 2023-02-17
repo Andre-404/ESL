@@ -445,6 +445,7 @@ void Compiler::visitVarDecl(AST::VarDecl* decl) {
     if(current->scopeDepth > 0) return;
     if(global <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, global);
     else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, global);
+    emitByte(+OpCode::POP);
 }
 
 void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
