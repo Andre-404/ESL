@@ -29,7 +29,7 @@ void runtime::Thread::copyVal(Value val) {
 	push(val);
 }
 
-runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value& receiver, string& name){
+runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, string& name){
     runtime::Builtin type = runtime::Builtin::COMMON;
     if(isObj(receiver)){
         switch(decodeObj(receiver)->type){
@@ -71,7 +71,7 @@ void runtime::Thread::popn(int n) {
     stackTop-= n;
 }
 
-Value& runtime::Thread::peek(int depth) {
+Value runtime::Thread::peek(int depth) {
     return stackTop[-1 - depth];
 }
 
@@ -80,7 +80,7 @@ void runtime::Thread::runtimeError(string err, int errorCode) {
     throw errorCode;
 }
 
-void runtime::Thread::callValue(Value& callee, int argCount) {
+void runtime::Thread::callValue(Value callee, int argCount) {
 	if (isObj(callee)) {
 		switch (decodeObj(callee)->type) {
 		case object::ObjType::CLOSURE:
@@ -163,7 +163,7 @@ object::ObjUpval* captureUpvalue(Value* local) {
 
 void runtime::Thread::defineMethod(string& name) {
 	//no need to type check since the compiler made sure to emit code in this order
-	Value& method = peek(0);
+	Value method = peek(0);
 	object::ObjClass* klass = asClass(peek(1));
 	klass->methods.insert_or_assign(name, method);
 	//we only pop the method, since other methods we're compiling will also need to know their class
@@ -181,7 +181,7 @@ bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
 }
 
 void runtime::Thread::invoke(string& fieldName, int argCount) {
-	Value& receiver = peek(argCount);
+	Value receiver = peek(argCount);
 
 	if (isInstance(receiver)) {
         object::ObjInstance* instance = asInstance(receiver);
@@ -217,7 +217,7 @@ bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodNam
     return true;
 }
 
-void runtime::Thread::bindMethodToPrimitive(Value& receiver, string& methodName){
+void runtime::Thread::bindMethodToPrimitive(Value receiver, string& methodName){
     auto func = findNativeMethod(receiver, methodName);
     push(encodeObj(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
 }
@@ -281,25 +281,25 @@ void runtime::Thread::executeBytecode() {
 
 	#define BINARY_OP(op)                                                                                                                                   \
         do {                                                                                                                                                \
-            Value& a = peek(1), b = peek(0);                                                                                                                \
+            Value a = peek(1), b = peek(0);                                                                                                                 \
             if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
             if (isInt(a) && isInt(b)) {                                                                                                                     \
                 int64_t res = decodeInt(a) op decodeInt(b);                                                                                                 \
-                a = (INT_MIN <= res && res <= INT_MAX) ? encodeInt(res) : encodeDouble(res);                                                                \
+                stackTop[-2] = (INT_MIN <= res && res <= INT_MAX) ? encodeInt(res) : encodeDouble(res);                                                     \
             }                                                                                                                                               \
             else {                                                                                                                                          \
                 double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);                                                                                  \
                 double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);                                                                                  \
-                a = encodeDouble(valA op valB);                                                                                                             \
+                stackTop[-2] = encodeDouble(valA op valB);                                                                                                  \
             }                                                                                                                                               \
             --stackTop;                                                                                                                                     \
         } while(0)                                                                                                                                          \
 
 	#define INT_BINARY_OP(op)                                                                                                                          \
         do {                                                                                                                                           \
-            Value& a = peek(1), b = peek(0);                                                                                                           \
+            Value a = peek(1), b = peek(0);                                                                                                            \
             if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-            a = encodeInt(decodeInt(a) op decodeInt(b));                                                                                               \
+            stackTop[-2] = encodeInt(decodeInt(a) op decodeInt(b));                                                                                    \
             --stackTop;                                                                                                                                \
         } while(0)                                                                                                                                     \
 
@@ -606,7 +606,7 @@ void runtime::Thread::executeBytecode() {
                 DISPATCH();
             }
             case +OpCode::GREATER: {
-                Value &a = peek(1), b = peek(0);
+                Value a = peek(1), b = peek(0);
                 if (!isNumber(a) || !isNumber(b)) {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
@@ -614,13 +614,13 @@ void runtime::Thread::executeBytecode() {
                 double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
                 double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
 
-                a = encodeBool(valA > valB);
+                stackTop[-2] = encodeBool(valA > valB);
                 stackTop--;
                 DISPATCH();
             }
             case +OpCode::GREATER_EQUAL: {
                 //Have to do this because of floating point comparisons
-                Value& a = peek(1), b = peek(0);
+                Value a = peek(1), b = peek(0);
                 if (!isNumber(a) || !isNumber(b)) {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)), typeToStr(peek(0))), 3);
                 }
@@ -628,12 +628,12 @@ void runtime::Thread::executeBytecode() {
                 double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
 
                 // TODO: Make this better? (differentiate between int and double comparisons)
-                a = encodeBool(valA >= valB - DBL_EPSILON);
+                stackTop[-2] = encodeBool(valA >= valB - DBL_EPSILON);
                 stackTop--;
                 DISPATCH();
             }
             case +OpCode::LESS: {
-                Value &a = peek(1), b = peek(0);
+                Value a = peek(1), b = peek(0);
                 if (!isNumber(a) || !isNumber(b)) {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
@@ -641,19 +641,19 @@ void runtime::Thread::executeBytecode() {
                 double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
                 double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
 
-                a = encodeBool(valA < valB);
+                stackTop[-2] = encodeBool(valA < valB);
                 stackTop--;
                 DISPATCH();
             }
             case +OpCode::LESS_EQUAL: {
-                Value& a = peek(1), b = peek(0);
+                Value a = peek(1), b = peek(0);
                 if (!isNumber(a) || !isNumber(b)) {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)), typeToStr(peek(0))), 3);
                 }
                 double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
                 double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
 
-                a = encodeBool(valA < valB + DBL_EPSILON);
+                stackTop[-2] = encodeBool(valA < valB + DBL_EPSILON);
                 stackTop--;
                 DISPATCH();
             }
