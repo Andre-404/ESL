@@ -98,9 +98,9 @@ inline bool equals(Value x, Value y){
     ValueType type = getType(x);
     if (type != getType(y)) return false;
     if (type == ValueType::DOUBLE){
-        return FLOAT_EQ(x, y);
+        return FLOAT_EQ(decodeDouble(x), decodeDouble(y));
     }
-    if (type == ValueType::OBJ && decodeObj(x)->type == ObjType::STRING){
+    if (type == ValueType::OBJ && decodeObj(x)->type == ObjType::STRING && decodeObj(y)->type == ObjType::STRING){
         return decodeObj(x)->toString(nullptr) == decodeObj(y)->toString(nullptr);
     }
     return x == y;

@@ -384,12 +384,12 @@ void runtime::Thread::executeBytecode() {
 
             #pragma region Constant opcodes
             case +OpCode::CONSTANT: {
-                Value& constant = READ_CONSTANT();
+                Value constant = READ_CONSTANT();
                 push(constant);
                 DISPATCH();
             }
             case +OpCode::CONSTANT_LONG: {
-                Value& constant = READ_CONSTANT_LONG();
+                Value constant = READ_CONSTANT_LONG();
                 push(constant);
                 DISPATCH();
             }
@@ -436,20 +436,18 @@ void runtime::Thread::executeBytecode() {
 
                 byte type = arg >> 2;
 
-                auto add = [&](Value& x, int y) {
-                    // TODO: Might overflow int
-                    if (isInt(x)) x = encodeInt(decodeInt(x) + y);
-                    else x = encodeDouble(decodeDouble(x) + y);
-                };
-
-                auto tryIncrement = [&](runtime::Thread* t, bool isPrefix, int sign, Value &val) {
+                auto tryIncrement = [](runtime::Thread* t, bool isPrefix, int sign, Value &val) {
                     if (!isNumber(val)) { t->runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3); }
                     if (isPrefix) {
-                        add(val, sign);
+                        // TODO: Might overflow int
+                        if (isInt(val)) val = encodeInt(decodeInt(val) + sign);
+                        else val = encodeDouble(decodeDouble(val) + sign);
                         t->push(val);
                     } else {
                         t->push(val);
-                        add(val, sign);
+                        // TODO: Might overflow int
+                        if (isInt(val)) val = encodeInt(decodeInt(val) + sign);
+                        else val = encodeDouble(decodeDouble(val) + sign);
                     }
                 };
 
