@@ -2,9 +2,11 @@
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Runtime/thread.h"
 #include "../Includes/fmt/format.h"
+#include "../codegen/valueHelpersInline.cpp"
 
 using namespace object;
 using namespace memory;
+using namespace valueHelpers;
 
 #pragma region ObjString
 ObjString::ObjString(string& _str) {
@@ -20,7 +22,7 @@ void ObjString::trace() {
 	//nothing to mark
 }
 
-string ObjString::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjString::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return str;
 }
 
@@ -53,7 +55,7 @@ void ObjFunc::trace() {
 	// Nothing
 }
 
-string ObjFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFunc::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<" + name + ">";
 }
 
@@ -75,7 +77,7 @@ void ObjNativeFunc::trace() {
 	//nothing
 }
 
-string ObjNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjNativeFunc::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return fmt::format("<native function {}>", name);
 }
 
@@ -95,10 +97,10 @@ ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int _arity, string _name,
 }
 
 void ObjBoundNativeFunc::trace() {
-    receiver.mark();
+    mark(receiver);
 }
 
-string ObjBoundNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjBoundNativeFunc::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
     return fmt::format("<native function {}>", name);
 }
 
@@ -123,7 +125,7 @@ void ObjClosure::trace() {
 	gc.markObj(func);
 }
 
-string ObjClosure::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjClosure::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return func->toString(stack);
 }
 
@@ -140,10 +142,10 @@ ObjUpval::ObjUpval(Value& _val) {
 }
 
 void ObjUpval::trace() {
-	val.mark();
+	mark(val);
 }
 
-string ObjUpval::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjUpval::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<upvalue>";
 }
 
@@ -171,15 +173,15 @@ void ObjArray::trace() {
 	int i = 0;
 	uInt64 arrSize = values.size();
 	while (i < arrSize && temp < numOfHeapPtr) {
-		values[i].mark();
-		if(values[i].isObj()) temp++;
+		mark(values[i]);
+		if(isObj(values[i])) temp++;
 	}
 }
 
-string ObjArray::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjArray::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	string str = "[";
     for(Value& val : values){
-        str.append(" " + val.toString(stack)).append(",");
+        str.append(" " + valueHelpers::toString(val, stack)).append(",");
     }
     str.erase(str.size() - 1).append(" ]");
     return str;
@@ -199,11 +201,11 @@ ObjClass::ObjClass(string _name) {
 
 void ObjClass::trace() {
 	for (auto & method : methods) {
-		method.second.mark();
+		mark(method.second);
 	}
 }
 
-string ObjClass::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjClass::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<class " + name + ">";
 }
 
@@ -221,17 +223,17 @@ ObjInstance::ObjInstance(ObjClass* _klass) {
 
 void ObjInstance::trace() {
 	for (auto & field : fields) {
-		field.second.mark();
+		mark(field.second);
 	}
 	if(klass) gc.markObj(klass);
 }
 
-string ObjInstance::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjInstance::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	if(klass) "<" + klass->name + " instance>";
     string str = "{";
     for(auto it : fields){
         str.append(" \"").append(it.first).append("\" : ");
-        str.append(it.second.toString(stack)).append(",");
+        str.append(valueHelpers::toString(it.second, stack)).append(",");
     }
     str.erase(str.size() - 1).append(" }");
     return str;
@@ -251,11 +253,11 @@ ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjClosure* _method) {
 }
 
 void ObjBoundMethod::trace() {
-	receiver.mark();
+	mark(receiver);
 	gc.markObj(method);
 }
 
-string ObjBoundMethod::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjBoundMethod::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return method->func->toString(stack);
 }
 
@@ -280,7 +282,7 @@ void ObjFile::trace() {
 	//nothing
 }
 
-string ObjFile::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFile::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<file>";
 }
 
@@ -302,7 +304,7 @@ void ObjMutex::trace() {
 	//nothing
 }
 
-string ObjMutex::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjMutex::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<mutex>";
 }
 
@@ -315,7 +317,7 @@ uInt64 ObjMutex::getSize() {
 ObjFuture::ObjFuture(runtime::Thread* t) {
 	thread = t;
     marked = false;
-	val = Value::nil();
+	val = encodeNil();
 	type = ObjType::FUTURE;
 }
 ObjFuture::~ObjFuture() {
@@ -328,10 +330,10 @@ void ObjFuture::startParallelExecution() {
 
 void ObjFuture::trace() {
 	//when tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-	val.mark();
+	mark(val);
 }
 
-string ObjFuture::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFuture::toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) {
 	return "<future>";
 }
 

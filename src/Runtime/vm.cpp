@@ -1,12 +1,14 @@
 #include "vm.h"
 #include "../codegen/compiler.h"
+#include "../codegen/valueHelpersInline.cpp"
 
 using std::get;
+using namespace valueHelpers;
 
 runtime::VM::VM(compileCore::Compiler* compiler) {
 
 	// Have to do this before assigning compiler->mainCodeBlock to code because endFuncDecl mutates mainCodeBlock
-	Value val = Value(new object::ObjClosure(compiler->mainBlockFunc));
+	Value val = encodeObj(new object::ObjClosure(compiler->mainBlockFunc));
 	// Main code block
 	code = compiler->mainCodeBlock;
     // Used by all threads
@@ -19,16 +21,16 @@ runtime::VM::VM(compileCore::Compiler* compiler) {
 
 	mainThread = new Thread(this);
 	// First value on the stack is the future holding the thread, mainThread has nil
-	mainThread->copyVal(Value::nil());
+	mainThread->copyVal(encodeNil());
 	mainThread->startThread(&val, 1);
 }
 
 void runtime::VM::mark(memory::GarbageCollector* gc) {
-	for (Globalvar& var : globals) var.val.mark();
+	for (Globalvar& var : globals) valueHelpers::mark(var.val);
 	// All threads in vector are active, finished threads get deleted automatically
 	for (Thread* t : childThreads) t->mark(gc);
 	mainThread->mark(gc);
-	for (Value& val : code.constants) val.mark();
+	for (Value& val : code.constants) valueHelpers::mark(val);
     for (auto func : nativeFuncs) func->marked = true;
 }
 

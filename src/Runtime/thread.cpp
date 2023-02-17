@@ -4,9 +4,11 @@
 #include <utility>
 #include "../Includes/fmt/format.h"
 #include "../Includes/fmt/color.h"
+#include "../codegen/valueHelpersInline.cpp"
 #include "../DebugPrinting/BytecodePrinter.h"
 
 using std::get;
+using namespace valueHelpers;
 
 runtime::Thread::Thread(VM* _vm){
 	stackTop = stack;
@@ -14,6 +16,7 @@ runtime::Thread::Thread(VM* _vm){
     cancelToken.store(false);
 	vm = _vm;
 }
+
 // Copies the callee and all arguments, otherStack points to the callee, arguments are on top of it on the stack
 void runtime::Thread::startThread(Value* otherStack, int num) {
 	memcpy(stackTop, otherStack, sizeof(Value) * num);
@@ -26,16 +29,10 @@ void runtime::Thread::copyVal(Value val) {
 	push(val);
 }
 
-
-#pragma region Helpers
-static bool isFalsey(Value value) {
-    return ((value.isBool() && !get<bool>(value.value)) || value.isNil());
-}
-
 runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value& receiver, string& name){
     runtime::Builtin type = runtime::Builtin::COMMON;
-    if(receiver.isObj()){
-        switch(receiver.asObj()->type){
+    if(isObj(receiver)){
+        switch(decodeObj(receiver)->type){
             case object::ObjType::STRING: type = runtime::Builtin::STRING; break;
             case object::ObjType::ARRAY: type = runtime::Builtin::ARRAY; break;
             case object::ObjType::FILE: type = runtime::Builtin::FILE; break;
@@ -47,12 +44,12 @@ runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value& receiver, strin
     auto& methods = vm->nativeClasses[+type].methods;
     auto it = methods.find(name);
     if(it != methods.end()) return it->second;
-    runtimeError(fmt::format("{} doesn't contain property '{}'.", receiver.typeToStr(), name), 4);
+    runtimeError(fmt::format("{} doesn't contain property '{}'.", typeToStr(receiver), name), 4);
 }
 
 void runtime::Thread::mark(memory::GarbageCollector* gc) {
 	for (Value* i = stack; i < stackTop; i++) {
-		i->mark();
+		valueHelpers::mark(*i);
 	}
 	for (int i = 0; i < frameCount; i++) gc->markObj(frames[i].closure);
 }
@@ -78,24 +75,23 @@ Value& runtime::Thread::peek(int depth) {
     return stackTop[-1 - depth];
 }
 
-
 void runtime::Thread::runtimeError(string err, int errorCode) {
     errorString = std::move(err);
     throw errorCode;
 }
 
 void runtime::Thread::callValue(Value& callee, int argCount) {
-	if (callee.isObj()) {
-		switch (get<object::Obj*>(callee.value)->type) {
+	if (isObj(callee)) {
+		switch (decodeObj(callee)->type) {
 		case object::ObjType::CLOSURE:
-			return call(callee.asClosure(), argCount);
+			return call(asClosure(callee), argCount);
 		case object::ObjType::NATIVE: {
-			int arity = callee.asNativeFn()->arity;
+			int arity = asNativeFn(callee)->arity;
 			//if arity is -1 it means that the function takes in a variable number of args
 			if (arity != -1 && argCount != arity) {
-				runtimeError(fmt::format("Function {} expects {} arguments but got {}.", callee.asNativeFn()->name, arity, argCount), 2);
+				runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
 			}
-			object::NativeFn native = callee.asNativeFn()->func;
+			object::NativeFn native = asNativeFn(callee)->func;
             // If native returns true then the ObjNativeFunc is still on the stack and should be popped
             if(native(this, argCount)) {
                 stackTop[-2] = stackTop[-1];
@@ -104,12 +100,12 @@ void runtime::Thread::callValue(Value& callee, int argCount) {
             return;
 		}
         case object::ObjType::BOUND_NATIVE:{
-            object::ObjBoundNativeFunc* bound = callee.asBoundNativeFunc();
+            object::ObjBoundNativeFunc* bound = asBoundNativeFunc(callee);
             stackTop[-argCount - 1] = bound->receiver;
             int arity = bound->arity;
             //if arity is -1 it means that the function takes in a variable number of args
             if (arity != -1 && argCount != arity) {
-                runtimeError(fmt::format("Function {} expects {} arguments but got {}.", callee.asNativeFn()->name, arity, argCount), 2);
+                runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
             }
             object::NativeFn native = bound->func;
             // If native returns true then the ObjNativeFunc is still on the stack and should be popped
@@ -121,10 +117,10 @@ void runtime::Thread::callValue(Value& callee, int argCount) {
         }
 		case object::ObjType::CLASS: {
 			// We do this so if a GC runs we safely update all the pointers(since the stack is considered a root)
-            object::ObjClass* klass = callee.asClass();
-			stackTop[-argCount - 1] = Value(new object::ObjInstance(klass));
+            object::ObjClass* klass = asClass(callee);
+			stackTop[-argCount - 1] = encodeObj(new object::ObjInstance(klass));
 			if (klass->methods.contains(klass->name)) {
-				return call(klass->methods[klass->name].asClosure(), argCount);
+				return call(asClosure(klass->methods[klass->name]), argCount);
 			}
 			else if (argCount != 0) {
 				runtimeError(fmt::format("Class constructor expects 0 arguments but got {}.", argCount), 2);
@@ -133,7 +129,7 @@ void runtime::Thread::callValue(Value& callee, int argCount) {
 		}
 		case object::ObjType::BOUND_METHOD: {
 			//puts the receiver instance in the 0th slot of the current callframe('this' points to the 0th slot)
-			object::ObjBoundMethod* bound = callee.asBoundMethod();
+			object::ObjBoundMethod* bound = asBoundMethod(callee);
 			stackTop[-argCount - 1] = bound->receiver;
 			return call(bound->method, argCount);
 		}
@@ -161,14 +157,14 @@ void runtime::Thread::call(object::ObjClosure* closure, int argCount) {
 
 object::ObjUpval* captureUpvalue(Value* local) {
 	auto* upval = new object::ObjUpval(*local);
-	*local = Value(upval);
+	*local = encodeObj(upval);
 	return upval;
 }
 
 void runtime::Thread::defineMethod(string& name) {
 	//no need to type check since the compiler made sure to emit code in this order
 	Value& method = peek(0);
-	object::ObjClass* klass = peek(1).asClass();
+	object::ObjClass* klass = asClass(peek(1));
 	klass->methods.insert_or_assign(name, method);
 	//we only pop the method, since other methods we're compiling will also need to know their class
 	pop();
@@ -178,17 +174,17 @@ bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
 	auto it = klass->methods.find(name);
 	if (it == klass->methods.end()) return false;
 	//peek(0) to get the ObjInstance
-	auto* bound = new object::ObjBoundMethod(peek(0), it->second.asClosure());
+	auto* bound = new object::ObjBoundMethod(peek(0), asClosure(it->second));
     // Replace top of the stack
-    *(stackTop - 1) = Value(bound);
+    *(stackTop - 1) = encodeObj(bound);
     return true;
 }
 
 void runtime::Thread::invoke(string& fieldName, int argCount) {
 	Value& receiver = peek(argCount);
 
-	if (receiver.isInstance()) {
-        object::ObjInstance* instance = receiver.asInstance();
+	if (isInstance(receiver)) {
+        object::ObjInstance* instance = asInstance(receiver);
         auto it = instance->fields.find(fieldName);
         // Invoke can be used on functions that are part of a struct or in a instances field
         // when not used for methods they need to replace the instance
@@ -217,44 +213,42 @@ bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodNam
 	auto it = klass->methods.find(methodName);
 	if (it == klass->methods.end()) return false;
 	// The bottom of the call stack will contain the receiver instance
-	call(it->second.asClosure(), argCount);
+	call(asClosure(it->second), argCount);
     return true;
 }
 
 void runtime::Thread::bindMethodToPrimitive(Value& receiver, string& methodName){
     auto func = findNativeMethod(receiver, methodName);
-    push(Value(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
+    push(encodeObj(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
 }
 #pragma endregion
 
 void runtime::Thread::executeBytecode() {
+
 	#ifdef DEBUG_TRACE_EXECUTION
 	std::cout << "-------------Code execution starts-------------\n";
 	#endif // DEBUG_TRACE_EXECUTION
 	// If this is the main thread fut will be nullptr
-	object::ObjFuture* fut = stack[0].asFuture();
+	object::ObjFuture* fut = asFuture(stack[0]);
 	// C++ is more likely to put these locals in registers which speeds things up
 	CallFrame* frame = &frames[frameCount - 1];
 	byte* ip = &vm->code.bytecode[frame->closure->func->bytecodeOffset];
 	Value* slotStart = frame->slots;
-    uInt constantOffset = frame->closure->func->constantsOffset;
+    uint32_t constantOffset = frame->closure->func->constantsOffset;
 
 
-	#pragma region Helpers and Macros
+	#pragma region Helpers & Macros
 	#define READ_BYTE() (*ip++)
 	#define READ_SHORT() (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
 	#define READ_CONSTANT() (vm->code.constants[constantOffset + READ_BYTE()])
 	#define READ_CONSTANT_LONG() (vm->code.constants[constantOffset + READ_SHORT()])
-	#define READ_STRING() (READ_CONSTANT().asString())
-	#define READ_STRING_LONG() (READ_CONSTANT_LONG().asString())
+	#define READ_STRING() (asString(READ_CONSTANT()))
+	#define READ_STRING_LONG() (asString(READ_CONSTANT_LONG()))
 	auto checkArrayBounds = [](runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
-		if (!field.isNumber()) t->runtimeError(fmt::format("Index must be a number, got {}.", callee.typeToStr()), 3);
-		double index = get<double>(field.value);
-		//Trying to access a variable using a float is a error
-		if (!IS_INT(index)) t->runtimeError("Expected integer, got float.", 3);
-		if (index < 0 || index > arr->values.size() - 1)
-			t->runtimeError(fmt::format("Index {} outside of range [0, {}].", (uInt64)index, arr->values.size() - 1), 9);
-		return static_cast<uInt64>(index);
+		if (!isInt(field)) { t->runtimeError(fmt::format("Index must be an integer, got {}.", typeToStr(callee)), 3); }
+        int32_t index = decodeInt(field);
+		if (index < 0 || index > arr->values.size() - 1) { t->runtimeError(fmt::format("Index {} outside of range [0, {}].", index, arr->values.size() - 1), 9); }
+		return index;
 	};
 	auto deleteThread = [](object::ObjFuture* _fut, VM* vm) {
         std::condition_variable &cv = vm->mainThreadCv;
@@ -285,28 +279,30 @@ void runtime::Thread::executeBytecode() {
 	ip = frame->ip,                                                         \
     constantOffset = frame->closure->func->constantsOffset)
 
-	#define BINARY_OP(valueType, op) \
-		do { \
-			if (!peek(0).isNumber() || !peek(1).isNumber()) { \
-				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peek(1).typeToStr(), peek(0).typeToStr()), 3); \
-			} \
-			double b = peek(0).asNumber(); \
-			Value* a = (--stackTop) - 1; \
-			a->value = get<double>(a->value) op b; \
-		} while (false)
+	#define BINARY_OP(op)                                                                                                                                   \
+        do {                                                                                                                                                \
+            Value& a = peek(1), b = peek(0);                                                                                                                \
+            if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+            if (isInt(a) && isInt(b)) {                                                                                                                     \
+                int64_t res = decodeInt(a) op decodeInt(b);                                                                                                 \
+                a = (INT_MIN <= res && res <= INT_MAX) ? encodeInt(res) : encodeDouble(res);                                                                \
+            }                                                                                                                                               \
+            else {                                                                                                                                          \
+                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);                                                                                  \
+                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);                                                                                  \
+                a = encodeDouble(valA op valB);                                                                                                             \
+            }                                                                                                                                               \
+            --stackTop;                                                                                                                                     \
+        } while(0)                                                                                                                                          \
 
-	#define INT_BINARY_OP(valueType, op)\
-		do {\
-			if (!peek(0).isNumber() || !peek(1).isNumber()) { \
-				runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", peek(1).typeToStr(), peek(0).typeToStr()), 3); \
-			} \
-			if (!IS_INT(get<double>(peek(0).value)) || !IS_INT(get<double>(peek(1).value))) { \
-				runtimeError("Operands must be a integers, got floats.", 3); \
-			} \
-			uInt64 b = static_cast<uInt64>(peek(0).asNumber()); \
-			Value* a = (--stackTop) - 1; \
-			a->value = static_cast<double>(static_cast<uInt64>(get<double>(a->value)) op b); \
-		} while (false)
+	#define INT_BINARY_OP(op)                                                                                                                          \
+        do {                                                                                                                                           \
+            Value& a = peek(1), b = peek(0);                                                                                                           \
+            if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+            a = encodeInt(decodeInt(a) op decodeInt(b));                                                                                               \
+            --stackTop;                                                                                                                                \
+        } while(0)                                                                                                                                     \
+
     #pragma endregion
 
     #define DISPATCH() goto loop
@@ -314,7 +310,7 @@ void runtime::Thread::executeBytecode() {
         loop:
         if(cancelToken.load()) {
             // If this is a child thread that has a future attached to it, assign the value to the future
-            fut->val = Value::nil();
+            fut->val = encodeNil();
             // Since this thread gets deleted by deleteThread, cond var to notify the main thread must be cached in the function
             std::condition_variable &cv = vm->mainThreadCv;
             // If execution is finishing and the main thread is waiting to run the gc
@@ -381,7 +377,7 @@ void runtime::Thread::executeBytecode() {
                 DISPATCH();
             }
             case +OpCode::LOAD_INT: {
-                push(Value(static_cast<double>(READ_BYTE())));
+                push(encodeInt(READ_BYTE()));
                 DISPATCH();
             }
             #pragma endregion
@@ -398,43 +394,38 @@ void runtime::Thread::executeBytecode() {
                 DISPATCH();
             }
             case +OpCode::NIL:
-                push(Value::nil());
+                push(encodeNil());
                 DISPATCH();
             case +OpCode::TRUE:
-                push(Value(true));
+                push(encodeBool(true));
                 DISPATCH();
             case +OpCode::FALSE:
-                push(Value(false));
+                push(encodeBool(false));
                 DISPATCH();
             #pragma endregion
 
             #pragma region Unary opcodes
             case +OpCode::NEGATE: {
                 Value val = pop();
-                if (!val.isNumber()) {
-                    runtimeError(fmt::format("Operand must be a number, got {}.", val.typeToStr()), 3);
+                if (!isNumber(val)) {
+                    runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3);
                 }
-                push(Value(-get<double>(val.value)));
+                if (isInt(val)) { push(encodeInt(-decodeInt(val))); }
+                else { push(encodeDouble(-decodeDouble(val))); }
                 DISPATCH();
             }
             case +OpCode::NOT: {
-                push(Value(isFalsey(pop())));
+                push(encodeBool(isFalsey(pop())));
                 DISPATCH();
             }
             case +OpCode::BIN_NOT: {
-                // Doing implicit conversion from double to long long, could end up with precision errors
-                Value val = pop();
-                if (!val.isNumber()) {
-                    runtimeError(fmt::format("Operand must be a number, got {}.", peek(0).typeToStr()), 3);
+                if (!isNumber(peek(0))) {
+                    runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(peek(0))), 3);
                 }
-                if (!IS_INT(get<double>(val.value))) {
+                if (!isInt(peek(0))) {
                     runtimeError("Number must be a integer, got a float.", 3);
                 }
-                double num = get<double>(pop().value);
-                // Cursed as shit
-                auto temp = static_cast<long long>(num);
-                temp = ~temp;
-                push(Value(static_cast<double>(temp)));
+                stackTop[-1] = encodeInt(~decodeInt(peek(0)));
                 DISPATCH();
             }
             case +OpCode::INCREMENT: {
@@ -445,15 +436,20 @@ void runtime::Thread::executeBytecode() {
 
                 byte type = arg >> 2;
 
-                auto tryIncrement = [](runtime::Thread* t, bool isPrefix, int sign, Value &val) {
-                    if (!val.isNumber())
-                        t->runtimeError(fmt::format("Operand must be a number, got {}.", val.typeToStr()), 3);
+                auto add = [&](Value& x, int y) {
+                    // TODO: Might overflow int
+                    if (isInt(x)) x = encodeInt(decodeInt(x) + y);
+                    else x = encodeDouble(decodeDouble(x) + y);
+                };
+
+                auto tryIncrement = [&](runtime::Thread* t, bool isPrefix, int sign, Value &val) {
+                    if (!isNumber(val)) { t->runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3); }
                     if (isPrefix) {
-                        val.value = get<double>(val.value) + sign;
+                        add(val, sign);
                         t->push(val);
                     } else {
                         t->push(val);
-                        val.value = get<double>(val.value) + sign;
+                        add(val, sign);
                     }
                 };
 
@@ -465,8 +461,8 @@ void runtime::Thread::executeBytecode() {
                         byte slot = READ_BYTE();
                         Value &num = slotStart[slot];
                         // If this is a local upvalue
-                        if (num.isUpvalue()) {
-                            Value &temp = num.asUpvalue()->val;
+                        if (isUpvalue(num)) {
+                            Value &temp = asUpvalue(num)->val;
                             INCREMENT(temp);
                         }
                         INCREMENT(num);
@@ -488,13 +484,13 @@ void runtime::Thread::executeBytecode() {
                     }
                     case 4: {
                         Value inst = pop();
-                        if (!inst.isInstance()) {
+                        if (!isInstance(inst)) {
                             runtimeError(
-                                    fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()),
+                                    fmt::format("Only instances/structs have properties, got {}.", typeToStr(inst)),
                                     3);
                         }
 
-                        object::ObjInstance *instance = inst.asInstance();
+                        object::ObjInstance *instance = asInstance(inst);
                         object::ObjString *str = READ_STRING();
                         auto it = instance->fields.find(str->str);
                         if (it == instance->fields.end()) {
@@ -505,13 +501,13 @@ void runtime::Thread::executeBytecode() {
                     }
                     case 5: {
                         Value inst = pop();
-                        if (!inst.isInstance()) {
+                        if (!isInstance(inst)) {
                             runtimeError(
-                                    fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()),
+                                    fmt::format("Only instances/structs have properties, got {}.", typeToStr(inst)),
                                     3);
                         }
 
-                        object::ObjInstance *instance = inst.asInstance();
+                        object::ObjInstance *instance = asInstance(inst);
                         object::ObjString *str = READ_STRING_LONG();
 
                         auto it = instance->fields.find(str->str);
@@ -525,19 +521,19 @@ void runtime::Thread::executeBytecode() {
                         Value field = pop();
                         Value callee = pop();
 
-                        if (callee.isArray()) {
-                            object::ObjArray *arr = callee.asArray();
+                        if (isArray(callee)) {
+                            object::ObjArray *arr = asArray(callee);
                             uInt64 index = checkArrayBounds(this, field, callee, arr);
                             Value &num = arr->values[index];
                             INCREMENT(num);
                         }
                         // If it's not an array nor a instance, throw type error
-                        if (!callee.isInstance()) runtimeError(fmt::format("Expected a array or struct, got {}.", callee.typeToStr()), 3);
-                        if (!field.isString())
-                            runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
+                        if (!isInstance(callee)) runtimeError(fmt::format("Expected a array or struct, got {}.", typeToStr(callee)), 3);
+                        if (!isString(field))
+                            runtimeError(fmt::format("Expected a string for field name, got {}.", typeToStr(field)), 3);
 
-                        object::ObjInstance *instance = callee.asInstance();
-                        object::ObjString *str = field.asString();
+                        object::ObjInstance *instance = asInstance(callee);
+                        object::ObjString *str = asString(field);
 
                         auto it = instance->fields.find(str->str);
                         if (it == instance->fields.end()) {
@@ -554,47 +550,45 @@ void runtime::Thread::executeBytecode() {
 
             #pragma region Binary opcodes
             case +OpCode::BITWISE_XOR:
-                INT_BINARY_OP(NUMBER_VAL, ^);
+                INT_BINARY_OP(^);
                 DISPATCH();
             case +OpCode::BITWISE_OR:
-                INT_BINARY_OP(NUMBER_VAL, |);
+                INT_BINARY_OP(|);
                 DISPATCH();
             case +OpCode::BITWISE_AND:
-                INT_BINARY_OP(NUMBER_VAL, &);
+                INT_BINARY_OP(&);
                 DISPATCH();
             case +OpCode::ADD: {
-                if (peek(0).isNumber() && peek(1).isNumber()) {
-                    double b = pop().asNumber();
-                    Value *a = stackTop - 1;
-                    a->value = a->asNumber() + b;
-                } else if (peek(0).isString() && peek(1).isString()) {
-                    object::ObjString *b = pop().asString();
-                    object::ObjString *a = pop().asString();
+                if (isNumber(peek(0)) && isNumber(peek(1))) {
+                    BINARY_OP(+);
+                } else if (isString(peek(0)) && isString(peek(1))) {
+                    object::ObjString *b = asString(pop());
+                    object::ObjString *a = asString(pop());
 
                     push(Value(a->concat(b)));
                 } else {
                     runtimeError(fmt::format("Operands must be two numbers or two strings, got {} and {}.",
-                                             peek(1).typeToStr(), peek(0).typeToStr()), 3);
+                                             typeToStr(peek(1)), typeToStr(peek(0))), 3);
                 }
                 DISPATCH();
             }
             case +OpCode::SUBTRACT:
-                BINARY_OP(NUMBER_VAL, -);
+                BINARY_OP(-);
                 DISPATCH();
             case +OpCode::MULTIPLY:
-                BINARY_OP(NUMBER_VAL, *);
+                BINARY_OP(*);
                 DISPATCH();
             case +OpCode::DIVIDE:
-                BINARY_OP(NUMBER_VAL, /);
+                BINARY_OP(/);
                 DISPATCH();
             case +OpCode::MOD:
-                INT_BINARY_OP(NUMBER_VAL, %);
+                INT_BINARY_OP(%);
                 DISPATCH();
             case +OpCode::BITSHIFT_LEFT:
-                INT_BINARY_OP(NUMBER_VAL, <<);
+                INT_BINARY_OP(<<);
                 DISPATCH();
             case +OpCode::BITSHIFT_RIGHT:
-                INT_BINARY_OP(NUMBER_VAL, >>);
+                INT_BINARY_OP(>>);
                 DISPATCH();
             #pragma endregion
 
@@ -602,50 +596,72 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::EQUAL: {
                 Value b = pop();
                 Value a = pop();
-                push(Value(a == b));
+                push(encodeBool(equals(a, b)));
                 DISPATCH();
             }
             case +OpCode::NOT_EQUAL: {
                 Value b = pop();
                 Value a = pop();
-                push(Value(a != b));
+                push(encodeBool(!equals(a, b)));
                 DISPATCH();
             }
-            case +OpCode::GREATER:
-                BINARY_OP(BOOL_VAL, >);
+            case +OpCode::GREATER: {
+                Value &a = peek(1), b = peek(0);
+                if (!isNumber(a) || !isNumber(b)) {
+                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
+                                             typeToStr(peek(0))), 3);
+                }
+                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
+                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
+
+                a = encodeBool(valA > valB);
+                stackTop--;
                 DISPATCH();
+            }
             case +OpCode::GREATER_EQUAL: {
                 //Have to do this because of floating point comparisons
-                if (!peek(0).isNumber() || !peek(1).isNumber()) {
-                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", peek(1).typeToStr(),
-                                             peek(0).typeToStr()), 3);
+                Value& a = peek(1), b = peek(0);
+                if (!isNumber(a) || !isNumber(b)) {
+                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)), typeToStr(peek(0))), 3);
                 }
-                double b = get<double>(pop().value);
-                double a = get<double>(pop().value);
-                if (a > b || FLOAT_EQ(a, b)) push(Value(true));
-                else push(Value(false));
+                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
+                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
+
+                // TODO: Make this better? (differentiate between int and double comparisons)
+                a = encodeBool(valA >= valB - DBL_EPSILON);
+                stackTop--;
                 DISPATCH();
             }
-            case +OpCode::LESS:
-                BINARY_OP(BOOL_VAL, <);
-                DISPATCH();
-            case +OpCode::LESS_EQUAL: {
-                //Have to do this because of floating point comparisons
-                if (!peek(0).isNumber() || !peek(1).isNumber()) {
-                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", peek(1).typeToStr(),
-                                             peek(0).typeToStr()), 3);
+            case +OpCode::LESS: {
+                Value &a = peek(1), b = peek(0);
+                if (!isNumber(a) || !isNumber(b)) {
+                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
+                                             typeToStr(peek(0))), 3);
                 }
-                double b = get<double>(pop().value);
-                double a = get<double>(pop().value);
-                if (a < b || FLOAT_EQ(a, b)) push(Value(true));
-                else push(Value(false));
+                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
+                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
+
+                a = encodeBool(valA < valB);
+                stackTop--;
+                DISPATCH();
+            }
+            case +OpCode::LESS_EQUAL: {
+                Value& a = peek(1), b = peek(0);
+                if (!isNumber(a) || !isNumber(b)) {
+                    runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)), typeToStr(peek(0))), 3);
+                }
+                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
+                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
+
+                a = encodeBool(valA < valB + DBL_EPSILON);
+                stackTop--;
                 DISPATCH();
             }
             #pragma endregion
 
             #pragma region Statements and var
             case +OpCode::GET_NATIVE: {
-                push(Value(vm->nativeFuncs[READ_SHORT()]));
+                push(encodeObj(vm->nativeFuncs[READ_SHORT()]));
                 DISPATCH();
             }
 
@@ -689,8 +705,8 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_LOCAL: {
                 uint8_t slot = READ_BYTE();
                 Value &val = slotStart[slot];
-                if (val.isUpvalue()) {
-                    push(val.asUpvalue()->val);
+                if (isUpvalue(val)) {
+                    push(asUpvalue(val)->val);
                     DISPATCH();
                 }
                 push(slotStart[slot]);
@@ -700,8 +716,8 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SET_LOCAL: {
                 uint8_t slot = READ_BYTE();
                 Value &val = slotStart[slot];
-                if (val.isUpvalue()) {
-                    val.asUpvalue()->val = peek(0);
+                if (isUpvalue(val)) {
+                    asUpvalue(val)->val = peek(0);
                     DISPATCH();
                 }
                 slotStart[slot] = peek(0);
@@ -834,7 +850,7 @@ void runtime::Thread::executeBytecode() {
             }
 
             case +OpCode::CLOSURE: {
-                auto *closure = new object::ObjClosure(READ_CONSTANT().asFunction());
+                auto *closure = new object::ObjClosure(asFunction(READ_CONSTANT()));
                 for (auto &upval: closure->upvals) {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
@@ -844,11 +860,11 @@ void runtime::Thread::executeBytecode() {
                         upval = frame->closure->upvals[index];
                     }
                 }
-                push(Value(closure));
+                push(encodeObj(closure));
                 DISPATCH();
             }
             case +OpCode::CLOSURE_LONG: {
-                auto *closure = new object::ObjClosure(READ_CONSTANT_LONG().asFunction());
+                auto *closure = new object::ObjClosure(asFunction(READ_CONSTANT_LONG()));
                 for (auto &upval: closure->upvals) {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
@@ -858,7 +874,7 @@ void runtime::Thread::executeBytecode() {
                         upval = frame->closure->upvals[index];
                     }
                 }
-                push(Value(closure));
+                push(encodeObj(closure));
                 DISPATCH();
             }
             #pragma endregion
@@ -869,7 +885,7 @@ void runtime::Thread::executeBytecode() {
                 auto *t = new Thread(vm);
                 auto *newFut = new object::ObjFuture(t);
                 // Ensures that ObjFuture tied to this thread lives long enough for the thread to finish execution
-                t->copyVal(Value(newFut));
+                t->copyVal(encodeObj(newFut));
                 // Copies the function being called and the arguments
                 t->startThread(&stackTop[-1 - argCount], argCount + 1);
                 stackTop -= argCount + 1;
@@ -879,15 +895,15 @@ void runtime::Thread::executeBytecode() {
                     vm->childThreads.push_back(t);
                 }
                 newFut->startParallelExecution();
-                push(Value(newFut));
+                push(encodeObj(newFut));
                 DISPATCH();
             }
 
             case +OpCode::AWAIT: {
                 Value val = pop();
-                if (!val.isFuture())
-                    runtimeError(fmt::format("Await can only be applied to a future, got {}", val.typeToStr()), 3);
-                object::ObjFuture *futToAwait = val.asFuture();
+                if (!isFuture(val))
+                    runtimeError(fmt::format("Await can only be applied to a future, got {}", typeToStr(val)), 3);
+                object::ObjFuture *futToAwait = asFuture(val);
                 futToAwait->fut.wait();
                 // Immediately delete the thread object to conserve memory
                 deleteThread(futToAwait, vm);
@@ -906,12 +922,12 @@ void runtime::Thread::executeBytecode() {
                     //size-i to because the values on the stack are in reverse order compared to how they're supposed to be in a array
                     Value val = pop();
                     //if numOfHeapPtr is 0 we don't trace or update the array when garbage collecting
-                    if (val.isObj()) arr->numOfHeapPtr++;
+                    if (isObj(val)) arr->numOfHeapPtr++;
 
                     arr->values[size - i - 1] = val;
                     i++;
                 }
-                push(Value(arr));
+                push(encodeObj(arr));
                 DISPATCH();
             }
 
@@ -922,18 +938,17 @@ void runtime::Thread::executeBytecode() {
                 Value field = pop();
                 Value callee = pop();
 
-                if (callee.isArray()) {
-                    object::ObjArray *arr = callee.asArray();
+                if (isArray(callee)) {
+                    object::ObjArray *arr = asArray(callee);
                     uInt64 index = checkArrayBounds(this, field, callee, arr);
                     push(arr->values[index]);
                     DISPATCH();
                     // Only structs can be access with [](eg. struct["field"]
-                }else if(callee.isInstance() && !callee.asInstance()->klass) {
-                    if (!field.isString())
-                        runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
+                }else if(isInstance(callee) && !asInstance(callee)->klass) {
+                    if (!isString(field)) { runtimeError(fmt::format("Expected a string for field name, got {}.", typeToStr(field)), 3); }
 
-                    object::ObjInstance *instance = callee.asInstance();
-                    object::ObjString *name = field.asString();
+                    object::ObjInstance *instance = asInstance(callee);
+                    object::ObjString *name = asString(field);
                     auto it = instance->fields.find(name->str);
                     if (it != instance->fields.end()) {
                         push(it->second);
@@ -941,7 +956,7 @@ void runtime::Thread::executeBytecode() {
                     }
                     runtimeError(fmt::format("Field '{}' doesn't exist.", name->str), 4);
                 }
-                runtimeError(fmt::format("Expected an array or struct, got {}.", callee.typeToStr()), 3);
+                runtimeError(fmt::format("Expected an array or struct, got {}.", typeToStr(callee)), 3);
             }
 
             case +OpCode::SET: {
@@ -950,30 +965,29 @@ void runtime::Thread::executeBytecode() {
                 Value callee = pop();
                 Value val = peek(0);
 
-                if (callee.isArray()) {
-                    object::ObjArray *arr = callee.asArray();
+                if (isArray(callee)) {
+                    object::ObjArray *arr = asArray(callee);
                     uInt64 index = checkArrayBounds(this, field, callee, arr);
 
                     //if numOfHeapPtr is 0 we don't trace or update the array when garbage collecting
-                    if (val.isObj() && !arr->values[index].isObj()) arr->numOfHeapPtr++;
-                    else if (!val.isObj() && arr->values[index].isObj()) arr->numOfHeapPtr--;
+                    if (isObj(val) && !isObj(arr->values[index])) arr->numOfHeapPtr++;
+                    else if (!isObj(val) && isObj(arr->values[index])) arr->numOfHeapPtr--;
                     arr->values[index] = val;
                     DISPATCH();
-                }else if(callee.isInstance() && !callee.asInstance()->klass) {
-                    if (!field.isString())
-                        runtimeError(fmt::format("Expected a string for field name, got {}.", field.typeToStr()), 3);
+                }else if(isInstance(callee) && !asInstance(callee)->klass) {
+                    if (!isString(field)) { runtimeError(fmt::format("Expected a string for field name, got {}.", typeToStr(field)), 3); }
 
-                    object::ObjInstance *instance = callee.asInstance();
-                    object::ObjString *str = field.asString();
+                    object::ObjInstance *instance = asInstance(callee);
+                    object::ObjString *str = asString(field);
                     //setting will always succeed, and we don't care if we're overriding an existing field, or creating a new one
                     instance->fields.insert_or_assign(str->str, val);
                     DISPATCH();
                 }
-                runtimeError(fmt::format("Expected an array or struct, got {}.", callee.typeToStr()), 3);
+                runtimeError(fmt::format("Expected an array or struct, got {}.", typeToStr(callee)), 3);
             }
 
             case +OpCode::CLASS: {
-                push(Value(new object::ObjClass(READ_STRING_LONG()->str)));
+                push(encodeObj(new object::ObjClass(READ_STRING_LONG()->str)));
                 DISPATCH();
             }
 
@@ -981,8 +995,8 @@ void runtime::Thread::executeBytecode() {
                 Value inst = pop();
                 object::ObjString *name = READ_STRING();
 
-                if (inst.isInstance()) {
-                    object::ObjInstance *instance = inst.asInstance();
+                if (isInstance(inst)) {
+                    object::ObjInstance *instance = asInstance(inst);
                     auto it = instance->fields.find(name->str);
                     if (it != instance->fields.end()) {
                         push(it->second);
@@ -997,8 +1011,8 @@ void runtime::Thread::executeBytecode() {
                 Value inst = pop();
                 object::ObjString *name = READ_STRING_LONG();
 
-                if (inst.isInstance()) {
-                    object::ObjInstance *instance = inst.asInstance();
+                if (isInstance(inst)) {
+                    object::ObjInstance *instance = asInstance(inst);
                     auto it = instance->fields.find(name->str);
                     if (it != instance->fields.end()) {
                         push(it->second);
@@ -1012,10 +1026,10 @@ void runtime::Thread::executeBytecode() {
 
             case +OpCode::SET_PROPERTY: {
                 Value inst = pop();
-                if (!inst.isInstance()) {
-                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()), 3);
+                if (!isInstance(inst)) {
+                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", typeToStr(inst)), 3);
                 }
-                object::ObjInstance *instance = inst.asInstance();
+                object::ObjInstance *instance = asInstance(inst);
 
                 //we don't care if we're overriding or creating a new field
                 instance->fields.insert_or_assign(READ_STRING()->str, peek(0));
@@ -1023,10 +1037,10 @@ void runtime::Thread::executeBytecode() {
             }
             case +OpCode::SET_PROPERTY_LONG: {
                 Value inst = pop();
-                if (!inst.isInstance()) {
-                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", inst.typeToStr()), 3);
+                if (!isInstance(inst)) {
+                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", typeToStr(inst)), 3);
                 }
-                object::ObjInstance *instance = inst.asInstance();
+                object::ObjInstance *instance = asInstance(inst);
 
                 //we don't care if we're overriding or creating a new field
                 instance->fields.insert_or_assign(READ_STRING_LONG()->str, peek(0));
@@ -1044,7 +1058,7 @@ void runtime::Thread::executeBytecode() {
                     object::ObjString *name = READ_STRING();
                     inst->fields.insert_or_assign(name->str, pop());
                 }
-                push(Value(inst));
+                push(encodeObj(inst));
                 DISPATCH();
             }
             case +OpCode::CREATE_STRUCT_LONG: {
@@ -1058,7 +1072,7 @@ void runtime::Thread::executeBytecode() {
                     object::ObjString *name = READ_STRING_LONG();
                     inst->fields.insert_or_assign(name->str, pop());
                 }
-                push(Value(inst));
+                push(encodeObj(inst));
                 DISPATCH();
             }
 
@@ -1089,12 +1103,13 @@ void runtime::Thread::executeBytecode() {
 
             case +OpCode::INHERIT: {
                 Value superclass = peek(1);
-                if (!superclass.isClass()) {
-                    runtimeError(fmt::format("Superclass must be a class, got {}.", superclass.typeToStr()), 3);
+                if (!isClass(superclass)) {
+                    runtimeError(fmt::format("Superclass must be a class, got {}.", typeToStr(superclass)), 3);
                 }
-                object::ObjClass *subclass = peek(0).asClass();
+                object::ObjClass *subclass = asClass(peek(0));
                 //copy down inheritance
-                for (auto it: superclass.asClass()->methods) {
+                // TODO: Inefficient?
+                for (auto it: asClass(superclass)->methods) {
                     subclass->methods.insert_or_assign(it.first, it.second);
                 }
                 DISPATCH();
@@ -1103,7 +1118,7 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_SUPER: {
                 //super is ALWAYS followed by a field
                 object::ObjString *name = READ_STRING();
-                object::ObjClass *superclass = pop().asClass();
+                object::ObjClass *superclass = asClass(pop());
 
                 if(!bindMethod(superclass, name->str)) {
                     runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
@@ -1113,7 +1128,7 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_SUPER_LONG: {
                 //super is ALWAYS followed by a field
                 object::ObjString *name = READ_STRING_LONG();
-                object::ObjClass *superclass = pop().asClass();
+                object::ObjClass *superclass = asClass(pop());
 
                 if(!bindMethod(superclass, name->str)) {
                     runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
@@ -1125,7 +1140,7 @@ void runtime::Thread::executeBytecode() {
                 //works same as +OpCode::INVOKE, but uses invokeFromClass() to specify the superclass
                 int argCount = READ_BYTE();
                 object::ObjString *method = READ_STRING();
-                object::ObjClass *superclass = pop().asClass();
+                object::ObjClass *superclass = asClass(pop());
                 STORE_FRAME();
                 if(!invokeFromClass(superclass, method->str, argCount)) {
                     runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);
@@ -1137,7 +1152,7 @@ void runtime::Thread::executeBytecode() {
                 //works same as +OpCode::INVOKE, but uses invokeFromClass() to specify the superclass
                 int argCount = READ_BYTE();
                 object::ObjString *method = READ_STRING_LONG();
-                object::ObjClass *superclass = pop().asClass();
+                object::ObjClass *superclass = asClass(pop());
                 STORE_FRAME();
                 if(!invokeFromClass(superclass, method->str, argCount)) {
                     runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);

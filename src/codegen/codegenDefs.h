@@ -2,6 +2,7 @@
 #include <variant>
 #include "../moduleDefs.h"
 #include "../Includes/robinHood.h"
+#include "../Objects/objects.h"
 
 namespace object {
 	class Obj;
@@ -34,85 +35,20 @@ namespace object {
 }
 
 enum class ValueType {
-	NUM = 0,
-	BOOL = 1,
-	OBJ = 2,
-	NIL = 3
+	DOUBLE,
+	BOOL,
+	NIL,
+    INT,
+	OBJ, // This is a pointer
 };
 inline constexpr unsigned operator+ (ValueType const val) { return static_cast<byte>(val); }
 
-struct Value {
-	std::variant<double, bool, object::Obj*> value;
-
-	Value() {
-		value = nullptr;
-	}
-
-	Value(double num) {
-		value = num;
-	}
-
-	Value(bool _bool) {
-		value = _bool;
-	}
-
-	Value(object::Obj* _object) {
-		value = _object;
-	}
-
-	static Value nil() {
-		return Value();
-	}
-
-	bool operator== (const Value& other) const;
-	bool operator!= (const Value& other) const;
-
-	void print();
-
-	#pragma region Helpers
-	bool isBool() const { return std::holds_alternative<bool>(value); };
-	bool isNumber() const { return std::holds_alternative<double>(value); };
-	bool isNil() const { return std::holds_alternative<object::Obj*>(value) && get<object::Obj*>(value) == nullptr; };
-	bool isObj() const { return std::holds_alternative<object::Obj*>(value) && get<object::Obj*>(value) != nullptr; };
-
-	bool asBool() { return get<bool>(value); }
-	double asNumber() { return get<double>(value); }
-	object::Obj* asObj() { return get<object::Obj*>(value); }
-
-	// Put everything in obj
-	bool isString() const;
-	bool isFunction() const;
-	bool isNativeFn() const;
-    bool isBoundNativeFunc() const;
-	bool isArray() const;
-	bool isClosure() const;
-	bool isClass() const;
-	bool isInstance() const;
-	bool isBoundMethod() const;
-	bool isUpvalue() const;
-	bool isFile() const;
-	bool isMutex() const;
-	bool isFuture() const;
-
-	object::ObjString* asString();
-	object::ObjFunc* asFunction();
-	object::ObjNativeFunc* asNativeFn();
-    object::ObjBoundNativeFunc* asBoundNativeFunc();
-	object::ObjArray* asArray();
-	object::ObjClosure* asClosure();
-	object::ObjClass* asClass();
-	object::ObjInstance* asInstance();
-	object::ObjBoundMethod* asBoundMethod();
-	object::ObjUpval* asUpvalue();
-	object::ObjFile* asFile();
-	object::ObjMutex* asMutex();
-	object::ObjFuture* asFuture();
-
-	void mark();
-	string typeToStr();
-    string toString(robin_hood::unordered_set<object::Obj*>& stack);
-	#pragma endregion
-};
+namespace valueHelpers {
+    string toString(Value x, std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack = nullptr);
+    void print(Value x);
+    void mark(Value x);
+    string typeToStr(Value x);
+}
 
 struct Globalvar {
 	string name;

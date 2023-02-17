@@ -1,11 +1,13 @@
 #include "codegenDefs.h"
 #include "../ErrorHandling/errorHandler.h"
-#include "../Objects/objects.h"
 #include "../DebugPrinting/BytecodePrinter.h"
 #include "../Includes/fmt/format.h"
+#include "../codegen/valueHelpersInline.cpp"
 #include <iostream>
+#include <iomanip>
 
 using namespace object;
+using namespace valueHelpers;
 using std::get;
 
 Chunk::Chunk() {}
@@ -43,6 +45,7 @@ void Chunk::disassemble(string name, int startingOffset, int constantsOffset) {
 //adds the constant to the array and returns it's index, which is used in conjuction with OP_CONSTANT
 //first checks if this value already exists, this helps keep the constants array small
 //returns index of the constant
+// TODO: Adding constants is O(n)?? Make it O(1) with a hash set
 uInt Chunk::addConstant(Value val) {
 	for (uInt i = 0; i < constants.size(); i++) {
 		if (constants[i] == val) return i;
@@ -52,170 +55,61 @@ uInt Chunk::addConstant(Value val) {
 	return size;
 }
 
-string valueToStr(Value& val, robin_hood::unordered_set<object::Obj*>& stack) {
-	switch (val.value.index()) {
-	case 0: {
-		double num = val.asNumber();
-		int prec = IS_INT(num) ? 0 : 5;
-		return std::to_string(num).substr(0, std::to_string(num).find(".") + prec);
-	}
-	case 1:
-		return val.asBool() ? "true" : "false";
-	case 2: {
-        auto ptr = val.asObj();
-        if (ptr == nullptr) return "nil";
-        if (stack.count(ptr) > 0) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uInt64>(ptr));
-        stack.insert(ptr);
-        string str = ptr->toString(stack);
-        stack.erase(ptr);
-        return str;
+string valueHelpers::toString(Value x, std::shared_ptr<robin_hood::unordered_set<Obj*>> stack){
+    switch(getType(x)){
+        case ValueType::DOUBLE:
+            // TODO: Make custom precision with string streams?
+            return std::to_string(decodeDouble(x));
+        case ValueType::BOOL:
+            return (decodeBool(x)) ? "true" : "false";
+        case ValueType::NIL:
+            return "null";
+        case ValueType::INT:
+            return std::to_string(decodeInt(x));
+        case ValueType::OBJ:
+            Obj* ptr = decodeObj(x);
+            if (!stack) stack = std::make_shared<robin_hood::unordered_set<Obj*>>();
+            if (stack->contains(ptr)) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uint64_t>(ptr));
+            stack->insert(ptr);
+            string str =  ptr->toString(stack);
+            stack->erase(ptr);
+            return str;
     }
-	default:
-		std::cout << "Error printing object";
-		return "";
-	}
+    std::cout << "Error printing object.\n";
+    return "";
 }
 
-bool Value::operator== (const Value& other) const {
-	if (this->value.index() != other.value.index()) return false;
-	switch (this->value.index()) {
-	case +ValueType::NUM: return FLOAT_EQ(get<double>(this->value), get<double>(other.value));
-	case +ValueType::BOOL: return this->value == other.value;
-	case +ValueType::OBJ: {
-        switch(get<object::Obj*>(this->value)->type){
-            case object::ObjType::STRING:{
-                if (get<object::Obj*>(other.value)->type != object::ObjType::STRING) return false;
-                string& str1 = reinterpret_cast<ObjString*>(get<object::Obj*>(this->value))->str;
-                string& str2 = reinterpret_cast<ObjString*>(get<object::Obj*>(other.value))->str;
-                return str1 == str2;
+void valueHelpers::print(Value x) {
+    std::cout << valueHelpers::toString(x);
+}
+
+void valueHelpers::mark(Value x){
+    if (getType(x) == ValueType::OBJ) memory::gc.markObj(decodeObj(x));
+}
+
+string valueHelpers::typeToStr(Value x) {
+    switch (getType(x)) {
+        case ValueType::DOUBLE: return "<double>";
+        case ValueType::BOOL: return "<bool>";
+        case ValueType::NIL: return "<null>";
+        case ValueType::INT: return "<int>";
+        case ValueType::OBJ:
+            Obj* ptr = decodeObj(x);
+            switch (ptr->type) {
+                case ObjType::ARRAY: return "<array>";
+                case ObjType::BOUND_METHOD: return "<method>";
+                case ObjType::CLASS: return "<class " + asClass(x)->name + ">";
+                case ObjType::CLOSURE: return "<function>";
+                case ObjType::FUNC: return "<function>";
+                case ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";
+                case ObjType::NATIVE: return "<native function>";
+                case ObjType::STRING: return "<string>";
+                case ObjType::UPVALUE: return "<upvalue>";
+                case ObjType::BOUND_NATIVE: return "<native function>";
+                case ObjType::FILE: return "<file>";
+                case ObjType::MUTEX: return "<mutex>";
+                case ObjType::FUTURE: return "<future>";
             }
-            default: return this->value == other.value;
-        }
     }
-	}
-    return false;
-}
-
-bool Value::operator!=(const Value& other) const {
-	return !(*this == other);
-}
-
-void Value::print() {
-    robin_hood::unordered_set<object::Obj*> stack;
-	std::cout << this->toString(stack);
-}
-
-string Value::toString(robin_hood::unordered_set<object::Obj*>& stack){
-    return valueToStr(*this, stack);
-}
-
-bool Value::isString() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::STRING;
-}
-bool Value::isFunction() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::FUNC;
-}
-bool Value::isNativeFn() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::NATIVE;
-}
-bool Value::isBoundNativeFunc() const {
-    return isObj() && get<object::Obj*>(value)->type == ObjType::BOUND_NATIVE;
-}
-bool Value::isArray() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::ARRAY;
-}
-bool Value::isClosure() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::CLOSURE;
-}
-bool Value::isClass() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::CLASS;
-}
-bool Value::isInstance() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::INSTANCE;
-}
-bool Value::isBoundMethod() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::BOUND_METHOD;
-}
-bool Value::isUpvalue() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::UPVALUE;
-}
-bool Value::isFile() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::FILE;
-}
-bool Value::isMutex() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::MUTEX;
-}
-bool Value::isFuture() const {
-	return isObj() && get<object::Obj*>(value)->type == ObjType::FUTURE;
-}
-
-// Uses reinterpret cast since we already check if the value is of the correct type
-object::ObjString* Value::asString() {
-	return reinterpret_cast<ObjString*>(get<object::Obj*>(value));
-}
-object::ObjFunc* Value::asFunction() {
-	return reinterpret_cast<ObjFunc*>(get<object::Obj*>(value));
-}
-object::ObjNativeFunc* Value::asNativeFn() {
-	return reinterpret_cast<ObjNativeFunc*>(get<object::Obj*>(value));
-}
-object::ObjBoundNativeFunc* Value::asBoundNativeFunc(){
-    return reinterpret_cast<ObjBoundNativeFunc*>(get<object::Obj*>(value));
-}
-object::ObjArray* Value::asArray() {
-	return reinterpret_cast<ObjArray*>(get<object::Obj*>(value));
-}
-object::ObjClosure* Value::asClosure() {
-	return reinterpret_cast<ObjClosure*>(get<object::Obj*>(value));
-}
-object::ObjClass* Value::asClass() {
-	return reinterpret_cast<ObjClass*>(get<object::Obj*>(value));
-}
-object::ObjInstance* Value::asInstance() {
-	return reinterpret_cast<ObjInstance*>(get<object::Obj*>(value));
-}
-object::ObjBoundMethod* Value::asBoundMethod() {
-	return reinterpret_cast<ObjBoundMethod*>(get<object::Obj*>(value));
-}
-object::ObjUpval* Value::asUpvalue() {
-	return reinterpret_cast<ObjUpval*>(get<object::Obj*>(value));
-}
-object::ObjFile* Value::asFile() {
-	return reinterpret_cast<ObjFile*>(get<object::Obj*>(value));
-}
-object::ObjMutex* Value::asMutex() {
-	return reinterpret_cast<ObjMutex*>(get<object::Obj*>(value));
-}
-object::ObjFuture* Value::asFuture() {
-	return reinterpret_cast<ObjFuture*>(get<object::Obj*>(value));
-}
-
-void Value::mark() {
-	if (isObj()) memory::gc.markObj(get<object::Obj*>(value));
-}
-
-string Value::typeToStr() {
-	switch (value.index()) {
-	case 0: return "<number>";
-	case 1: return "<bool>";
-	case 2:
-		object::Obj* temp = get<object::Obj*>(value);
-		if (!temp) return "<nil>";
-		switch (temp->type) {
-		case object::ObjType::ARRAY: return "<array>";
-		case object::ObjType::BOUND_METHOD: return "<method>";
-		case object::ObjType::CLASS: return "<class " + asClass()->name + ">";
-		case object::ObjType::CLOSURE: return "<function>";
-		case object::ObjType::FUNC: return "<function>";
-		case object::ObjType::INSTANCE: return asInstance()->klass == nullptr ? "<struct>" : "<instance>";
-		case object::ObjType::NATIVE: return "<native function>";
-		case object::ObjType::STRING: return "<string>";
-		case object::ObjType::UPVALUE: return "<upvalue>";
-        case ObjType::BOUND_NATIVE: return "<native function>";
-        case ObjType::FILE: return "<file>";
-        case ObjType::MUTEX: return "<mutex>";
-        case ObjType::FUTURE: return "<future>";
-        }
-	}
-	return "error, couldn't determine type of value";
+    return "error, couldn't determine type of value";
 }

@@ -35,7 +35,7 @@ namespace object {
 		ObjType type;
 		bool marked;
 
-		virtual string toString(robin_hood::unordered_set<object::Obj*>& stack) = 0;
+		virtual string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) = 0;
 		virtual void trace() = 0;
 		virtual uInt64 getSize() = 0;
 		virtual ~Obj() = default;
@@ -64,7 +64,7 @@ namespace object {
 		ObjString* concat(ObjString* other);
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -78,7 +78,7 @@ namespace object {
 		~ObjArray() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -94,7 +94,7 @@ namespace object {
 		~ObjFunc() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -110,7 +110,7 @@ namespace object {
 		~ObjNativeFunc() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -127,7 +127,7 @@ namespace object {
         ~ObjBoundNativeFunc() {}
 
         void trace();
-        string toString(robin_hood::unordered_set<object::Obj*>& stack);
+        string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
         uInt64 getSize();
     };
 
@@ -138,7 +138,7 @@ namespace object {
 		~ObjUpval() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -151,7 +151,7 @@ namespace object {
 		~ObjClosure() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -164,7 +164,7 @@ namespace object {
 		~ObjClass() {}
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -178,7 +178,7 @@ namespace object {
 		~ObjBoundMethod() = default;
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -191,7 +191,7 @@ namespace object {
 		~ObjInstance() = default;
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -206,7 +206,7 @@ namespace object {
 		~ObjFile();
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -219,7 +219,7 @@ namespace object {
 		~ObjMutex();
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -236,7 +236,7 @@ namespace object {
 		void startParallelExecution();
 
 		void trace();
-		string toString(robin_hood::unordered_set<object::Obj*>& stack);
+		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 }
