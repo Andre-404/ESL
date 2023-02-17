@@ -559,8 +559,18 @@ void runtime::Thread::executeBytecode() {
                 INT_BINARY_OP(&);
                 DISPATCH();
             case +OpCode::ADD: {
-                if (isNumber(peek(0)) && isNumber(peek(1))) {
-                    BINARY_OP(+);
+                Value a = peek(1), b = peek(0);
+                if (isNumber(a) && isNumber(b)) {
+                    if (isInt(a) && isInt(b)) {
+                        int64_t res = decodeInt(a) + decodeInt(b);
+                        stackTop[-2] = (INT_MIN <= res && res <= INT_MAX) ? encodeInt(res) : encodeDouble(res);
+                    }
+                    else {
+                        double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
+                        double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
+                        stackTop[-2] = encodeDouble(valA + valB);
+                    }
+                    --stackTop;
                 } else if (isString(peek(0)) && isString(peek(1))) {
                     object::ObjString *b = asString(pop());
                     object::ObjString *a = asString(pop());
