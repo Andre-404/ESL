@@ -59,13 +59,11 @@ void runtime::Thread::push(Value val) {
 	if (stackTop >= stack + STACK_MAX) {
 		runtimeError("Stack overflow", 1);
 	}
-	*stackTop = val;
-	stackTop++;
+	*(stackTop++) = val;
 }
 
 Value runtime::Thread::pop() {
-	stackTop--;
-	return *stackTop;
+	return *(--stackTop);
 }
 
 void runtime::Thread::popn(int n) {
@@ -338,19 +336,16 @@ void runtime::Thread::executeBytecode() {
 	ip = frame->ip,                                                         \
     constantOffset = frame->closure->func->constantsOffset)
 
-	#define BINARY_OP(op)                                                                                                                                   \
-        do {                                                                                                                                                \
-            Value a = peek(1), b = peek(0);                                                                                                                 \
-            if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-            *(--stackTop - 1) = encodeNumber(decodeNumber(a) op decodeNumber(b));                                                                           \
-        } while(0)
+	#define BINARY_OP(op)                                                                                                                               \
+        Value a = peek(1), b = peek(0);                                                                                                                 \
+        if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+        *(--stackTop - 1) = encodeNumber(decodeNumber(a) op decodeNumber(b))                                                                            \
 
-	#define INT_BINARY_OP(op)                                                                                                                          \
-        do {                                                                                                                                           \
-            Value a = peek(1), b = peek(0);                                                                                                            \
-            if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-            *(--stackTop - 1) = encodeNumber(decodeInt(a) op decodeInt(b));                                                                            \
-        } while(0)
+
+	#define INT_BINARY_OP(op)                                                                                                                      \
+        Value a = peek(1), b = peek(0);                                                                                                            \
+        if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+        *(--stackTop - 1) = encodeNumber(decodeInt(a) op decodeInt(b));                                                                            \
 
     #pragma endregion
 
@@ -373,19 +368,16 @@ void runtime::Thread::executeBytecode() {
         #endif
         switch(READ_BYTE()) {
             #pragma region Helper opcodes
-            case +OpCode::POP:
-            {
+            case +OpCode::POP:{
                 stackTop--;
                 DISPATCH();
             }
-            case +OpCode::POPN:
-            {
+            case +OpCode::POPN:{
                 uint8_t nToPop = READ_BYTE();
                 stackTop -= nToPop;
                 DISPATCH();
             }
-            case +OpCode::LOAD_INT:
-            {
+            case +OpCode::LOAD_INT:{
                 push(encodeNumber(READ_BYTE()));
                 DISPATCH();
             }
@@ -538,15 +530,18 @@ void runtime::Thread::executeBytecode() {
             #pragma endregion
 
             #pragma region Binary opcodes
-            case +OpCode::BITWISE_XOR:
-            INT_BINARY_OP(^);
-            DISPATCH();
-            case +OpCode::BITWISE_OR:
-            INT_BINARY_OP(|);
-            DISPATCH();
-            case +OpCode::BITWISE_AND:
-            INT_BINARY_OP(&);
-            DISPATCH();
+            case +OpCode::BITWISE_XOR: {
+                INT_BINARY_OP(^);
+                DISPATCH();
+            }
+            case +OpCode::BITWISE_OR: {
+                INT_BINARY_OP(|);
+                DISPATCH();
+            }
+            case +OpCode::BITWISE_AND: {
+                INT_BINARY_OP(&);
+                DISPATCH();
+            }
             case +OpCode::ADD:{
                 if (isNumber(peek(0)) && isNumber(peek(1))) {
                     BINARY_OP(+);
@@ -561,24 +556,30 @@ void runtime::Thread::executeBytecode() {
                 }
                 DISPATCH();
             }
-            case +OpCode::SUBTRACT:
-            BINARY_OP(-);
-            DISPATCH();
-            case +OpCode::MULTIPLY:
-            BINARY_OP(*);
-            DISPATCH();
-            case +OpCode::DIVIDE:
-            BINARY_OP(/);
-            DISPATCH();
-            case +OpCode::MOD:
-            INT_BINARY_OP(%);
-            DISPATCH();
-            case +OpCode::BITSHIFT_LEFT:
-            INT_BINARY_OP(<<);
-            DISPATCH();
-            case +OpCode::BITSHIFT_RIGHT:
-            INT_BINARY_OP(>>);
-            DISPATCH();
+            case +OpCode::SUBTRACT: {
+                BINARY_OP(-);
+                DISPATCH();
+            }
+            case +OpCode::MULTIPLY: {
+                BINARY_OP(*);
+                DISPATCH();
+            }
+            case +OpCode::DIVIDE: {
+                BINARY_OP(/);
+                DISPATCH();
+            }
+            case +OpCode::MOD: {
+                INT_BINARY_OP(%);
+                DISPATCH();
+            }
+            case +OpCode::BITSHIFT_LEFT: {
+                INT_BINARY_OP(<<);
+                DISPATCH();
+            }
+            case +OpCode::BITSHIFT_RIGHT: {
+                INT_BINARY_OP(>>);
+                DISPATCH();
+            }
             #pragma endregion
 
             #pragma region Binary opcodes that return bool

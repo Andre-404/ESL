@@ -29,9 +29,9 @@ namespace runtime {
         void callValue(Value callee, int argCount);
 	private:
 		Value stack[STACK_MAX];
-		Value* stackTop;
 		CallFrame frames[FRAMES_MAX];
 		int frameCount;
+        Value* stackTop;
 
         string errorString;
 
