@@ -21,7 +21,7 @@ typedef unsigned char byte;
 #define IS_INT(num) (FLOAT_EQ(std::floor(num), num))
 
 //#define AST_DEBUG
-#define COMPILER_DEBUG
+//#define COMPILER_DEBUG
 //#define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
 //#define DEBUG_TRACE_EXECUTION

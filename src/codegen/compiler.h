@@ -62,8 +62,8 @@ namespace compileCore {
 
 	struct ClassChunkInfo {
 		ClassChunkInfo* enclosing;
-		object::ObjClass* superclass;
-		ClassChunkInfo(ClassChunkInfo* _enclosing, object::ObjClass*  _superclass) : enclosing(_enclosing), superclass(_superclass) {};
+		bool hasSuperclass;
+		ClassChunkInfo(ClassChunkInfo* _enclosing, bool _hasSuperclass) : enclosing(_enclosing), hasSuperclass(_hasSuperclass) {};
 	};
 
 	struct CompilerException {
@@ -128,9 +128,6 @@ namespace compileCore {
 		int curUnitIndex;
 		int curGlobalIndex;
 		vector<CSLModule*> units;
-        // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
-        // a undefined global variable is being used
-        vector<bool> definedGlobals;
 
 		#pragma region Helpers
 		//emitters
@@ -162,7 +159,7 @@ namespace compileCore {
 		void beginScope();
 		void endScope();
 		//classes and methods
-		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
+		void method(AST::FuncDecl* _method, Token className);
 		bool invoke(AST::CallExpr* expr);
 		Token syntheticToken(string str);
 		//misc
@@ -171,8 +168,8 @@ namespace compileCore {
 		void error(const string& message) noexcept(false);
 		// Checks all imports to see if the symbol 'token' is imported
 		int checkSymbol(Token token);
-		// Given a symbol and whether the operation is assigning or reading a variable, determines the correct symbol to use
-		int resolveGlobal(Token symbol, bool canAssign);
+		// Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
+		int resolveGlobal(Token token, bool canAssign);
 		// Given a token for module alias and a token for variable name, returns correct symbol to use
 		uInt resolveModuleVariable(Token moduleAlias, Token variable);
 		#pragma endregion
