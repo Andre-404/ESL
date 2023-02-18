@@ -788,7 +788,8 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("cancel", 0, [](Thread*t, int argCount){
         auto fut = asFuture(t->pop());
-        fut->thread->cancelToken.store(true);
+        fut->thread->cancelToken.store(true, std::memory_order_relaxed);
+        fut->thread->pauseToken.store(true, std::memory_order_relaxed);
         t->push(encodeNil());
         return false;
     });

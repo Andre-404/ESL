@@ -15,6 +15,7 @@ namespace memory {
 	GarbageCollector::GarbageCollector() {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
+        vm = nullptr;
 
 		shouldCollect.store(false);
 	}
@@ -22,7 +23,10 @@ namespace memory {
 	void* GarbageCollector::alloc(uInt64 size) {
 		std::scoped_lock<std::mutex> lk(allocMtx);
 		heapSize += size;
-		if (heapSize > heapSizeLimit) shouldCollect = true;
+		if (heapSize > heapSizeLimit) {
+            shouldCollect = true;
+            if(vm) vm->pauseAllThreads();
+        }
 		byte* block = nullptr;
 		try {
 			block = new byte[size];
@@ -34,7 +38,7 @@ namespace memory {
 		return block;
 	}
 
-	void GarbageCollector::collect(runtime::VM* vm) {
+	void GarbageCollector::collect() {
 		markRoots(vm);
 		mark();
 		sweep();
@@ -44,6 +48,7 @@ namespace memory {
 			std::scoped_lock<std::mutex> lk(vm->pauseMtx);
 			shouldCollect.store(false);
 		}
+        vm->unpauseAllThreads();
 		vm->childThreadsCv.notify_all();
 	}
 

@@ -21,7 +21,7 @@ namespace memory {
 	class GarbageCollector {
 	public:
 		void* alloc(uInt64 size);
-		void collect(runtime::VM* vm);
+		void collect();
 		void collect(compileCore::Compiler* compiler);
 		GarbageCollector();
 		void markObj(object::Obj* object);
@@ -30,6 +30,7 @@ namespace memory {
 		std::mutex allocMtx;
 		uInt64 heapSize;
 		uInt64 heapSizeLimit;
+        runtime::VM* vm;
 		//static allocations that get transfered to heap at next 'collect'
 		vector<object::Obj*> objects;
 

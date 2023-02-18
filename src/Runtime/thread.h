@@ -21,6 +21,8 @@ namespace runtime {
         void popn(int n);
         Value peek(int depth);
         std::atomic<bool> cancelToken;
+        // Tells the thread that it should pause it's execution, merely setting this to true doesn't pause
+        std::atomic<bool> pauseToken;
 
         void runtimeError(string err, int errorCode);
 

@@ -13,6 +13,8 @@ namespace runtime {
 		void execute();
 		void mark(memory::GarbageCollector* gc);
 		bool allThreadsPaused();
+        void pauseAllThreads();
+        void unpauseAllThreads();
 		// Used by all threads
 		vector<Globalvar> globals;
 		vector<File*> sourceFiles;

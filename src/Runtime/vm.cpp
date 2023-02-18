@@ -44,3 +44,18 @@ bool runtime::VM::allThreadsPaused() {
 	return threadsPaused == childThreads.size();
 }
 
+void runtime::VM::pauseAllThreads(){
+    std::scoped_lock<std::mutex> lk(mtx);
+    for(runtime::Thread* t : childThreads){
+        t->pauseToken.store(true, std::memory_order_relaxed);
+    }
+    mainThread->pauseToken.store(true, std::memory_order_relaxed);
+}
+
+void runtime::VM::unpauseAllThreads(){
+    std::scoped_lock<std::mutex> lk(mtx);
+    for(runtime::Thread* t : childThreads){
+        t->pauseToken.store(false, std::memory_order_relaxed);
+    }
+    mainThread->pauseToken.store(false, std::memory_order_relaxed);
+}

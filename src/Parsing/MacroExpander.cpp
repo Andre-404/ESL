@@ -1,4 +1,5 @@
 #include "MacroExpander.h"
+#include <algorithm>
 
 AST::MacroExpander::MacroExpander(Parser* _parser) {
     parser = _parser;

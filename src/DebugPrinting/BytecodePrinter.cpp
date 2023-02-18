@@ -301,8 +301,6 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return byteInstruction("OP LAUNCH ASYNC", chunk, offset);
 	case +OpCode::AWAIT:
 		return simpleInstruction("OP AWAIT", offset);
-	case +OpCode::CLASS:
-		return constantInstruction("OP CLASS", chunk, offset, true, constantsOffset);
 	case +OpCode::GET_PROPERTY:
 		return constantInstruction("OP GET PROPERTY", chunk, offset, false, constantsOffset);
 	case +OpCode::GET_PROPERTY_LONG:
@@ -332,14 +330,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		}
 		return offset;
 	}
-	case +OpCode::METHOD:
-		return constantInstruction("OP METHOD", chunk, offset, true, constantsOffset);
 	case +OpCode::INVOKE:
 		return invokeInstruction("OP INVOKE", chunk, offset, constantsOffset);
 	case +OpCode::INVOKE_LONG:
 		return longInvokeInstruction("OP INVOKE LONG", chunk, offset, constantsOffset);
-	case +OpCode::INHERIT:
-		return simpleInstruction("OP INHERIT", offset);
 	case +OpCode::GET_SUPER:
 		return constantInstruction("OP GET SUPER", chunk, offset, false, constantsOffset);
 	case +OpCode::GET_SUPER_LONG:

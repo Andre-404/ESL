@@ -139,17 +139,14 @@ enum class OpCode {
 	AWAIT,
 
 	//OOP
-	CLASS,//arg: 16-bit ObjString constant index
 	GET_PROPERTY,//arg: 8-bit ObjString constant index
 	GET_PROPERTY_LONG,//arg: 16-bit ObjString constant index
 	SET_PROPERTY,//arg: 8-bit ObjString constant index
 	SET_PROPERTY_LONG,//arg: 16-bit ObjString constant index
 	CREATE_STRUCT,//arg: 8-bit number of fields
 	CREATE_STRUCT_LONG,//arg: 16-bit number of fields
-	METHOD,//arg: 16-bit ObjString constant index
 	INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count
 	INVOKE_LONG,//arg: 16-bit ObjString constant index, 8-bit argument count
-	INHERIT,
 	GET_SUPER,//arg: 8-bit ObjString constant index
 	GET_SUPER_LONG,//arg: 16-bit ObjString constant index
 	SUPER_INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count

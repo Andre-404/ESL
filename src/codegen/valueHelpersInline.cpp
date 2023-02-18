@@ -32,7 +32,7 @@ using namespace object;
 #define MASK_SIGNATURE_OBJ (MASK_SIGN | MASK_NAN | MASK_TYPE_OBJ)
 
 // Things with values (NaN boxing)
-inline ValueType getType(Value x){
+static ValueType getType(Value x){
     if (((~x) & MASK_EXPONENT) != 0) return ValueType::DOUBLE;
     switch (x & MASK_SIGNATURE){
         case MASK_SIGNATURE_NAN: return ValueType::DOUBLE;
@@ -75,7 +75,7 @@ inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::
 inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::MUTEX; }
 inline bool isFuture(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::FUTURE; }
 
-inline bool isFalsey(Value x) { return (getType(x) == ValueType::NIL) || (getType(x) == ValueType::BOOL && !decodeBool(x)); }
+inline bool isFalsey(Value x) { return (isNil(x)) || (isBool(x) && !decodeBool(x)); }
 
 inline double asNumber(Value x){ return (isInt(x)) ? decodeInt(x) : decodeDouble(x); }
 
