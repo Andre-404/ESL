@@ -126,6 +126,7 @@ void Preprocessor::processDirectives(CSLModule* unit, vector<pair<Token, Token>>
     path absP = path(absolutePath).parent_path();
     for (auto& [pathToken, alias] : depsToParse) {
         string path = pathToken.getLexeme();
+        std::cout << path << '\n';
         // Calculates absolute path to the file with the relative path given by pathToken
         path = parsePath(absP, path.substr(1, path.size() - 2)); // Extract dependency path from "" (it's a string)
 
