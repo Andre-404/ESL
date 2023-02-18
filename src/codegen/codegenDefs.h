@@ -35,10 +35,9 @@ namespace object {
 }
 
 enum class ValueType {
-	DOUBLE,
+	NUMBER,
 	BOOL,
 	NIL,
-    INT,
 	OBJ, // This is a pointer
 };
 inline constexpr unsigned operator+ (ValueType const val) { return static_cast<byte>(val); }

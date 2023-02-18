@@ -51,19 +51,19 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
 
     NATIVE_FUNC("ms_since_epoch", 0, [](Thread* t, int argCount) {
         double duration = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        t->push(encodeDouble(duration));
+        t->push(encodeNumber(duration));
         return true;
     });
     NATIVE_FUNC("micros_since_epoch", 0, [](Thread* t, int argCount) {
         double duration = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        t->push(encodeDouble(duration));
+        t->push(encodeNumber(duration));
         return true;
     });
     // Random number generator
     NATIVE_FUNC("random_num", 0, [](Thread* t, int argCount) {
         // TODO: Make it return ints??
         double randomNumber = std::uniform_int_distribution<long long>(-INT64_MAX, INT64_MAX)(t->vm->rng);
-        t->push(encodeDouble(randomNumber));
+        t->push(encodeNumber(randomNumber));
         return true;
     });
     NATIVE_FUNC("random_range", 2, [](Thread* t, int argCount) {
@@ -71,18 +71,20 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num1 = t->pop();
         if(!isNumber(num1)) TYPE_ERROR("number", 0, num1);
         if(!isNumber(num2)) TYPE_ERROR("number", 1, num2);
-        if(asNumber(num1) > asNumber(num2))
-            t->runtimeError(fmt::format("Argument 0 is {}, must be less than argument 1 which is {}.", asNumber(num1), asNumber(num2)), 3);
-        double randomNumber = std::uniform_int_distribution<long long>(asNumber(num1), asNumber(num2))(t->vm->rng);
-        t->push(encodeDouble(randomNumber));
+        if(decodeNumber(num1) > decodeNumber(num2))
+            t->runtimeError(fmt::format("Argument 0 is {}, must be less than argument 1 which is {}.",
+                                        decodeNumber(num1),
+                                        decodeNumber(num2)), 3);
+        double randomNumber = std::uniform_int_distribution<long long>(decodeNumber(num1), decodeNumber(num2))(t->vm->rng);
+        t->push(encodeNumber(randomNumber));
         return true;
     });
     NATIVE_FUNC("random_set_seed", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        if (FLOAT_EQ(asNumber(num), -1)) t->vm->rng.seed(std::chrono::steady_clock::now().time_since_epoch().count());
-        else t->vm->rng.seed(asNumber(num));
+        if (FLOAT_EQ(decodeNumber(num), -1)) t->vm->rng.seed(std::chrono::steady_clock::now().time_since_epoch().count());
+        else t->vm->rng.seed(decodeNumber(num));
         t->push(encodeNil());
         return true;
     });
@@ -101,7 +103,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
         // TODO: Make it return ints
-        t->push(encodeDouble(floor(asNumber(num))));
+        t->push(encodeNumber(floor(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("ceil", 1, [](Thread* t, int argCount) {
@@ -109,7 +111,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
         // TODO: Make it return ints
-        t->push(encodeDouble(ceil(asNumber(num))));
+        t->push(encodeNumber(ceil(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("round", 1, [](Thread* t, int argCount) {
@@ -117,14 +119,14 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
         // TODO: Make it return ints
-        t->push(encodeDouble(round(asNumber(num))));
+        t->push(encodeNumber(round(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("sqrt", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(encodeDouble(sqrt(asNumber(num))));
+        t->push(encodeNumber(sqrt(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("pow", 2, [](Thread* t, int argCount) {
@@ -133,28 +135,28 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(base)) TYPE_ERROR("number", 0, base);
         if(!isNumber(exponent)) TYPE_ERROR("number", 0, exponent);
 
-        t->push(encodeDouble(pow(asNumber(base), asNumber(exponent))));
+        t->push(encodeNumber(pow(decodeNumber(base), decodeNumber(exponent))));
         return true;
     });
     NATIVE_FUNC("log2", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log2(asNumber(num))));
+        t->push(Value(log2(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("log10", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log10(asNumber(num))));
+        t->push(Value(log10(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("log", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log(asNumber(num))));
+        t->push(Value(log(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("logn", 2, [](Thread* t, int argCount) {
@@ -163,49 +165,49 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(base)) TYPE_ERROR("number", 0, base);
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log(asNumber(num)) / log(asNumber(base))));
+        t->push(Value(log(decodeNumber(num)) / log(decodeNumber(base))));
         return true;
     });
     NATIVE_FUNC("sin", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(sin(asNumber(num))));
+        t->push(Value(sin(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("dsin", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(sin((asNumber(num)*180)/std::numbers::pi_v<double>)));
+        t->push(Value(sin((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
         return true;
     });
     NATIVE_FUNC("cos", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(cos(asNumber(num))));
+        t->push(Value(cos(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("dcos", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(cos((asNumber(num)*180)/std::numbers::pi_v<double>)));
+        t->push(Value(cos((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
         return true;
     });
     NATIVE_FUNC("tan", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(tan(asNumber(num))));
+        t->push(Value(tan(decodeNumber(num))));
         return true;
     });
     NATIVE_FUNC("dtan", 1, [](Thread* t, int argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(tan((asNumber(num)*180)/std::numbers::pi_v<double>)));
+        t->push(Value(tan((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
         return true;
     });
 
@@ -216,8 +218,8 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
             // -1 because arguments start at peek(argCount - 1)
             Value num = t->peek(argCount - i - 1);
             if(!isNumber(num)) TYPE_ERROR("number", i, num);
-            if(i == 0) minVal = asNumber(num);
-            else minVal = std::min(minVal, asNumber(num));
+            if(i == 0) minVal = decodeNumber(num);
+            else minVal = std::min(minVal, decodeNumber(num));
         }
         t->popn(argCount);
 
@@ -231,8 +233,8 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
             // -1 because arguments start at peek(argCount - 1)
             Value num = t->peek(argCount - i - 1);
             if(!isNumber(num)) TYPE_ERROR("number", i, num);
-            if(i == 0) maxVal = asNumber(num);
-            else maxVal = std::max(maxVal, asNumber(num));
+            if(i == 0) maxVal = decodeNumber(num);
+            else maxVal = std::max(maxVal, decodeNumber(num));
         }
         t->popn(argCount);
 
@@ -246,7 +248,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
             // -1 because arguments start at peek(argCount - 1)
             Value num = t->peek(argCount - i - 1);
             if(!isNumber(num)) TYPE_ERROR("number", i, num);
-            sum += asNumber(num);
+            sum += decodeNumber(num);
         }
         t->popn(argCount);
 
@@ -264,7 +266,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         }else arraySize = t->pop();
 
         isNumAndInt(t, arraySize, 0);
-        double arrSize = asNumber(arraySize);
+        double arrSize = decodeNumber(arraySize);
 
         auto arr = new object::ObjArray(arrSize);
         if(!isNil(fillVal)) std::fill(arr->values.begin(), arr->values.end(), fillVal);
@@ -340,7 +342,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
 }
 void strRangeCheck(runtime::Thread* t, uInt argNum, Value indexVal, uInt64 end) {
     isNumAndInt(t, indexVal, argNum);
-    double index = asNumber(indexVal);
+    double index = decodeNumber(indexVal);
     if (index >= 0 && index <= end) return;
     t->runtimeError(fmt::format("String length is {}, argument {} is {}", end, argNum, static_cast<uInt64>(index)), 9);
 };
@@ -433,7 +435,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     // String
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("length", 0, [](Thread*t, int argCount){
-        t->push(encodeInt(asString(t->pop())->str.length()));
+        t->push(encodeNumber(asString(t->pop())->str.length()));
         return false;
     });
     BOUND_NATIVE("concat", 1, [](Thread*t, int argCount){
@@ -451,7 +453,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         if(!isString(toAppend)) TYPE_ERROR("string", 0, toAppend);
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
-        str.insert(asNumber(pos), asString(toAppend)->str);
+        str.insert(decodeNumber(pos), asString(toAppend)->str);
         t->push(encodeObj(new object::ObjString(str)));
         return false;
     });
@@ -462,7 +464,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
         isNumAndInt(t, len, 1);
-        str.erase(asNumber(pos), asNumber(len));
+        str.erase(decodeNumber(pos), decodeNumber(len));
         t->push(encodeObj(new object::ObjString(str)));
         return false;
     });
@@ -475,7 +477,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
         isNumAndInt(t, len, 1);
-        str.replace(asNumber(pos), asNumber(len), asString(toReplace)->str);
+        str.replace(decodeNumber(pos), decodeNumber(len), asString(toReplace)->str);
         t->push(encodeObj(new object::ObjString(str)));
         return false;
     });
@@ -486,7 +488,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
         isNumAndInt(t, len, 1);
-        str.substr(asNumber(pos), asNumber(len));
+        str.substr(decodeNumber(pos), decodeNumber(len));
         t->push(encodeObj(new object::ObjString(str)));
         return false;
     });
@@ -495,7 +497,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         Value callee = t->pop();
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
-        string c(1, str[asNumber(pos)]);
+        string c(1, str[decodeNumber(pos)]);
         t->push(encodeObj(new object::ObjString(c)));
         return false;
     });
@@ -504,7 +506,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         Value callee = t->pop();
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
-        t->push(encodeDouble(str[asNumber(pos)]));
+        t->push(encodeNumber(str[decodeNumber(pos)]));
         return false;
     });
     BOUND_NATIVE("pos", 1, [](Thread*t, int argCount){
@@ -515,7 +517,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         auto pos = str.find(asString(substr)->str);
         auto p = static_cast<double>(pos);
         if(pos == str.npos) p = -1;
-        t->push(encodeDouble(p));
+        t->push(encodeNumber(p));
         return false;
     });
     BOUND_NATIVE("last_pos", 1, [](Thread*t, int argCount){
@@ -526,7 +528,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         auto pos = str.rfind(asString(substr)->str);
         int32_t p = pos;
         if(pos == str.npos) p = -1;
-        t->push(encodeInt(p));
+        t->push(encodeNumber(p));
         return false;
     });
     BOUND_NATIVE("is_upper", 1, [](Thread*t, int argCount){
@@ -534,7 +536,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         Value callee = t->pop();
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
-        t->push(encodeBool(std::isupper(str[asNumber(pos)]) != 0));
+        t->push(encodeBool(std::isupper(str[decodeNumber(pos)]) != 0));
         return false;
     });
     BOUND_NATIVE("is_lower", 1, [](Thread*t, int argCount){
@@ -542,7 +544,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         Value callee = t->pop();
         string str = asString(callee)->str;
         strRangeCheck(t, 0, pos, str.length());
-        t->push(encodeBool(std::isupper(str[asNumber(pos)]) == 0));
+        t->push(encodeBool(std::isupper(str[decodeNumber(pos)]) == 0));
         return false;
     });
     BOUND_NATIVE("to_upper", 0, [](Thread*t, int argCount){
@@ -564,7 +566,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         return false;
     });
     BOUND_NATIVE("to_number", 0, [](Thread*t, int argCount){
-        t->push(encodeDouble(std::stoi(asString(t->pop())->str)));
+        t->push(encodeNumber(std::stoi(asString(t->pop())->str)));
         return false;
     });
     BOUND_NATIVE("split", 1, [](Thread*t, int argCount){
@@ -613,14 +615,14 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
         }else if(argCount == 1) newSize = t->pop();
         else t->runtimeError(fmt::format("Expected 1 or 2 arguments, got {}.", argCount), 2);
         isNumAndInt(t, newSize, 0);
-        if(asNumber(newSize) < 0) t->runtimeError("Expected positive integer for argument 0, got negative.", 3);
-        uInt64 s = asNumber(newSize);
+        if(decodeNumber(newSize) < 0) t->runtimeError("Expected positive integer for argument 0, got negative.", 3);
+        uInt64 s = decodeNumber(newSize);
         asArray(t->peek(0))->values.resize(s, fill);
         return false;
     });
     BOUND_NATIVE("length", 0, [](Thread*t, int argCount){
         auto arr = asArray(t->pop());
-        t->push(encodeDouble(arr->values.size()));
+        t->push(encodeNumber(arr->values.size()));
         return false;
     });
     BOUND_NATIVE("insert", 2, [](Thread*t, int argCount){

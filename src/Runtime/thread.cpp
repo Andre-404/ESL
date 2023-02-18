@@ -300,14 +300,10 @@ static void tryIncrement(runtime::Thread *t, bool isPrefix, int sign, Value &val
     }
     if (!isPrefix) {
         t->push(val);
-        // TODO: Might overflow int
-        if (isInt(val)) val = encodeInt(decodeInt(val) + sign);
-        else val = encodeDouble(decodeDouble(val) + sign);
+        val = encodeNumber(decodeNumber(val) + sign);
         return;
     }
-    // TODO: Might overflow int
-    if (isInt(val)) val = encodeInt(decodeInt(val) + sign);
-    else val = encodeDouble(decodeDouble(val) + sign);
+    val = encodeNumber(decodeNumber(val) + sign);
     t->push(val);
 }
 
@@ -346,25 +342,15 @@ void runtime::Thread::executeBytecode() {
         do {                                                                                                                                                \
             Value a = peek(1), b = peek(0);                                                                                                                 \
             if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-            if (isInt(a) && isInt(b)) {                                                                                                                     \
-                int64_t res = decodeInt(a) op decodeInt(b);                                                                                                 \
-                stackTop[-2] = (INT_MIN <= res && res <= INT_MAX) ? encodeInt(res) : encodeDouble(res);                                                     \
-            }                                                                                                                                               \
-            else {                                                                                                                                          \
-                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);                                                                                  \
-                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);                                                                                  \
-                stackTop[-2] = encodeDouble(valA op valB);                                                                                                  \
-            }                                                                                                                                               \
-            --stackTop;                                                                                                                                     \
-        } while(0)                                                                                                                                          \
+            *(--stackTop - 1) = encodeNumber(decodeNumber(a) op decodeNumber(b));                                                                           \
+        } while(0)
 
 	#define INT_BINARY_OP(op)                                                                                                                          \
         do {                                                                                                                                           \
             Value a = peek(1), b = peek(0);                                                                                                            \
             if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-            stackTop[-2] = encodeInt(decodeInt(a) op decodeInt(b));                                                                                    \
-            --stackTop;                                                                                                                                \
-        } while(0)                                                                                                                                     \
+            *(--stackTop - 1) = encodeNumber(decodeInt(a) op decodeInt(b));                                                                            \
+        } while(0)
 
     #pragma endregion
 
@@ -400,7 +386,7 @@ void runtime::Thread::executeBytecode() {
             }
             case +OpCode::LOAD_INT:
             {
-                push(encodeInt(READ_BYTE()));
+                push(encodeNumber(READ_BYTE()));
                 DISPATCH();
             }
             #pragma endregion
@@ -429,8 +415,8 @@ void runtime::Thread::executeBytecode() {
                 if (!isNumber(val)) {
                     runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3);
                 }
-                if (isInt(val)) { push(encodeInt(-decodeInt(val))); }
-                else { push(encodeDouble(-decodeDouble(val))); }
+                // TODO: Could be marginally faster with manipulating the first bit?
+                push(encodeNumber(-decodeNumber(val)));
                 DISPATCH();
             }
             case +OpCode::NOT:{
@@ -444,7 +430,7 @@ void runtime::Thread::executeBytecode() {
                 if (!isInt(peek(0))) {
                     runtimeError("Number must be a integer, got a float.", 3);
                 }
-                stackTop[-1] = encodeInt(~decodeInt(peek(0)));
+                stackTop[-1] = encodeNumber(~decodeInt(peek(0)));
                 DISPATCH();
             }
             case +OpCode::INCREMENT:{
@@ -614,10 +600,7 @@ void runtime::Thread::executeBytecode() {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
                 }
-                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
-                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
-
-                *(--stackTop - 1) = encodeBool(valA > valB);
+                *(--stackTop - 1) = encodeBool(decodeNumber(a) > decodeNumber(b));
                 DISPATCH();
             }
             case +OpCode::GREATER_EQUAL:{
@@ -627,11 +610,7 @@ void runtime::Thread::executeBytecode() {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
                 }
-                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
-                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
-
-                // TODO: Make this better? (differentiate between int and double comparisons)
-                *(--stackTop - 1) = encodeBool(valA >= valB - DBL_EPSILON);
+                *(--stackTop - 1) = encodeBool(decodeNumber(a) >= decodeNumber(b) - DBL_EPSILON);
                 DISPATCH();
             }
             case +OpCode::LESS:{
@@ -640,10 +619,7 @@ void runtime::Thread::executeBytecode() {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
                 }
-                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
-                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
-
-                *(--stackTop - 1) = encodeBool(valA < valB);
+                *(--stackTop - 1) = encodeBool(decodeNumber(a) < decodeNumber(b));
                 DISPATCH();
             }
             case +OpCode::LESS_EQUAL:{
@@ -652,10 +628,7 @@ void runtime::Thread::executeBytecode() {
                     runtimeError(fmt::format("Operands must be two numbers, got {} and {}.", typeToStr(peek(1)),
                                              typeToStr(peek(0))), 3);
                 }
-                double valA = (isInt(a)) ? decodeInt(a) : decodeDouble(a);
-                double valB = (isInt(b)) ? decodeInt(b) : decodeDouble(b);
-
-                *(--stackTop - 1) = encodeBool(valA < valB + DBL_EPSILON);
+                *(--stackTop - 1) = encodeBool(decodeNumber(a) < decodeNumber(b) + DBL_EPSILON);
                 DISPATCH();
             }
             #pragma endregion

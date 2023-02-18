@@ -323,17 +323,9 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
 	switch (expr->token.type) {
 	case TokenType::NUMBER: {
         string num = expr->token.getLexeme();
-        // Int
-        if (num.find('.') == string::npos){
-            int32_t val = std::stoi(num);
-            if (val <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::LOAD_INT, val);
-            else emitConstant(encodeInt(val));
-        }
-        // Double
-        else {
-            double val = std::stod(num);
-            emitConstant(encodeDouble(val));
-        }
+        double val = std::stod(num);
+        if (isInt(val) && val <= SHORT_CONSTANT_LIMIT) { emitBytes(+OpCode::LOAD_INT, val); }
+        else { emitConstant(encodeNumber(val)); }
 		break;
 	}
 	case TokenType::TRUE: emitByte(+OpCode::TRUE); break;
@@ -702,7 +694,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 				switch (constant.type) {
 				case TokenType::NUMBER: {
 					double num = std::stod(constant.getLexeme());//doing this becuase stod doesn't accept string_view
-					val = encodeDouble(num);
+					val = encodeNumber(num);
 					break;
 				}
 				case TokenType::TRUE: val = encodeBool(true); break;

@@ -57,15 +57,14 @@ uInt Chunk::addConstant(Value val) {
 
 string valueHelpers::toString(Value x, std::shared_ptr<robin_hood::unordered_set<Obj*>> stack){
     switch(getType(x)){
-        case ValueType::DOUBLE:
+        case ValueType::NUMBER:
             // TODO: Make custom precision with string streams?
-            return std::to_string(decodeDouble(x));
+            // TODO: Do some funky stuff with ints
+            return std::to_string(decodeNumber(x));
         case ValueType::BOOL:
             return (decodeBool(x)) ? "true" : "false";
         case ValueType::NIL:
             return "null";
-        case ValueType::INT:
-            return std::to_string(decodeInt(x));
         case ValueType::OBJ:
             Obj* ptr = decodeObj(x);
             if (!stack) stack = std::make_shared<robin_hood::unordered_set<Obj*>>();
@@ -89,10 +88,9 @@ void valueHelpers::mark(Value x){
 
 string valueHelpers::typeToStr(Value x) {
     switch (getType(x)) {
-        case ValueType::DOUBLE: return "<double>";
+        case ValueType::NUMBER: return "<double>";
         case ValueType::BOOL: return "<bool>";
         case ValueType::NIL: return "<null>";
-        case ValueType::INT: return "<int>";
         case ValueType::OBJ:
             Obj* ptr = decodeObj(x);
             switch (ptr->type) {
