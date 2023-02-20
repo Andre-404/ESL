@@ -106,8 +106,8 @@ namespace AST {
 					do {
 						Token arg = cur->consume(TokenType::IDENTIFIER, "Expect argument name");
 						args.push_back(arg);
-						if (args.size() > 255) {
-							throw cur->error(arg, "Functions can't have more than 255 arguments");
+						if (args.size() > 127) {
+							throw cur->error(arg, "Functions can't have more than 128 arguments");
 						}
 					} while (cur->match(TokenType::COMMA));
 				}
@@ -596,8 +596,8 @@ shared_ptr<ASTDecl> Parser::funcDecl() {
 		do {
 			Token arg = consume(TokenType::IDENTIFIER, "Expect argument name");
 			args.push_back(arg);
-			if (args.size() > 255) {
-				throw error(arg, "Functions can't have more than 255 arguments");
+			if (args.size() > 127) {
+				throw error(arg, "Functions can't have more than 127 arguments");
 			}
 		} while (match(TokenType::COMMA));
 	}

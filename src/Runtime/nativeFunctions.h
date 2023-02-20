@@ -6,9 +6,9 @@ namespace runtime {
     struct BuiltinMethod{
         object::NativeFn func;
         // Arity of -1 means that the native function takes in a variable number of arguments
-        int arity;
+        int8_t arity;
 
-        BuiltinMethod(object::NativeFn _func, int _arity){
+        BuiltinMethod(object::NativeFn _func, int8_t _arity){
             func = _func;
             arity = _arity;
         }

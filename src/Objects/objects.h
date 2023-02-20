@@ -47,7 +47,8 @@ namespace object {
 	};
 
 	//pointer to a native C++ function
-	using NativeFn = bool(*)(runtime::Thread* thread, int argCount);
+	using NativeFn = bool(*)(runtime::Thread* thread, int8_t argCount);
+    using NativeMethod = void(*)(runtime::Thread* thread, int8_t argCount);
 
 	//this is a header which is followed by the bytes of the string
 	class ObjString : public Obj {
@@ -104,11 +105,11 @@ namespace object {
 	public:
 		NativeFn func;
         // Arity of -1 means that the native function takes in a variable number of arguments
-		int arity;
+		int8_t arity;
         // For debugging purposes
         string name;
 
-		ObjNativeFunc(NativeFn _func, int _arity, string _name);
+		ObjNativeFunc(NativeFn _func, int8_t _arity, string _name);
 		~ObjNativeFunc() {}
 
 		void trace();
@@ -120,12 +121,12 @@ namespace object {
     public:
         NativeFn func;
         // Arity of -1 means that the native function takes in a variable number of arguments
-        int arity;
+        int8_t arity;
         // For debugging purposes
         string name;
         Value receiver;
 
-        ObjBoundNativeFunc(NativeFn _func, int _arity, string _name, Value& _receiver);
+        ObjBoundNativeFunc(NativeFn _func, int8_t _arity, string _name, Value& _receiver);
         ~ObjBoundNativeFunc() {}
 
         void trace();

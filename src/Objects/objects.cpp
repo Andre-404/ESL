@@ -43,6 +43,7 @@ ObjString* ObjString::createStr(string str){
     auto it = memory::gc.interned.find(str);
     if(it != memory::gc.interned.end()) return it->second;
     auto newStr = new ObjString(str);
+    memory::gc.heapSize += str.size();
     memory::gc.interned[str] = newStr;
     return newStr;
 }
@@ -73,7 +74,7 @@ uInt64 ObjFunc::getSize() {
 #pragma endregion
 
 #pragma region ObjNativeFunc
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, int _arity, string _name) {
+ObjNativeFunc::ObjNativeFunc(NativeFn _func, int8_t _arity, string _name) {
 	func = _func;
 	arity = _arity;
     name = _name;
@@ -95,7 +96,7 @@ uInt64 ObjNativeFunc::getSize() {
 #pragma endregion
 
 #pragma region ObjBoundNativeFunc
-ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int _arity, string _name, Value& _receiver) {
+ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int8_t _arity, string _name, Value& _receiver) {
     func = _func;
     arity = _arity;
     name = _name;
@@ -196,7 +197,7 @@ string ObjArray::toString(std::shared_ptr<ankerl::unordered_dense::set<object::O
 }
 
 uInt64 ObjArray::getSize() {
-	return sizeof(ObjArray);
+	return sizeof(ObjArray) + sizeof(Value)*values.size();
 }
 #pragma endregion
 

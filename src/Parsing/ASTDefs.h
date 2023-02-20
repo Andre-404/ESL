@@ -341,7 +341,7 @@ namespace AST {
 	class FuncLiteral : public ASTNode {
 	public:
 		vector<Token> args;
-		int arity;
+        int8_t arity;
 		shared_ptr<BlockStmt> body;
 
 		FuncLiteral(vector<Token> _args, shared_ptr<BlockStmt> _body) {
@@ -559,7 +559,7 @@ namespace AST {
 	class FuncDecl : public ASTDecl {
 	public:
 		vector<Token> args;
-		uInt arity;
+        int8_t arity;
 		shared_ptr<BlockStmt> body;
 		Token name;
 

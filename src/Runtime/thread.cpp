@@ -70,7 +70,7 @@ void runtime::Thread::popn(int n) {
     stackTop-= n;
 }
 
-Value runtime::Thread::peek(int depth) {
+Value runtime::Thread::peek(int8_t depth) {
     return stackTop[-1 - depth];
 }
 
@@ -79,13 +79,13 @@ void runtime::Thread::runtimeError(string err, int errorCode) {
     throw errorCode;
 }
 
-void runtime::Thread::callValue(Value callee, int argCount) {
+void runtime::Thread::callValue(Value callee, int8_t argCount) {
 	if (isObj(callee)) {
 		switch (decodeObj(callee)->type) {
 		case object::ObjType::CLOSURE:
 			return call(asClosure(callee), argCount);
 		case object::ObjType::NATIVE: {
-			int arity = asNativeFn(callee)->arity;
+            int8_t arity = asNativeFn(callee)->arity;
 			//if arity is -1 it means that the function takes in a variable number of args
 			if (arity != -1 && argCount != arity) {
 				runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
@@ -101,17 +101,13 @@ void runtime::Thread::callValue(Value callee, int argCount) {
         case object::ObjType::BOUND_NATIVE:{
             object::ObjBoundNativeFunc* bound = asBoundNativeFunc(callee);
             stackTop[-argCount - 1] = bound->receiver;
-            int arity = bound->arity;
+            int8_t arity = bound->arity;
             //if arity is -1 it means that the function takes in a variable number of args
             if (arity != -1 && argCount != arity) {
                 runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
             }
-            object::NativeFn native = bound->func;
-            // If native returns true then the ObjNativeFunc is still on the stack and should be popped
-            if(native(this, argCount)) {
-                stackTop[-2] = stackTop[-1];
-                stackTop--;
-            }
+            // Native methods always pop the receiver
+            bound->func(this, argCount);
             return;
         }
 		case object::ObjType::CLASS: {
@@ -139,7 +135,7 @@ void runtime::Thread::callValue(Value callee, int argCount) {
 	runtimeError("Can only call functions and classes.", 3);
 }
 
-void runtime::Thread::call(object::ObjClosure* closure, int argCount) {
+void runtime::Thread::call(object::ObjClosure* closure, int8_t argCount) {
 	if (argCount != closure->func->arity) {
 		runtimeError(fmt::format("Expected {} arguments for function call but got {}.", closure->func->arity, argCount), 2);
 	}
@@ -170,7 +166,7 @@ bool runtime::Thread::bindMethod(object::ObjClass* klass, object::ObjString* nam
     return true;
 }
 
-void runtime::Thread::invoke(object::ObjString* fieldName, int argCount) {
+void runtime::Thread::invoke(object::ObjString* fieldName, int8_t argCount) {
 	Value receiver = peek(argCount);
 
 	if (isInstance(receiver)) {
@@ -191,14 +187,11 @@ void runtime::Thread::invoke(object::ObjString* fieldName, int argCount) {
     if (native.arity != -1 && argCount != native.arity) {
         runtimeError(fmt::format("Method {} expects {} arguments but got {}.", fieldName->str, native.arity, argCount), 2);
     }
-    // If native returns true then the ObjNativeFunc is still on the stack and should be popped
-    if(native.func(this, argCount)) {
-        stackTop[-2] = stackTop[-1];
-        stackTop--;
-    }
+    // Native methods always pop the receiver
+    native.func(this, argCount);
 }
 
-bool runtime::Thread::invokeFromClass(object::ObjClass* klass, object::ObjString* methodName, int argCount) {
+bool runtime::Thread::invokeFromClass(object::ObjClass* klass, object::ObjString* methodName, int8_t argCount) {
 	auto it = klass->methods.find(methodName);
 	if (it == klass->methods.end()) return false;
 	// The bottom of the call stack will contain the receiver instance

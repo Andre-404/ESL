@@ -20,7 +20,7 @@ namespace runtime {
         void push(Value val);
         Value pop();
         void popn(int n);
-        Value peek(int depth);
+        Value peek(int8_t depth);
         std::atomic<bool> cancelToken;
         // Tells the thread that it should pause it's execution, merely setting this to true doesn't pause
         std::atomic<bool> pauseToken;
@@ -28,7 +28,7 @@ namespace runtime {
 
         void runtimeError(string err, int errorCode);
 
-        void callValue(Value callee, int argCount);
+        void callValue(Value callee, int8_t argCount);
 
     private:
 		Value stack[STACK_MAX];
@@ -37,13 +37,13 @@ namespace runtime {
 
         string errorString;
 
-		void call(object::ObjClosure* function, int argCount);
+		void call(object::ObjClosure* function, int8_t argCount);
 
         // True if method exists and was bound to receiver
 		bool bindMethod(object::ObjClass* klass, object::ObjString* name);
-		void invoke(object::ObjString* fieldName, int argCount);
+		void invoke(object::ObjString* fieldName, int8_t argCount);
         // True if method exists and was invoked
-		bool invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int argCount);
+		bool invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int8_t argCount);
 
         void bindMethodToPrimitive(Value receiver, object::ObjString* methodName);
         BuiltinMethod& findNativeMethod(Value receiver, object::ObjString* name);
