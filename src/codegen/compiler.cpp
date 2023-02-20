@@ -336,7 +336,7 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
 		string temp = expr->token.getLexeme();
 		temp.erase(0, 1);
 		temp.erase(temp.size() - 1, 1);
-		emitConstant(encodeObj(new ObjString(temp)));
+		emitConstant(encodeObj(ObjString::createStr(temp)));
 		break;
 	}
 
@@ -524,7 +524,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	for (AST::ASTNodePtr _method : decl->methods) {
         // TODO: And another another one
         auto m = dynamic_cast<AST::FuncDecl*>(_method.get());
-		klass->methods.insert_or_assign(m->getName().getLexeme(), encodeObj(method(m, className)));
+		klass->methods.insert_or_assign(ObjString::createStr(m->getName().getLexeme()), encodeObj(method(m, className)));
 	}
 	currentClass = nullptr;
     // Assigning at compile time to save on bytecode
@@ -705,7 +705,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 					string temp = constant.getLexeme();
 					temp.erase(0, 1);
 					temp.erase(temp.size() - 1, 1);
-					val = encodeObj(new ObjString(temp));
+					val = encodeObj(ObjString::createStr(temp));
 					break;
 				}
 				default: {
@@ -937,7 +937,7 @@ void Compiler::patchScopeJumps(ScopeJumpType type) {
 uint16_t Compiler::identifierConstant(Token name) {
 	updateLine(name);
 	string temp = name.getLexeme();
-	return makeConstant(encodeObj(new ObjString(temp)));
+	return makeConstant(encodeObj(ObjString::createStr(temp)));
 }
 
 //if this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table

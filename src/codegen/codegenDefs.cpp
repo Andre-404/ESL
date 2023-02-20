@@ -55,7 +55,7 @@ uInt Chunk::addConstant(Value val) {
 	return size;
 }
 
-string valueHelpers::toString(Value x, std::shared_ptr<robin_hood::unordered_set<Obj*>> stack){
+string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(getType(x)){
         case ValueType::NUMBER:
             // TODO: Make custom precision with string streams?
@@ -67,7 +67,7 @@ string valueHelpers::toString(Value x, std::shared_ptr<robin_hood::unordered_set
             return "null";
         case ValueType::OBJ:
             Obj* ptr = decodeObj(x);
-            if (!stack) stack = std::make_shared<robin_hood::unordered_set<Obj*>>();
+            if (!stack) stack = std::make_shared<ankerl::unordered_dense::set<object::Obj*>>();
             if (stack->contains(ptr)) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uint64_t>(ptr));
             stack->insert(ptr);
             string str =  ptr->toString(stack);
@@ -96,7 +96,7 @@ string valueHelpers::typeToStr(Value x) {
             switch (ptr->type) {
                 case ObjType::ARRAY: return "<array>";
                 case ObjType::BOUND_METHOD: return "<method>";
-                case ObjType::CLASS: return "<class " + asClass(x)->name + ">";
+                case ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
                 case ObjType::CLOSURE: return "<function>";
                 case ObjType::FUNC: return "<function>";
                 case ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";

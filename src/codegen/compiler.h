@@ -83,7 +83,7 @@ namespace compileCore {
         object::ObjFunc* mainBlockFunc;
         // Here to do name checking at compile time
         vector<object::ObjNativeFunc*> nativeFuncs;
-        robin_hood::unordered_map<string, uInt> nativeFuncNames;
+        ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();

@@ -10,8 +10,8 @@
 
 using namespace valueHelpers;
 
-robin_hood::unordered_map<string, uInt> runtime::createNativeNameTable(vector<object::ObjNativeFunc *>& natives){
-    robin_hood::unordered_map<string, uInt> map;
+ankerl::unordered_dense::map<string, uInt> runtime::createNativeNameTable(vector<object::ObjNativeFunc *>& natives){
+    ankerl::unordered_dense::map<string, uInt> map;
     for(int i = 0; i < natives.size(); i++){
         map.insert_or_assign(natives[i]->name, i);
     }
@@ -372,7 +372,7 @@ static void decThreadWait(runtime::Thread* t){
     t->vm->mainThreadCv.notify_one();
 }
 
-#define BOUND_NATIVE(name, arity, func) classes.back().methods.insert_or_assign(name, BuiltinMethod(func, arity))
+#define BOUND_NATIVE(name, arity, func) classes.back().methods.insert_or_assign(object::ObjString::createStr(name), BuiltinMethod(func, arity))
 
 vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     vector<runtime::BuiltinClass> classes;
@@ -427,7 +427,7 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     });
 
     BOUND_NATIVE("to_string", 0, [](Thread*t, int argCount){
-        robin_hood::unordered_set<object::Obj*> stack;
+        ankerl::unordered_dense::set<object::Obj*> stack;
         string str = toString(t->pop());
         t->push(encodeObj(new object::ObjString(str)));
         return false;
@@ -588,13 +588,14 @@ vector<runtime::BuiltinClass> runtime::createBuiltinClasses(){
     // Array
     classes.emplace_back(&classes[0]);
     BOUND_NATIVE("push", 1, [](Thread*t, int argCount){
-        Value val = t->pop();
-        asArray(t->peek(0))->values.emplace_back(val);
+        memory::gc.heapSize += 8;
+        asArray(t->peek(1))->values.push_back(t->pop());
         return false;
     });
     BOUND_NATIVE("pop", 0, [](Thread*t, int argCount){
         auto arr = asArray(t->pop());
         Value val = arr->values.back();
+        memory::gc.heapSize -= 8;
         arr->values.pop_back();
         t->push(val);
         return false;

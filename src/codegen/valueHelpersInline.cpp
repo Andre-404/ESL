@@ -50,7 +50,7 @@ inline int32_t decodeInt(Value x){ return std::round(decodeNumber(x)); }
 inline bool decodeBool(Value x){ return x & MASK_TYPE_TRUE; }
 inline object::Obj* decodeObj(Value x){ return reinterpret_cast<object::Obj*>(x & MASK_PAYLOAD_OBJ); }
 
-inline bool isNumber(Value x){ return ((~x) & MASK_EXPONENT) != 0 || (x & MASK_SIGNATURE) == MASK_SIGNATURE_NAN; }
+inline bool isNumber(Value x){ return ((~x) & MASK_EXPONENT) != 0  || (x & MASK_SIGNATURE) == MASK_SIGNATURE_NAN; }
 inline bool isBool(Value x){ return ((x & MASK_SIGNATURE) == MASK_SIGNATURE_TRUE || (x & MASK_SIGNATURE) == MASK_SIGNATURE_FALSE); }
 inline bool isNil(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_NIL; }
 inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
@@ -71,7 +71,7 @@ inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::
 inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::MUTEX; }
 inline bool isFuture(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::FUTURE; }
 
-inline bool isFalsey(Value x) { return (isNil(x)) || (isBool(x) && !decodeBool(x)); }
+inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
 
 // Uses reinterpret_cast because it assumes the object being passed is of the requested type
 inline object::ObjString* asString(Value x) { return reinterpret_cast<ObjString*>(decodeObj(x)); }

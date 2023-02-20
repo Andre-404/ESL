@@ -84,16 +84,20 @@ namespace memory {
 
 	void GarbageCollector::sweep() {
 		heapSize = 0;
+        for(auto it = interned.begin(); it != interned.end(); it++){
+            if(!it->second->marked) interned.erase(it);
+        }
 		for (int i = objects.size() - 1; i >= 0; i--) {
 			object::Obj* obj = objects[i];
 			if (!obj->marked) {
-				obj->~Obj();
+				delete obj;
 				objects.erase(objects.begin() + i);
 				continue;
 			}
 			heapSize += obj->getSize();
 			obj->marked = false;
 		}
+
 	}
 
 	void GarbageCollector::markObj(object::Obj* object) {

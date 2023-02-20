@@ -14,6 +14,7 @@ namespace runtime {
 		void mark(memory::GarbageCollector* gc);
 		void copyVal(Value val);
 
+
         // Used by Thread and native functions
         VM* vm;
         void push(Value val);
@@ -23,28 +24,28 @@ namespace runtime {
         std::atomic<bool> cancelToken;
         // Tells the thread that it should pause it's execution, merely setting this to true doesn't pause
         std::atomic<bool> pauseToken;
+        Value* stackTop;
 
         void runtimeError(string err, int errorCode);
 
         void callValue(Value callee, int argCount);
-	private:
+
+    private:
 		Value stack[STACK_MAX];
 		CallFrame frames[FRAMES_MAX];
 		int frameCount;
-        Value* stackTop;
 
         string errorString;
 
 		void call(object::ObjClosure* function, int argCount);
 
-		void defineMethod(string& name);
         // True if method exists and was bound to receiver
-		bool bindMethod(object::ObjClass* klass, string& name);
-		void invoke(string& fieldName, int argCount);
+		bool bindMethod(object::ObjClass* klass, object::ObjString* name);
+		void invoke(object::ObjString* fieldName, int argCount);
         // True if method exists and was invoked
-		bool invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
+		bool invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int argCount);
 
-        void bindMethodToPrimitive(Value receiver, string& methodName);
-        BuiltinMethod& findNativeMethod(Value receiver, string& name);
+        void bindMethodToPrimitive(Value receiver, object::ObjString* methodName);
+        BuiltinMethod& findNativeMethod(Value receiver, object::ObjString* name);
 	};
 }

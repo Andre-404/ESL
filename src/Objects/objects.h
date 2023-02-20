@@ -1,7 +1,7 @@
 #pragma once
 #include "../codegen/codegenDefs.h"
 #include "../MemoryManagment/garbageCollector.h"
-#include "../Includes/robinHood.h"
+#include "../Includes/unorderedDense.h"
 #include <fstream>
 #include <stdio.h>
 #include <shared_mutex>
@@ -35,7 +35,7 @@ namespace object {
 		ObjType type;
 		bool marked;
 
-		virtual string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack) = 0;
+		virtual string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) = 0;
 		virtual void trace() = 0;
 		virtual uInt64 getSize() = 0;
 		virtual ~Obj() = default;
@@ -63,8 +63,10 @@ namespace object {
 
 		ObjString* concat(ObjString* other);
 
+        static ObjString* createStr(string str);
+
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -78,7 +80,7 @@ namespace object {
 		~ObjArray() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -94,7 +96,7 @@ namespace object {
 		~ObjFunc() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -110,7 +112,7 @@ namespace object {
 		~ObjNativeFunc() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -127,7 +129,7 @@ namespace object {
         ~ObjBoundNativeFunc() {}
 
         void trace();
-        string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
         uInt64 getSize();
     };
 
@@ -138,7 +140,7 @@ namespace object {
 		~ObjUpval() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -151,20 +153,20 @@ namespace object {
 		~ObjClosure() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
 	//parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class
 	class ObjClass : public Obj {
 	public:
-		string name;
-		robin_hood::unordered_map<string, Value> methods;
+        object::ObjString* name;
+        ankerl::unordered_dense::map<object::ObjString*, Value> methods;
 		ObjClass(string _name);
 		~ObjClass() {}
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -178,7 +180,7 @@ namespace object {
 		~ObjBoundMethod() = default;
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -186,12 +188,12 @@ namespace object {
 	class ObjInstance : public Obj {
 	public:
 		ObjClass* klass;
-		robin_hood::unordered_map<string, Value> fields;
+		ankerl::unordered_dense::map<object::ObjString*, Value> fields;
 		ObjInstance(ObjClass* _klass);
 		~ObjInstance() = default;
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -206,7 +208,7 @@ namespace object {
 		~ObjFile();
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -219,7 +221,7 @@ namespace object {
 		~ObjMutex();
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 
@@ -236,7 +238,7 @@ namespace object {
 		void startParallelExecution();
 
 		void trace();
-		string toString(std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack);
+		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
 }

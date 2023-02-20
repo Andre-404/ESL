@@ -1,7 +1,5 @@
 #pragma once
 #include <utility>
-
-#include "../Includes/robinHood.h"
 #include "../Objects/objects.h"
 
 namespace runtime {
@@ -17,7 +15,7 @@ namespace runtime {
     };
     struct BuiltinClass {
         // Only store raw native function pointers, at runtime an object::ObjBoundNative is created and the caller is bound to it
-        robin_hood::unordered_map<string, BuiltinMethod> methods;
+        ankerl::unordered_dense::map<object::ObjString*, BuiltinMethod> methods;
 
         BuiltinClass() = default;
         BuiltinClass(BuiltinClass* parent){
@@ -37,7 +35,7 @@ namespace runtime {
 
     vector<object::ObjNativeFunc *> createNativeFuncs();
 
-    robin_hood::unordered_map<string, uInt> createNativeNameTable(vector<object::ObjNativeFunc *>& natives);
+    ankerl::unordered_dense::map<string, uInt> createNativeNameTable(vector<object::ObjNativeFunc *>& natives);
 
     vector<BuiltinClass> createBuiltinClasses();
 }

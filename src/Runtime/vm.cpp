@@ -18,7 +18,7 @@ runtime::VM::VM(compileCore::Compiler* compiler) {
     globals = compiler->globals;
     // For stack tracing during error printing
     sourceFiles = compiler->sourceFiles;
-
+    memory::gc.vm = this;
 	mainThread = new Thread(this);
 	// First value on the stack is the future holding the thread, mainThread has nil
 	mainThread->copyVal(encodeNil());
@@ -32,6 +32,9 @@ void runtime::VM::mark(memory::GarbageCollector* gc) {
 	mainThread->mark(gc);
 	for (Value& val : code.constants) valueHelpers::mark(val);
     for (auto func : nativeFuncs) func->marked = true;
+    for (auto klass : nativeClasses){
+        for(auto method : klass.methods) method.first->marked = true;
+    }
 }
 
 void runtime::VM::execute() {

@@ -30,7 +30,7 @@ void runtime::Thread::copyVal(Value val) {
 	push(val);
 }
 
-runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, string& name){
+runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, object::ObjString* name){
     runtime::Builtin type = runtime::Builtin::COMMON;
     if(isObj(receiver)){
         switch(decodeObj(receiver)->type){
@@ -45,7 +45,7 @@ runtime::BuiltinMethod& runtime::Thread::findNativeMethod(Value receiver, string
     auto& methods = vm->nativeClasses[+type].methods;
     auto it = methods.find(name);
     if(it != methods.end()) return it->second;
-    runtimeError(fmt::format("{} doesn't contain property '{}'.", typeToStr(receiver), name), 4);
+    runtimeError(fmt::format("{} doesn't contain property '{}'.", typeToStr(receiver), name->str), 4);
 }
 
 void runtime::Thread::mark(memory::GarbageCollector* gc) {
@@ -160,16 +160,7 @@ object::ObjUpval* captureUpvalue(Value* local) {
 	return upval;
 }
 
-void runtime::Thread::defineMethod(string& name) {
-	//no need to type check since the compiler made sure to emit code in this order
-	Value method = peek(0);
-	object::ObjClass* klass = asClass(peek(1));
-	klass->methods.insert_or_assign(name, method);
-	//we only pop the method, since other methods we're compiling will also need to know their class
-	pop();
-}
-
-bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
+bool runtime::Thread::bindMethod(object::ObjClass* klass, object::ObjString* name) {
 	auto it = klass->methods.find(name);
 	if (it == klass->methods.end()) return false;
 	//peek(0) to get the ObjInstance
@@ -179,7 +170,7 @@ bool runtime::Thread::bindMethod(object::ObjClass* klass, string& name) {
     return true;
 }
 
-void runtime::Thread::invoke(string& fieldName, int argCount) {
+void runtime::Thread::invoke(object::ObjString* fieldName, int argCount) {
 	Value receiver = peek(argCount);
 
 	if (isInstance(receiver)) {
@@ -196,10 +187,9 @@ void runtime::Thread::invoke(string& fieldName, int argCount) {
         if (instance->klass != nullptr && invokeFromClass(instance->klass, fieldName, argCount)) return;
 	}
     auto native = findNativeMethod(receiver, fieldName);
-    int arity = native.arity;
     // If arity is -1 it means that the function takes in a variable number of args
-    if (arity != -1 && argCount != arity) {
-        runtimeError(fmt::format("Method {} expects {} arguments but got {}.", fieldName, arity, argCount), 2);
+    if (native.arity != -1 && argCount != native.arity) {
+        runtimeError(fmt::format("Method {} expects {} arguments but got {}.", fieldName->str, native.arity, argCount), 2);
     }
     // If native returns true then the ObjNativeFunc is still on the stack and should be popped
     if(native.func(this, argCount)) {
@@ -208,7 +198,7 @@ void runtime::Thread::invoke(string& fieldName, int argCount) {
     }
 }
 
-bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodName, int argCount) {
+bool runtime::Thread::invokeFromClass(object::ObjClass* klass, object::ObjString* methodName, int argCount) {
 	auto it = klass->methods.find(methodName);
 	if (it == klass->methods.end()) return false;
 	// The bottom of the call stack will contain the receiver instance
@@ -216,9 +206,9 @@ bool runtime::Thread::invokeFromClass(object::ObjClass* klass, string& methodNam
     return true;
 }
 
-void runtime::Thread::bindMethodToPrimitive(Value receiver, string& methodName){
+void runtime::Thread::bindMethodToPrimitive(Value receiver, object::ObjString* methodName){
     auto func = findNativeMethod(receiver, methodName);
-    push(encodeObj(new object::ObjBoundNativeFunc(func.func, func.arity, methodName, receiver)));
+    push(encodeObj(new object::ObjBoundNativeFunc(func.func, func.arity, methodName->str, receiver)));
 }
 
 static int32_t checkArrayBounds(runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
@@ -292,17 +282,12 @@ __attribute__((noinline)) static bool handlePauseToken(runtime::Thread* t, objec
     return false;
 }
 
-static void tryIncrement(runtime::Thread *t, bool isPrefix, int sign, Value &val) {
-    if (!isNumber(val)) {
-        t->runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3);
-    }
-    if (!isPrefix) {
-        t->push(val);
-        val = encodeNumber(decodeNumber(val) + sign);
-        return;
-    }
-    val = encodeNumber(decodeNumber(val) + sign);
+static void tryIncrement(runtime::Thread *t, byte arg, Value &val) {
+    if (!isNumber(val)) t->runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3);
     t->push(val);
+    val = encodeNumber(decodeNumber(val) + (static_cast<int8_t>((arg & 0b00000001)*2) - 1));
+    // True: prefix, false: postfix
+    if(arg & 0b00000010) t->stackTop[-1] = val;
 }
 
 #pragma endregion
@@ -317,13 +302,14 @@ void runtime::Thread::executeBytecode() {
     byte* ip = &vm->code.bytecode[frame->closure->func->bytecodeOffset];
 	Value* slotStart = frame->slots;
     uint64_t constantOffset = frame->closure->func->constantsOffset;
+    Value* constants = vm->code.constants.data();
 
 
 	#pragma region Helpers & Macros
 	#define READ_BYTE() (*ip++)
 	#define READ_SHORT() (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
-	#define READ_CONSTANT() (vm->code.constants[constantOffset + READ_BYTE()])
-	#define READ_CONSTANT_LONG() (vm->code.constants[constantOffset + READ_SHORT()])
+	#define READ_CONSTANT() (constants[constantOffset + READ_BYTE()])
+	#define READ_CONSTANT_LONG() (constants[constantOffset + READ_SHORT()])
 	#define READ_STRING() (asString(READ_CONSTANT()))
 	#define READ_STRING_LONG() (asString(READ_CONSTANT_LONG()))
 
@@ -427,23 +413,20 @@ void runtime::Thread::executeBytecode() {
             }
             case +OpCode::INCREMENT:{
                 byte arg = READ_BYTE();
-                int8_t sign = (arg & 0b00000001) == 1 ? 1 : -1;
-                // True: prefix, false: postfix
-                bool isPrefix = (arg & 0b00000010) == 2;
 
                 byte type = arg >> 2;
 
-                #define INCREMENT(val) tryIncrement(this, isPrefix, sign, val); DISPATCH();
+                #define INCREMENT(val) tryIncrement(this, arg, val); DISPATCH();
 
                 switch (type) {
                     case 0: {
                         byte slot = READ_BYTE();
                         Value &num = slotStart[slot];
                         // If this is a local upvalue
-                        if (isUpvalue(num)) {
+                        /*if (isUpvalue(num)) {
                             Value &temp = asUpvalue(num)->val;
                             INCREMENT(temp);
-                        }
+                        }*/
                         INCREMENT(num);
                     }
                     case 1: {
@@ -461,23 +444,7 @@ void runtime::Thread::executeBytecode() {
                         Globalvar &var = vm->globals[index];
                         INCREMENT(var.val);
                     }
-                    case 4: {
-                        Value inst = pop();
-                        if (!isInstance(inst)) {
-                            runtimeError(
-                                    fmt::format("Only instances/structs have properties, got {}.", typeToStr(inst)),
-                                    3);
-                        }
-
-                        object::ObjInstance *instance = asInstance(inst);
-                        object::ObjString *str = READ_STRING();
-                        auto it = instance->fields.find(str->str);
-                        if (it == instance->fields.end()) {
-                            runtimeError(fmt::format("Field '{}' doesn't exist.", str->str), 4);
-                        }
-                        Value &num = it->second;
-                        INCREMENT(num);
-                    }
+                    case 4:[[fallthrough]];
                     case 5: {
                         Value inst = pop();
                         if (!isInstance(inst)) {
@@ -487,9 +454,9 @@ void runtime::Thread::executeBytecode() {
                         }
 
                         object::ObjInstance *instance = asInstance(inst);
-                        object::ObjString *str = READ_STRING_LONG();
+                        object::ObjString *str = arg == 4 ? READ_STRING() : READ_STRING_LONG();
 
-                        auto it = instance->fields.find(str->str);
+                        auto it = instance->fields.find(str);
                         if (it == instance->fields.end()) {
                             runtimeError(fmt::format("Field '{}' doesn't exist.", str->str), 4);
                         }
@@ -516,7 +483,7 @@ void runtime::Thread::executeBytecode() {
                         object::ObjInstance *instance = asInstance(callee);
                         object::ObjString *str = asString(field);
 
-                        auto it = instance->fields.find(str->str);
+                        auto it = instance->fields.find(str);
                         if (it == instance->fields.end()) {
                             runtimeError(fmt::format("Field '{}' doesn't exist.", str->str), 4);
                         }
@@ -680,10 +647,10 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_LOCAL:{
                 uint8_t slot = READ_BYTE();
                 Value val = slotStart[slot];
-                if (isUpvalue(val)) {
+                /*if (isUpvalue(val)) {
                     push(asUpvalue(val)->val);
                     DISPATCH();
-                }
+                }*/
                 push(slotStart[slot]);
                 DISPATCH();
             }
@@ -691,10 +658,10 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SET_LOCAL:{
                 uint8_t slot = READ_BYTE();
                 Value val = slotStart[slot];
-                if (isUpvalue(val)) {
+                /*if (isUpvalue(val)) {
                     asUpvalue(val)->val = peek(0);
                     DISPATCH();
-                }
+                }*/
                 slotStart[slot] = peek(0);
                 DISPATCH();
             }
@@ -754,7 +721,7 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SWITCH:{
                 Value val = pop();
                 uInt caseNum = READ_SHORT();
-                // Offset into constant indexes
+                // Offset into jump indexes
                 byte *offset = ip + caseNum;
                 // Place in the bytecode where the jump is held
                 byte *jumpOffset = nullptr;
@@ -775,7 +742,7 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SWITCH_LONG:{
                 Value val = pop();
                 uInt caseNum = READ_SHORT();
-                // Offset into constant indexes
+                // Offset into jump indexes
                 byte *offset = ip + caseNum * 2;
                 // Place in the bytecode where the jump is held
                 byte *jumpOffset = nullptr;
@@ -827,24 +794,9 @@ void runtime::Thread::executeBytecode() {
                 DISPATCH();
             }
 
-            case +OpCode::CLOSURE:
-            {
-                auto *closure = new object::ObjClosure(asFunction(READ_CONSTANT()));
-                for (auto &upval: closure->upvals) {
-                    uint8_t isLocal = READ_BYTE();
-                    uint8_t index = READ_BYTE();
-                    if (isLocal) {
-                        upval = captureUpvalue(slotStart + index);
-                    } else {
-                        upval = frame->closure->upvals[index];
-                    }
-                }
-                push(encodeObj(closure));
-                DISPATCH();
-            }
-            case +OpCode::CLOSURE_LONG:
-            {
-                auto *closure = new object::ObjClosure(asFunction(READ_CONSTANT_LONG()));
+            case +OpCode::CLOSURE: [[fallthrough]];
+            case +OpCode::CLOSURE_LONG:{
+                auto *closure = new object::ObjClosure(asFunction(*(ip - 1) == +OpCode::CLOSURE ? READ_CONSTANT() : READ_CONSTANT_LONG()));
                 for (auto &upval: closure->upvals) {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
@@ -933,7 +885,7 @@ void runtime::Thread::executeBytecode() {
 
                     object::ObjInstance *instance = asInstance(callee);
                     object::ObjString *name = asString(field);
-                    auto it = instance->fields.find(name->str);
+                    auto it = instance->fields.find(name);
                     if (it != instance->fields.end()) {
                         push(it->second);
                         DISPATCH();
@@ -966,42 +918,27 @@ void runtime::Thread::executeBytecode() {
                     object::ObjInstance *instance = asInstance(callee);
                     object::ObjString *str = asString(field);
                     //setting will always succeed, and we don't care if we're overriding an existing field, or creating a new one
-                    instance->fields.insert_or_assign(str->str, val);
+                    instance->fields.insert_or_assign(str, val);
                     DISPATCH();
                 }
                 runtimeError(fmt::format("Expected an array or struct, got {}.", typeToStr(callee)), 3);
             }
 
-            case +OpCode::GET_PROPERTY:{
-                Value inst = pop();
-                object::ObjString *name = READ_STRING();
-
-                if (isInstance(inst)) {
-                    object::ObjInstance *instance = asInstance(inst);
-                    auto it = instance->fields.find(name->str);
-                    if (it != instance->fields.end()) {
-                        push(it->second);
-                        DISPATCH();
-                    }
-                    if (instance->klass && bindMethod(instance->klass, name->str)) DISPATCH();
-                }
-                bindMethodToPrimitive(inst, name->str);
-                DISPATCH();
-            }
+            case +OpCode::GET_PROPERTY: [[fallthrough]];
             case +OpCode::GET_PROPERTY_LONG:{
                 Value inst = pop();
-                object::ObjString *name = READ_STRING_LONG();
+                object::ObjString *name = (*(ip - 1) == +OpCode::GET_PROPERTY ? READ_STRING() : READ_STRING_LONG());
 
                 if (isInstance(inst)) {
                     object::ObjInstance *instance = asInstance(inst);
-                    auto it = instance->fields.find(name->str);
+                    auto it = instance->fields.find(name);
                     if (it != instance->fields.end()) {
                         push(it->second);
                         DISPATCH();
                     }
-                    if (instance->klass && bindMethod(instance->klass, name->str)) DISPATCH();
+                    if (instance->klass && bindMethod(instance->klass, name)) DISPATCH();
                 }
-                bindMethodToPrimitive(inst, name->str);
+                bindMethodToPrimitive(inst, name);
                 DISPATCH();
             }
 
@@ -1013,7 +950,7 @@ void runtime::Thread::executeBytecode() {
                 object::ObjInstance *instance = asInstance(inst);
 
                 //we don't care if we're overriding or creating a new field
-                instance->fields.insert_or_assign(READ_STRING()->str, peek(0));
+                instance->fields.insert_or_assign(READ_STRING(), peek(0));
                 DISPATCH();
             }
             case +OpCode::SET_PROPERTY_LONG:{
@@ -1024,34 +961,22 @@ void runtime::Thread::executeBytecode() {
                 object::ObjInstance *instance = asInstance(inst);
 
                 //we don't care if we're overriding or creating a new field
-                instance->fields.insert_or_assign(READ_STRING_LONG()->str, peek(0));
+                instance->fields.insert_or_assign(READ_STRING_LONG(), peek(0));
                 DISPATCH();
             }
 
-            case +OpCode::CREATE_STRUCT:{
-                int numOfFields = READ_BYTE();
-
-                //passing null instead of class signals to the VM that this is a struct, and not a instance of a class
-                auto *inst = new object::ObjInstance(nullptr);
-
-                //the compiler emits the fields in reverse order, so we can loop through them normally and pop the values on the stack
-                for (int i = 0; i < numOfFields; i++) {
-                    object::ObjString *name = READ_STRING();
-                    inst->fields.insert_or_assign(name->str, pop());
-                }
-                push(encodeObj(inst));
-                DISPATCH();
-            }
+            case +OpCode::CREATE_STRUCT: [[fallthrough]];
             case +OpCode::CREATE_STRUCT_LONG:{
                 int numOfFields = READ_BYTE();
+                bool isShort = *(ip - 1) == +OpCode::CREATE_STRUCT ? true : false;
 
                 //passing null instead of class signals to the VM that this is a struct, and not a instance of a class
                 auto *inst = new object::ObjInstance(nullptr);
 
                 //the compiler emits the fields in reverse order, so we can loop through them normally and pop the values on the stack
                 for (int i = 0; i < numOfFields; i++) {
-                    object::ObjString *name = READ_STRING_LONG();
-                    inst->fields.insert_or_assign(name->str, pop());
+                    object::ObjString *name = isShort ? READ_STRING() : READ_STRING_LONG();
+                    inst->fields.insert_or_assign(name, pop());
                 }
                 push(encodeObj(inst));
                 DISPATCH();
@@ -1062,7 +987,7 @@ void runtime::Thread::executeBytecode() {
                 int argCount = READ_BYTE();
                 object::ObjString *method = READ_STRING();
                 STORE_FRAME();
-                invoke(method->str, argCount);
+                invoke(method, argCount);
                 LOAD_FRAME();
                 DISPATCH();
             }
@@ -1071,28 +996,19 @@ void runtime::Thread::executeBytecode() {
                 int argCount = READ_BYTE();
                 object::ObjString *method = READ_STRING_LONG();
                 STORE_FRAME();
-                invoke(method->str, argCount);
+                invoke(method, argCount);
                 LOAD_FRAME();
                 DISPATCH();
             }
 
-            case +OpCode::GET_SUPER:{
-                //super is ALWAYS followed by a field
-                object::ObjString *name = READ_STRING();
-                object::ObjClass *superclass = asClass(pop());
-
-                if (!bindMethod(superclass, name->str)) {
-                    runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
-                }
-                DISPATCH();
-            }
+            case +OpCode::GET_SUPER: [[fallthrough]];
             case +OpCode::GET_SUPER_LONG:{
                 //super is ALWAYS followed by a field
-                object::ObjString *name = READ_STRING_LONG();
+                object::ObjString *name = *(ip - 1) == +OpCode::GET_SUPER ? READ_STRING() : READ_STRING_LONG();
                 object::ObjClass *superclass = asClass(pop());
 
-                if (!bindMethod(superclass, name->str)) {
-                    runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name, name->str), 4);
+                if (!bindMethod(superclass, name)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'", superclass->name->str, name->str), 4);
                 }
                 DISPATCH();
             }
@@ -1103,8 +1019,8 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *method = READ_STRING();
                 object::ObjClass *superclass = asClass(pop());
                 STORE_FRAME();
-                if (!invokeFromClass(superclass, method->str, argCount)) {
-                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);
+                if (!invokeFromClass(superclass, method, argCount)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name->str, method->str), 4);
                 }
                 LOAD_FRAME();
                 DISPATCH();
@@ -1115,8 +1031,8 @@ void runtime::Thread::executeBytecode() {
                 object::ObjString *method = READ_STRING_LONG();
                 object::ObjClass *superclass = asClass(pop());
                 STORE_FRAME();
-                if (!invokeFromClass(superclass, method->str, argCount)) {
-                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name, method->str), 4);
+                if (!invokeFromClass(superclass, method, argCount)) {
+                    runtimeError(fmt::format("{} doesn't contain method '{}'.", superclass->name->str, method->str), 4);
                 }
                 LOAD_FRAME();
                 DISPATCH();

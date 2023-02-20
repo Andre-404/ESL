@@ -1,7 +1,7 @@
 #pragma once
 #include <variant>
 #include "../moduleDefs.h"
-#include "../Includes/robinHood.h"
+#include "../Includes/unorderedDense.h"
 #include "../Objects/objects.h"
 
 namespace object {
@@ -43,7 +43,7 @@ enum class ValueType {
 inline constexpr unsigned operator+ (ValueType const val) { return static_cast<byte>(val); }
 
 namespace valueHelpers {
-    string toString(Value x, std::shared_ptr<robin_hood::unordered_set<object::Obj*>> stack = nullptr);
+    string toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack = nullptr);
     void print(Value x);
     void mark(Value x);
     string typeToStr(Value x);
