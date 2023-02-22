@@ -196,6 +196,12 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return byteInstruction("OP GET LOCAL", chunk, offset);
 	case +OpCode::SET_LOCAL:
 		return byteInstruction("OP SET LOCAL", chunk, offset);
+    case +OpCode::CREATE_UPVALUE:
+        return byteInstruction("OP CREATE UPVALUE", chunk, offset);
+    case +OpCode::GET_LOCAL_UPVALUE:
+        return byteInstruction("OP GET LOCAL UPVALUE", chunk, offset);
+    case +OpCode::SET_LOCAL_UPVALUE:
+        return byteInstruction("OP SET LOCAL UPVALUE", chunk, offset);
 	case +OpCode::GET_UPVALUE:
 		return byteInstruction("OP GET UPVALUE", chunk, offset);
 	case +OpCode::SET_UPVALUE:

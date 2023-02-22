@@ -4,6 +4,7 @@
 #include <iostream>
 #include "../Includes/fmt/format.h"
 #include "../codegen/valueHelpersInline.cpp"
+#include "upvalueFinder.h"
 
 using namespace compileCore;
 using namespace object;
@@ -26,20 +27,21 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 	localCount = 0;
 	scopeDepth = 0;
 	line = 0;
-	//first slot is claimed for function name
-	Local* local = &locals[localCount++];
-	local->depth = 0;
-	if (type == FuncType::TYPE_CONSTRUCTOR || type == FuncType::TYPE_METHOD) {
-		local->name = "this";
-	}
-	else {
-		local->name = "";
+	// If a constructor or a method is being compiled, it implicitly declares "this" as the first slot
+	if (!(type == FuncType::TYPE_CONSTRUCTOR || type == FuncType::TYPE_METHOD)) {
+        // First slot is claimed for function name
+        Local* local = &locals[localCount++];
+        local->depth = 0;
+        local->name = "";
 	}
 	chunk = Chunk();
 	func = new ObjFunc();
 }
 
 Compiler::Compiler(vector<CSLModule*>& _units) {
+    {
+        upvalueFinder::UpvalueFinder f(_units);
+    }
 	current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
 	currentClass = nullptr;
 	curUnitIndex = 0;
@@ -175,8 +177,8 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 	if (expr->op.type == TokenType::INCREMENT || expr->op.type == TokenType::DECREMENT) {
 		int arg = -1;
 		//type definition and arg size
-		//0: local(8bit index), 1: upvalue(8bit index), 2: global(8bit constant), 3: global(16bit constant)
-		//4: dot access(8bit constant), 5: dot access(16bit constant), 6: field access(none, field is compiled to stack)
+		//0: local(8bit index), 1: local upvalue(8bit index), 2: upvalue(8bit index), 3: global(8bit constant), 4: global(16bit constant)
+		//5: dot access(8bit constant), 6: dot access(16bit constant), 7: field access(none, field is compiled to stack)
 		byte type = 0;
 		if (expr->right->type == AST::ASTType::LITERAL) {
 			//if a variable is being incremented, first get what kind of variable it is(local, upvalue or global)
@@ -185,12 +187,15 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 
 			updateLine(left->token);
 			arg = resolveLocal(left->token);
-			if (arg != -1) type = 0;
-			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 1;
+			if (arg != -1) {
+                type = 0;
+                if(current->locals[arg].isLocalUpvalue) type = 1;
+            }
+			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 2;
 			else if((arg = resolveGlobal(left->token, true)) != -1){
                 if(arg == -2) error(left->token, fmt::format("Trying to access variable '{}' before it's initialized.", left->token.getLexeme()));
 				if(!definedGlobals[arg]) error(left->token, fmt::format("Use of undefined variable '{}'.", left->token.getLexeme()));
-				type = arg > SHORT_CONSTANT_LIMIT ? 3 : 2;
+				type = arg > SHORT_CONSTANT_LIMIT ? 4 : 3;
 			}else error(left->token, fmt::format("Variable '{}' isn't declared.", left->token.getLexeme()));
 		}
 		else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
@@ -201,11 +206,11 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 
 			if (left->accessor.type == TokenType::DOT) {
 				arg = identifierConstant(dynamic_cast<AST::LiteralExpr*>(left->field.get())->token);
-				type = arg > SHORT_CONSTANT_LIMIT ? 5 : 4;
+				type = arg > SHORT_CONSTANT_LIMIT ? 6 : 5;
 			}
 			else {
 				left->field->accept(this);
-				type = 6;
+				type = 7;
 			}
 		}
 		else error(expr->op, "Left side is not incrementable.");
@@ -364,10 +369,9 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 	beginScope();
 	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
 	//we just assign those positions to each arg
-	for (Token& var : expr->args) {
-		updateLine(var);
-		uint8_t constant = parseVar(var);
-		defineVar(constant);
+	for (AST::ASTVar& var : expr->args) {
+        declareLocalVar(var);
+        defineLocalVar();
 	}
     for(auto stmt : expr->body->statements){
         stmt->accept(this);
@@ -426,8 +430,10 @@ void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
 }
 
 void Compiler::visitVarDecl(AST::VarDecl* decl) {
-	// If this is a global, we get a index into global array, if it's a local, it returns a dummy 0
-	uint16_t global = parseVar(decl->name);
+    uint16_t global;
+    if(decl->var.type == AST::ASTVarType::GLOBAL){
+        global = declareGlobalVar(decl->var.name);
+    }else declareLocalVar(decl->var);
 	// Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 	AST::ASTNodePtr expr = decl->value;
 	if (expr == nullptr) {
@@ -436,19 +442,15 @@ void Compiler::visitVarDecl(AST::VarDecl* decl) {
 	else {
 		expr->accept(this);
 	}
-	// If it's a local, do nothing the slot that the compiled value is at becomes a local var
-	defineVar(global);
-    // Put the value into the global array if we're in global scope
-    if(current->scopeDepth > 0) return;
-    if(global <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, global);
-    else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, global);
-    emitByte(+OpCode::POP);
+    if(decl->var.type == AST::ASTVarType::GLOBAL){
+        defineGlobalVar(global);
+    }else defineLocalVar();
 }
 
 void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
-	uint16_t index = parseVar(decl->getName());
+	uint16_t index = declareGlobalVar(decl->getName());
     // Defining the function here to allow for recursion
-    defineVar(index);
+    defineGlobalVar(index);
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
 	//is stored in parserCurrent->enclosing
 	current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
@@ -456,11 +458,10 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 	beginScope();
 	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
 	//we just assign those positions to each arg
-	for (Token& var : decl->args) {
-		updateLine(var);
-		uint8_t constant = parseVar(var);
-		defineVar(constant);
-	}
+    for (AST::ASTVar& var : decl->args) {
+        declareLocalVar(var);
+        defineLocalVar();
+    }
     for(auto stmt : decl->body->statements){
         stmt->accept(this);
     }
@@ -481,7 +482,7 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	Token className = decl->getName();
-	uInt16 index = parseVar(className);
+	uInt16 index = declareGlobalVar(className);
     auto klass = new object::ObjClass(className.getLexeme());
 
 	ClassChunkInfo temp(currentClass, nullptr);
@@ -519,7 +520,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	}
     // Define the class here, so that it can be called inside its own methods
     // Defining after inheriting so that a class can't be used as its own parent
-    defineVar(index);
+    defineGlobalVar(index);
 
 	for (AST::ASTNodePtr _method : decl->methods) {
         // TODO: And another another one
@@ -940,13 +941,12 @@ uint16_t Compiler::identifierConstant(Token name) {
 	return makeConstant(encodeObj(ObjString::createStr(temp)));
 }
 
-//if this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
-void Compiler::defineVar(uInt16 index) {
-	if (current->scopeDepth > 0) {
-		markInit();
-		return;
-	}
+// If this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
+void Compiler::defineGlobalVar(uInt16 index) {
     definedGlobals[index] = true;
+    if(index <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, index);
+    else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, index);
+    emitByte(+OpCode::POP);
 }
 
 //gets/sets a variable, respects the scoping rules(locals->upvalues->globals)
@@ -958,6 +958,10 @@ void Compiler::namedVar(Token token, bool canAssign) {
 	if (arg != -1) {
 		getOp = +OpCode::GET_LOCAL;
 		setOp = +OpCode::SET_LOCAL;
+        if(current->locals[arg].isLocalUpvalue){
+            getOp = +OpCode::GET_LOCAL_UPVALUE;
+            setOp = +OpCode::SET_LOCAL_UPVALUE;
+        }
 	}
 	else if ((arg = resolveUpvalue(current, token)) != -1) {
 		getOp = +OpCode::GET_UPVALUE;
@@ -990,11 +994,8 @@ void Compiler::namedVar(Token token, bool canAssign) {
 
 // If 'name' is a global variable it's index in the globals array is returned
 // Otherwise, if 'name' is a local variable it's passed to declareVar()
-uint16_t Compiler::parseVar(Token name) {
+uint16_t Compiler::declareGlobalVar(Token name) {
 	updateLine(name);
-	declareVar(name);
-	if (current->scopeDepth > 0) return 0;
-
 	// Searches for the index of the global variable in the current file
     // (globals.size() - curGlobalIndex = globals declared in current file)
 	int index = curGlobalIndex;
@@ -1007,33 +1008,32 @@ uint16_t Compiler::parseVar(Token name) {
 }
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
-void Compiler::declareVar(Token& name) {
-	updateLine(name);
-	// If we are currently in global scope, this has no use
-	if (current->scopeDepth == 0) return;
+void Compiler::declareLocalVar(AST::ASTVar& var) {
+	updateLine(var.name);
 	for (int i = current->localCount - 1; i >= 0; i--) {
 		Local* local = &current->locals[i];
 		if (local->depth != -1 && local->depth < current->scopeDepth) {
 			break;
 		}
-		string str = name.getLexeme();
+		string str = var.name.getLexeme();
 		if (str.compare(local->name) == 0) {
-			error(name, "Already a variable with this name in this scope.");
+			error(var.name, "Already a variable with this name in this scope.");
 		}
 	}
-	addLocal(name);
+	addLocal(var);
 }
 
-//locals are stored on the stack, at compile time this is tracked with the 'locals' array
-void Compiler::addLocal(Token name) {
-	updateLine(name);
+// If a variable is declared as "
+void Compiler::addLocal(AST::ASTVar var) {
+	updateLine(var.name);
 	if (current->localCount == LOCAL_MAX) {
-		error(name, "Too many local variables in function.");
+		error(var.name, "Too many local variables in function.");
 		return;
 	}
 	Local* local = &current->locals[current->localCount++];
-	local->name = name.getLexeme();
+	local->name = var.name.getLexeme();
 	local->depth = -1;
+    local->isLocalUpvalue = var.type == AST::ASTVarType::LOCAL_UPVALUE;
 }
 
 void Compiler::beginScope() {
@@ -1083,23 +1083,22 @@ int Compiler::resolveUpvalue(CurrentChunkInfo* func, Token name) {
 
 	int local = resolveLocal(func->enclosing, name);
 	if (local != -1) {
-		func->enclosing->locals[local].isCaptured = true;
 		func->enclosing->hasCapturedLocals = true;
-		return addUpvalue((uint8_t)local, true);
+		return addUpvalue(func, (uint8_t)local, true);
 	}
 	int upvalue = resolveUpvalue(func->enclosing, name);
 	if (upvalue != -1) {
-		return addUpvalue((uint8_t)upvalue, false);
+		return addUpvalue(func, (uint8_t)upvalue, false);
 	}
 
 	return -1;
 }
 
-int Compiler::addUpvalue(byte index, bool isLocal) {
-	int upvalueCount = current->func->upvalueCount;
+int Compiler::addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal) {
+	int upvalueCount = func->func->upvalueCount;
 	//first check if this upvalue has already been captured
 	for (int i = 0; i < upvalueCount; i++) {
-		Upvalue* upval = &current->upvalues[i];
+		Upvalue* upval = &func->upvalues[i];
 		if (upval->index == index && upval->isLocal == isLocal) {
 			return i;
 		}
@@ -1108,15 +1107,17 @@ int Compiler::addUpvalue(byte index, bool isLocal) {
 		error("Too many closure variables in function.");
 		return 0;
 	}
-	current->upvalues[upvalueCount].isLocal = isLocal;
-	current->upvalues[upvalueCount].index = index;
-	return current->func->upvalueCount++;
+	func->upvalues[upvalueCount].isLocal = isLocal;
+	func->upvalues[upvalueCount].index = index;
+	return func->func->upvalueCount++;
 }
 
-//marks the local at the top of the stack as ready to use
-void Compiler::markInit() {
-	if (current->scopeDepth == 0) return;
+// Marks the local at the top of the stack as ready to use
+void Compiler::defineLocalVar() {
 	current->locals[current->localCount - 1].depth = current->scopeDepth;
+    if(current->locals[current->localCount - 1].isLocalUpvalue) {
+        emitBytes(+OpCode::CREATE_UPVALUE, current->localCount - 1);
+    }
 }
 
 Token Compiler::syntheticToken(string str) {
@@ -1136,10 +1137,10 @@ object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
 	current = new CurrentChunkInfo(current, type);
 	beginScope();
 	// Args defined as local in order they were passed to the function
-	for (Token& var : _method->args) {
-		uInt16 constant = parseVar(var);
-		defineVar(constant);
-	}
+    for (AST::ASTVar& var : _method->args) {
+        declareLocalVar(var);
+        defineLocalVar();
+    }
     for(auto stmt : _method->body->statements){
         stmt->accept(this);
     }

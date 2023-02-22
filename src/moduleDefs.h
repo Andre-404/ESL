@@ -25,11 +25,11 @@ enum class TokenType {
     AND, OR,
     NIL, FALSE, TRUE,
     IF, ELSE,
-    FUNC, RETURN,
+    FN, RETURN,
     WHILE, FOR, CONTINUE, BREAK, ADVANCE,
     CLASS, THIS, SUPER,
     SWITCH, CASE, DEFAULT,
-    VAR,
+    LET,
     IMPORT, EXPORT, AS,
     AWAIT, ASYNC, ADDMACRO, EXPR, TT,
 

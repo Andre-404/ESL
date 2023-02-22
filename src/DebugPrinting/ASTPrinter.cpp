@@ -93,8 +93,8 @@ void ASTPrinter::visitLiteralExpr(LiteralExpr* expr) {
 
 void ASTPrinter::visitFuncLiteral(FuncLiteral* expr) {
 	cout << "func literal ( ";
-	for (Token arg : expr->args) {
-		cout << arg.getLexeme() << ", ";
+	for (auto arg : expr->args) {
+		cout << arg.name.getLexeme() << ", ";
 	}
 	cout << ") ";
 	expr->body->accept(this);
@@ -120,7 +120,7 @@ void ASTPrinter::visitMacroExpr(MacroExpr* expr)
 
 
 void ASTPrinter::visitVarDecl(VarDecl* decl) {
-	cout << "var decl: " << decl->name.getLexeme() << " = ";
+	cout << "var decl: " << decl->var.name.getLexeme() << " = ";
 	if (decl->value != nullptr) {
 		decl->value->accept(this);
 	}
@@ -132,8 +132,8 @@ void ASTPrinter::visitVarDecl(VarDecl* decl) {
 
 void ASTPrinter::visitFuncDecl(FuncDecl* decl) {
 	cout << "func " << decl->name.getLexeme() << "( ";
-	for (Token arg : decl->args) {
-		cout << arg.getLexeme() << ", ";
+	for (auto arg : decl->args) {
+		cout << arg.name.getLexeme() << ", ";
 	}
 	cout << ") ";
 	decl->body->accept(this);

@@ -122,6 +122,25 @@ namespace AST {
 		virtual Token getName() = 0;
 	};
 
+    enum class ASTVarType{
+        LOCAL,
+        LOCAL_UPVALUE,
+        GLOBAL,
+        NONE
+    };
+    struct ASTVar{
+        Token name;
+        ASTVarType type;
+
+        ASTVar(){
+            type = ASTVarType::NONE;
+        }
+        ASTVar(Token _name){
+            name = _name;
+            type = ASTVarType::NONE;
+        }
+    };
+
 	#pragma region Expressions
 
 	class AssignmentExpr : public ASTNode {
@@ -340,11 +359,11 @@ namespace AST {
 
 	class FuncLiteral : public ASTNode {
 	public:
-		vector<Token> args;
+		vector<ASTVar> args;
         int8_t arity;
 		shared_ptr<BlockStmt> body;
 
-		FuncLiteral(vector<Token> _args, shared_ptr<BlockStmt> _body) {
+		FuncLiteral(vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
 			args = _args;
 			arity = _args.size();
 			body = _body;
@@ -407,17 +426,17 @@ namespace AST {
 	class VarDecl : public ASTDecl {
 	public:
 		ASTNodePtr value;
-		Token name;
+        ASTVar var;
 
 		VarDecl(Token _name, ASTNodePtr _value) {
-			name = _name;
+			var.name = _name;
 			value = _value;
 			type = ASTType::VAR;
 		}
 		void accept(Visitor* vis) {
 			vis->visitVarDecl(this);
 		}
-		Token getName() { return name; }
+		Token getName() { return var.name; }
 	};
 
 	class BlockStmt : public ASTNode {
@@ -558,12 +577,12 @@ namespace AST {
 
 	class FuncDecl : public ASTDecl {
 	public:
-		vector<Token> args;
+		vector<ASTVar> args;
         int8_t arity;
 		shared_ptr<BlockStmt> body;
 		Token name;
 
-		FuncDecl(Token _name, vector<Token> _args, shared_ptr<BlockStmt> _body) {
+		FuncDecl(Token _name, vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
 			name = _name;
 			args = _args;
 			arity = _args.size();

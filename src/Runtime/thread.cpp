@@ -101,10 +101,9 @@ void runtime::Thread::callValue(Value callee, int8_t argCount) {
         case object::ObjType::BOUND_NATIVE:{
             object::ObjBoundNativeFunc* bound = asBoundNativeFunc(callee);
             stackTop[-argCount - 1] = bound->receiver;
-            int8_t arity = bound->arity;
             //if arity is -1 it means that the function takes in a variable number of args
-            if (arity != -1 && argCount != arity) {
-                runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
+            if (bound->arity != -1 && argCount != bound->arity) {
+                runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, bound->arity, argCount), 2);
             }
             // Native methods always pop the receiver
             bound->func(this, argCount);
@@ -151,9 +150,7 @@ void runtime::Thread::call(object::ObjClosure* closure, int8_t argCount) {
 }
 
 object::ObjUpval* captureUpvalue(Value* local) {
-	auto* upval = new object::ObjUpval(*local);
-	*local = encodeObj(upval);
-	return upval;
+	return asUpvalue(*local);
 }
 
 bool runtime::Thread::bindMethod(object::ObjClass* klass, object::ObjString* name) {
@@ -415,30 +412,30 @@ void runtime::Thread::executeBytecode() {
                     case 0: {
                         byte slot = READ_BYTE();
                         Value &num = slotStart[slot];
-                        // If this is a local upvalue
-                        /*if (isUpvalue(num)) {
-                            Value &temp = asUpvalue(num)->val;
-                            INCREMENT(temp);
-                        }*/
                         INCREMENT(num);
                     }
                     case 1: {
                         byte slot = READ_BYTE();
-                        Value &num = frame->closure->upvals[slot]->val;
+                        Value &num = asUpvalue(slotStart[slot])->val;
                         INCREMENT(num);
                     }
                     case 2: {
+                        byte slot = READ_BYTE();
+                        Value &num = frame->closure->upvals[slot]->val;
+                        INCREMENT(num);
+                    }
+                    case 3: {
                         byte index = READ_BYTE();
                         Globalvar &var = vm->globals[index];
                         INCREMENT(var.val);
                     }
-                    case 3: {
+                    case 4: {
                         byte index = READ_SHORT();
                         Globalvar &var = vm->globals[index];
                         INCREMENT(var.val);
                     }
-                    case 4:[[fallthrough]];
-                    case 5: {
+                    case 5:[[fallthrough]];
+                    case 6: {
                         Value inst = pop();
                         if (!isInstance(inst)) {
                             runtimeError(
@@ -456,7 +453,7 @@ void runtime::Thread::executeBytecode() {
                         Value &num = it->second;
                         INCREMENT(num);
                     }
-                    case 6: {
+                    case 7: {
                         Value field = pop();
                         Value callee = pop();
 
@@ -638,24 +635,27 @@ void runtime::Thread::executeBytecode() {
             }
 
             case +OpCode::GET_LOCAL:{
-                uint8_t slot = READ_BYTE();
-                Value val = slotStart[slot];
-                /*if (isUpvalue(val)) {
-                    push(asUpvalue(val)->val);
-                    DISPATCH();
-                }*/
-                push(slotStart[slot]);
+                push(slotStart[READ_BYTE()]);
+                DISPATCH();
+            }
+            case +OpCode::SET_LOCAL:{
+                slotStart[READ_BYTE()] = peek(0);
                 DISPATCH();
             }
 
-            case +OpCode::SET_LOCAL:{
+            case +OpCode::CREATE_UPVALUE: {
                 uint8_t slot = READ_BYTE();
-                Value val = slotStart[slot];
-                /*if (isUpvalue(val)) {
-                    asUpvalue(val)->val = peek(0);
-                    DISPATCH();
-                }*/
-                slotStart[slot] = peek(0);
+                auto* upval = new object::ObjUpval(slotStart[slot]);
+                slotStart[slot] = encodeObj(upval);
+                DISPATCH();
+            }
+
+            case +OpCode::GET_LOCAL_UPVALUE:{
+                push(asUpvalue(slotStart[READ_BYTE()])->val);
+                DISPATCH();
+            }
+            case +OpCode::SET_LOCAL_UPVALUE:{
+                asUpvalue(slotStart[READ_BYTE()])->val = peek(0);
                 DISPATCH();
             }
 
@@ -794,7 +794,7 @@ void runtime::Thread::executeBytecode() {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
                     if (isLocal) {
-                        upval = captureUpvalue(slotStart + index);
+                        upval = asUpvalue(slotStart[index]);
                     } else {
                         upval = frame->closure->upvals[index];
                     }

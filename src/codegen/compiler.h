@@ -20,7 +20,7 @@ namespace compileCore {
 	struct Local {
 		string name = "";
 		int depth = -1;
-		bool isCaptured = false;//whether this local variable has been captured as an upvalue
+		bool isLocalUpvalue = false;//whether this local variable has been captured as an upvalue
 	};
 
 	struct Upvalue {
@@ -144,21 +144,28 @@ namespace compileCore {
 		int emitJump(byte jumpType);
 		void patchJump(int offset);
 		void emitLoop(int start);
+
 		void patchScopeJumps(ScopeJumpType type);
+
 		uInt16 makeConstant(Value value);
 		//variables
 		uInt16 identifierConstant(Token name);
-		void defineVar(uInt16 name);
+
+        uint16_t declareGlobalVar(Token name);
+		void defineGlobalVar(uInt16 name);
+
 		void namedVar(Token name, bool canAssign);
-		uInt16 parseVar(Token name);
 		//locals
-		void declareVar(Token& name);
-		void addLocal(Token name);
+		void declareLocalVar(AST::ASTVar& name);
+        void defineLocalVar();
+
+		void addLocal(AST::ASTVar name);
 		int resolveLocal(Token name);
 		int resolveLocal(CurrentChunkInfo* func, Token name);
+
 		int resolveUpvalue(CurrentChunkInfo* func, Token name);
-		int addUpvalue(byte index, bool isLocal);
-		void markInit();
+		int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
+
 		void beginScope();
 		void endScope();
 		//classes and methods

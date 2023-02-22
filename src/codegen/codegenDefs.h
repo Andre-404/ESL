@@ -108,6 +108,9 @@ enum class OpCode {
 
 	GET_LOCAL,//arg: 8-bit stack position
 	SET_LOCAL,//arg: 8-bit stack position
+    CREATE_UPVALUE,//arg: 8-bit stack position
+    GET_LOCAL_UPVALUE,//arg: 8-bit stack position
+    SET_LOCAL_UPVALUE,//arg: 8-bit stack position
 	GET_UPVALUE,//arg: 8-bit upval position
 	SET_UPVALUE,//arg: 8-bit upval position
 	//Arrays

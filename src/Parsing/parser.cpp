@@ -91,7 +91,7 @@ namespace AST {
 				return make_shared<StructLiteral>(entries);
 			}
 			//function literal
-			case TokenType::FUNC: {
+			case TokenType::FN: {
 				//the depths are used for throwing errors for switch and loops stmts, 
 				//and since a function can be declared inside a loop we need to account for that
 				int tempLoopDepth = cur->loopDepth;
@@ -100,12 +100,12 @@ namespace AST {
 				cur->switchDepth = 0;
 
 				cur->consume(TokenType::LEFT_PAREN, "Expect '(' for arguments.");
-				vector<Token> args;
+				vector<ASTVar> args;
 				//parse args
 				if (!cur->check(TokenType::RIGHT_PAREN)) {
 					do {
 						Token arg = cur->consume(TokenType::IDENTIFIER, "Expect argument name");
-						args.push_back(arg);
+						args.emplace_back(arg);
 						if (args.size() > 127) {
 							throw cur->error(arg, "Functions can't have more than 128 arguments");
 						}
@@ -352,7 +352,7 @@ Parser::Parser() {
 	addPrefix<LiteralParselet>(TokenType::LEFT_BRACKET, Precedence::PRIMARY);
 	addPrefix<LiteralParselet>(TokenType::LEFT_BRACE, Precedence::PRIMARY);
 	addPrefix<LiteralParselet>(TokenType::SUPER, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::FUNC, Precedence::PRIMARY);
+	addPrefix<LiteralParselet>(TokenType::FN, Precedence::PRIMARY);
 
 	// Infix
 	addInfix<AssignmentParselet>(TokenType::EQUAL, Precedence::ASSIGNMENT);
@@ -545,9 +545,9 @@ ASTNodePtr Parser::topLevelDeclaration() {
     shared_ptr<ASTDecl> node = nullptr;
     bool isExported = false;
     if (match(TokenType::EXPORT)) isExported = true;
-    if (match(TokenType::VAR)) node = varDecl();
+    if (match(TokenType::LET)) node = varDecl();
     else if (match(TokenType::CLASS)) node = classDecl();
-    else if (match(TokenType::FUNC)) node = funcDecl();
+    else if (match(TokenType::FN)) node = funcDecl();
     else if(isExported) throw error(previous(), "Only declarations are allowed after 'export'");
     if(node){
         for(const auto decl : parsedUnit->topDeclarations){
@@ -565,11 +565,11 @@ ASTNodePtr Parser::topLevelDeclaration() {
 }
 
 ASTNodePtr Parser::localDeclaration() {
-	if (match(TokenType::VAR)) return varDecl();
+	if (match(TokenType::LET)) return varDecl();
 	return statement();
 }
 
-shared_ptr<ASTDecl> Parser::varDecl() {
+shared_ptr<VarDecl> Parser::varDecl() {
 	Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
 	ASTNodePtr expr = nullptr;
 	//if no initializer is present the variable is initialized to null
@@ -580,7 +580,7 @@ shared_ptr<ASTDecl> Parser::varDecl() {
 	return make_shared<VarDecl>(name, expr);
 }
 
-shared_ptr<ASTDecl> Parser::funcDecl() {
+shared_ptr<FuncDecl> Parser::funcDecl() {
 	//the depths are used for throwing errors for switch and loops stmts, 
 	//and since a function can be declared inside a loop we need to account for that
 	int tempLoopDepth = loopDepth;
@@ -590,12 +590,12 @@ shared_ptr<ASTDecl> Parser::funcDecl() {
 
 	Token name = consume(TokenType::IDENTIFIER, "Expected a function name.");
 	consume(TokenType::LEFT_PAREN, "Expect '(' after function name.");
-	vector<Token> args;
+	vector<ASTVar> args;
 	//parse args
 	if (!check(TokenType::RIGHT_PAREN)) {
 		do {
 			Token arg = consume(TokenType::IDENTIFIER, "Expect argument name");
-			args.push_back(arg);
+			args.emplace_back(arg);
 			if (args.size() > 127) {
 				throw error(arg, "Functions can't have more than 127 arguments");
 			}
@@ -610,7 +610,7 @@ shared_ptr<ASTDecl> Parser::funcDecl() {
 	return make_shared<FuncDecl>(name, args, body);
 }
 
-shared_ptr<ASTDecl> Parser::classDecl() {
+shared_ptr<ClassDecl> Parser::classDecl() {
 	Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
 	ASTNodePtr inherited = nullptr;
 	//inheritance is optional
@@ -629,7 +629,10 @@ shared_ptr<ASTDecl> Parser::classDecl() {
 	//a class body can contain only methods(fields are initialized in the constructor)
 	vector<ASTNodePtr> methods;
 	while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-		methods.push_back(funcDecl());
+        auto decl = funcDecl();
+        // Implicitly declare "this"
+        decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
+		methods.push_back(decl);
 	}
 	consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
 	return make_shared<ClassDecl>(name, methods, inherited, inherited != nullptr);
@@ -704,7 +707,7 @@ shared_ptr<ForStmt> Parser::forStmt() {
 	if (match(TokenType::SEMICOLON)) {
 		//do nothing
 	}
-	else if (match(TokenType::VAR)) init = varDecl();
+	else if (match(TokenType::LET)) init = varDecl();
 	else init = exprStmt();
 
 	ASTNodePtr condition = nullptr;
@@ -923,8 +926,8 @@ void Parser::sync() {
 
 		switch (peek().type) {
 		case TokenType::CLASS:
-		case TokenType::FUNC:
-		case TokenType::VAR:
+		case TokenType::FN:
+		case TokenType::LET:
 		case TokenType::FOR:
 		case TokenType::IF:
 		case TokenType::ELSE:
