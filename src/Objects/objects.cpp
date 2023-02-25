@@ -74,7 +74,7 @@ uInt64 ObjFunc::getSize() {
 #pragma endregion
 
 #pragma region ObjNativeFunc
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, int8_t _arity, string _name) {
+ObjNativeFunc::ObjNativeFunc(NativeFn _func, int8_t _arity, const char* _name) {
 	func = _func;
 	arity = _arity;
     name = _name;
@@ -93,30 +93,6 @@ string ObjNativeFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<obje
 uInt64 ObjNativeFunc::getSize() {
 	return sizeof(ObjNativeFunc);
 }
-#pragma endregion
-
-#pragma region ObjBoundNativeFunc
-ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int8_t _arity, string _name, Value& _receiver) {
-    func = _func;
-    arity = _arity;
-    name = _name;
-    receiver = _receiver;
-    marked = false;
-    type = ObjType::BOUND_NATIVE;
-}
-
-void ObjBoundNativeFunc::trace() {
-    mark(receiver);
-}
-
-string ObjBoundNativeFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-    return fmt::format("<native function {}>", name);
-}
-
-uInt64 ObjBoundNativeFunc::getSize() {
-    return sizeof(ObjBoundNativeFunc);
-}
-
 #pragma endregion
 
 #pragma region ObjClosure
@@ -209,10 +185,13 @@ ObjClass::ObjClass(string _name) {
 }
 
 void ObjClass::trace() {
-	for (auto & method : methods) {
-        method.first->marked = true;
-		mark(method.second);
+	for (auto & m : methods) {
+        gc.markObj(m.second);
+        m.first->marked = true;
 	}
+    for (auto & f : fieldsInit) {
+        f.first->marked = true;
+    }
     name->marked = true;
 }
 
@@ -228,6 +207,7 @@ uInt64 ObjClass::getSize() {
 #pragma region ObjInstance
 ObjInstance::ObjInstance(ObjClass* _klass) {
 	klass = _klass;
+	fields = klass->fieldsInit;
     marked = false;
 	type = ObjType::INSTANCE;
 }
@@ -241,14 +221,7 @@ void ObjInstance::trace() {
 }
 
 string ObjInstance::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	if(klass) "<" + klass->name->str + " instance>";
-    string str = "{";
-    for(auto it : fields){
-        str.append(" \"").append(it.first->str).append("\" : ");
-        str.append(valueHelpers::toString(it.second, stack)).append(",");
-    }
-    str.erase(str.size() - 1).append(" }");
-    return str;
+	return "<" + klass->name->str + " instance>";
 }
 
 uInt64 ObjInstance::getSize() {
@@ -256,8 +229,36 @@ uInt64 ObjInstance::getSize() {
 }
 #pragma endregion
 
+#pragma region ObjHashMap
+ObjHashMap::ObjHashMap() {
+	marked = false;
+	type = ObjType::HASH_MAP;
+}
+
+void ObjHashMap::trace() {
+	for (auto & field : fields) {
+		field.first->marked = true;
+		mark(field.second);
+	}
+}
+
+string ObjHashMap::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+	string str = "{";
+	for(auto it : fields){
+		str.append(" \"").append(it.first->str).append("\" : ");
+		str.append(valueHelpers::toString(it.second, stack)).append(",");
+	}
+	str.erase(str.size() - 1).append(" }");
+	return str;
+}
+
+uInt64 ObjHashMap::getSize() {
+	return sizeof(ObjHashMap);
+}
+#pragma endregion
+
 #pragma region ObjBoundMethod
-ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjClosure* _method) {
+ObjBoundMethod::ObjBoundMethod(Value _receiver, Method _method) {
 	receiver = _receiver;
 	method = _method;
     marked = false;
@@ -270,7 +271,7 @@ void ObjBoundMethod::trace() {
 }
 
 string ObjBoundMethod::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return method->func->toString(stack);
+	return "<bound method>";
 }
 
 uInt64 ObjBoundMethod::getSize() {

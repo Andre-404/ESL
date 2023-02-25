@@ -611,18 +611,35 @@ namespace AST {
 		}
 	};
 
+    struct ClassMethod{
+        bool isPublic;
+        shared_ptr<FuncDecl> method;
+
+        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method) : isPublic(_isPublic), method(_method) {}
+    };
+
+    struct ClassField{
+        bool isPublic;
+        Token field;
+
+        ClassField(bool _isPublic, Token _field) : isPublic(_isPublic), field(_field) {}
+    };
+
 	class ClassDecl : public ASTDecl {
 	public:
 		Token name;
 		ASTNodePtr inheritedClass;
-		vector<ASTNodePtr> methods;
-		bool inherits;
+		vector<ClassMethod> methods;
+        vector<ClassField> fields;
 
-		ClassDecl(Token _name, vector<ASTNodePtr> _methods, ASTNodePtr _inheritedClass, bool _inherits) {
+		ClassDecl(Token _name, vector<ClassMethod> _methods,
+                  vector<ClassField> _fields,
+                  ASTNodePtr _inheritedClass) {
+
 			name = _name;
 			methods = _methods;
+            fields = _fields;
 			inheritedClass = _inheritedClass;
-			inherits = _inherits;
 			type = ASTType::CLASS;
 		}
 		void accept(Visitor* vis) {

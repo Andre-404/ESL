@@ -10,7 +10,7 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"continue", TokenType::CONTINUE},
         {"default", TokenType::DEFAULT},
         {"else", TokenType::ELSE},
-        {"export", TokenType::EXPORT},
+        {"pub", TokenType::PUB},
         {"if", TokenType::IF},
         {"import", TokenType::IMPORT},
         {"null", TokenType::NIL},
@@ -31,7 +31,8 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"async", TokenType::ASYNC},
         {"addMacro", TokenType::ADDMACRO},
         {"expr", TokenType::EXPR},
-        {"tt", TokenType::TT}
+        {"tt", TokenType::TT},
+        {"static", TokenType::STATIC}
 };
 
 using namespace preprocessing;

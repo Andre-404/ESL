@@ -109,28 +109,31 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		case 0: {
 			std::cout << fmt::format("OP INCREMENT {} {} local: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
 		}
-		case 1: {
+        case 1: {
+            std::cout << fmt::format("OP INCREMENT {} {} local upvalue: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
+        }
+		case 2: {
 			std::cout << fmt::format("OP INCREMENT {} {} upvalue: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
 		}
-		case 2: {
+		case 3: {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} global: {} \n", sign, fix, constant);
 			break;
 		}
-		case 3: {
+		case 4: {
 			uInt constant = chunk->bytecode[offset++];
 			constant |= chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} global 16-bit: {} \n", sign, fix, constantsOffset +constant);
 			break;
 		}
-		case 4: {
+		case 5: {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} dot access: {} ", sign, fix, constant);
 			print(chunk->constants[constant]);
 			std::cout << std::endl;
 			break;
 		}
-		case 5: {
+		case 6: {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
 			constant |= chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} dot access 16-bit: {} ", sign, fix, constant);
@@ -138,7 +141,7 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 			std::cout << std::endl;
 			break;
 		}
-		case 6: {
+		case 7: {
 			std::cout << fmt::format("OP INCREMENT {} {} field access", sign, fix) << std::endl; break;
 		}
 		}
@@ -180,10 +183,6 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return simpleInstruction("OP LESS EQUAL", offset);
     case +OpCode::GET_NATIVE:
          return shortInstruction("OP GET NATIVE", chunk, offset);
-	case +OpCode::DEFINE_GLOBAL:
-		return globalInstruction("OP DEFINE GLOBAL", chunk, offset, false);
-	case +OpCode::DEFINE_GLOBAL_LONG:
-		return globalInstruction("OP DEFINE GLOBAL LONG", chunk, offset, true);
 	case +OpCode::GET_GLOBAL:
 		return globalInstruction("OP GET GLOBAL", chunk, offset, false);
 	case +OpCode::GET_GLOBAL_LONG:
@@ -315,6 +314,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return constantInstruction("OP SET PROPERTY", chunk, offset, false, constantsOffset);
 	case +OpCode::SET_PROPERTY_LONG:
 		return constantInstruction("OP SET PROPERTY LONG", chunk, offset, true, constantsOffset);
+    case +OpCode::GET_PROPERTY_EFFICIENT:
+        return constantInstruction("OP GET PROPERTY EFFICIENT", chunk, offset, true, constantsOffset);
+    case +OpCode::SET_PROPERTY_EFFICIENT:
+        return constantInstruction("OP SET PROPERTY EFFICIENT", chunk, offset, true, constantsOffset);
 	case +OpCode::CREATE_STRUCT: {
 		offset++;
 		uint8_t fieldNum = chunk->bytecode[offset++];

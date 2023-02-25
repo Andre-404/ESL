@@ -3,7 +3,6 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
-#include "../Runtime/nativeFunctions.h"
 #include <array>
 
 namespace compileCore {
@@ -61,9 +60,11 @@ namespace compileCore {
 	};
 
 	struct ClassChunkInfo {
-		ClassChunkInfo* enclosing;
+        // For super
 		object::ObjClass* superclass;
-		ClassChunkInfo(ClassChunkInfo* _enclosing, object::ObjClass*  _superclass) : enclosing(_enclosing), superclass(_superclass) {};
+        // For statics
+        object::ObjClass* klass;
+        ClassChunkInfo(object::ObjClass*  _superclass, object::ObjClass* _klass) : superclass(_superclass), klass(_klass) {};
 	};
 
 	struct CompilerException {
@@ -83,7 +84,8 @@ namespace compileCore {
         object::ObjFunc* mainBlockFunc;
         // Here to do name checking at compile time
         vector<object::ObjNativeFunc*> nativeFuncs;
-        ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
+        //Base class which implements toString
+        object::ObjClass* baseClass;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();
@@ -131,6 +133,7 @@ namespace compileCore {
         // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
         // a undefined global variable is being used
         vector<bool> definedGlobals;
+        ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
 
 		#pragma region Helpers
 		//emitters
@@ -171,8 +174,13 @@ namespace compileCore {
 		//classes and methods
 		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
 		bool invoke(AST::CallExpr* expr);
-		Token syntheticToken(string str);
+        int resolveClassField(Token name, bool canAssign);
+        // Resolve public/private fields when this.object_field in encountered
+        bool resolveThis(AST::FieldAccessExpr* expr);
+        bool resolveThis(AST::SetExpr* expr);
+        bool resolveImplicitObjectField(AST::CallExpr* expr);
 		//misc
+        Token syntheticToken(string str);
 		void updateLine(Token token);
 		void error(Token token, const string& msg) noexcept(false);
 		void error(const string& message) noexcept(false);

@@ -2,7 +2,6 @@
 #include "../codegen/codegenDefs.h"
 #include "../Objects/objects.h"
 #include "thread.h"
-#include "nativeFunctions.h"
 #include <condition_variable>
 #include <random>
 
@@ -18,8 +17,8 @@ namespace runtime {
 		// Used by all threads
 		vector<Globalvar> globals;
 		vector<File*> sourceFiles;
-        vector<object::ObjNativeFunc *> nativeFuncs;
-        vector<BuiltinClass> nativeClasses;
+        vector<object::ObjNativeFunc*> nativeFuncs;
+        vector<object::ObjClass*> nativeClasses;
 
         std::mt19937_64 rng;
 		// Main code block, all function look into this vector at some offset

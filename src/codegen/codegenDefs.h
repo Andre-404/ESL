@@ -15,8 +15,6 @@ namespace object {
 
 	class ObjNativeFunc;
 
-    class ObjBoundNativeFunc;
-
 	class ObjUpval;
 
 	class ObjClosure;
@@ -26,6 +24,8 @@ namespace object {
 	class ObjBoundMethod;
 
 	class ObjInstance;
+
+    class ObjHashMap;
 
 	class ObjFile;
 
@@ -59,21 +59,22 @@ struct Globalvar {
 };
 
 enum class OpCode {
-	//Helpers
+	// Helpers
 	POP,
 	POPN,//arg: 8-bit num
-	//constants
+    LOAD_INT,//arg: 8-bit, integer smaller than 256 to load
+	// Constants
 	CONSTANT,//arg: 8-bit constant index
 	CONSTANT_LONG,//arg: 16-bit constant index
 	NIL,
 	TRUE,
 	FALSE,
-	//unary
+	// Unary
 	NEGATE,
 	NOT,
 	BIN_NOT,
 	INCREMENT,//arg: bit flags for type of incrementation and optional 8-16bit arg
-	//binary
+	// Binary
 	BITWISE_XOR,
 	BITWISE_OR,
 	BITWISE_AND,
@@ -85,8 +86,7 @@ enum class OpCode {
 	BITSHIFT_LEFT,
 	BITSHIFT_RIGHT,
 
-	LOAD_INT,//arg: 8-bit, integer smaller than 256 to load
-	//comparisons and equality
+	// Comparisons and equality
 	EQUAL,
 	NOT_EQUAL,
 	GREATER,
@@ -95,12 +95,10 @@ enum class OpCode {
 	LESS_EQUAL,
 
 
-	//Variables
+	// Variables
     GET_NATIVE, //arg: 16-bit index
-	//all module level variables(including class and function declarations) are treated as global variables
-	//compiler has an array of all globals, and access to globals is done through an array
-	DEFINE_GLOBAL,//arg: 8-bit  index
-	DEFINE_GLOBAL_LONG,//arg: 16-bit index
+	// All module level variables(including class and function declarations) are treated as global variables
+	// Compiler has an array of all globals, and access to globals is done through an array
 	GET_GLOBAL,//arg: 8-bit index
 	GET_GLOBAL_LONG,//arg: 16-bit index
 	SET_GLOBAL,//arg: 8-bit index
@@ -113,13 +111,7 @@ enum class OpCode {
     SET_LOCAL_UPVALUE,//arg: 8-bit stack position
 	GET_UPVALUE,//arg: 8-bit upval position
 	SET_UPVALUE,//arg: 8-bit upval position
-	//Arrays
-	CREATE_ARRAY,//arg: 8-bit array size
-	//get and set is used by both arrays and instances/structs, since struct.field is just syntax sugar for struct["field"] that
-	//gets optimized to use GET_PROPERTY
-	GET,
-	SET,
-	//control flow
+	// Control flow
 	JUMP,//arg: 16-bit jump offset
 	JUMP_IF_FALSE,//arg: 16-bit jump offset
 	JUMP_IF_TRUE,//arg: 16-bit jump offset
@@ -130,25 +122,41 @@ enum class OpCode {
 	SWITCH, //arg: 16-bit number of constants in cases, followed by 8-bit case constants and 16-bit jump offsets
 	SWITCH_LONG, //arg: 16-bit number of constants in cases, followed by 16-bit case constants and 16-bit jump offsets
 
-	//Functions
+	// Functions
 	CALL,//arg: 8-bit argument count
 	RETURN,
 	CLOSURE,//arg: 8-bit ObjFunction constant index
 	CLOSURE_LONG,//arg: 16-bit ObjFunction constant index
 
-	//Multithreading
+	// Multithreading
 	LAUNCH_ASYNC,//arg: 8-bit arg count
 	AWAIT,
+
+    //Arrays
+    CREATE_ARRAY,//arg: 8-bit array size
+    // Get and set is used by both arrays and structs, since struct.field is just syntax sugar for struct["field"] that
+    // gets optimized to use GET_PROPERTY
+    GET,
+    SET,
 
 	//OOP
 	GET_PROPERTY,//arg: 8-bit ObjString constant index
 	GET_PROPERTY_LONG,//arg: 16-bit ObjString constant index
 	SET_PROPERTY,//arg: 8-bit ObjString constant index
 	SET_PROPERTY_LONG,//arg: 16-bit ObjString constant index
+
+    // Avoids having to push 'this' to the top of the stack, directly looks up bottom of stack for the current frame
+    // Only emitted in methods
+    GET_PROPERTY_EFFICIENT,//arg: 16-bit ObjString constant index
+    SET_PROPERTY_EFFICIENT,//arg: 16-bit ObjString constant index
+
+    INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count
+    INVOKE_LONG,//arg: 16-bit ObjString constant index, 8-bit argument count
+    INVOKE_FROM_STACK,//8-bit argument count
+
 	CREATE_STRUCT,//arg: 8-bit number of fields
 	CREATE_STRUCT_LONG,//arg: 16-bit number of fields
-	INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count
-	INVOKE_LONG,//arg: 16-bit ObjString constant index, 8-bit argument count
+
 	GET_SUPER,//arg: 8-bit ObjString constant index
 	GET_SUPER_LONG,//arg: 16-bit ObjString constant index
 	SUPER_INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count

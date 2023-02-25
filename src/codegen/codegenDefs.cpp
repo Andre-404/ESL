@@ -83,7 +83,7 @@ void valueHelpers::print(Value x) {
 }
 
 void valueHelpers::mark(Value x){
-    if (getType(x) == ValueType::OBJ) memory::gc.markObj(decodeObj(x));
+    if (isObj(x)) memory::gc.markObj(decodeObj(x));
 }
 
 string valueHelpers::typeToStr(Value x) {
@@ -103,7 +103,7 @@ string valueHelpers::typeToStr(Value x) {
                 case ObjType::NATIVE: return "<native function>";
                 case ObjType::STRING: return "<string>";
                 case ObjType::UPVALUE: return "<upvalue>";
-                case ObjType::BOUND_NATIVE: return "<native function>";
+                case ObjType::HASH_MAP: return "<hash map>";
                 case ObjType::FILE: return "<file>";
                 case ObjType::MUTEX: return "<mutex>";
                 case ObjType::FUTURE: return "<future>";

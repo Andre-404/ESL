@@ -95,7 +95,9 @@ void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) {
 }
 void AST::MacroExpander::visitClassDecl(ClassDecl* decl) {
     for (auto& method : decl->methods) {
-        expand(method);
+        for (auto& line : method.method->body->statements) {
+            expand(line);
+        }
     }
 }
 

@@ -18,13 +18,13 @@ namespace object {
 		STRING,
 		FUNC,
 		NATIVE,
-        BOUND_NATIVE,
 		ARRAY,
 		CLOSURE,
 		UPVALUE,
 		CLASS,
 		INSTANCE,
-		BOUND_METHOD,
+        BOUND_METHOD,
+        HASH_MAP,
 		FILE,
 		MUTEX,
 		FUTURE
@@ -47,7 +47,7 @@ namespace object {
 	};
 
 	//pointer to a native C++ function
-	using NativeFn = bool(*)(runtime::Thread* thread, int8_t argCount);
+	using NativeFn = void(*)(runtime::Thread* thread, int8_t argCount);
     using NativeMethod = void(*)(runtime::Thread* thread, int8_t argCount);
 
 	//this is a header which is followed by the bytes of the string
@@ -107,32 +107,15 @@ namespace object {
         // Arity of -1 means that the native function takes in a variable number of arguments
 		int8_t arity;
         // For debugging purposes
-        string name;
+        const char* name;
 
-		ObjNativeFunc(NativeFn _func, int8_t _arity, string _name);
+		ObjNativeFunc(NativeFn _func, int8_t _arity, const char* _name);
 		~ObjNativeFunc() {}
 
 		void trace();
 		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
-
-    class ObjBoundNativeFunc : public Obj {
-    public:
-        NativeFn func;
-        // Arity of -1 means that the native function takes in a variable number of arguments
-        int8_t arity;
-        // For debugging purposes
-        string name;
-        Value receiver;
-
-        ObjBoundNativeFunc(NativeFn _func, int8_t _arity, string _name, Value& _receiver);
-        ~ObjBoundNativeFunc() {}
-
-        void trace();
-        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
-        uInt64 getSize();
-    };
 
 	class ObjUpval : public Obj {
 	public:
@@ -158,11 +141,15 @@ namespace object {
 		uInt64 getSize();
 	};
 
-	//parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class
+    typedef Obj* Method;
+	// Parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class
 	class ObjClass : public Obj {
 	public:
         object::ObjString* name;
-        ankerl::unordered_dense::map<object::ObjString*, Value> methods;
+        ankerl::unordered_dense::map<object::ObjString*, Method> methods;
+        // Dummy map which has the names of defined fields already inserted, gets copied to each ObjInstance
+        ankerl::unordered_dense::map<object::ObjString*, Value> fieldsInit;
+
 		ObjClass(string _name);
 		~ObjClass() {}
 
@@ -171,25 +158,13 @@ namespace object {
 		uInt64 getSize();
 	};
 
-	//method bound to a specific instance of a class
-	//as long as the method exists, the instance it's bound to won't be GC-ed
-	class ObjBoundMethod : public Obj {
-	public:
-		Value receiver;
-		ObjClosure* method;
-		ObjBoundMethod(Value _receiver, ObjClosure* _method);
-		~ObjBoundMethod() = default;
-
-		void trace();
-		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
-		uInt64 getSize();
-	};
-
-	// Used for instances of classes and structs, if 'klass' is null then it's a struct
+    // Fields contains both public and private fields, private fields have a prefix '!' which cannot appear as part of an identifier
+    // thus making sure that only the compiler can emit code to access a private member
 	class ObjInstance : public Obj {
 	public:
 		ObjClass* klass;
 		ankerl::unordered_dense::map<object::ObjString*, Value> fields;
+
 		ObjInstance(ObjClass* _klass);
 		~ObjInstance() = default;
 
@@ -197,6 +172,31 @@ namespace object {
 		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
+
+    //method bound to a specific instance of a class
+    //as long as the method exists, the instance it's bound to won't be GC-ed
+    class ObjBoundMethod : public Obj {
+    public:
+        Value receiver;
+        Method method;
+        ObjBoundMethod(Value _receiver, Method _method);
+        ~ObjBoundMethod() = default;
+
+        void trace();
+        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
+        uInt64 getSize();
+    };
+
+    class ObjHashMap : public Obj{
+    public:
+        ankerl::unordered_dense::map<object::ObjString*, Value> fields;
+        ObjHashMap();
+        ~ObjHashMap() = default;
+
+        void trace();
+        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
+        uInt64 getSize();
+    };
 
 	class ObjFile : public Obj {
 	public:

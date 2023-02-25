@@ -81,8 +81,8 @@ namespace AST {
 				if (cur->peek().type != TokenType::RIGHT_BRACE) {
 					//a struct literal looks like this: {var1 : expr1, var2 : expr2}
 					do {
-						Token identifier = cur->consume(TokenType::IDENTIFIER, "Expected a identifier.");
-						cur->consume(TokenType::COLON, "Expected a ':' after identifier");
+						Token identifier = cur->consume(TokenType::STRING, "Expected a string identifier.");
+						cur->consume(TokenType::COLON, "Expected a ':' after string identifier");
 						ASTNodePtr expr = cur->expression();
 						entries.emplace_back(identifier, expr);
 					} while (cur->match(TokenType::COMMA));
@@ -306,11 +306,54 @@ namespace AST {
 					TokenType::STAR_EQUAL, TokenType::BITWISE_XOR_EQUAL, TokenType::BITWISE_AND_EQUAL,
 					TokenType::BITWISE_OR_EQUAL, TokenType::PERCENTAGE_EQUAL })) {
 				Token op = cur->previous();
-				ASTNodePtr val = cur->expression();
+				ASTNodePtr val = parseAssign(make_shared<FieldAccessExpr>(left, newToken, field), op);
 				return make_shared<SetExpr>(left, field, newToken, op, val);
 			}
 			return make_shared<FieldAccessExpr>(left, newToken, field);
 		}
+
+        //used for parsing assignment tokens(eg. =, +=, *=...)
+        ASTNodePtr parseAssign(ASTNodePtr left, Token op) {
+            ASTNodePtr right = cur->expression();
+            switch (op.type) {
+                case TokenType::EQUAL: {
+                    break;
+                }
+                case TokenType::PLUS_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, op), right);
+                    break;
+                }
+                case TokenType::MINUS_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, op), right);
+                    break;
+                }
+                case TokenType::SLASH_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, op), right);
+                    break;
+                }
+                case TokenType::STAR_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, op), right);
+                    break;
+                }
+                case TokenType::BITWISE_XOR_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, op), right);
+                    break;
+                }
+                case TokenType::BITWISE_AND_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, op), right);
+                    break;
+                }
+                case TokenType::BITWISE_OR_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, op), right);
+                    break;
+                }
+                case TokenType::PERCENTAGE_EQUAL: {
+                    right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, op), right);
+                    break;
+                }
+            }
+            return right;
+        }
 	};
 
 }
@@ -544,7 +587,7 @@ ASTNodePtr Parser::topLevelDeclaration() {
 	//export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
     bool isExported = false;
-    if (match(TokenType::EXPORT)) isExported = true;
+    if (match(TokenType::PUB)) isExported = true;
     if (match(TokenType::LET)) node = varDecl();
     else if (match(TokenType::CLASS)) node = classDecl();
     else if (match(TokenType::FN)) node = funcDecl();
@@ -613,7 +656,7 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
 shared_ptr<ClassDecl> Parser::classDecl() {
 	Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
 	ASTNodePtr inherited = nullptr;
-	//inheritance is optional
+	// Inheritance is optional
 	if (match(TokenType::COLON)) {
 		Token token = previous();
 		//only accept identifiers and module access
@@ -626,16 +669,66 @@ shared_ptr<ClassDecl> Parser::classDecl() {
 	}
 
 	consume(TokenType::LEFT_BRACE, "Expect '{' before class body.");
-	//a class body can contain only methods(fields are initialized in the constructor)
-	vector<ASTNodePtr> methods;
+
+    vector<ClassMethod> methods;
+    vector<ClassField> fields;
+
+    auto checkName = [&](Token token, bool isMethod, bool isPublic){
+        if(isMethod){
+            for(auto& m : methods){
+                if(token.equals(m.method->name)) {
+                    throw error(token, "Re-declaration of method.");
+                    throw error(m.method->name, "Method first defined here.");
+                    return;
+                }
+            }
+            return;
+        }
+        for(auto& field : fields){
+            if(token.equals(field.field)) {
+                throw error(token, "Re-declaration of field.");
+                throw error(field.field, "Field first defined here.");
+                return;
+            }
+        }
+        return;
+    };
+
 	while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-        auto decl = funcDecl();
-        // Implicitly declare "this"
-        decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
-		methods.push_back(decl);
+        try {
+            bool isPublic = false;
+            if (match(TokenType::PUB)) {
+                isPublic = true;
+            }
+            if (match(TokenType::LET)) {
+                Token field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
+
+                checkName(field, false, isPublic);
+                fields.emplace_back(isPublic, field);
+
+                while (!check(TokenType::SEMICOLON) && !check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
+                    if (!match(TokenType::COMMA)) break;
+                    field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
+                    checkName(field, false, isPublic);
+                    fields.emplace_back(isPublic, field);
+                }
+
+                consume(TokenType::SEMICOLON, "Expected ';' after field name");
+            } else if (match(TokenType::FN)) {
+                auto decl = funcDecl();
+                checkName(decl->name, true, isPublic);
+                // Implicitly declare "this"
+                decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
+                methods.emplace_back(isPublic, decl);
+            } else {
+                throw error(peek(), "Expected let or fn keywords.");
+            }
+        }catch(ParserException& e){
+            sync();
+        }
 	}
 	consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
-	return make_shared<ClassDecl>(name, methods, inherited, inherited != nullptr);
+	return make_shared<ClassDecl>(name, methods, fields, inherited);
 }
 
 ASTNodePtr Parser::statement() {
@@ -922,7 +1015,10 @@ void Parser::expandMacros()
 //syncs when we find a ';' or one of the keywords
 void Parser::sync() {
 	while (!isAtEnd()) {
-		if (peek().type == TokenType::SEMICOLON) return;
+		if (peek().type == TokenType::SEMICOLON){
+            advance();
+            return;
+        }
 
 		switch (peek().type) {
 		case TokenType::CLASS:
@@ -937,6 +1033,8 @@ void Parser::sync() {
 		case TokenType::CASE:
 		case TokenType::DEFAULT:
 		case TokenType::RIGHT_BRACE:
+        case TokenType::STATIC:
+        case TokenType::PUB:
 			return;
         default: break;
 		}

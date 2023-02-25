@@ -99,7 +99,7 @@ namespace AST {
 
 		void defineMacro();
 
-#pragma region Expressions
+        #pragma region Expressions
 		ASTNodePtr expression(int prec);
 		ASTNodePtr expression();
 
@@ -122,9 +122,9 @@ namespace AST {
         // Match pattern needs to be able to attempt to generate an expression
         friend class MatchPattern;
 
-#pragma endregion
+        #pragma endregion
 
-#pragma region Statements
+        #pragma region Statements
 		ASTNodePtr topLevelDeclaration();
 		ASTNodePtr localDeclaration();
 		shared_ptr<VarDecl> varDecl();
@@ -144,9 +144,9 @@ namespace AST {
         shared_ptr<AdvanceStmt> advanceStmt();
         shared_ptr<ReturnStmt> returnStmt();
 
-#pragma endregion
+        #pragma endregion
 
-#pragma region Helpers
+        #pragma region Helpers
 
 		bool match(const std::initializer_list<TokenType>& tokenTypes);
 
@@ -177,7 +177,7 @@ namespace AST {
 		void sync();
 
 		int getPrec();
-#pragma endregion
+        #pragma endregion
 
 	};
 

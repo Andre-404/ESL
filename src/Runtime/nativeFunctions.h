@@ -24,12 +24,12 @@ namespace runtime {
     };
 
     enum class Builtin{
-        COMMON,
         STRING,
         ARRAY,
         FILE,
         MUTEX,
-        FUTURE
+        FUTURE,
+        COMMON
     };
     inline constexpr unsigned operator+ (Builtin const val) { return static_cast<byte>(val); }
 
@@ -37,6 +37,6 @@ namespace runtime {
 
     ankerl::unordered_dense::map<string, uInt> createNativeNameTable(vector<object::ObjNativeFunc *>& natives);
 
-    vector<BuiltinClass> createBuiltinClasses();
+    vector<object::ObjClass*> createBuiltinClasses(object::ObjClass* baseClass);
 }
 

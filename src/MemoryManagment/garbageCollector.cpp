@@ -80,12 +80,14 @@ namespace memory {
         for(auto& val : compiler->globals) valueHelpers::mark(val.val);
         for(auto func : compiler->nativeFuncs) func->marked = true;
         compiler->mainBlockFunc->marked = true;
+        gc.markObj(compiler->baseClass);
 	}
 
 	void GarbageCollector::sweep() {
 		heapSize = 0;
-        for(auto it = interned.begin(); it != interned.end(); it++){
-            if(!it->second->marked) interned.erase(it);
+        for(auto it = interned.cbegin(); it != interned.cend(); ){
+            if(!it->second->marked) it = interned.erase(it);
+            else it = std::next(it);
         }
 		for (int i = objects.size() - 1; i >= 0; i--) {
 			object::Obj* obj = objects[i];

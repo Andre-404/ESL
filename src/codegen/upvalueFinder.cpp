@@ -172,8 +172,8 @@ void UpvalueFinder::visitFuncDecl(AST::FuncDecl* decl) {
 
 void UpvalueFinder::visitClassDecl(AST::ClassDecl* decl) {
     // Class name is always going to be a global
-    for (AST::ASTNodePtr _method : decl->methods) {
-        _method->accept(this);
+    for (auto& _method : decl->methods) {
+        _method.method->accept(this);
     }
 }
 

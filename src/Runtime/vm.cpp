@@ -1,19 +1,20 @@
 #include "vm.h"
 #include "../codegen/compiler.h"
 #include "../codegen/valueHelpersInline.cpp"
+#include "nativeFunctions.h"
 
 using std::get;
 using namespace valueHelpers;
 
 runtime::VM::VM(compileCore::Compiler* compiler) {
-
 	// Have to do this before assigning compiler->mainCodeBlock to code because endFuncDecl mutates mainCodeBlock
 	Value val = encodeObj(new object::ObjClosure(compiler->mainBlockFunc));
 	// Main code block
 	code = compiler->mainCodeBlock;
     // Used by all threads
     nativeFuncs = compiler->nativeFuncs;
-    nativeClasses = runtime::createBuiltinClasses();
+    nativeClasses = runtime::createBuiltinClasses(compiler->baseClass);
+    nativeClasses.push_back(compiler->baseClass);
     rng = std::mt19937_64(0);
     globals = compiler->globals;
     // For stack tracing during error printing
@@ -32,9 +33,7 @@ void runtime::VM::mark(memory::GarbageCollector* gc) {
 	mainThread->mark(gc);
 	for (Value& val : code.constants) valueHelpers::mark(val);
     for (auto func : nativeFuncs) func->marked = true;
-    for (auto klass : nativeClasses){
-        for(auto method : klass.methods) method.first->marked = true;
-    }
+    for(auto c : nativeClasses) gc->markObj(c);
 }
 
 void runtime::VM::execute() {

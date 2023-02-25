@@ -33,19 +33,15 @@ namespace runtime {
     private:
 		Value stack[STACK_MAX];
 		CallFrame frames[FRAMES_MAX];
-		int frameCount;
+        uint16_t frameCount;
 
         string errorString;
 
-		void call(object::ObjClosure* function, int8_t argCount);
+		void callFunc(object::ObjClosure* function, int8_t argCount);
+        void callMethod(object::Method method, int8_t argCount);
 
-        // True if method exists and was bound to receiver
-		bool bindMethod(object::ObjClass* klass, object::ObjString* name);
+		void bindMethod(object::ObjClass* klass, object::ObjString* name, Value receiver);
 		void invoke(object::ObjString* fieldName, int8_t argCount);
-        // True if method exists and was invoked
-		bool invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int8_t argCount);
-
-        void bindMethodToPrimitive(Value receiver, object::ObjString* methodName);
-        BuiltinMethod& findNativeMethod(Value receiver, object::ObjString* name);
+		void invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int8_t argCount);
 	};
 }
