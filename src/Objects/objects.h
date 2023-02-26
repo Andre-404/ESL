@@ -41,7 +41,7 @@ namespace object {
 		virtual ~Obj() = default;
 
 		//this reroutes the new operator to take memory which the GC gives out
-		void* operator new(uInt64 size) {
+		void* operator new(size_t size) {
 			return memory::gc.alloc(size);
 		}
 	};
