@@ -351,6 +351,8 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return invokeInstruction("OP SUPER INVOKE", chunk, offset, constantsOffset);
 	case +OpCode::SUPER_INVOKE_LONG:
 		return longInvokeInstruction("OP SUPER INVOKE LONG", chunk, offset, constantsOffset);
+    case +OpCode::INSTANCEOF:
+        return constantInstruction("OP INSTANCEOF", chunk, offset, true, constantsOffset);
 	default:
 		std::cout << "Unknown opcode " << (int)instruction << "\n";
 		return offset + 1;

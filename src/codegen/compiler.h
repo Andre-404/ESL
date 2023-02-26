@@ -60,11 +60,9 @@ namespace compileCore {
 	};
 
 	struct ClassChunkInfo {
-        // For super
-		object::ObjClass* superclass;
         // For statics
         object::ObjClass* klass;
-        ClassChunkInfo(object::ObjClass*  _superclass, object::ObjClass* _klass) : superclass(_superclass), klass(_klass) {};
+        ClassChunkInfo(object::ObjClass* _klass) : klass(_klass) {};
 	};
 
 	struct CompilerException {
@@ -175,6 +173,7 @@ namespace compileCore {
 		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
 		bool invoke(AST::CallExpr* expr);
         int resolveClassField(Token name, bool canAssign);
+        object::ObjClass* getClassFromExpr(AST::ASTNodePtr expr);
         // Resolve public/private fields when this.object_field in encountered
         bool resolveThis(AST::FieldAccessExpr* expr);
         bool resolveThis(AST::SetExpr* expr);

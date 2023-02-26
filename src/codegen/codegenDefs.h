@@ -161,6 +161,8 @@ enum class OpCode {
 	GET_SUPER_LONG,//arg: 16-bit ObjString constant index
 	SUPER_INVOKE,//arg: 8-bit ObjString constant index, 8-bit argument count
 	SUPER_INVOKE_LONG,//arg: 16-bit ObjString constant index, 8-bit argument count
+
+    INSTANCEOF,//arg: 16-bit ObjClass constant index
 };
 //conversion from enum to 1 byte number
 inline constexpr unsigned operator+ (OpCode const val) { return static_cast<byte>(val); }

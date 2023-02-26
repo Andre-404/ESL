@@ -43,9 +43,9 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 Compiler::Compiler(vector<CSLModule*>& _units) {
     upvalueFinder::UpvalueFinder f(_units);
 	current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
-    baseClass = new object::ObjClass("base class");
+    baseClass = new object::ObjClass("base class", nullptr);
     baseClass->methods.insert_or_assign(ObjString::createStr("to_string"), new object::ObjNativeFunc([](runtime::Thread* thread, int8_t argCount){
-        valueHelpers::toString(thread->pop());
+        thread->push(encodeObj(object::ObjString::createStr(valueHelpers::toString(thread->pop()))));
     }, 0, "to_string"));
 	currentClass = nullptr;
 	curUnitIndex = 0;
@@ -88,6 +88,33 @@ static Token probeToken(AST::ASTNodePtr ptr){
 static bool isLiteralThis(AST::ASTNodePtr ptr){
     if(ptr->type != AST::ASTType::LITERAL) return false;
     return probeToken(ptr).type == TokenType::THIS;
+}
+
+object::ObjClass* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
+    uint16_t classIndex = 0;
+    Token token;
+    if (expr->type == AST::ASTType::LITERAL) {
+        Token superclass = probeToken(expr);
+        // Gets the index into globals in which the superclass is stored
+        int arg = resolveGlobal(superclass, false);
+        if(arg == -1) error(superclass, "Class isn't defined.");
+        else if(arg == -2) error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
+        classIndex = arg;
+        token = superclass;
+    }
+    else if(expr->type == AST::ASTType::MODULE_ACCESS){
+        // TODO: dynamic cast :cry:
+        AST::ModuleAccessExpr* moduleExpr = dynamic_cast<AST::ModuleAccessExpr*>(expr.get());
+        classIndex = resolveModuleVariable(moduleExpr->moduleName, moduleExpr->ident);
+        token = moduleExpr->ident;
+    }
+    if(!definedGlobals[classIndex]){
+        error(token,"Variable isn't defined.");
+    }
+    if(!isClass(globals[classIndex].val)){
+        error(token,"Variable isn't a class(perhaps you tried inheriting from class stored in a global variable, which is illegal, please use the class name).");
+    }
+    return asClass(globals[classIndex].val);
 }
 
 void Compiler::visitAssignmentExpr(AST::AssignmentExpr* expr) {
@@ -134,29 +161,34 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 	updateLine(expr->op);
 
 	expr->left->accept(this);
-	if (expr->op.type == TokenType::OR) {
-		//if the left side is true, we know that the whole expression will eval to true
-		int jump = emitJump(+OpCode::JUMP_IF_TRUE);
-		//pop the left side and eval the right side, right side result becomes the result of the whole expression
-		emitByte(+OpCode::POP);
-		expr->right->accept(this);
-		patchJump(jump);//left side of the expression becomes the result of the whole expression
-		return;
-	}
-	else if (expr->op.type == TokenType::AND) {
-		//at this point we have the left side of the expression on the stack, and if it's false we skip to the end
-		//since we know the whole expression will evaluate to false
-		int jump = emitJump(+OpCode::JUMP_IF_FALSE);
-		//if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
-		//whole expression
-		emitByte(+OpCode::POP);
-		expr->right->accept(this);
-		patchJump(jump);
-		return;
-	}
-
 	uint8_t op = 0;
 	switch (expr->op.type) {
+        case TokenType::OR:{
+            //if the left side is true, we know that the whole expression will eval to true
+            int jump = emitJump(+OpCode::JUMP_IF_TRUE);
+            //pop the left side and eval the right side, right side result becomes the result of the whole expression
+            emitByte(+OpCode::POP);
+            expr->right->accept(this);
+            patchJump(jump);//left side of the expression becomes the result of the whole expression
+            return;
+        }
+        case TokenType::AND:{
+            //at this point we have the left side of the expression on the stack, and if it's false we skip to the end
+            //since we know the whole expression will evaluate to false
+            int jump = emitJump(+OpCode::JUMP_IF_FALSE);
+            //if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
+            //whole expression
+            emitByte(+OpCode::POP);
+            expr->right->accept(this);
+            patchJump(jump);
+            return;
+        }
+        case TokenType::INSTANCEOF:{
+            auto klass = getClassFromExpr(expr->right);
+            uint16_t index = makeConstant(encodeObj(klass));
+            emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
+            return;
+        }
 		//take in double or string(in case of add)
         case TokenType::PLUS:	op = +OpCode::ADD; break;
         case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
@@ -338,12 +370,12 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
 	if (currentClass == nullptr) {
 		error(expr->methodName, "Can't use 'super' outside of a class.");
 	}
-	else if (!currentClass->superclass) {
+	else if (!currentClass->klass->superclass) {
 		error(expr->methodName, "Can't use 'super' in a class with no superclass.");
 	}
 	// We use a synthetic token since 'this' is defined if we're currently compiling a class method
 	namedVar(syntheticToken("this"), false);
-    emitConstant(encodeObj(currentClass->superclass));
+    emitConstant(encodeObj(currentClass->klass->superclass));
 	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
 	else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
 }
@@ -517,10 +549,10 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	Token className = decl->getName();
 	uInt16 index = declareGlobalVar(className);
-    auto klass = new object::ObjClass(className.getLexeme());
+    auto klass = new object::ObjClass(className.getLexeme(), nullptr);
 
 
-	currentClass = new ClassChunkInfo(nullptr, klass);
+	currentClass = new ClassChunkInfo(klass);
 
 	if (decl->inheritedClass) {
 		//if the class inherits from some other class, load the parent class and declare 'super' as a local variable which holds the superclass
@@ -528,31 +560,8 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 
 		//if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
 		//undefined behavior (eg. class a : a)
-        uint16_t superclassIndex = 0;
-        Token token;
-		if (decl->inheritedClass->type == AST::ASTType::LITERAL) {
-            // TODO: dynamic cast :cry:
-            Token superclass = probeToken(decl->inheritedClass);
-            // Gets the index into globals in which the superclass is stored
-            int arg = resolveGlobal(superclass, false);
-            if(arg == -1) error(superclass, "Class isn't defined.");
-            else if(arg == -2) error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
-            superclassIndex = arg;
-            token = superclass;
-		}
-        else if(decl->inheritedClass->type == AST::ASTType::MODULE_ACCESS){
-            // TODO: And another one
-            AST::ModuleAccessExpr* expr = dynamic_cast<AST::ModuleAccessExpr*>(decl->inheritedClass.get());
-            superclassIndex = resolveModuleVariable(expr->moduleName, expr->ident);
-            token = expr->ident;
-        }
-
-        if(!isClass(globals[superclassIndex].val)){
-            error(token,"Variable isn't a class(perhaps you tried inheriting from class stored in a global variable, which is illegal, please use the class name).");
-        }
-        auto superclass = asClass(globals[superclassIndex].val);
-        currentClass->superclass = superclass;
-
+        auto superclass = getClassFromExpr(decl->inheritedClass);
+        klass->superclass = superclass;
         //Copies methods and fields from superclass
         klass->methods = superclass->methods;
         klass->fieldsInit = superclass->fieldsInit;
@@ -560,6 +569,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
         // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
         // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
         klass->methods = baseClass->methods;
+        klass->superclass = baseClass;
     }
 
     // Put field and method names into the class
@@ -1253,7 +1263,7 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		if (currentClass == nullptr) {
 			error(superCall->methodName, "Can't use 'super' outside of a class.");
 		}
-		else if (!currentClass->superclass) {
+		else if (!currentClass->klass->superclass) {
 			error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
 		}
 		//in methods and constructors, "this" is implicitly defined as the first local
@@ -1264,7 +1274,7 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			argCount++;
 		}
 		// superclass gets popped, leaving only the receiver and args on the stack
-        emitConstant(encodeObj(currentClass->superclass));
+        emitConstant(encodeObj(currentClass->klass->superclass));
         if(name > SHORT_CONSTANT_LIMIT){
             emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
             emit16Bit(name);

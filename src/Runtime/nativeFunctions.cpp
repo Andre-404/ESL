@@ -10,14 +10,7 @@
 
 using namespace valueHelpers;
 
-ankerl::unordered_dense::map<string, uInt> runtime::createNativeNameTable(vector<object::ObjNativeFunc *>& natives){
-    ankerl::unordered_dense::map<string, uInt> map;
-    for(int i = 0; i < natives.size(); i++){
-        map.insert_or_assign(natives[i]->name, i);
-    }
-    return map;
-}
-
+#pragma region Helpers
 #define NATIVE_FUNC(name, arity, func) vector.push_back(new object::ObjNativeFunc(func, arity, name))
 #define TYPE_ERROR(expectedType, argNum, value) \
     t->runtimeError(fmt::format("Expected {} for argument {}, got '{}'", expectedType, argNum, typeToStr(value)), 3)
@@ -25,11 +18,47 @@ ankerl::unordered_dense::map<string, uInt> runtime::createNativeNameTable(vector
 #define INT_ERROR(argNum) \
     t->runtimeError(fmt::format("Expected integer for argument {}, got decimal", argNum), 3)
 
+#define INLINE_PEEK(depth) t->stackTop[-1 - depth]
+#define INLINE_POP() (*(--t->stackTop))
+// When pushing/popping from arrays and such, have to take care of memory
+#define MEM_ADD(size) memory::gc.heapSize += size
+
 static void isNumAndInt(runtime::Thread* t, Value val, uInt argNum){
     if(!isNumber(val)) TYPE_ERROR("number", argNum, val);
     if(!isInt(val)) INT_ERROR(argNum);
 }
+static void strRangeCheck(runtime::Thread* t, uInt argNum, Value indexVal, uInt64 end) {
+    isNumAndInt(t, indexVal, argNum);
+    double index = decodeNumber(indexVal);
+    if (index >= 0 && index <= end) return;
+    t->runtimeError(fmt::format("String length is {}, argument {} is {}", end, argNum, static_cast<uInt64>(index)), 9);
+};
 
+// These are required because the main thread might want to start a GC run while this thread is in the process of acquiring a mutex
+// If this blocks, main thread needs to know that it can safely run GC since this thread is blocked
+static void incThreadWait(runtime::Thread* t){
+    if(t == t->vm->mainThread) return;
+    // If this is a child thread and the GC must run, notify the main thread that this one is paused
+    // Main thread sends the notification when to awaken
+    {
+        std::scoped_lock lk(t->vm->pauseMtx);
+        t->vm->threadsPaused.fetch_add(1);
+    }
+    // Only the main thread waits for mainThreadCv
+    t->vm->mainThreadCv.notify_one();
+}
+static void decThreadWait(runtime::Thread* t){
+    if(t == t->vm->mainThread) return;
+    // If this is a child thread and the GC must run, notify the main thread that this one is paused
+    // Main thread sends the notification when to awaken
+    {
+        std::scoped_lock lk(t->vm->pauseMtx);
+        t->vm->threadsPaused.fetch_sub(1);
+    }
+    // Only the main thread waits for mainThreadCv
+    t->vm->mainThreadCv.notify_one();
+}
+#pragma endregion
 
 vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
     vector<object::ObjNativeFunc*> vector;
@@ -45,6 +74,42 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         string str;
         std::getline(std::cin, str);
         t->push(encodeObj(object::ObjString::createStr(str)));
+    });
+
+    NATIVE_FUNC("is_number", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isNumber(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_bool", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isBool(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_string", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isString(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_array", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isArray(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_function", 0, [](Thread*t, int8_t argCount){
+        Value val = INLINE_POP();
+        t->push(encodeBool(isClosure(val) || isBoundMethod(val) || isNativeFn(val)));
+    });
+    NATIVE_FUNC("is_class", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isClass(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_instance", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isInstance(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_hashmap", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isHashMap(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_file", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isFile(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_mutex", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isMutex(INLINE_POP())));
+    });
+    NATIVE_FUNC("is_future", 0, [](Thread*t, int8_t argCount){
+        t->push(encodeBool(isFuture(INLINE_POP())));
+
     });
 
     NATIVE_FUNC("ms_since_epoch", 0, [](Thread* t, int8_t argCount) {
@@ -307,111 +372,28 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
 
     return vector;
 }
-void strRangeCheck(runtime::Thread* t, uInt argNum, Value indexVal, uInt64 end) {
-    isNumAndInt(t, indexVal, argNum);
-    double index = decodeNumber(indexVal);
-    if (index >= 0 && index <= end) return;
-    t->runtimeError(fmt::format("String length is {}, argument {} is {}", end, argNum, static_cast<uInt64>(index)), 9);
-};
 
-// These are required because the main thread might want to start a GC run while this thread is in the process of acquiring a mutex
-// If this blocks, main thread needs to know that it can safely run GC since this thread is blocked
-static void incThreadWait(runtime::Thread* t){
-    if(t == t->vm->mainThread) return;
-    // If this is a child thread and the GC must run, notify the main thread that this one is paused
-    // Main thread sends the notification when to awaken
-    {
-        std::scoped_lock lk(t->vm->pauseMtx);
-        t->vm->threadsPaused.fetch_add(1);
+ankerl::unordered_dense::map<string, uInt> runtime::createNativeNameTable(vector<object::ObjNativeFunc *>& natives){
+    ankerl::unordered_dense::map<string, uInt> map;
+    for(int i = 0; i < natives.size(); i++){
+        map.insert_or_assign(natives[i]->name, i);
     }
-    // Only the main thread waits for mainThreadCv
-    t->vm->mainThreadCv.notify_one();
-}
-static void decThreadWait(runtime::Thread* t){
-    if(t == t->vm->mainThread) return;
-    // If this is a child thread and the GC must run, notify the main thread that this one is paused
-    // Main thread sends the notification when to awaken
-    {
-        std::scoped_lock lk(t->vm->pauseMtx);
-        t->vm->threadsPaused.fetch_sub(1);
-    }
-    // Only the main thread waits for mainThreadCv
-    t->vm->mainThreadCv.notify_one();
+    return map;
 }
 
 
 #define BOUND_NATIVE(name, arity, func) classes.back()->methods.insert_or_assign(object::ObjString::createStr(name), new object::ObjNativeFunc(func, arity, name))
 #define ADD_CLASS(name) \
 do{                     \
-    auto klass = new object::ObjClass(name); \
+    auto klass = new object::ObjClass(name, baseClass); \
     klass->methods = baseClass->methods;     \
     classes.push_back(klass);                \
 }while(false)
 
 
-#define INLINE_PEEK(depth) t->stackTop[-1 - depth]
-#define INLINE_POP() (*(--t->stackTop))
-// When pushing/popping from arrays and such, have to take care of memory
-#define MEM_ADD(size) memory::gc.heapSize += size
-
 
 vector<object::ObjClass*> runtime::createBuiltinClasses(object::ObjClass* baseClass){
     vector<object::ObjClass*> classes;
-    /*
-    // Common
-    ADD_CLASS("common");
-    BOUND_NATIVE("is_number", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isNumber(t->pop())));
-    });
-    BOUND_NATIVE("is_bool", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isBool(t->pop())));
-
-    });
-    BOUND_NATIVE("is_string", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isString(t->pop())));
-
-    });
-    BOUND_NATIVE("is_array", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isArray(t->pop())));
-
-    });
-    BOUND_NATIVE("is_function", 0, [](Thread*t, int8_t argCount){
-        Value val = t->pop();
-        t->push(encodeBool(isClosure(val) || isBoundMethod(val) || isNativeFn(val)));
-
-    });
-    BOUND_NATIVE("is_class", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isClass(t->pop())));
-
-    });
-    BOUND_NATIVE("is_instance", 0, [](Thread*t, int8_t argCount){
-        Value val = t->pop();
-        t->push(encodeBool(isInstance(val) && asInstance(val)->klass));
-
-    });
-    BOUND_NATIVE("is_struct", 0, [](Thread*t, int8_t argCount){
-        Value val = t->pop();
-        t->push(encodeBool(isInstance(val) && !asInstance(val)->klass));
-
-    });
-    BOUND_NATIVE("is_file", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isFile(t->pop())));
-
-    });
-    BOUND_NATIVE("is_mutex", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isMutex(t->pop())));
-
-    });
-    BOUND_NATIVE("is_future", 0, [](Thread*t, int8_t argCount){
-        t->push(encodeBool(isFuture(t->pop())));
-
-    });
-
-    BOUND_NATIVE("to_string", 0, [](Thread*t, int8_t argCount){
-        ankerl::unordered_dense::set<object::Obj*> stack;
-        string str = toString(t->pop());
-        t->push(encodeObj(object::ObjString::createStr(str)));
-    });*/
     // String
     ADD_CLASS("string");
     BOUND_NATIVE("length", 0, [](Thread*t, int8_t argCount){
@@ -648,7 +630,6 @@ vector<object::ObjClass*> runtime::createBuiltinClasses(object::ObjClass* baseCl
         }
         t->push(encodeBool(true));
     });
-
     // File
     ADD_CLASS("file");
     BOUND_NATIVE("open_read", 0, [](Thread*t, int8_t argCount){

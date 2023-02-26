@@ -1073,6 +1073,24 @@ void runtime::Thread::executeBytecode() {
                 LOAD_FRAME();
                 DISPATCH();
             }
+
+            case +OpCode::INSTANCEOF:{
+                auto klass = asClass(READ_CONSTANT_LONG());
+                Value val = pop();
+                if(!isInstance(val)){
+                    runtimeError(fmt::format("Expected an instance of the class, got {}.", typeToStr(val)), 3);
+                }
+                auto checkClass = asInstance(val)->klass;
+                do{
+                    if(checkClass == klass){
+                        push(encodeBool(true));
+                        DISPATCH();
+                    }
+                    checkClass = checkClass->superclass;
+                }while(checkClass->superclass);
+                push(encodeBool(false));
+                DISPATCH();
+            }
             #pragma endregion
         }
     } catch(int errCode) {

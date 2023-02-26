@@ -178,9 +178,10 @@ uInt64 ObjArray::getSize() {
 #pragma endregion
 
 #pragma region ObjClass
-ObjClass::ObjClass(string _name) {
+ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
 	name = ObjString::createStr(_name);
     marked = false;
+    superclass = _superclass;
 	type = ObjType::CLASS;
 }
 
@@ -193,6 +194,7 @@ void ObjClass::trace() {
         f.first->marked = true;
     }
     name->marked = true;
+    if(superclass) gc.markObj(superclass);
 }
 
 string ObjClass::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {

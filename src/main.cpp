@@ -19,11 +19,9 @@ static void windowsSetTerminalProcessing(){
     consoleMode |= ENABLE_PROCESSED_OUTPUT;
     SetConsoleMode( handleOut , consoleMode );
 };
-
 #endif
 
 int main(int argc, char* argv[]) {
-
     string path;
     // For ease of use during development
     #ifdef DEBUG_MODE

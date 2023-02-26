@@ -146,11 +146,13 @@ namespace object {
 	class ObjClass : public Obj {
 	public:
         object::ObjString* name;
+        // Uses copy down inheritance, but superclass ptr is still here for instanceof operator
+        object::ObjClass* superclass;
         ankerl::unordered_dense::map<object::ObjString*, Method> methods;
         // Dummy map which has the names of defined fields already inserted, gets copied to each ObjInstance
         ankerl::unordered_dense::map<object::ObjString*, Value> fieldsInit;
 
-		ObjClass(string _name);
+		ObjClass(string _name, object::ObjClass* _superclass);
 		~ObjClass() {}
 
 		void trace();

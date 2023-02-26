@@ -212,19 +212,16 @@ namespace AST {
 			prec = _prec;
 		}
 		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-            // Module access operator
-			if (token.type == TokenType::DOUBLE_COLON) {
-				if (left->type == ASTType::LITERAL) {
-					left->accept(cur->probe);
-					Token ident = cur->consume(TokenType::IDENTIFIER, "Expected variable name.");
-					return make_shared<ModuleAccessExpr>(cur->probe->getProbedToken(), ident);
-				}
-				else throw cur->error(token, "Expected module name identifier.");
-			}
 
-            // Macro invocation
-            if (token.type == TokenType::BANG) {
-                if (left->type == ASTType::LITERAL) {
+            switch(token.type){
+                case TokenType::DOUBLE_COLON:{
+                    if(left->type != ASTType::LITERAL) throw cur->error(token, "Expected module name identifier.");
+                    left->accept(cur->probe);
+                    Token ident = cur->consume(TokenType::IDENTIFIER, "Expected variable name.");
+                    return make_shared<ModuleAccessExpr>(cur->probe->getProbedToken(), ident);
+                }
+                case TokenType::BANG:{
+                    if(left->type != ASTType::LITERAL) throw cur->error(token, "Expected macro name to be an identifier.");
                     left->accept(cur->probe);
                     Token macroName = cur->probe->getProbedToken();
                     if (macroName.type != TokenType::IDENTIFIER) {
@@ -235,11 +232,18 @@ namespace AST {
                     }
                     return make_shared<MacroExpr>(macroName, cur->readTokenTree());
                 }
-                throw cur->error(token, "Expected macro name to be an identifier.");
+                case TokenType::INSTANCEOF:{
+                    auto right = cur->expression(+Precedence::PRIMARY - 1);
+                    if(!(right->type == ASTType::LITERAL || right->type == ASTType::MODULE_ACCESS)){
+                        throw cur->error(token, "Right side of the 'instanceof' operator can only be an identifier.");
+                    }
+                    return make_shared<BinaryExpr>(left, token, right);
+                }
+                default:{
+                    ASTNodePtr right = cur->expression(prec);
+                    return make_shared<BinaryExpr>(left, token, right);
+                }
             }
-
-			ASTNodePtr right = cur->expression(prec);
-			return make_shared<BinaryExpr>(left, token, right);
 		}
 	};
 
@@ -441,6 +445,7 @@ Parser::Parser() {
 	addInfix<FieldAccessParselet>(TokenType::DOT, Precedence::CALL);
 
 	addInfix<BinaryParselet>(TokenType::DOUBLE_COLON, Precedence::PRIMARY);
+    addInfix<BinaryParselet>(TokenType::INSTANCEOF, Precedence::PRIMARY);
 
 	//postfix and mix-fix operators get parsed with the infix parselets
 	addInfix<UnaryPostfixParselet>(TokenType::INCREMENT, Precedence::ALTER);
@@ -659,10 +664,9 @@ shared_ptr<ClassDecl> Parser::classDecl() {
 	// Inheritance is optional
 	if (match(TokenType::COLON)) {
 		Token token = previous();
-		//only accept identifiers and module access
-		inherited = expression();
-		if (!((inherited->type == ASTType::LITERAL
-			&& dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
+		// Only accept identifiers and module access
+		inherited = expression(+Precedence::PRIMARY - 1);
+		if (!((inherited->type == ASTType::LITERAL && dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
 			|| inherited->type == ASTType::MODULE_ACCESS)) {
 			error(token, "Superclass can only be an identifier.");
 		}
