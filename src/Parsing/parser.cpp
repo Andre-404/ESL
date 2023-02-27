@@ -119,6 +119,18 @@ namespace AST {
 				cur->switchDepth = tempSwitchDepth;
 				return make_shared<FuncLiteral>(args, body);
 			}
+            case TokenType::NEW:{
+                // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
+                // or module access to identifier
+                auto call = cur->expression(+Precedence::CALL - 1);
+                if(call->type != ASTType::CALL) throw cur->error(token, "Expected a call to class.");
+                auto castCall = std::static_pointer_cast<CallExpr>(call);
+                auto type = castCall->callee->type;
+                if(!(type == AST::ASTType::LITERAL || type == AST::ASTType::MODULE_ACCESS)) {
+                    throw cur->error(token, "Expected a class identifier or module access to class identifier.");
+                }
+                return make_shared<NewExpr>(castCall, token);
+            }
 			//number, string, boolean or nil
 			default:
 				return make_shared<LiteralExpr>(token);
@@ -400,6 +412,7 @@ Parser::Parser() {
 	addPrefix<LiteralParselet>(TokenType::LEFT_BRACE, Precedence::PRIMARY);
 	addPrefix<LiteralParselet>(TokenType::SUPER, Precedence::PRIMARY);
 	addPrefix<LiteralParselet>(TokenType::FN, Precedence::PRIMARY);
+    addPrefix<LiteralParselet>(TokenType::NEW, Precedence::PRIMARY);
 
 	// Infix
 	addInfix<AssignmentParselet>(TokenType::EQUAL, Precedence::ASSIGNMENT);

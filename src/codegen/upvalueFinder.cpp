@@ -80,6 +80,13 @@ void UpvalueFinder::visitCallExpr(AST::CallExpr* expr) {
     }
 }
 
+void UpvalueFinder::visitNewExpr(AST::NewExpr* expr){
+    // Expr->call will always be a call
+    for (AST::ASTNodePtr arg : reinterpret_cast<AST::CallExpr*>(expr->call.get())->args) {
+        arg->accept(this);
+    }
+}
+
 void UpvalueFinder::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     expr->callee->accept(this);
 

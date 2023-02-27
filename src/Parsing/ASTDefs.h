@@ -12,6 +12,7 @@ namespace AST {
 		UNARY,
 		ARRAY_LITERAL,
 		CALL,
+        NEW,
 		FIELD_ACCESS,
 		ASYNC,
 		AWAIT,
@@ -45,6 +46,7 @@ namespace AST {
 	class UnaryExpr;
 	class ArrayLiteralExpr;
 	class CallExpr;
+    class NewExpr;
 	class FieldAccessExpr;
 	class AsyncExpr;
 	class AwaitExpr;
@@ -80,6 +82,7 @@ namespace AST {
 		virtual void visitBinaryExpr(BinaryExpr* expr) = 0;
 		virtual void visitUnaryExpr(UnaryExpr* expr) = 0;
 		virtual void visitCallExpr(CallExpr* expr) = 0;
+        virtual void visitNewExpr(NewExpr* expr) = 0;
 		virtual void visitFieldAccessExpr(FieldAccessExpr* expr) = 0;
 		virtual void visitAsyncExpr(AsyncExpr* expr) = 0;
 		virtual void visitAwaitExpr(AwaitExpr* expr) = 0;
@@ -259,6 +262,21 @@ namespace AST {
 		}
 	};
 
+    class NewExpr : public ASTNode{
+    public:
+        shared_ptr<CallExpr> call;
+        Token token;
+
+        NewExpr(shared_ptr<CallExpr> _call, Token _token) {
+            call = _call;
+            token = _token;
+            type = ASTType::NEW;
+        }
+        void accept(Visitor* vis) override {
+            vis->visitNewExpr(this);
+        }
+    };
+
 	//getting values from compound types using '.' or '[]'
 	class FieldAccessExpr : public ASTNode {
 	public:
@@ -406,7 +424,7 @@ namespace AST {
         }
     };
 
-#pragma endregion
+    #pragma endregion
 
 	#pragma region Statements
 

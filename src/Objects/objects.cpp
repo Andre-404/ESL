@@ -146,7 +146,7 @@ ObjArray::ObjArray() {
     marked = false;
 }
 ObjArray::ObjArray(size_t size) {
-	values = vector<Value>(size);
+	values.resize(size);
 	type = ObjType::ARRAY;
 	numOfHeapPtr = 0;
 }

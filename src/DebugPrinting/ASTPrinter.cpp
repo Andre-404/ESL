@@ -51,6 +51,11 @@ void ASTPrinter::visitCallExpr(CallExpr* expr) {
 	cout << ")";
 }
 
+void ASTPrinter::visitNewExpr(NewExpr* expr){
+    cout<<"new ";
+    expr->call->accept(this);
+}
+
 void ASTPrinter::visitFieldAccessExpr(FieldAccessExpr* expr) {
 	expr->callee->accept(this);
 	cout << expr->accessor.getLexeme();

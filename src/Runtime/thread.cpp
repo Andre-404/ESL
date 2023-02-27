@@ -402,12 +402,11 @@ void runtime::Thread::executeBytecode() {
 
             #pragma region Unary opcodes
             case +OpCode::NEGATE:{
-                Value val = pop();
+                Value val = peek(0);
                 if (!isNumber(val)) {
                     runtimeError(fmt::format("Operand must be a number, got {}.", typeToStr(val)), 3);
                 }
-                // TODO: Could be marginally faster with manipulating the first bit?
-                push(encodeNumber(-decodeNumber(val)));
+                *(stackTop - 1) ^= (1ll << 63);
                 DISPATCH();
             }
             case +OpCode::NOT:{

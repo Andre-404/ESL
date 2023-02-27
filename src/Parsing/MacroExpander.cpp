@@ -31,10 +31,18 @@ void AST::MacroExpander::visitUnaryExpr(UnaryExpr* expr) {
     expand(expr->right);
 }
 void AST::MacroExpander::visitCallExpr(CallExpr* expr) {
+    expand(expr->callee);
     for (auto& arg : expr->args) {
         expand(arg);
     }
 }
+void AST::MacroExpander::visitNewExpr(NewExpr* expr) {
+    expand(expr->call->callee);
+    for (auto& arg : expr->call->args) {
+        expand(arg);
+    }
+}
+
 void AST::MacroExpander::visitFieldAccessExpr(FieldAccessExpr* expr) {}
 void AST::MacroExpander::visitAsyncExpr(AsyncExpr* expr) {
     for (auto& arg : expr->args) {
@@ -147,14 +155,6 @@ AST::Macro::Macro() {
 AST::Macro::Macro(Token _name, Parser *_parser) {
     name = _name;
     parser = _parser;
-}
-
-// TODO: remove later?
-void debugTokens(vector<Token> tokens){
-    for (const auto& token : tokens){
-        std::cout << token.getLexeme() << " ";
-    }
-    std::cout << "\n";
 }
 
 AST::ASTNodePtr AST::Macro::expand(vector<Token> &args, const Token &callerToken) {

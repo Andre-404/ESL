@@ -73,7 +73,7 @@ namespace compileCore {
 	public:
 		// Compiler only ever emits the code for a single function, top level code is considered a function
 		CurrentChunkInfo* current;
-		ClassChunkInfo* currentClass;
+		std::unique_ptr<ClassChunkInfo> currentClass;
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 		// Passed to the VM
@@ -90,38 +90,39 @@ namespace compileCore {
 		object::ObjFunc* endFuncDecl();
 
 		#pragma region Visitor pattern
-		void visitAssignmentExpr(AST::AssignmentExpr* expr);
-		void visitSetExpr(AST::SetExpr* expr);
-		void visitConditionalExpr(AST::ConditionalExpr* expr);
-		void visitBinaryExpr(AST::BinaryExpr* expr);
-		void visitUnaryExpr(AST::UnaryExpr* expr);
-		void visitCallExpr(AST::CallExpr* expr);
-		void visitFieldAccessExpr(AST::FieldAccessExpr* expr);
-		void visitAsyncExpr(AST::AsyncExpr* expr);
-		void visitAwaitExpr(AST::AwaitExpr* expr);
-		void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr);
-		void visitStructLiteralExpr(AST::StructLiteral* expr);
-		void visitLiteralExpr(AST::LiteralExpr* expr);
-		void visitSuperExpr(AST::SuperExpr* expr);
-		void visitFuncLiteral(AST::FuncLiteral* expr);
-		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr);
-        void visitMacroExpr(AST::MacroExpr* expr);
+		void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
+		void visitSetExpr(AST::SetExpr* expr) override;
+		void visitConditionalExpr(AST::ConditionalExpr* expr) override;
+		void visitBinaryExpr(AST::BinaryExpr* expr) override;
+		void visitUnaryExpr(AST::UnaryExpr* expr) override;
+		void visitCallExpr(AST::CallExpr* expr) override;
+        void visitNewExpr(AST::NewExpr* expr) override;
+		void visitFieldAccessExpr(AST::FieldAccessExpr* expr) override;
+		void visitAsyncExpr(AST::AsyncExpr* expr) override;
+		void visitAwaitExpr(AST::AwaitExpr* expr) override;
+		void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
+		void visitStructLiteralExpr(AST::StructLiteral* expr) override;
+		void visitLiteralExpr(AST::LiteralExpr* expr) override;
+		void visitSuperExpr(AST::SuperExpr* expr) override;
+		void visitFuncLiteral(AST::FuncLiteral* expr) override;
+		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr) override;
+        void visitMacroExpr(AST::MacroExpr* expr) override;
 
-		void visitVarDecl(AST::VarDecl* decl);
-		void visitFuncDecl(AST::FuncDecl* decl);
-		void visitClassDecl(AST::ClassDecl* decl);
+		void visitVarDecl(AST::VarDecl* decl) override;
+		void visitFuncDecl(AST::FuncDecl* decl) override;
+		void visitClassDecl(AST::ClassDecl* decl) override;
 
-		void visitExprStmt(AST::ExprStmt* stmt);
-		void visitBlockStmt(AST::BlockStmt* stmt);
-		void visitIfStmt(AST::IfStmt* stmt);
-		void visitWhileStmt(AST::WhileStmt* stmt);
-		void visitForStmt(AST::ForStmt* stmt);
-		void visitBreakStmt(AST::BreakStmt* stmt);
-		void visitContinueStmt(AST::ContinueStmt* stmt);
-		void visitSwitchStmt(AST::SwitchStmt* stmt);
-		void visitCaseStmt(AST::CaseStmt* _case);
-		void visitAdvanceStmt(AST::AdvanceStmt* stmt);
-		void visitReturnStmt(AST::ReturnStmt* stmt);
+		void visitExprStmt(AST::ExprStmt* stmt) override;
+		void visitBlockStmt(AST::BlockStmt* stmt) override;
+		void visitIfStmt(AST::IfStmt* stmt) override;
+		void visitWhileStmt(AST::WhileStmt* stmt) override;
+		void visitForStmt(AST::ForStmt* stmt) override;
+		void visitBreakStmt(AST::BreakStmt* stmt) override;
+		void visitContinueStmt(AST::ContinueStmt* stmt) override;
+		void visitSwitchStmt(AST::SwitchStmt* stmt) override;
+		void visitCaseStmt(AST::CaseStmt* _case) override;
+		void visitAdvanceStmt(AST::AdvanceStmt* stmt) override;
+		void visitReturnStmt(AST::ReturnStmt* stmt) override;
 		#pragma endregion 
 	private:
 		CSLModule* curUnit;
@@ -134,14 +135,14 @@ namespace compileCore {
         ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
 
 		#pragma region Helpers
-		//emitters
+		// Emitters
 		void emitByte(byte byte);
 		void emitBytes(byte byte1, byte byte2);
 		void emit16Bit(uInt16 number);
 		void emitByteAnd16Bit(byte byte, uInt16 num);
 		void emitConstant(Value value);
 		void emitReturn();
-		//control flow
+		// Control flow
 		int emitJump(byte jumpType);
 		void patchJump(int offset);
 		void emitLoop(int start);
@@ -149,14 +150,14 @@ namespace compileCore {
 		void patchScopeJumps(ScopeJumpType type);
 
 		uInt16 makeConstant(Value value);
-		//variables
+		// Variables
 		uInt16 identifierConstant(Token name);
 
         uint16_t declareGlobalVar(Token name);
 		void defineGlobalVar(uInt16 name);
 
 		void namedVar(Token name, bool canAssign);
-		//locals
+		// Locals
 		void declareLocalVar(AST::ASTVar& name);
         void defineLocalVar();
 
@@ -169,7 +170,7 @@ namespace compileCore {
 
 		void beginScope();
 		void endScope();
-		//classes and methods
+		// Classes and methods
 		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
 		bool invoke(AST::CallExpr* expr);
         int resolveClassField(Token name, bool canAssign);
@@ -178,7 +179,7 @@ namespace compileCore {
         bool resolveThis(AST::FieldAccessExpr* expr);
         bool resolveThis(AST::SetExpr* expr);
         bool resolveImplicitObjectField(AST::CallExpr* expr);
-		//misc
+		// Misc
         Token syntheticToken(string str);
 		void updateLine(Token token);
 		void error(Token token, const string& msg) noexcept(false);

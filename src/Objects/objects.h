@@ -2,6 +2,7 @@
 #include "../codegen/codegenDefs.h"
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Includes/unorderedDense.h"
+#include "../Includes/customAllocator.h"
 #include <fstream>
 #include <stdio.h>
 #include <shared_mutex>

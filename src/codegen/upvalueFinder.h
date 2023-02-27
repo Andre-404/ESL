@@ -50,6 +50,7 @@ namespace upvalueFinder {
         void visitBinaryExpr(AST::BinaryExpr* expr);
         void visitUnaryExpr(AST::UnaryExpr* expr);
         void visitCallExpr(AST::CallExpr* expr);
+        void visitNewExpr(AST::NewExpr* expr);
         void visitFieldAccessExpr(AST::FieldAccessExpr* expr);
         void visitAsyncExpr(AST::AsyncExpr* expr);
         void visitAwaitExpr(AST::AwaitExpr* expr);

@@ -90,33 +90,6 @@ static bool isLiteralThis(AST::ASTNodePtr ptr){
     return probeToken(ptr).type == TokenType::THIS;
 }
 
-object::ObjClass* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
-    uint16_t classIndex = 0;
-    Token token;
-    if (expr->type == AST::ASTType::LITERAL) {
-        Token superclass = probeToken(expr);
-        // Gets the index into globals in which the superclass is stored
-        int arg = resolveGlobal(superclass, false);
-        if(arg == -1) error(superclass, "Class isn't defined.");
-        else if(arg == -2) error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
-        classIndex = arg;
-        token = superclass;
-    }
-    else if(expr->type == AST::ASTType::MODULE_ACCESS){
-        // TODO: dynamic cast :cry:
-        AST::ModuleAccessExpr* moduleExpr = dynamic_cast<AST::ModuleAccessExpr*>(expr.get());
-        classIndex = resolveModuleVariable(moduleExpr->moduleName, moduleExpr->ident);
-        token = moduleExpr->ident;
-    }
-    if(!definedGlobals[classIndex]){
-        error(token,"Variable isn't defined.");
-    }
-    if(!isClass(globals[classIndex].val)){
-        error(token,"Variable isn't a class(perhaps you tried inheriting from class stored in a global variable, which is illegal, please use the class name).");
-    }
-    return asClass(globals[classIndex].val);
-}
-
 void Compiler::visitAssignmentExpr(AST::AssignmentExpr* expr) {
 	//rhs of the expression is on the top of the stack and stays there, since assignment is an expression
 	expr->value->accept(this);
@@ -208,6 +181,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
         case TokenType::LESS:			 op = +OpCode::LESS; break;
         case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+        default: error(expr->op, "Unrecognized token in binary expression.");
 	}
 	expr->right->accept(this);
 	emitByte(op);
@@ -249,7 +223,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 		}
 		else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
 			// If a field is being incremented, compile the object, and then if it's not a dot access also compile the field
-			AST::FieldAccessExpr* left = dynamic_cast<AST::FieldAccessExpr*>(expr->right.get());
+			auto left = std::static_pointer_cast<AST::FieldAccessExpr>(expr->right);
 			updateLine(left->accessor);
 			left->callee->accept(this);
 
@@ -310,11 +284,23 @@ void Compiler::visitCallExpr(AST::CallExpr* expr) {
 	// Invoking is field access + call, when the compiler recognizes this pattern it optimizes
 	if (invoke(expr)) return;
 	//todo: tail recursion optimization
-	expr->callee->accept(this);
+    expr->callee->accept(this);
 	for (AST::ASTNodePtr arg : expr->args) {
 		arg->accept(this);
 	}
 	emitBytes(+OpCode::CALL, expr->args.size());
+}
+
+void Compiler::visitNewExpr(AST::NewExpr* expr){
+    // Parser guarantees that expr->call->callee is either a literal or a module access
+    auto klass = getClassFromExpr(expr->call->callee);
+
+    emitConstant(encodeObj(klass));
+
+    for (AST::ASTNodePtr arg : expr->call->args) {
+        arg->accept(this);
+    }
+    emitBytes(+OpCode::CALL, expr->call->args.size());
 }
 
 void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
@@ -552,7 +538,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
     auto klass = new object::ObjClass(className.getLexeme(), nullptr);
 
 
-	currentClass = new ClassChunkInfo(klass);
+	currentClass = std::make_unique<ClassChunkInfo>(klass);
 
 	if (decl->inheritedClass) {
 		//if the class inherits from some other class, load the parent class and declare 'super' as a local variable which holds the superclass
@@ -585,14 +571,14 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
     // Define the class here, so that it can be called inside its own methods
     // Defining after inheriting so that a class can't be used as its own parent
     defineGlobalVar(index);
+    // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
+    globals[index].val = encodeObj(klass);
 
 	for (auto& _method : decl->methods) {
         //At this point the name is guaranteed to exist as a string, so createStr just returns the already created string
         klass->methods[ObjString::createStr((_method.isPublic ? "" : "!") + _method.method->getName().getLexeme())] = method(_method.method.get(), className);
 	}
 	currentClass = nullptr;
-    // Assigning at compile time to save on bytecode
-    globals[index].val = encodeObj(klass);
 }
 
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
@@ -1009,7 +995,7 @@ void Compiler::defineGlobalVar(uInt16 index) {
     definedGlobals[index] = true;
 }
 
-//gets/sets a variable, respects the scoping rules(locals->upvalues->class fields(if inside a method)->globals)
+// Gets/sets a variable, respects the scoping rules(locals->upvalues->class fields(if inside a method)->globals)
 void Compiler::namedVar(Token token, bool canAssign) {
 	updateLine(token);
 	byte getOp;
@@ -1040,6 +1026,10 @@ void Compiler::namedVar(Token token, bool canAssign) {
 		// All global variables are stored in an array, resolveGlobal gets index into the array
 		getOp = +OpCode::GET_GLOBAL;
 		setOp = +OpCode::SET_GLOBAL;
+        // Classes cannot be accessed with variable get/set, only way they can be accessed is when inheriting,
+        // within the 'instanceof' operator and within the 'new' operator
+        if(isClass(globals[arg].val)) error(token, "Cannot access or mutate classes.");
+
 		if (arg > SHORT_CONSTANT_LIMIT) {
 			getOp = +OpCode::GET_GLOBAL_LONG;
 			setOp = +OpCode::SET_GLOBAL_LONG;
@@ -1228,7 +1218,7 @@ object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
 bool Compiler::invoke(AST::CallExpr* expr) {
 	if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
 		//currently we only optimizes field invoking(struct.field() or array[field]())
-		auto* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+		auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
         if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
 
 		call->callee->accept(this);
@@ -1257,7 +1247,7 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		return true;
 	}
 	else if (expr->callee->type == AST::ASTType::SUPER) {
-		AST::SuperExpr* superCall = dynamic_cast<AST::SuperExpr*>(expr->callee.get());
+		auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
 		uint16_t name = identifierConstant(superCall->methodName);
 
 		if (currentClass == nullptr) {
@@ -1376,6 +1366,30 @@ bool Compiler::resolveImplicitObjectField(AST::CallExpr *expr) {
 
     return true;
 }
+
+// Any call to getClassFromExpr assumes expr is either AST::LiteralExpr and AST::ModuleAccessExpr
+object::ObjClass* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
+    uint16_t classIndex = 0;
+    Token token;
+    if (expr->type == AST::ASTType::LITERAL) {
+        Token superclass = probeToken(expr);
+        // Gets the index into globals in which the superclass is stored
+        int arg = resolveGlobal(superclass, false);
+        if(arg == -1) error(superclass, "Class doesn't exist.");
+        else if(arg == -2) {
+            error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
+        }
+        classIndex = arg;
+        token = superclass;
+    }
+    else {
+        auto moduleExpr = std::static_pointer_cast<AST::ModuleAccessExpr>(expr);
+        classIndex = resolveModuleVariable(moduleExpr->moduleName, moduleExpr->ident);
+        token = moduleExpr->ident;
+    }
+    if(!isClass(globals[classIndex].val)) error(token, "Variable isn't a class.");
+    return asClass(globals[classIndex].val);
+}
 #pragma endregion
 
 Chunk* Compiler::getChunk() {
@@ -1440,15 +1454,11 @@ int Compiler::checkSymbol(Token symbol) {
                 globalIndex += units[i]->topDeclarations.size();
             }
             int upperLimit = globalIndex + decls.size();
-			for (auto it = decls.begin(); it != decls.end(); it++) {
-                if(!(*it)->getName().equals(symbol)) continue;
-                // If the correct symbol is found, find the index of the global variable inside globals array
-                for(int i = globalIndex; i < upperLimit; i++){
-                    if (lexeme == globals[i].name) return i;
-                }
-                // Should never be hit
-                error(symbol, "Error, variable wasn't loaded into globals array.");
-			}
+            for(int i = 0; i < upperLimit; i++){
+                if(!decls[i]->getName().equals(symbol)) continue;
+                return i;
+            }
+            error(symbol, "Error, variable wasn't loaded into globals array.");
 		}
 	}
     return -1;

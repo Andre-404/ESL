@@ -122,7 +122,6 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
     });
     // Random number generator
     NATIVE_FUNC("random_num", 0, [](Thread* t, int8_t argCount) {
-        // TODO: Make it return ints??
         double randomNumber = std::uniform_int_distribution<long long>(-INT64_MAX, INT64_MAX)(t->vm->rng);
         t->push(encodeNumber(randomNumber));
     });
@@ -159,21 +158,18 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        // TODO: Make it return ints
         t->push(encodeNumber(floor(decodeNumber(num))));
     });
     NATIVE_FUNC("ceil", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        // TODO: Make it return ints
         t->push(encodeNumber(ceil(decodeNumber(num))));
     });
     NATIVE_FUNC("round", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        // TODO: Make it return ints
         t->push(encodeNumber(round(decodeNumber(num))));
     });
     NATIVE_FUNC("sqrt", 1, [](Thread* t, int8_t argCount) {
