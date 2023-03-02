@@ -19,6 +19,9 @@ enum class TokenType {
     LESS, LESS_EQUAL,
     BITSHIFT_LEFT, BITSHIFT_RIGHT,
     INCREMENT, DECREMENT, DOUBLE_COLON, ARROW,
+    DOUBLE_DOT,
+    // Three character tokens
+    DOUBLE_DOT_EQUAL,
     // Literals.
     IDENTIFIER, STRING, NUMBER,
     // Keywords.

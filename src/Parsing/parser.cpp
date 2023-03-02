@@ -8,370 +8,309 @@ using namespace AST;
 
 // Have to define this in the AST namespace because parselets are c++ friend classes
 namespace AST {
-	//!, -, ~, ++a, --a, async and await
-	class UnaryPrefixParselet : public PrefixParselet {
-	public:
-		UnaryPrefixParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(Token token) {
-			// Macro meta variables
-            if (token.type == TokenType::DOLLAR){
-                Token metaVar = cur->consume(TokenType::IDENTIFIER, "Expected identifier after '$'.");
-                return cur->exprMetaVars[metaVar.getLexeme()]->get();
+    //!, -, ~, $, --, ++, async, await, .., ..=
+    ASTNodePtr parsePrefix(Parser* parser, Token token) {
+        switch (token.type) {
+            // Macro meta variables
+            case TokenType::DOLLAR:{
+                Token metaVar = parser->consume(TokenType::IDENTIFIER, "Expected identifier after '$'.");
+                return parser->exprMetaVars[metaVar.getLexeme()]->get();
             }
-
-
-			switch (token.type) {
-			case TokenType::AWAIT: {
-                // Parse a new expression with 0 precedence
-                ASTNodePtr expr = cur->expression();
+            case TokenType::AWAIT: {
+                // Syntax is await <expr>
+                ASTNodePtr expr = parser->expression();
                 return make_shared<AwaitExpr>(token, expr);
             }
-			case TokenType::ASYNC: {
-                ASTNodePtr expr = cur->expression(prec);
-				if (expr->type != ASTType::CALL) throw cur->error(token, "Expected a call after 'thread'.");
-				CallExpr* call = dynamic_cast<CallExpr*>(expr.get());
-				return make_shared<AsyncExpr>(token, call->callee, call->args);
-			}
-			default: {
-                ASTNodePtr expr = cur->expression(prec);
+            case TokenType::DOUBLE_DOT:{
+                if(parser->prefixParselets.contains(parser->peek().type)) return make_shared<RangeExpr>(token, nullptr, nullptr, false);
+                auto expr = parser->expression(+Precedence::RANGE);
+                return make_shared<RangeExpr>(token, nullptr, expr, false);
+            }
+            case TokenType::DOUBLE_DOT_EQUAL:{
+                auto expr = parser->expression(+Precedence::RANGE);
+                return make_shared<RangeExpr>(token, nullptr, expr, true);
+            }
+            case TokenType::ASYNC: {
+                ASTNodePtr expr = parser->expression();
+                if (expr->type != ASTType::CALL) throw parser->error(token, "Expected a call after 'async'.");
+                auto call = std::static_pointer_cast<CallExpr>(expr);
+                return make_shared<AsyncExpr>(token, call->callee, call->args);
+            }
+            default: {
+                ASTNodePtr expr = parser->expression(parser->prefixPrecLevel(token.type));
                 return make_shared<UnaryExpr>(token, expr, true);
             }
-			}
-		}
-	};
+        }
+    }
 
-	//numbers, string, boolean, nil, array and struct literals, grouping as well as super calls and anonymous functions
-	class LiteralParselet : public PrefixParselet {
-	public:
-		LiteralParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(Token token) {
-			switch (token.type) {
-				//only thing that gets inherited is methods
-			case TokenType::SUPER: {
-				cur->consume(TokenType::DOT, "Expected '.' after super.");
-				Token ident = cur->consume(TokenType::IDENTIFIER, "Expect superclass method name.");
-				return make_shared<SuperExpr>(ident);
-			}
-			case TokenType::LEFT_PAREN: {
-				//grouping can contain a expr of any precedence
-				ASTNodePtr expr = cur->expression();
-				cur->consume(TokenType::RIGHT_PAREN, "Expected ')' at the end of grouping expression.");
-				return expr;
-			}
-			//Array literal
-			case TokenType::LEFT_BRACKET: {
-				vector<ASTNodePtr> members;
-				if (cur->peek().type != TokenType::RIGHT_BRACKET) {
-					do {
-						members.push_back(cur->expression());
-					} while (cur->match(TokenType::COMMA));
-				}
-				cur->consume(TokenType::RIGHT_BRACKET, "Expect ']' at the end of an array literal.");
-				return make_shared<ArrayLiteralExpr>(members);
-			}
-			//Struct literal
-			case TokenType::LEFT_BRACE: {
-				vector<StructEntry> entries;
-				if (cur->peek().type != TokenType::RIGHT_BRACE) {
-					//a struct literal looks like this: {var1 : expr1, var2 : expr2}
-					do {
-						Token identifier = cur->consume(TokenType::STRING, "Expected a string identifier.");
-						cur->consume(TokenType::COLON, "Expected a ':' after string identifier");
-						ASTNodePtr expr = cur->expression();
-						entries.emplace_back(identifier, expr);
-					} while (cur->match(TokenType::COMMA));
-				}
-				cur->consume(TokenType::RIGHT_BRACE, "Expect '}' after struct literal.");
-				return make_shared<StructLiteral>(entries);
-			}
-			//function literal
-			case TokenType::FN: {
-				//the depths are used for throwing errors for switch and loops stmts, 
-				//and since a function can be declared inside a loop we need to account for that
-				int tempLoopDepth = cur->loopDepth;
-				int tempSwitchDepth = cur->switchDepth;
-				cur->loopDepth = 0;
-				cur->switchDepth = 0;
+    ASTNodePtr parseLiteral(Parser* parser, Token token) {
+        switch (token.type) {
+            // Super is always followed by a .
+            case TokenType::SUPER: {
+                parser->consume(TokenType::DOT, "Expected '.' after super.");
+                Token ident = parser->consume(TokenType::IDENTIFIER, "Expect superclass method name.");
+                return make_shared<SuperExpr>(ident);
+            }
+            case TokenType::LEFT_PAREN: {
+                // Grouping can contain an expr of any precedence
+                ASTNodePtr expr = parser->expression();
+                parser->consume(TokenType::RIGHT_PAREN, "Expected ')' at the end of grouping expression.");
+                return expr;
+            }
+            // Array literal
+            case TokenType::LEFT_BRACKET: {
+                vector<ASTNodePtr> members;
+                if (parser->peek().type != TokenType::RIGHT_BRACKET) {
+                    do {
+                        members.push_back(parser->expression());
+                    } while (parser->match(TokenType::COMMA));
+                }
+                parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' at the end of an array literal.");
+                return make_shared<ArrayLiteralExpr>(members);
+            }
+            // Struct literal
+            case TokenType::LEFT_BRACE: {
+                vector<StructEntry> entries;
+                if (parser->peek().type != TokenType::RIGHT_BRACE) {
+                    // A struct literal looks like this: {var1 : expr1, var2 : expr2}
+                    do {
+                        Token identifier = parser->consume(TokenType::STRING, "Expected a string identifier.");
+                        parser->consume(TokenType::COLON, "Expected a ':' after string identifier");
+                        ASTNodePtr expr = parser->expression();
+                        entries.emplace_back(identifier, expr);
+                    } while (parser->match(TokenType::COMMA));
+                }
+                parser->consume(TokenType::RIGHT_BRACE, "Expect '}' after struct literal.");
+                return make_shared<StructLiteral>(entries);
+            }
+            // Function literal
+            case TokenType::FN: {
+                // The depths are used for throwing errors for switch and loops stmts,
+                // and since a function can be declared inside a loop we need to account for that
+                int tempLoopDepth = parser->loopDepth;
+                int tempSwitchDepth = parser->switchDepth;
+                parser->loopDepth = 0;
+                parser->switchDepth = 0;
 
-				cur->consume(TokenType::LEFT_PAREN, "Expect '(' for arguments.");
-				vector<ASTVar> args;
-				//parse args
-				if (!cur->check(TokenType::RIGHT_PAREN)) {
-					do {
-						Token arg = cur->consume(TokenType::IDENTIFIER, "Expect argument name");
-						args.emplace_back(arg);
-						if (args.size() > 127) {
-							throw cur->error(arg, "Functions can't have more than 128 arguments");
-						}
-					} while (cur->match(TokenType::COMMA));
-				}
-				cur->consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments");
-				cur->consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
-                shared_ptr<BlockStmt> body = cur->blockStmt();
+                parser->consume(TokenType::LEFT_PAREN, "Expect '(' for arguments.");
+                vector<ASTVar> args;
+                if (!parser->check(TokenType::RIGHT_PAREN)) {
+                    do {
+                        Token arg = parser->consume(TokenType::IDENTIFIER, "Expect argument name");
+                        args.emplace_back(arg);
+                        if (args.size() > 127) {
+                            throw parser->error(arg, "Functions can't have more than 128 arguments");
+                        }
+                    } while (parser->match(TokenType::COMMA));
+                }
+                parser->consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments");
+                parser->consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
+                shared_ptr<BlockStmt> body = parser->blockStmt();
 
-				cur->loopDepth = tempLoopDepth;
-				cur->switchDepth = tempSwitchDepth;
-				return make_shared<FuncLiteral>(args, body);
-			}
+                parser->loopDepth = tempLoopDepth;
+                parser->switchDepth = tempSwitchDepth;
+                return make_shared<FuncLiteral>(args, body);
+            }
             case TokenType::NEW:{
                 // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
                 // or module access to identifier
-                auto call = cur->expression(+Precedence::CALL - 1);
-                if(call->type != ASTType::CALL) throw cur->error(token, "Expected a call to class.");
+                auto call = parser->expression(+Precedence::CALL - 1);
+                if(call->type != ASTType::CALL) throw parser->error(token, "Expected a call to class.");
                 auto castCall = std::static_pointer_cast<CallExpr>(call);
                 auto type = castCall->callee->type;
                 if(!(type == AST::ASTType::LITERAL || type == AST::ASTType::MODULE_ACCESS)) {
-                    throw cur->error(token, "Expected a class identifier or module access to class identifier.");
+                    throw parser->error(token, "Expected a class identifier or module access to class identifier.");
                 }
                 return make_shared<NewExpr>(castCall, token);
             }
-			//number, string, boolean or nil
-			default:
-				return make_shared<LiteralExpr>(token);
-			}
-		}
-	};
-
-	//variable assignment
-	class AssignmentParselet : public InfixParselet {
-	public:
-		AssignmentParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-
-			if (left->type != ASTType::LITERAL) throw cur->error(token, "Left side is not assignable");
-
-			left->accept(cur->probe);
-            Token temp = cur->probe->getProbedToken();
-			if (temp.type != TokenType::IDENTIFIER) throw cur->error(token, "Left side is not assignable");
-			//makes it right associative
-			ASTNodePtr right = parseAssign(left, token);
-			return make_shared<AssignmentExpr>(temp, right);
-		}
-
-		//used for parsing assignment tokens(eg. =, +=, *=...)
-		ASTNodePtr parseAssign(ASTNodePtr left, Token op) {
-			ASTNodePtr right = cur->expression();
-			switch (op.type) {
-			case TokenType::EQUAL: {
-				break;
-			}
-			case TokenType::PLUS_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, op), right);
-				break;
-			}
-			case TokenType::MINUS_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, op), right);
-				break;
-			}
-			case TokenType::SLASH_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, op), right);
-				break;
-			}
-			case TokenType::STAR_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, op), right);
-				break;
-			}
-			case TokenType::BITWISE_XOR_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, op), right);
-				break;
-			}
-			case TokenType::BITWISE_AND_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, op), right);
-				break;
-			}
-			case TokenType::BITWISE_OR_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, op), right);
-				break;
-			}
-			case TokenType::PERCENTAGE_EQUAL: {
-				right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, op), right);
-				break;
-			}
-			}
-			return right;
-		}
-	};
-
-	//?: operator
-	class ConditionalParselet : public InfixParselet {
-	public:
-		ConditionalParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-			ASTNodePtr thenBranch = cur->expression(prec - 1);
-			cur->consume(TokenType::COLON, "Expected ':' after then branch.");
-			ASTNodePtr elseBranch = cur->expression(prec - 1);
-			return make_shared<ConditionalExpr>(left, thenBranch, elseBranch);
-		}
-	};
-
-	//any binary operation + module alias access operator(::) + macro invocation (!)
-	class BinaryParselet : public InfixParselet {
-	public:
-		BinaryParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-
-            switch(token.type){
-                case TokenType::DOUBLE_COLON:{
-                    if(left->type != ASTType::LITERAL) throw cur->error(token, "Expected module name identifier.");
-                    left->accept(cur->probe);
-                    Token ident = cur->consume(TokenType::IDENTIFIER, "Expected variable name.");
-                    return make_shared<ModuleAccessExpr>(cur->probe->getProbedToken(), ident);
-                }
-                case TokenType::BANG:{
-                    if(left->type != ASTType::LITERAL) throw cur->error(token, "Expected macro name to be an identifier.");
-                    left->accept(cur->probe);
-                    Token macroName = cur->probe->getProbedToken();
-                    if (macroName.type != TokenType::IDENTIFIER) {
-                        throw cur->error(macroName, "Expected macro name to be an identifier.");
-                    }
-                    if (!cur->macros.contains(macroName.getLexeme())) {
-                        throw cur->error(macroName, "Invoked macro isn't defined");
-                    }
-                    return make_shared<MacroExpr>(macroName, cur->readTokenTree());
-                }
-                case TokenType::INSTANCEOF:{
-                    auto right = cur->expression(+Precedence::PRIMARY - 1);
-                    if(!(right->type == ASTType::LITERAL || right->type == ASTType::MODULE_ACCESS)){
-                        throw cur->error(token, "Right side of the 'instanceof' operator can only be an identifier.");
-                    }
-                    return make_shared<BinaryExpr>(left, token, right);
-                }
-                default:{
-                    ASTNodePtr right = cur->expression(prec);
-                    return make_shared<BinaryExpr>(left, token, right);
-                }
-            }
-		}
-	};
-
-	//a++, a--
-	class UnaryPostfixParselet : public InfixParselet {
-	public:
-		UnaryPostfixParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr var, Token op, int surroundingPrec) {
-			return make_shared<UnaryExpr>(op, var, false);
-		}
-	};
-
-	//function calling
-	class CallParselet : public InfixParselet {
-	public:
-		CallParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-			vector<ASTNodePtr> args;
-			if (!cur->check(TokenType::RIGHT_PAREN)) {
-				do {
-					args.push_back(cur->expression());
-				} while (cur->match(TokenType::COMMA));
-			}
-			cur->consume(TokenType::RIGHT_PAREN, "Expect ')' after call expression.");
-			return make_shared<CallExpr>(left, args);
-		}
-	};
-
-	//accessing struct, class or array fields
-	class FieldAccessParselet : public InfixParselet {
-	public:
-		FieldAccessParselet(Parser* _cur, int _prec) {
-			cur = _cur;
-			prec = _prec;
-		}
-		ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) {
-			ASTNodePtr field = nullptr;
-			Token newToken = token;
-			if (token.type == TokenType::LEFT_BRACKET) {//array/struct with string access
-				field = cur->expression();
-				//object["field"] gets optimized to object.field
-				if (field->type == ASTType::LITERAL) {
-					field->accept(cur->probe);
-					if (cur->probe->getProbedToken().type == TokenType::STRING) newToken.type = TokenType::DOT;
-				}
-				cur->consume(TokenType::RIGHT_BRACKET, "Expect ']' after array/map access.");
-			}
-			else if (token.type == TokenType::DOT) {//struct/object access
-				Token fieldName = cur->consume(TokenType::IDENTIFIER, "Expected a field identifier.");
-				field = make_shared<LiteralExpr>(fieldName);
-			}
-			//if we have something like arr[0] = 1 or struct.field = 1 we can't parse it with the assignment expr
-			//this handles that case and produces a special set expr
-			//we also check the precedence level of the surrounding expression, so "a + b.c = 3" doesn't get parsed
-			//the match() covers every possible type of assignment
-			if (surroundingPrec <= (int)Precedence::ASSIGNMENT
-				&& cur->match({ TokenType::EQUAL, TokenType::PLUS_EQUAL, TokenType::MINUS_EQUAL, TokenType::SLASH_EQUAL,
-					TokenType::STAR_EQUAL, TokenType::BITWISE_XOR_EQUAL, TokenType::BITWISE_AND_EQUAL,
-					TokenType::BITWISE_OR_EQUAL, TokenType::PERCENTAGE_EQUAL })) {
-				Token op = cur->previous();
-				ASTNodePtr val = parseAssign(make_shared<FieldAccessExpr>(left, newToken, field), op);
-				return make_shared<SetExpr>(left, field, newToken, op, val);
-			}
-			return make_shared<FieldAccessExpr>(left, newToken, field);
-		}
-
-        //used for parsing assignment tokens(eg. =, +=, *=...)
-        ASTNodePtr parseAssign(ASTNodePtr left, Token op) {
-            ASTNodePtr right = cur->expression();
-            switch (op.type) {
-                case TokenType::EQUAL: {
-                    break;
-                }
-                case TokenType::PLUS_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, op), right);
-                    break;
-                }
-                case TokenType::MINUS_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, op), right);
-                    break;
-                }
-                case TokenType::SLASH_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, op), right);
-                    break;
-                }
-                case TokenType::STAR_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, op), right);
-                    break;
-                }
-                case TokenType::BITWISE_XOR_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, op), right);
-                    break;
-                }
-                case TokenType::BITWISE_AND_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, op), right);
-                    break;
-                }
-                case TokenType::BITWISE_OR_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, op), right);
-                    break;
-                }
-                case TokenType::PERCENTAGE_EQUAL: {
-                    right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, op), right);
-                    break;
-                }
-            }
-            return right;
+            //number, string, boolean or nil
+            default:
+                return make_shared<LiteralExpr>(token);
         }
-	};
+    }
 
+    // Parses =, +=, -=, *=, /=, %=, ^=, |=, &=
+    static ASTNodePtr parseAssign(ASTNodePtr left, Token op, ASTNodePtr right) {
+        // No token other than the ones listed here will ever be passed to parseAssign
+        switch (op.type) {
+            case TokenType::EQUAL: {
+                break;
+            }
+            case TokenType::PLUS_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, op), right);
+                break;
+            }
+            case TokenType::MINUS_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, op), right);
+                break;
+            }
+            case TokenType::SLASH_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, op), right);
+                break;
+            }
+            case TokenType::STAR_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, op), right);
+                break;
+            }
+            case TokenType::BITWISE_XOR_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, op), right);
+                break;
+            }
+            case TokenType::BITWISE_AND_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, op), right);
+                break;
+            }
+            case TokenType::BITWISE_OR_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, op), right);
+                break;
+            }
+            case TokenType::PERCENTAGE_EQUAL: {
+                right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, op), right);
+                break;
+            }
+        }
+        return right;
+    }
+    ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, Token token) {
+        if (!(left->type == ASTType::LITERAL || left->type == ASTType::FIELD_ACCESS)) throw parser->error(token, "Left side is not assignable");
+        // Precedence level -1 makes assignment right to left associative since parser->expression call won't stop when it hits '=' token
+        // E.g. a = b = 2; gets parsed as a = (b = 2);
+        auto rhs = parser->expression(parser->infixPrecLevel(token.type) - 1);
+        rhs = parseAssign(left, token, rhs);
+        // Assignment can be either variable assignment or set expression
+        if(left->type == ASTType::LITERAL){
+            left->accept(parser->probe);
+            Token temp = parser->probe->getProbedToken();
+            if (temp.type != TokenType::IDENTIFIER) throw parser->error(token, "Left side is not assignable");
+            return make_shared<AssignmentExpr>(temp, rhs);
+        }
+        // Set expr, e.g. a.b = 3;
+        auto fieldAccess = std::static_pointer_cast<FieldAccessExpr>(left);
+        return make_shared<SetExpr>(fieldAccess->callee, fieldAccess->field, fieldAccess->accessor, rhs);
+    }
+
+    //?: operator
+    ASTNodePtr parseConditional(Parser* parser, ASTNodePtr left, Token token){
+        ASTNodePtr mhs = parser->expression();
+        parser->consume(TokenType::COLON, "Expected ':' after then branch.");
+        //Makes conditional right to left associative
+        // a ? b : c ? d : e gets parsed as a ? b : (c ? d : e)
+        ASTNodePtr rhs = parser->expression(+Precedence::CONDITIONAL - 1);
+        return make_shared<ConditionalExpr>(left, mhs, rhs);
+    }
+
+    // Binary ops, module access(::) and macro invocation(!)
+    static bool isComparisonOp(Token token){
+        auto t = token.type;
+        return (t == TokenType::EQUAL_EQUAL || t == TokenType::BANG_EQUAL ||
+                t == TokenType::LESS || t == TokenType::LESS_EQUAL ||
+                t == TokenType::GREATER || t== TokenType::GREATER_EQUAL);
+    }
+    ASTNodePtr parseBinary(Parser* parser, ASTNodePtr left, Token token){
+        switch(token.type){
+            // Module access cannot be chained, so it throws an error if left side isn't an identifier
+            case TokenType::DOUBLE_COLON:{
+                if(left->type != ASTType::LITERAL) throw parser->error(token, "Expected left side to be a module name.");
+                left->accept(parser->probe);
+                Token lhs = parser->probe->getProbedToken();
+                if(lhs.type != TokenType::IDENTIFIER) throw parser->error(lhs, "Expected identifier for module name.");
+                Token ident = parser->consume(TokenType::IDENTIFIER, "Expected variable name.");
+                return make_shared<ModuleAccessExpr>(lhs, ident);
+            }
+            case TokenType::BANG:{
+                if(left->type != ASTType::LITERAL) throw parser->error(token, "Expected macro name to be an identifier.");
+                left->accept(parser->probe);
+                Token macroName = parser->probe->getProbedToken();
+                if (macroName.type != TokenType::IDENTIFIER) {
+                    throw parser->error(macroName, "Expected macro name to be an identifier.");
+                }
+                if (!parser->macros.contains(macroName.getLexeme())) {
+                    throw parser->error(macroName, "Invoked macro isn't defined");
+                }
+                return make_shared<MacroExpr>(macroName, parser->readTokenTree());
+            }
+            case TokenType::INSTANCEOF:{
+                auto right = parser->expression(parser->infixPrecLevel(token.type));
+                if(!(right->type == ASTType::LITERAL || right->type == ASTType::MODULE_ACCESS)){
+                    throw parser->error(token, "Right side of the 'instanceof' operator can only be an identifier.");
+                }
+                return make_shared<BinaryExpr>(left, token, right);
+            }
+            default:{
+                ASTNodePtr right = parser->expression(parser->infixPrecLevel(token.type));
+                if(!isComparisonOp(token)) return make_shared<BinaryExpr>(left, token, right);
+
+                // Chaining comparison ops is forbidden, here lhs is checked against op of this binary expr,
+                // After parsing rhs, rhs is compared to op of this binary expr
+                if(left->type == ASTType::BINARY){
+                    auto op = std::static_pointer_cast<BinaryExpr>(left)->op;
+                    if(isComparisonOp(op)){
+                        parser->error(op, "Cannot chain comparison operators.");
+                        parser->error(token, "Second comparison operator here.");
+                    }
+                }
+                if(right->type == ASTType::BINARY){
+                    auto op = std::static_pointer_cast<BinaryExpr>(right)->op;
+                    if(isComparisonOp(op)){
+                        parser->error(token, "Second comparison operator here.");
+                        parser->error(op, "Cannot chain comparison operators.");
+                    }
+                }
+                return make_shared<BinaryExpr>(left, token, right);
+            }
+        }
+    }
+
+    ASTNodePtr parsePostfix(Parser* parser, ASTNodePtr left, Token token){
+        switch(token.type){
+            // Handles both infix and postfix range ops
+            case TokenType::DOUBLE_DOT_EQUAL:{
+                if(+Precedence::RANGE < parser->prefixPrecLevel(parser->peek().type)){
+                    auto expr = parser->expression(parser->infixPrecLevel(token.type));
+                    return make_shared<RangeExpr>(token, left, expr, true);
+                }
+                throw parser->error(token, "End inclusive range operator used without end of range.");
+            }
+            case TokenType::DOUBLE_DOT:{
+                if(+Precedence::RANGE < parser->prefixPrecLevel(parser->peek().type)){
+                    auto expr = parser->expression(parser->infixPrecLevel(token.type));
+                    return make_shared<RangeExpr>(token, left, expr, false);
+                }
+                return make_shared<RangeExpr>(token, left, nullptr, false);
+            }
+            default: return make_shared<UnaryExpr>(token, left, false);
+        }
+    }
+
+    ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, Token token){
+        vector<ASTNodePtr> args;
+        if (!parser->check(TokenType::RIGHT_PAREN)) {
+            do {
+                args.push_back(parser->expression());
+            } while (parser->match(TokenType::COMMA));
+        }
+        parser->consume(TokenType::RIGHT_PAREN, "Expect ')' after call expression.");
+        return make_shared<CallExpr>(left, args);
+    }
+
+    ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, Token token){
+        ASTNodePtr field = nullptr;
+        Token newToken = token;
+        if (token.type == TokenType::LEFT_BRACKET) {// Array/struct with string access
+            field = parser->expression();
+            // object["field"] gets optimized to object.field
+            if (field->type == ASTType::LITERAL) {
+                field->accept(parser->probe);
+                if (parser->probe->getProbedToken().type == TokenType::STRING) newToken.type = TokenType::DOT;
+            }
+            parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' after array/map access.");
+        }
+        else if (token.type == TokenType::DOT) {// Object access
+            Token fieldName = parser->consume(TokenType::IDENTIFIER, "Expected a field identifier.");
+            field = make_shared<LiteralExpr>(fieldName);
+        }
+        return make_shared<FieldAccessExpr>(left, newToken, field);
+    }
 }
 
 Parser::Parser() {
@@ -387,90 +326,94 @@ Parser::Parser() {
 
 	#pragma region Parselets
 	// Prefix
-	addPrefix<LiteralParselet>(TokenType::THIS, Precedence::NONE);
+    addPrefix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePrefix);
+    addPrefix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePrefix);
 
-	addPrefix<UnaryPrefixParselet>(TokenType::BANG, Precedence::NOT);
-	addPrefix<UnaryPrefixParselet>(TokenType::MINUS, Precedence::NOT);
-	addPrefix<UnaryPrefixParselet>(TokenType::TILDA, Precedence::NOT);
+	addPrefix(TokenType::BANG, Precedence::UNARY_PREFIX, parsePrefix);
+	addPrefix(TokenType::MINUS, Precedence::UNARY_PREFIX, parsePrefix);
+	addPrefix(TokenType::TILDA, Precedence::UNARY_PREFIX, parsePrefix);
     // Only for macros
-    addPrefix<UnaryPrefixParselet>(TokenType::DOLLAR, Precedence::NOT);
+    addPrefix(TokenType::DOLLAR, Precedence::UNARY_PREFIX, parsePrefix);
 
-	addPrefix<UnaryPrefixParselet>(TokenType::INCREMENT, Precedence::ALTER);
-	addPrefix<UnaryPrefixParselet>(TokenType::DECREMENT, Precedence::ALTER);
+	addPrefix(TokenType::INCREMENT, Precedence::UNARY_PREFIX, parsePrefix);
+	addPrefix(TokenType::DECREMENT, Precedence::UNARY_PREFIX, parsePrefix);
 
-	addPrefix<UnaryPrefixParselet>(TokenType::ASYNC, Precedence::ASYNC);
-	addPrefix<UnaryPrefixParselet>(TokenType::AWAIT, Precedence::ASYNC);
+	addPrefix(TokenType::IDENTIFIER, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::STRING, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::NUMBER, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::TRUE, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::FALSE, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::NIL, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::LEFT_PAREN, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::LEFT_BRACKET, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::LEFT_BRACE, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::SUPER, Precedence::PRIMARY, parseLiteral);
+	addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::NEW, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::THIS, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::ASYNC, Precedence::PRIMARY, parsePrefix);
+    addPrefix(TokenType::AWAIT, Precedence::PRIMARY, parsePrefix);
 
-	addPrefix<LiteralParselet>(TokenType::IDENTIFIER, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::STRING, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::NUMBER, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::TRUE, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::FALSE, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::NIL, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::LEFT_PAREN, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::LEFT_BRACKET, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::LEFT_BRACE, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::SUPER, Precedence::PRIMARY);
-	addPrefix<LiteralParselet>(TokenType::FN, Precedence::PRIMARY);
-    addPrefix<LiteralParselet>(TokenType::NEW, Precedence::PRIMARY);
+	// Infix and mix-fix
+	addInfix(TokenType::EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::PLUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::MINUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::SLASH_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::STAR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::PERCENTAGE_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::BITWISE_XOR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::BITWISE_OR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+	addInfix(TokenType::BITWISE_AND_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
 
-	// Infix
-	addInfix<AssignmentParselet>(TokenType::EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::PLUS_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::MINUS_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::SLASH_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::STAR_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::PERCENTAGE_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::BITWISE_XOR_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::BITWISE_OR_EQUAL, Precedence::ASSIGNMENT);
-	addInfix<AssignmentParselet>(TokenType::BITWISE_AND_EQUAL, Precedence::ASSIGNMENT);
+	addInfix(TokenType::QUESTIONMARK, Precedence::CONDITIONAL, parseConditional);
 
-	addInfix<ConditionalParselet>(TokenType::QUESTIONMARK, Precedence::CONDITIONAL);
+	addInfix(TokenType::OR, Precedence::OR, parseBinary);
+	addInfix(TokenType::AND, Precedence::AND, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::OR, Precedence::OR);
-	addInfix<BinaryParselet>(TokenType::AND, Precedence::AND);
+	addInfix(TokenType::BITWISE_OR, Precedence::BIN_OR, parseBinary);
+	addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
+	addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::BITWISE_OR, Precedence::BIN_OR);
-	addInfix<BinaryParselet>(TokenType::BITWISE_XOR, Precedence::BIN_XOR);
-	addInfix<BinaryParselet>(TokenType::BITWISE_AND, Precedence::BIN_AND);
+	addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
+	addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::EQUAL_EQUAL, Precedence::EQUALITY);
-	addInfix<BinaryParselet>(TokenType::BANG_EQUAL, Precedence::EQUALITY);
+	addInfix(TokenType::LESS, Precedence::COMPARISON, parseBinary);
+	addInfix(TokenType::LESS_EQUAL, Precedence::COMPARISON, parseBinary);
+	addInfix(TokenType::GREATER, Precedence::COMPARISON, parseBinary);
+	addInfix(TokenType::GREATER_EQUAL, Precedence::COMPARISON, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::LESS, Precedence::COMPARISON);
-	addInfix<BinaryParselet>(TokenType::LESS_EQUAL, Precedence::COMPARISON);
-	addInfix<BinaryParselet>(TokenType::GREATER, Precedence::COMPARISON);
-	addInfix<BinaryParselet>(TokenType::GREATER_EQUAL, Precedence::COMPARISON);
+	addInfix(TokenType::BITSHIFT_LEFT, Precedence::BITSHIFT, parseBinary);
+	addInfix(TokenType::BITSHIFT_RIGHT, Precedence::BITSHIFT, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::BITSHIFT_LEFT, Precedence::BITSHIFT);
-	addInfix<BinaryParselet>(TokenType::BITSHIFT_RIGHT, Precedence::BITSHIFT);
+	addInfix(TokenType::PLUS, Precedence::SUM, parseBinary);
+	addInfix(TokenType::MINUS, Precedence::SUM, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::PLUS, Precedence::SUM);
-	addInfix<BinaryParselet>(TokenType::MINUS, Precedence::SUM);
+	addInfix(TokenType::SLASH, Precedence::FACTOR, parseBinary);
+	addInfix(TokenType::STAR, Precedence::FACTOR, parseBinary);
+	addInfix(TokenType::PERCENTAGE, Precedence::FACTOR, parseBinary);
+    addInfix(TokenType::BANG, Precedence::PRIMARY, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::SLASH, Precedence::FACTOR);
-	addInfix<BinaryParselet>(TokenType::STAR, Precedence::FACTOR);
-	addInfix<BinaryParselet>(TokenType::PERCENTAGE, Precedence::FACTOR);
-    addInfix<BinaryParselet>(TokenType::BANG, Precedence::PRIMARY);
+	addInfix(TokenType::LEFT_PAREN, Precedence::CALL, parseCall);
+	addInfix(TokenType::LEFT_BRACKET, Precedence::CALL, parseFieldAccess);
+	addInfix(TokenType::DOT, Precedence::CALL, parseFieldAccess);
+    addInfix(TokenType::INSTANCEOF, Precedence::INSTANCEOF, parseBinary);
 
-	addInfix<CallParselet>(TokenType::LEFT_PAREN, Precedence::CALL);
-	addInfix<FieldAccessParselet>(TokenType::LEFT_BRACKET, Precedence::CALL);
-	addInfix<FieldAccessParselet>(TokenType::DOT, Precedence::CALL);
+	addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
 
-	addInfix<BinaryParselet>(TokenType::DOUBLE_COLON, Precedence::PRIMARY);
-    addInfix<BinaryParselet>(TokenType::INSTANCEOF, Precedence::PRIMARY);
+	// Postfix
+    addPostfix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePostfix);
+    addPostfix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePostfix);
 
-	//postfix and mix-fix operators get parsed with the infix parselets
-	addInfix<UnaryPostfixParselet>(TokenType::INCREMENT, Precedence::ALTER);
-	addInfix<UnaryPostfixParselet>(TokenType::DECREMENT, Precedence::ALTER);
-#pragma endregion
+	addPostfix(TokenType::INCREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
+	addPostfix(TokenType::DECREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
+    #pragma endregion
 }
 
 void Parser::parse(vector<CSLModule*>& modules) {
 	#ifdef AST_DEBUG
 	ASTPrinter* astPrinter = new ASTPrinter;
 	#endif
-	//modules are already sorted using toposort
+	// Modules are already sorted using topsort
 	for (CSLModule* unit : modules) {
         parsedUnit = unit;
 
@@ -578,21 +521,34 @@ ASTNodePtr Parser::expression(int prec) {
     if (token.type == TokenType::DOLLAR && parseMode != ParseMode::Macro){
         throw error(token, "Unexpected '$' found outside of macro transcriber.");
     }
-	unique_ptr<PrefixParselet>& prefix = prefixParselets[token.type];
-	shared_ptr<ASTNode> left = prefix->parse(token);
+	auto& prefix = prefixParselets[token.type];
+	shared_ptr<ASTNode> left = prefix.second(this, token);
 
-	//advances only if the next token has a higher precedence than the parserCurrent one
-	//e.g. 1 + 2 compiles because the base precedence is 0, and '+' has a precedence of 11
-	//loop runs as long as the next operator has a higher precedence than the one that called this function
-	while (prec < getPrec()) {
-		token = advance();
-		if (infixParselets.count(token.type) == 0) {
-			throw error(token, "Expected expression.");
-		}
-		unique_ptr<InfixParselet>& infix = infixParselets[token.type];
-		left = infix->parse(left, token, prec);
-	}
-	return left;
+
+    while(true){
+        //Postfix
+        if (postfixParselets.contains(peek().type) && prec < postfixPrecLevel(peek().type)){
+            token = advance();
+            auto& postfix = postfixParselets[token.type];
+            left = postfix.second(this, left, token);
+            continue;
+        }
+
+        //advances only if the next token has a higher precedence than the parserCurrent one
+        //e.g. 1 + 2 compiles because the base precedence is 0, and '+' has a precedence of 11
+        //loop runs as long as the next operator has a higher precedence than the one that called this function
+        if(infixParselets.contains(peek().type) && prec < infixPrecLevel(peek().type)){
+            token = advance();
+            if (infixParselets.count(token.type) == 0) {
+                throw error(token, "Expected expression.");
+            }
+            auto& infix = infixParselets[token.type];
+            left = infix.second(this, left, token);
+            continue;
+        }
+        break;
+    }
+    return left;
 }
 
 ASTNodePtr Parser::expression() {
@@ -1060,22 +1016,26 @@ void Parser::sync() {
 	}
 }
 
-template<typename ParseletType>
-void Parser::addPrefix(TokenType type, Precedence prec) {
-	prefixParselets[type] = std::make_unique<ParseletType>(this, +prec);
+void Parser::addPrefix(TokenType type, Precedence prec, PrefixFunc func){
+    prefixParselets[type] = std::pair(+prec, func);
+}
+void Parser::addInfix(TokenType type, Precedence prec, InfixFunc func){
+    infixParselets[type] = std::pair(+prec, func);
+}
+void Parser::addPostfix(TokenType type, Precedence prec, InfixFunc func){
+    postfixParselets[type] = std::pair(+prec, func);
 }
 
-template<typename ParseletType>
-void Parser::addInfix(TokenType type, Precedence prec) {
-	infixParselets[type] = std::make_unique<ParseletType>(this, +prec);
+int Parser::prefixPrecLevel(TokenType type){
+    if(!prefixParselets.contains(type)) return +Precedence::NONE;
+    return prefixParselets[type].first;
 }
-
-//checks if the parserCurrent token has any infix parselet associated with it, and if so the precedence of that operation is returned
-int Parser::getPrec() {
-	Token token = peek();
-	if (infixParselets.count(token.type) == 0) {
-		return 0;
-	}
-	return infixParselets[token.type]->prec;
+int Parser::infixPrecLevel(TokenType type){
+    if(!infixParselets.contains(type)) return +Precedence::NONE;
+    return infixParselets[type].first;
+}
+int Parser::postfixPrecLevel(TokenType type){
+    if(!postfixParselets.contains(type)) return +Precedence::NONE;
+    return postfixParselets[type].first;
 }
 #pragma endregion

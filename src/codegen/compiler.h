@@ -93,6 +93,7 @@ namespace compileCore {
 		void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
 		void visitSetExpr(AST::SetExpr* expr) override;
 		void visitConditionalExpr(AST::ConditionalExpr* expr) override;
+        void visitRangeExpr(AST::RangeExpr* expr) override;
 		void visitBinaryExpr(AST::BinaryExpr* expr) override;
 		void visitUnaryExpr(AST::UnaryExpr* expr) override;
 		void visitCallExpr(AST::CallExpr* expr) override;

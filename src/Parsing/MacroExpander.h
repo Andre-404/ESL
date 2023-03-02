@@ -117,6 +117,7 @@ namespace AST {
         void visitAssignmentExpr(AssignmentExpr* expr) override;
         void visitSetExpr(SetExpr* expr) override;
         void visitConditionalExpr(ConditionalExpr* expr) override;
+        void visitRangeExpr(RangeExpr* expr) override;
         void visitBinaryExpr(BinaryExpr* expr) override;
         void visitUnaryExpr(UnaryExpr* expr) override;
         void visitCallExpr(CallExpr* expr) override;

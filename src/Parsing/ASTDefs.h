@@ -22,6 +22,7 @@ namespace AST {
 		FUNC_LITERAL,
 		MODULE_ACCESS,
         MACRO,
+        RANGE,
 
 		VAR,
 		FUNC,
@@ -56,6 +57,7 @@ namespace AST {
 	class FuncLiteral;
 	class ModuleAccessExpr;
     class MacroExpr;
+    class RangeExpr;
 
 	class VarDecl;
 	class FuncDecl;
@@ -79,6 +81,7 @@ namespace AST {
 		virtual void visitAssignmentExpr(AssignmentExpr* expr) = 0;
 		virtual void visitSetExpr(SetExpr* expr) = 0;
 		virtual void visitConditionalExpr(ConditionalExpr* expr) = 0;
+        virtual void visitRangeExpr(RangeExpr* expr) = 0;
 		virtual void visitBinaryExpr(BinaryExpr* expr) = 0;
 		virtual void visitUnaryExpr(UnaryExpr* expr) = 0;
 		virtual void visitCallExpr(CallExpr* expr) = 0;
@@ -167,15 +170,13 @@ namespace AST {
 		ASTNodePtr callee;
 		ASTNodePtr field;
 		Token accessor;
-		Token op;
 		ASTNodePtr value;
 
-		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, Token _op, ASTNodePtr _val) {
+		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, ASTNodePtr _val) {
 			callee = _callee;
 			field = _field;
 			accessor = _accessor;
 			value = _val;
-			op = _op;
 			type = ASTType::SET;
 		}
 		void accept(Visitor* vis) override {
@@ -186,13 +187,13 @@ namespace AST {
 	class ConditionalExpr : public ASTNode {
 	public:
 		ASTNodePtr condition;
-		ASTNodePtr thenBranch;
-		ASTNodePtr elseBranch;
+		ASTNodePtr mhs;
+		ASTNodePtr rhs;
 
 		ConditionalExpr(ASTNodePtr _condition, ASTNodePtr _thenBranch, ASTNodePtr _elseBranch) {
 			condition = _condition;
-			thenBranch = _thenBranch;
-			elseBranch = _elseBranch;
+            mhs = _thenBranch;
+            rhs = _elseBranch;
 			type = ASTType::CONDITIONAL;
 		}
 		void accept(Visitor* vis) override {
@@ -421,6 +422,26 @@ namespace AST {
 
         void accept(Visitor* vis) {
             vis->visitMacroExpr(this);
+        }
+    };
+
+    class RangeExpr : public ASTNode{
+    public:
+        Token token;
+        ASTNodePtr start;
+        ASTNodePtr end;
+        bool endInclusive;
+
+        RangeExpr(Token _token, ASTNodePtr _start, ASTNodePtr _end, bool _endInclusive) {
+            token = _token;
+            start = _start;
+            end = _end;
+            endInclusive = _endInclusive;
+            type = ASTType::RANGE;
+        }
+
+        void accept(Visitor* vis) {
+            vis->visitRangeExpr(this);
         }
     };
 

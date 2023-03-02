@@ -927,7 +927,7 @@ void runtime::Thread::executeBytecode() {
                 }
                 runtimeError(fmt::format("Expected an array or hash map, got {}.", typeToStr(callee)), 3);
             }
-
+            //TODO: implement hash map variation of these ops
             case +OpCode::GET_PROPERTY: [[fallthrough]];
             case +OpCode::GET_PROPERTY_LONG:{
                 Value inst = pop();

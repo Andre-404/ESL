@@ -22,38 +22,27 @@ namespace AST {
 		NONE,
 		ASSIGNMENT,
 		CONDITIONAL,
+        RANGE,
 		OR,
 		AND,
+        COMPARISON,
 		BIN_OR,
 		BIN_XOR,
 		BIN_AND,
-		EQUALITY,
-		COMPARISON,
 		BITSHIFT,
 		SUM,
 		FACTOR,
-		NOT,
-		ALTER,
-		ASYNC,
+        UNARY_PREFIX,
+        UNARY_POSTFIX,
 		CALL,
+        INSTANCEOF,
 		PRIMARY
 	};
 	//conversion from enum to 1 byte number
 	inline constexpr unsigned operator+ (Precedence const val) { return static_cast<byte>(val); }
 
-	class PrefixParselet {
-	public:
-		virtual ASTNodePtr parse(Token token) = 0;
-		Parser* cur;
-		int prec;
-	};
-
-	class InfixParselet {
-	public:
-		virtual ASTNodePtr parse(ASTNodePtr left, Token token, int surroundingPrec) = 0;
-		Parser* cur;
-		int prec;
-	};
+    using PrefixFunc = ASTNodePtr(*)(Parser* parser, Token token);
+    using InfixFunc = ASTNodePtr(*)(Parser* parser, ASTNodePtr left, Token token);
 
     struct ParserException : public std::exception {
         bool macroRecursionLimitExceeded = false;
@@ -82,8 +71,13 @@ namespace AST {
 		int loopDepth;
 		int switchDepth;
 
-		unordered_map<TokenType, unique_ptr<PrefixParselet>> prefixParselets;
-		unordered_map<TokenType, unique_ptr<InfixParselet>> infixParselets;
+		unordered_map<TokenType, std::pair<int, PrefixFunc>> prefixParselets;
+		unordered_map<TokenType, std::pair<int, InfixFunc>> infixParselets;
+        // Postfix parselets use infix funcs since those are effectively the same as infix
+        unordered_map<TokenType, std::pair<int, InfixFunc>> postfixParselets;
+        int prefixPrecLevel(TokenType type);
+        int infixPrecLevel(TokenType type);
+        int postfixPrecLevel(TokenType type);
 
         // For macro expansions
 		unordered_map<string, unique_ptr<Macro>> macros;
@@ -92,10 +86,9 @@ namespace AST {
 
 		ParseMode parseMode = ParseMode::Standard;
 
-		template<typename ParsletType>
-		void addPrefix(TokenType type, Precedence prec);
-		template<typename ParsletType>
-		void addInfix(TokenType type, Precedence prec);
+		void addPrefix(TokenType type, Precedence prec, PrefixFunc func);
+		void addInfix(TokenType type, Precedence prec, InfixFunc func);
+        void addPostfix(TokenType type, Precedence prec, InfixFunc func);
 
 		void defineMacro();
 
@@ -104,14 +97,14 @@ namespace AST {
 		ASTNodePtr expression();
 
 		// Parselets that need to have access to private methods of parser
-		friend class FieldAccessParselet;
-		friend class CallParselet;
-		friend class BinaryParselet;
-		friend class ConditionalParselet;
-		friend class AssignmentParselet;
-		friend class LiteralParselet;
-		friend class UnaryPrefixParselet;
-		friend class UnaryPostfixParselet;
+        friend ASTNodePtr parsePrefix(Parser* parser, Token token);
+        friend ASTNodePtr parseLiteral(Parser* parser, Token token);
+        friend ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, Token token);
+        friend ASTNodePtr parseConditional(Parser* parser, ASTNodePtr left, Token token);
+		friend ASTNodePtr parseBinary(Parser* parser, ASTNodePtr left, Token token);
+		friend ASTNodePtr parsePostfix(Parser* parser, ASTNodePtr left, Token token);
+		friend ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, Token token);
+		friend ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, Token token);
 
 		// Macro expander needs to be able to parse additional tokens and report errors
 		friend class MacroExpander;
@@ -175,8 +168,6 @@ namespace AST {
 		void expandMacros();
 
 		void sync();
-
-		int getPrec();
         #pragma endregion
 
 	};

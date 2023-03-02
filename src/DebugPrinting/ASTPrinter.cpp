@@ -22,9 +22,9 @@ void ASTPrinter::visitSetExpr(SetExpr* expr) {
 void ASTPrinter::visitConditionalExpr(ConditionalExpr* expr) {
 	expr->condition->accept(this);
 	cout << " ? ";
-	expr->thenBranch->accept(this);
+	expr->mhs->accept(this);
 	cout << " : ";
-	expr->elseBranch->accept(this);
+	expr->rhs->accept(this);
 }
 
 void ASTPrinter::visitBinaryExpr(BinaryExpr* expr) {

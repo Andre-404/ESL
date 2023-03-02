@@ -118,7 +118,7 @@ Token Scanner::scanToken() {
         case ']': return makeToken(TokenType::RIGHT_BRACKET);
         case ';': return makeToken(TokenType::SEMICOLON);
         case ',': return makeToken(TokenType::COMMA);
-        case '.': return makeToken(TokenType::DOT);
+        case '.': return makeToken(match('.') ? (match('=') ? TokenType::DOUBLE_DOT_EQUAL : TokenType::DOUBLE_DOT) : TokenType::DOT);
         case '$': return makeToken(TokenType::DOLLAR);
         case '-': return makeToken(match('=') ? TokenType::MINUS_EQUAL : match('-') ? TokenType::DECREMENT : TokenType::MINUS);
         case '+': return makeToken(match('=') ? TokenType::PLUS_EQUAL : match('+') ? TokenType::INCREMENT : TokenType::PLUS);

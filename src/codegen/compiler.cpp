@@ -121,13 +121,17 @@ void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
 	//compile condition and emit a jump over then branch if the condition is false
 	expr->condition->accept(this);
 	int thenJump = emitJump(+OpCode::JUMP_IF_FALSE_POP);
-	expr->thenBranch->accept(this);
+	expr->mhs->accept(this);
 	//prevents fallthrough to else branch
 	int elseJump = emitJump(+OpCode::JUMP);
 	patchJump(thenJump);
 	//only emit code if else branch exists, since its optional
-	if (expr->elseBranch) expr->elseBranch->accept(this);
+	if (expr->rhs) expr->rhs->accept(this);
 	patchJump(elseJump);
+}
+
+void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
+    //TODO: implement this
 }
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {

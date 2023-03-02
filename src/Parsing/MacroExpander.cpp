@@ -20,8 +20,12 @@ void AST::MacroExpander::visitAssignmentExpr(AssignmentExpr* expr) {
 void AST::MacroExpander::visitSetExpr(SetExpr* expr) { expand(expr->value); }
 void AST::MacroExpander::visitConditionalExpr(ConditionalExpr* expr) {
     expand(expr->condition);
-    expand(expr->thenBranch);
-    expand(expr->elseBranch);
+    expand(expr->mhs);
+    expand(expr->rhs);
+}
+void AST::MacroExpander::visitRangeExpr(RangeExpr *expr) {
+    expand(expr->start);
+    expand(expr->end);
 }
 void AST::MacroExpander::visitBinaryExpr(BinaryExpr* expr) {
     expand(expr->left);

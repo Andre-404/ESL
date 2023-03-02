@@ -3,6 +3,7 @@
 void AST::ASTProbe::visitAssignmentExpr(AssignmentExpr* expr){}
 void AST::ASTProbe::visitSetExpr(SetExpr* expr){}
 void AST::ASTProbe::visitConditionalExpr(ConditionalExpr* expr){}
+void AST::ASTProbe::visitRangeExpr(RangeExpr *expr) {}
 void AST::ASTProbe::visitBinaryExpr(BinaryExpr* expr){}
 void AST::ASTProbe::visitUnaryExpr(UnaryExpr* expr) {}
 void AST::ASTProbe::visitCallExpr(CallExpr* expr) {}

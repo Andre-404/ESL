@@ -54,8 +54,13 @@ void UpvalueFinder::visitSetExpr(AST::SetExpr* expr) {
 
 void UpvalueFinder::visitConditionalExpr(AST::ConditionalExpr* expr) {
     expr->condition->accept(this);
-    expr->thenBranch->accept(this);
-    expr->elseBranch->accept(this);
+    expr->mhs->accept(this);
+    expr->rhs->accept(this);
+}
+
+void UpvalueFinder::visitRangeExpr(AST::RangeExpr *expr) {
+    expr->start->accept(this);
+    expr->end->accept(this);
 }
 
 void UpvalueFinder::visitBinaryExpr(AST::BinaryExpr* expr) {
