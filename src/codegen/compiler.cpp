@@ -131,7 +131,14 @@ void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
 }
 
 void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
-    //TODO: implement this
+    auto index = nativeFuncNames["create_range"];
+    emitByteAnd16Bit(+OpCode::GET_NATIVE, index);
+    if(expr->start) expr->start->accept(this);
+    else emitConstant(encodeNumber(-std::numeric_limits<double>::max()));
+    if(expr->end) expr->end->accept(this);
+    else emitConstant(encodeNumber(std::numeric_limits<double>::max()));
+    emitConstant(encodeBool(expr->endInclusive));
+    emitBytes(+OpCode::CALL, 3);
 }
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {

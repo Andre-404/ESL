@@ -22,7 +22,7 @@ namespace AST {
                 return make_shared<AwaitExpr>(token, expr);
             }
             case TokenType::DOUBLE_DOT:{
-                if(parser->prefixParselets.contains(parser->peek().type)) return make_shared<RangeExpr>(token, nullptr, nullptr, false);
+                if(!parser->prefixParselets.contains(parser->peek().type)) return make_shared<RangeExpr>(token, nullptr, nullptr, false);
                 auto expr = parser->expression(+Precedence::RANGE);
                 return make_shared<RangeExpr>(token, nullptr, expr, false);
             }

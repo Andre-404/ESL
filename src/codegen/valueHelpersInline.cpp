@@ -94,8 +94,5 @@ inline bool equals(Value x, Value y){
     if (type == ValueType::NUMBER){
         return FLOAT_EQ(decodeNumber(x), decodeNumber(y));
     }
-    if (type == ValueType::OBJ && decodeObj(x)->type == ObjType::STRING && decodeObj(y)->type == ObjType::STRING){
-        return decodeObj(x)->toString(nullptr) == decodeObj(y)->toString(nullptr);
-    }
     return x == y;
 }

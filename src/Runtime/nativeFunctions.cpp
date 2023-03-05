@@ -190,19 +190,19 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log2(decodeNumber(num))));
+        t->push(encodeNumber(log2(decodeNumber(num))));
     });
     NATIVE_FUNC("log10", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log10(decodeNumber(num))));
+        t->push(encodeNumber(log10(decodeNumber(num))));
     });
     NATIVE_FUNC("log", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log(decodeNumber(num))));
+        t->push(encodeNumber(log(decodeNumber(num))));
     });
     NATIVE_FUNC("logn", 2, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
@@ -210,43 +210,43 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         if(!isNumber(base)) TYPE_ERROR("number", 0, base);
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(log(decodeNumber(num)) / log(decodeNumber(base))));
+        t->push(encodeNumber(log(decodeNumber(num)) / log(decodeNumber(base))));
     });
     NATIVE_FUNC("sin", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(sin(decodeNumber(num))));
+        t->push(encodeNumber(sin(decodeNumber(num))));
     });
     NATIVE_FUNC("dsin", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(sin((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(sin((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
     });
     NATIVE_FUNC("cos", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(cos(decodeNumber(num))));
+        t->push(encodeNumber(cos(decodeNumber(num))));
     });
     NATIVE_FUNC("dcos", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(cos((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(cos((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
     });
     NATIVE_FUNC("tan", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(tan(decodeNumber(num))));
+        t->push(encodeNumber(tan(decodeNumber(num))));
     });
     NATIVE_FUNC("dtan", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(Value(tan((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(tan((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
     });
 
     NATIVE_FUNC("min", -1, [](Thread* t, int8_t argCount) {
@@ -261,7 +261,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         }
         t->popn(argCount);
 
-        t->push(Value(minVal));
+        t->push(encodeNumber(minVal));
     });
     NATIVE_FUNC("max", -1, [](Thread* t, int8_t argCount) {
         if(argCount < 2) t->runtimeError(fmt::format("Function 'max' requires at least 2 arguments, got {}", argCount), 2);
@@ -275,7 +275,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         }
         t->popn(argCount);
 
-        t->push(Value(maxVal));
+        t->push(encodeNumber(maxVal));
     });
     NATIVE_FUNC("mean", -1, [](Thread* t, int8_t argCount) {
         if(argCount < 2) t->runtimeError(fmt::format("Function 'mean' requires at least 2 arguments, got {}", argCount), 2);
@@ -288,7 +288,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         }
         t->popn(argCount);
 
-        t->push(Value(sum / static_cast<double>(argCount)));
+        t->push(encodeNumber(sum / static_cast<double>(argCount)));
     });
     // Create objects
     NATIVE_FUNC("create_array", -1, [](Thread* t, int8_t argCount) {
@@ -305,10 +305,10 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
 
         auto arr = new object::ObjArray(arrSize);
         if(!isNil(fillVal)) std::fill(arr->values.begin(), arr->values.end(), fillVal);
-        t->push(Value(arr));
+        t->push(encodeObj(arr));
     });
     NATIVE_FUNC("mutex", 0, [](Thread* t, int8_t argCount) {
-        t->push(Value(new object::ObjMutex()));
+        t->push(encodeObj(new object::ObjMutex()));
     });
 
     // Files
@@ -326,14 +326,14 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         auto file = new object::ObjFile(asString(path)->str, 1);
         if(!file->stream.good()) t->runtimeError(fmt::format("File in path {} doesn't exist.", file->path), 7);
         file->stream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        t->push(Value(file));
+        t->push(encodeObj(file));
     });
     NATIVE_FUNC("file_exists", 1, [](Thread* t, int8_t argCount) {
         Value path = t->pop();
         if(!isString(path)) TYPE_ERROR("string", 0, path);
         std::filesystem::path p = asString(path)->str;
 
-        t->push(Value(std::filesystem::exists(p)));
+        t->push(encodeBool(std::filesystem::exists(p)));
     });
     NATIVE_FUNC("file_delete", 1, [](Thread* t, int8_t argCount) {
         Value path = t->pop();
@@ -364,6 +364,17 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         }
 
         t->push(encodeNil());
+    });
+
+    // Ranges
+    NATIVE_FUNC("create_range", 3, [](Thread* t, int8_t argCount) {
+        Value isEndInclusive = INLINE_POP();
+        Value end = INLINE_POP();
+        Value start = INLINE_POP();
+        if(!isBool(isEndInclusive)) TYPE_ERROR("bool", 2, isEndInclusive);
+        if(!isNumber(end)) TYPE_ERROR("number", 1, end);
+        if(!isNumber(start)) TYPE_ERROR("number", 0, start);
+        t->push(encodeObj(new object::ObjRange(decodeNumber(start), decodeNumber(end), decodeBool(isEndInclusive))));
     });
 
     return vector;
@@ -645,12 +656,12 @@ vector<object::ObjClass*> runtime::createBuiltinClasses(object::ObjClass* baseCl
     BOUND_NATIVE("is_open_read", 0, [](Thread*t, int8_t argCount){
         auto file = asFile(t->pop());
         std::fstream& stream = file->stream;
-        t->push(Value(stream.is_open() && file->openType == 0));
+        t->push(encodeBool(stream.is_open() && file->openType == 0));
     });
     BOUND_NATIVE("is_open_write", 0, [](Thread*t, int8_t argCount){
         auto file = asFile(t->pop());
         std::fstream& stream = file->stream;
-        t->push(Value(stream.is_open() && file->openType == 1));
+        t->push(encodeBool(stream.is_open() && file->openType == 1));
     });
     BOUND_NATIVE("close", 0, [](Thread*t, int8_t argCount){
         std::fstream& stream = asFile(t->peek(0))->stream;

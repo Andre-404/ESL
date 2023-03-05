@@ -28,7 +28,8 @@ namespace object {
         HASH_MAP,
 		FILE,
 		MUTEX,
-		FUTURE
+		FUTURE,
+        RANGE
 	};
 
 	class Obj{
@@ -47,11 +48,11 @@ namespace object {
 		}
 	};
 
-	//pointer to a native C++ function
+	// Pointer to a native C++ function
 	using NativeFn = void(*)(runtime::Thread* thread, int8_t argCount);
     using NativeMethod = void(*)(runtime::Thread* thread, int8_t argCount);
 
-	//this is a header which is followed by the bytes of the string
+	// This is a header which is followed by the bytes of the string
 	class ObjString : public Obj {
 	public:
 		string str;
@@ -75,7 +76,7 @@ namespace object {
 	class ObjArray : public Obj {
 	public:
 		vector<Value> values;
-		//used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
+		// Used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
 		uInt numOfHeapPtr;
 		ObjArray();
 		ObjArray(size_t size);
@@ -91,7 +92,7 @@ namespace object {
 		uInt64 bytecodeOffset;
 		uInt64 constantsOffset;
 		string name;
-		//function can have a maximum of 255 parameters
+		// A function can have a maximum of 255 parameters
 		byte arity;
 		int upvalueCount;
 		ObjFunc();
@@ -129,7 +130,7 @@ namespace object {
 		uInt64 getSize();
 	};
 
-	//multiple closures with different upvalues can point to the same function
+	// Multiple closures with different upvalues can point to the same function
 	class ObjClosure : public Obj {
 	public:
 		ObjFunc* func;
@@ -176,8 +177,8 @@ namespace object {
 		uInt64 getSize();
 	};
 
-    //method bound to a specific instance of a class
-    //as long as the method exists, the instance it's bound to won't be GC-ed
+    // Method bound to a specific instance of a class
+    // as long as the method exists, the instance it's bound to won't be GC-ed
     class ObjBoundMethod : public Obj {
     public:
         Value receiver;
@@ -216,7 +217,7 @@ namespace object {
 		uInt64 getSize();
 	};
 
-	//language representation of a mutex object
+	// Language representation of a mutex object
 	class ObjMutex : public Obj {
     public:
 		std::shared_mutex mtx;
@@ -229,7 +230,7 @@ namespace object {
 		uInt64 getSize();
 	};
 
-	//returned by "async func()" call, when the thread finishes it will populate returnVal and delete the vm
+	// Returned by "async func()" call, when the thread finishes it will populate returnVal and delete the vm
 	class ObjFuture : public Obj {
 	public:
 		std::future<void> fut;
@@ -245,4 +246,18 @@ namespace object {
 		string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
 		uInt64 getSize();
 	};
+
+    class ObjRange : public Obj{
+    public:
+        double start;
+        double end;
+        bool isEndInclusive;
+
+        ObjRange(double _start, double _end, bool _isEndInclusive);
+        ~ObjRange();
+
+        void trace();
+        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
+        uInt64 getSize();
+    };
 }

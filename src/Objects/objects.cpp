@@ -357,3 +357,27 @@ uInt64 ObjFuture::getSize() {
 }
 #pragma endregion
 
+#pragma region ObjRange
+ObjRange::ObjRange(double _start, double _end, bool _isEndInclusive) {
+    start = _start;
+    end = _end;
+    isEndInclusive = _isEndInclusive;
+    marked = false;
+    type = ObjType::RANGE;
+}
+ObjRange::~ObjRange() {
+
+}
+
+void ObjRange::trace() {
+
+}
+
+string ObjRange::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+    return "<range>";
+}
+
+uInt64 ObjRange::getSize() {
+    return sizeof(ObjRange);
+}
+#pragma endregion
