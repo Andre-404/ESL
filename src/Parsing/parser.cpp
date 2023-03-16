@@ -57,7 +57,7 @@ namespace AST {
                 parser->consume(TokenType::RIGHT_PAREN, "Expected ')' at the end of grouping expression.");
                 return expr;
             }
-            // Array literal
+                // Array literal
             case TokenType::LEFT_BRACKET: {
                 vector<ASTNodePtr> members;
                 if (parser->peek().type != TokenType::RIGHT_BRACKET) {
@@ -68,7 +68,7 @@ namespace AST {
                 parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' at the end of an array literal.");
                 return make_shared<ArrayLiteralExpr>(members);
             }
-            // Struct literal
+                // Struct literal
             case TokenType::LEFT_BRACE: {
                 vector<StructEntry> entries;
                 if (parser->peek().type != TokenType::RIGHT_BRACE) {
@@ -83,7 +83,7 @@ namespace AST {
                 parser->consume(TokenType::RIGHT_BRACE, "Expect '}' after struct literal.");
                 return make_shared<StructLiteral>(entries);
             }
-            // Function literal
+                // Function literal
             case TokenType::FN: {
                 // The depths are used for throwing errors for switch and loops stmts,
                 // and since a function can be declared inside a loop we need to account for that
@@ -123,7 +123,7 @@ namespace AST {
                 }
                 return make_shared<NewExpr>(castCall, token);
             }
-            //number, string, boolean or nil
+                //number, string, boolean or nil
             default:
                 return make_shared<LiteralExpr>(token);
         }
@@ -314,165 +314,175 @@ namespace AST {
 }
 
 Parser::Parser() {
-	probe = new ASTProbe;
+    probe = new ASTProbe;
     macroExpander = new MacroExpander(this);
 
-	loopDepth = 0;
-	switchDepth = 0;
+    loopDepth = 0;
+    switchDepth = 0;
     parsedUnit = nullptr;
 
     currentContainer = nullptr;
     currentPtr = 0;
 
-	#pragma region Parselets
-	// Prefix
+#pragma region Parselets
+    // Prefix
     addPrefix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePrefix);
     addPrefix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePrefix);
 
-	addPrefix(TokenType::BANG, Precedence::UNARY_PREFIX, parsePrefix);
-	addPrefix(TokenType::MINUS, Precedence::UNARY_PREFIX, parsePrefix);
-	addPrefix(TokenType::TILDA, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::BANG, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::MINUS, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::TILDA, Precedence::UNARY_PREFIX, parsePrefix);
     // Only for macros
     addPrefix(TokenType::DOLLAR, Precedence::UNARY_PREFIX, parsePrefix);
 
-	addPrefix(TokenType::INCREMENT, Precedence::UNARY_PREFIX, parsePrefix);
-	addPrefix(TokenType::DECREMENT, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::INCREMENT, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::DECREMENT, Precedence::UNARY_PREFIX, parsePrefix);
 
-	addPrefix(TokenType::IDENTIFIER, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::STRING, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::NUMBER, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::TRUE, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::FALSE, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::NIL, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::LEFT_PAREN, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::LEFT_BRACKET, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::LEFT_BRACE, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::SUPER, Precedence::PRIMARY, parseLiteral);
-	addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::IDENTIFIER, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::STRING, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::NUMBER, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::TRUE, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::FALSE, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::NIL, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::LEFT_PAREN, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::LEFT_BRACKET, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::LEFT_BRACE, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::SUPER, Precedence::PRIMARY, parseLiteral);
+    addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::NEW, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::THIS, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::ASYNC, Precedence::PRIMARY, parsePrefix);
     addPrefix(TokenType::AWAIT, Precedence::PRIMARY, parsePrefix);
 
-	// Infix and mix-fix
-	addInfix(TokenType::EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::PLUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::MINUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::SLASH_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::STAR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::PERCENTAGE_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::BITWISE_XOR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::BITWISE_OR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
-	addInfix(TokenType::BITWISE_AND_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    // Infix and mix-fix
+    addInfix(TokenType::EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::PLUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::MINUS_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::SLASH_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::STAR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::PERCENTAGE_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::BITWISE_XOR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::BITWISE_OR_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
+    addInfix(TokenType::BITWISE_AND_EQUAL, Precedence::ASSIGNMENT, parseAssignment);
 
-	addInfix(TokenType::QUESTIONMARK, Precedence::CONDITIONAL, parseConditional);
+    addInfix(TokenType::QUESTIONMARK, Precedence::CONDITIONAL, parseConditional);
 
-	addInfix(TokenType::OR, Precedence::OR, parseBinary);
-	addInfix(TokenType::AND, Precedence::AND, parseBinary);
+    addInfix(TokenType::OR, Precedence::OR, parseBinary);
+    addInfix(TokenType::AND, Precedence::AND, parseBinary);
 
-	addInfix(TokenType::BITWISE_OR, Precedence::BIN_OR, parseBinary);
-	addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
-	addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
+    addInfix(TokenType::BITWISE_OR, Precedence::BIN_OR, parseBinary);
+    addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
+    addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
 
-	addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
-	addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
 
-	addInfix(TokenType::LESS, Precedence::COMPARISON, parseBinary);
-	addInfix(TokenType::LESS_EQUAL, Precedence::COMPARISON, parseBinary);
-	addInfix(TokenType::GREATER, Precedence::COMPARISON, parseBinary);
-	addInfix(TokenType::GREATER_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::LESS, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::LESS_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::GREATER, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::GREATER_EQUAL, Precedence::COMPARISON, parseBinary);
 
-	addInfix(TokenType::BITSHIFT_LEFT, Precedence::BITSHIFT, parseBinary);
-	addInfix(TokenType::BITSHIFT_RIGHT, Precedence::BITSHIFT, parseBinary);
+    addInfix(TokenType::BITSHIFT_LEFT, Precedence::BITSHIFT, parseBinary);
+    addInfix(TokenType::BITSHIFT_RIGHT, Precedence::BITSHIFT, parseBinary);
 
-	addInfix(TokenType::PLUS, Precedence::SUM, parseBinary);
-	addInfix(TokenType::MINUS, Precedence::SUM, parseBinary);
+    addInfix(TokenType::PLUS, Precedence::SUM, parseBinary);
+    addInfix(TokenType::MINUS, Precedence::SUM, parseBinary);
 
-	addInfix(TokenType::SLASH, Precedence::FACTOR, parseBinary);
-	addInfix(TokenType::STAR, Precedence::FACTOR, parseBinary);
-	addInfix(TokenType::PERCENTAGE, Precedence::FACTOR, parseBinary);
+    addInfix(TokenType::SLASH, Precedence::FACTOR, parseBinary);
+    addInfix(TokenType::STAR, Precedence::FACTOR, parseBinary);
+    addInfix(TokenType::PERCENTAGE, Precedence::FACTOR, parseBinary);
     addInfix(TokenType::BANG, Precedence::PRIMARY, parseBinary);
 
-	addInfix(TokenType::LEFT_PAREN, Precedence::CALL, parseCall);
-	addInfix(TokenType::LEFT_BRACKET, Precedence::CALL, parseFieldAccess);
-	addInfix(TokenType::DOT, Precedence::CALL, parseFieldAccess);
+    addInfix(TokenType::LEFT_PAREN, Precedence::CALL, parseCall);
+    addInfix(TokenType::LEFT_BRACKET, Precedence::CALL, parseFieldAccess);
+    addInfix(TokenType::DOT, Precedence::CALL, parseFieldAccess);
     addInfix(TokenType::INSTANCEOF, Precedence::INSTANCEOF, parseBinary);
 
-	addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
+    addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
 
-	// Postfix
+    // Postfix
     addPostfix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePostfix);
     addPostfix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePostfix);
 
-	addPostfix(TokenType::INCREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
-	addPostfix(TokenType::DECREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
-    #pragma endregion
+    addPostfix(TokenType::INCREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
+    addPostfix(TokenType::DECREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
+#pragma endregion
 }
 
 void Parser::parse(vector<CSLModule*>& modules) {
-	#ifdef AST_DEBUG
-	ASTPrinter* astPrinter = new ASTPrinter;
-	#endif
-	// Modules are already sorted using topsort
-	for (CSLModule* unit : modules) {
+#ifdef AST_DEBUG
+    ASTPrinter* astPrinter = new ASTPrinter;
+#endif
+    // Modules are already sorted using topsort
+    for (CSLModule* unit : modules) {
         parsedUnit = unit;
 
         // Parse tokenized source into AST
-		loopDepth = 0;
-		switchDepth = 0;
+        loopDepth = 0;
+        switchDepth = 0;
         currentContainer = &parsedUnit->tokens;
         currentPtr = 0;
-		while (!isAtEnd()) {
-			try {
+        while (!isAtEnd()) {
+            try {
                 if (match(TokenType::ADDMACRO)) {
                     defineMacro();
                     continue;
                 }
-				unit->stmts.push_back(topLevelDeclaration());
-				#ifdef AST_DEBUG
-				//prints statement
+                unit->stmts.push_back(topLevelDeclaration());
+#ifdef AST_DEBUG
+                //prints statement
 				unit->stmts[unit->stmts.size() - 1]->accept(astPrinter);
-				#endif
-			}
-			catch (ParserException& e) {
-				sync();
-			}
-		}
+#endif
+            }
+            catch (ParserException& e) {
+                sync();
+            }
+        }
 
         expandMacros();
-	}
-	//look at each unit and determine if any of its dependencies that are imported without an alias are exporting the same symbol,
-	//or if 2 or more units using aliases share the same alias, which is forbidden
-	for (CSLModule* unit : modules) {
-		std::unordered_map<string, Dependency*> importedSymbols;
-		std::unordered_map<string, Dependency*> importAliases;
+    }
+    // 2 units being imported using the same alias is illegal
+    // Units imported without an alias must abide by the rule that every symbol must be unique
+    for (CSLModule* unit : modules) {
+        std::unordered_map<string, Dependency*> symbols;
+        // Symbols of this unit are also taken into account when checking uniqueness
+        for(auto decl : unit->topDeclarations){
+            symbols[decl->getName().getLexeme()] = nullptr;
+        }
+        std::unordered_map<string, Dependency*> importAliases;
 
-		for (Dependency& dep : unit->deps) {
-			if (dep.alias.type == TokenType::NONE) {
-				for (const Token& token : dep.module->exports) {
-					string lexeme = token.getLexeme();
+        for (Dependency& dep : unit->deps) {
+            if (dep.alias.type == TokenType::NONE) {
+                for (const auto decl : dep.module->exports) {
+                    string lexeme = decl->getName().getLexeme();
 
-					if (importedSymbols.count(lexeme) == 0) {
-						importedSymbols[lexeme] = &dep;
-						continue;
-					}
-					//if there are 2 or more declaration which use the same symbol,
-					//throw an error and tell the user exactly which dependencies caused the error
-					string str = fmt::format("Ambiguous definition, symbol '{}' defined in {} and {}.",
-						lexeme, importedSymbols[lexeme]->pathString.getLexeme(), dep.pathString.getLexeme());
-					error(dep.pathString, str);
-				}
-			}
-			else {
-				//check if any imported dependencies share the same alias
-				if (importAliases.count(dep.alias.getLexeme()) > 0) {
-					error(importAliases[dep.alias.getLexeme()]->alias, "Cannot use the same alias for 2 module imports.");
-					error(dep.alias, "Cannot use the same alias for 2 module imports.");
-				}
-				importAliases[dep.alias.getLexeme()] = &dep;
-			}
-		}
-	}
+                    if (symbols.count(lexeme) == 0) {
+                        symbols[lexeme] = &dep;
+                        continue;
+                    }
+                    // If there are 2 or more declaration which use the same symbol,
+                    // throw an error and tell the user exactly which dependencies caused the error
+
+                    string str = fmt::format("Ambiguous definition, symbol '{}' defined in {} and {}.",
+                                             lexeme, symbols[lexeme] ? symbols[lexeme]->pathString.getLexeme() : "this file", dep.pathString.getLexeme());
+                    if(!symbols[lexeme]){
+                        for(auto thisFileDecl : unit->topDeclarations){
+                            if(thisFileDecl->getName().getLexeme() != lexeme) continue;
+                            error(thisFileDecl->getName(), str);
+                        }
+                    }else error(dep.pathString, str);
+                }
+            }
+            else {
+                // Check if any imported dependencies share the same alias
+                if (importAliases.count(dep.alias.getLexeme()) > 0) {
+                    error(importAliases[dep.alias.getLexeme()]->alias, "Cannot use the same alias for 2 module imports.");
+                    error(dep.alias, "Cannot use the same alias for 2 module imports.");
+                }
+                importAliases[dep.alias.getLexeme()] = &dep;
+            }
+        }
+    }
 }
 
 void Parser::defineMacro() {
@@ -501,18 +511,18 @@ void Parser::defineMacro() {
 }
 
 ASTNodePtr Parser::expression(int prec) {
-	Token token = advance();
-	//check if the token has a prefix function associated with it, and if it does, parse with it
-	if (prefixParselets.count(token.type) == 0) {
+    Token token = advance();
+    //check if the token has a prefix function associated with it, and if it does, parse with it
+    if (prefixParselets.count(token.type) == 0) {
         // TODO: Fix hackyness
         if (token.str.length == 0) token = currentContainer->at(currentPtr - 2);
-		throw error(token, "Expected expression.");
-	}
+        throw error(token, "Expected expression.");
+    }
     if (token.type == TokenType::DOLLAR && parseMode != ParseMode::Macro){
         throw error(token, "Unexpected '$' found outside of macro transcriber.");
     }
-	auto& prefix = prefixParselets[token.type];
-	shared_ptr<ASTNode> left = prefix.second(this, token);
+    auto& prefix = prefixParselets[token.type];
+    shared_ptr<ASTNode> left = prefix.second(this, token);
 
 
     while(true){
@@ -542,13 +552,13 @@ ASTNodePtr Parser::expression(int prec) {
 }
 
 ASTNodePtr Parser::expression() {
-	return expression(0);
+    return expression(0);
 }
 
 #pragma region Statements and declarations
 //module level variables are put in a list to help with error reporting in compiler
 ASTNodePtr Parser::topLevelDeclaration() {
-	  //export is only allowed in global scope
+    //export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
     bool isExported = false;
     if (match(TokenType::PUB)) isExported = true;
@@ -568,70 +578,70 @@ ASTNodePtr Parser::topLevelDeclaration() {
         if(isExported) parsedUnit->exports.push_back(node);
         return node;
     }
-	return statement();
+    return statement();
 }
 
 ASTNodePtr Parser::localDeclaration() {
-	if (match(TokenType::LET)) return varDecl();
-	return statement();
+    if (match(TokenType::LET)) return varDecl();
+    return statement();
 }
 
 shared_ptr<VarDecl> Parser::varDecl() {
-	Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
-	ASTNodePtr expr = nullptr;
-	//if no initializer is present the variable is initialized to null
-	if (match(TokenType::EQUAL)) {
-		expr = expression();
-	}
-	consume(TokenType::SEMICOLON, "Expected a ';' after variable declaration.");
-	return make_shared<VarDecl>(name, expr);
+    Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
+    ASTNodePtr expr = nullptr;
+    //if no initializer is present the variable is initialized to null
+    if (match(TokenType::EQUAL)) {
+        expr = expression();
+    }
+    consume(TokenType::SEMICOLON, "Expected a ';' after variable declaration.");
+    return make_shared<VarDecl>(name, expr);
 }
 
 shared_ptr<FuncDecl> Parser::funcDecl() {
-	//the depths are used for throwing errors for switch and loops stmts, 
-	//and since a function can be declared inside a loop we need to account for that
-	int tempLoopDepth = loopDepth;
-	int tempSwitchDepth = switchDepth;
-	loopDepth = 0;
-	switchDepth = 0;
+    //the depths are used for throwing errors for switch and loops stmts,
+    //and since a function can be declared inside a loop we need to account for that
+    int tempLoopDepth = loopDepth;
+    int tempSwitchDepth = switchDepth;
+    loopDepth = 0;
+    switchDepth = 0;
 
-	Token name = consume(TokenType::IDENTIFIER, "Expected a function name.");
-	consume(TokenType::LEFT_PAREN, "Expect '(' after function name.");
-	vector<ASTVar> args;
-	//parse args
-	if (!check(TokenType::RIGHT_PAREN)) {
-		do {
-			Token arg = consume(TokenType::IDENTIFIER, "Expect argument name");
-			args.emplace_back(arg);
-			if (args.size() > 127) {
-				throw error(arg, "Functions can't have more than 127 arguments");
-			}
-		} while (match(TokenType::COMMA));
-	}
-	consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments");
-	consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
-	ASTNodePtr body = blockStmt();
+    Token name = consume(TokenType::IDENTIFIER, "Expected a function name.");
+    consume(TokenType::LEFT_PAREN, "Expect '(' after function name.");
+    vector<ASTVar> args;
+    //parse args
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            Token arg = consume(TokenType::IDENTIFIER, "Expect argument name");
+            args.emplace_back(arg);
+            if (args.size() > 127) {
+                throw error(arg, "Functions can't have more than 127 arguments");
+            }
+        } while (match(TokenType::COMMA));
+    }
+    consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments");
+    consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
+    shared_ptr<BlockStmt> body = blockStmt();
 
-	loopDepth = tempLoopDepth;
-	switchDepth = tempSwitchDepth;
-	return make_shared<FuncDecl>(name, args, body);
+    loopDepth = tempLoopDepth;
+    switchDepth = tempSwitchDepth;
+    return make_shared<FuncDecl>(name, args, body);
 }
 
 shared_ptr<ClassDecl> Parser::classDecl() {
-	Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
-	ASTNodePtr inherited = nullptr;
-	// Inheritance is optional
-	if (match(TokenType::COLON)) {
-		Token token = previous();
-		// Only accept identifiers and module access
-		inherited = expression(+Precedence::PRIMARY - 1);
-		if (!((inherited->type == ASTType::LITERAL && dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
-			|| inherited->type == ASTType::MODULE_ACCESS)) {
-			error(token, "Superclass can only be an identifier.");
-		}
-	}
+    Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
+    ASTNodePtr inherited = nullptr;
+    // Inheritance is optional
+    if (match(TokenType::COLON)) {
+        Token token = previous();
+        // Only accept identifiers and module access
+        inherited = expression(+Precedence::PRIMARY - 1);
+        if (!((inherited->type == ASTType::LITERAL && dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
+              || inherited->type == ASTType::MODULE_ACCESS)) {
+            error(token, "Superclass can only be an identifier.");
+        }
+    }
 
-	consume(TokenType::LEFT_BRACE, "Expect '{' before class body.");
+    consume(TokenType::LEFT_BRACE, "Expect '{' before class body.");
 
     vector<ClassMethod> methods;
     vector<ClassField> fields;
@@ -657,7 +667,7 @@ shared_ptr<ClassDecl> Parser::classDecl() {
         return;
     };
 
-	while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
+    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
             bool isPublic = false;
             if (match(TokenType::PUB)) {
@@ -689,173 +699,173 @@ shared_ptr<ClassDecl> Parser::classDecl() {
         }catch(ParserException& e){
             sync();
         }
-	}
-	consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
-	return make_shared<ClassDecl>(name, methods, fields, inherited);
+    }
+    consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
+    return make_shared<ClassDecl>(name, methods, fields, inherited);
 }
 
 ASTNodePtr Parser::statement() {
-	if (match({ TokenType::LEFT_BRACE, TokenType::IF, TokenType::WHILE,
-		TokenType::FOR, TokenType::BREAK, TokenType::SWITCH,
-		TokenType::RETURN, TokenType::CONTINUE, TokenType::ADVANCE })) {
+    if (match({ TokenType::LEFT_BRACE, TokenType::IF, TokenType::WHILE,
+                TokenType::FOR, TokenType::BREAK, TokenType::SWITCH,
+                TokenType::RETURN, TokenType::CONTINUE, TokenType::ADVANCE })) {
 
-		switch (previous().type) {
-		case TokenType::LEFT_BRACE: return blockStmt();
-		case TokenType::IF: return ifStmt();
-		case TokenType::WHILE: return whileStmt();
-		case TokenType::FOR: return forStmt();
-		case TokenType::BREAK: return breakStmt();
-		case TokenType::CONTINUE: return continueStmt();
-		case TokenType::ADVANCE: return advanceStmt();
-		case TokenType::SWITCH: return switchStmt();
-		case TokenType::RETURN: return returnStmt();
-		}
-	}
-	return exprStmt();
+        switch (previous().type) {
+            case TokenType::LEFT_BRACE: return blockStmt();
+            case TokenType::IF: return ifStmt();
+            case TokenType::WHILE: return whileStmt();
+            case TokenType::FOR: return forStmt();
+            case TokenType::BREAK: return breakStmt();
+            case TokenType::CONTINUE: return continueStmt();
+            case TokenType::ADVANCE: return advanceStmt();
+            case TokenType::SWITCH: return switchStmt();
+            case TokenType::RETURN: return returnStmt();
+        }
+    }
+    return exprStmt();
 }
 
-ASTNodePtr Parser::exprStmt() {
-	ASTNodePtr expr = expression();
-	consume(TokenType::SEMICOLON, "Expected ';' after expression.");
-	return make_shared<ExprStmt>(expr);
+shared_ptr<ExprStmt> Parser::exprStmt() {
+    ASTNodePtr expr = expression();
+    consume(TokenType::SEMICOLON, "Expected ';' after expression.");
+    return make_shared<ExprStmt>(expr);
 }
 
-ASTNodePtr Parser::blockStmt() {
-	vector<ASTNodePtr> stmts;
-	//TokenType::LEFT_BRACE is already consumed
-	while (!check(TokenType::RIGHT_BRACE)) {
-		stmts.push_back(localDeclaration());
-	}
-	consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
-	return make_shared<BlockStmt>(stmts);
+shared_ptr<BlockStmt> Parser::blockStmt() {
+    vector<ASTNodePtr> stmts;
+    //TokenType::LEFT_BRACE is already consumed
+    while (!check(TokenType::RIGHT_BRACE)) {
+        stmts.push_back(localDeclaration());
+    }
+    consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
+    return make_shared<BlockStmt>(stmts);
 }
 
-ASTNodePtr Parser::ifStmt() {
-	consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'.");
-	ASTNodePtr condition = expression();
-	consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
-	//using statement() instead of declaration() disallows declarations directly in a control flow body
-	//declarations are still allowed in block statement
-	ASTNodePtr thenBranch = statement();
-	ASTNodePtr elseBranch = nullptr;
-	if (match(TokenType::ELSE)) {
-		elseBranch = statement();
-	}
-	return make_shared<IfStmt>(thenBranch, elseBranch, condition);
+shared_ptr<IfStmt> Parser::ifStmt() {
+    consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'.");
+    ASTNodePtr condition = expression();
+    consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
+    //using statement() instead of declaration() disallows declarations directly in a control flow body
+    //declarations are still allowed in block statement
+    ASTNodePtr thenBranch = statement();
+    ASTNodePtr elseBranch = nullptr;
+    if (match(TokenType::ELSE)) {
+        elseBranch = statement();
+    }
+    return make_shared<IfStmt>(thenBranch, elseBranch, condition);
 }
 
-ASTNodePtr Parser::whileStmt() { 
-	//loopDepth is used to see if a 'continue' or 'break' statement is allowed within the body
-	loopDepth++;
-	consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
-	ASTNodePtr condition = expression();
-	consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
-	ASTNodePtr body = statement();
-	loopDepth--;
-	return make_shared<WhileStmt>(body, condition);
+shared_ptr<WhileStmt> Parser::whileStmt() {
+    //loopDepth is used to see if a 'continue' or 'break' statement is allowed within the body
+    loopDepth++;
+    consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
+    ASTNodePtr condition = expression();
+    consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
+    ASTNodePtr body = statement();
+    loopDepth--;
+    return make_shared<WhileStmt>(body, condition);
 }
 
-ASTNodePtr Parser::forStmt() {
-	loopDepth++;
-	consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.");
-	//initializer can either be: empty, a new variable declaration, or any expression
-	ASTNodePtr init = nullptr;
-	if (match(TokenType::SEMICOLON)) {
-		//do nothing
-	}
-	else if (match(TokenType::LET)) init = varDecl();
-	else init = exprStmt();
+shared_ptr<ForStmt> Parser::forStmt() {
+    loopDepth++;
+    consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.");
+    //initializer can either be: empty, a new variable declaration, or any expression
+    ASTNodePtr init = nullptr;
+    if (match(TokenType::SEMICOLON)) {
+        //do nothing
+    }
+    else if (match(TokenType::LET)) init = varDecl();
+    else init = exprStmt();
 
-	ASTNodePtr condition = nullptr;
-	//we don't want to use exprStmt() because it emits OP_POP, and we'll need the value to determine whether to jump
-	if (!check(TokenType::SEMICOLON)) condition = expression();
-	consume(TokenType::SEMICOLON, "Expect ';' after loop condition");
+    ASTNodePtr condition = nullptr;
+    //we don't want to use exprStmt() because it emits OP_POP, and we'll need the value to determine whether to jump
+    if (!check(TokenType::SEMICOLON)) condition = expression();
+    consume(TokenType::SEMICOLON, "Expect ';' after loop condition");
 
-	ASTNodePtr increment = nullptr;
-	//using expression() here instead of exprStmt() because there is no trailing ';'
-	if (!check(TokenType::RIGHT_PAREN)) increment = expression();
-	consume(TokenType::RIGHT_PAREN, "Expect ')' after 'for' clauses.");
-	//disallows declarations unless they're in a block
-	ASTNodePtr body = statement();
-	loopDepth--;
-	return make_shared<ForStmt>(init, condition, increment, body);
+    ASTNodePtr increment = nullptr;
+    //using expression() here instead of exprStmt() because there is no trailing ';'
+    if (!check(TokenType::RIGHT_PAREN)) increment = expression();
+    consume(TokenType::RIGHT_PAREN, "Expect ')' after 'for' clauses.");
+    //disallows declarations unless they're in a block
+    ASTNodePtr body = statement();
+    loopDepth--;
+    return make_shared<ForStmt>(init, condition, increment, body);
 }
 
-ASTNodePtr Parser::breakStmt() {
-	if (loopDepth == 0 && switchDepth == 0) throw error(previous(), "Cannot use 'break' outside of loops or switch statements.");
-	consume(TokenType::SEMICOLON, "Expect ';' after break.");
-	return make_shared<BreakStmt>(previous());
+shared_ptr<BreakStmt> Parser::breakStmt() {
+    if (loopDepth == 0 && switchDepth == 0) throw error(previous(), "Cannot use 'break' outside of loops or switch statements.");
+    consume(TokenType::SEMICOLON, "Expect ';' after break.");
+    return make_shared<BreakStmt>(previous());
 }
 
-ASTNodePtr Parser::continueStmt() {
-	if (loopDepth == 0) throw error(previous(), "Cannot use 'continue' outside of loops.");
-	consume(TokenType::SEMICOLON, "Expect ';' after continue.");
-	return make_shared<ContinueStmt>(previous());
+shared_ptr<ContinueStmt> Parser::continueStmt() {
+    if (loopDepth == 0) throw error(previous(), "Cannot use 'continue' outside of loops.");
+    consume(TokenType::SEMICOLON, "Expect ';' after continue.");
+    return make_shared<ContinueStmt>(previous());
 }
 
-ASTNodePtr Parser::switchStmt() {
-	//structure:
-	//switch(<expression>){
-	//case <expression>: <statements>
-	//}
-	consume(TokenType::LEFT_PAREN, "Expect '(' after 'switch'.");
-	ASTNodePtr expr = expression();
-	consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
-	consume(TokenType::LEFT_BRACE, "Expect '{' after switch expression.");
-	switchDepth++;
-	vector<shared_ptr<CaseStmt>> cases;
-	bool hasDefault = false;
+shared_ptr<SwitchStmt> Parser::switchStmt() {
+    //structure:
+    //switch(<expression>){
+    //case <expression>: <statements>
+    //}
+    consume(TokenType::LEFT_PAREN, "Expect '(' after 'switch'.");
+    ASTNodePtr expr = expression();
+    consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
+    consume(TokenType::LEFT_BRACE, "Expect '{' after switch expression.");
+    switchDepth++;
+    vector<shared_ptr<CaseStmt>> cases;
+    bool hasDefault = false;
 
-	while (!check(TokenType::RIGHT_BRACE) && match({ TokenType::CASE, TokenType::DEFAULT })) {
-		Token prev = previous();//to see if it's a default statement
-		shared_ptr<CaseStmt> curCase = caseStmt();
-		curCase->caseType = prev;
-		if (prev.type == TokenType::DEFAULT) {
-			//don't throw, it isn't a breaking error
-			if (hasDefault) error(prev, "Only 1 default case is allowed inside a switch statement.");
-			hasDefault = true;
-		}
-		cases.push_back(curCase);
-	}
-	consume(TokenType::RIGHT_BRACE, "Expect '}' after switch body.");
-	switchDepth--;
-	return make_shared<SwitchStmt>(expr, cases, hasDefault);
+    while (!check(TokenType::RIGHT_BRACE) && match({ TokenType::CASE, TokenType::DEFAULT })) {
+        Token prev = previous();//to see if it's a default statement
+        shared_ptr<CaseStmt> curCase = caseStmt();
+        curCase->caseType = prev;
+        if (prev.type == TokenType::DEFAULT) {
+            //don't throw, it isn't a breaking error
+            if (hasDefault) error(prev, "Only 1 default case is allowed inside a switch statement.");
+            hasDefault = true;
+        }
+        cases.push_back(curCase);
+    }
+    consume(TokenType::RIGHT_BRACE, "Expect '}' after switch body.");
+    switchDepth--;
+    return make_shared<SwitchStmt>(expr, cases, hasDefault);
 }
 
 shared_ptr<CaseStmt> Parser::caseStmt() {
-	vector<Token> matchConstants;
-	//default cases don't have a match expression
-	if (previous().type != TokenType::DEFAULT) {
-		while (match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE })) {
-			matchConstants.push_back(previous());
-			if (!match(TokenType::BITWISE_OR)) break;
-		}
-		if (!match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE }) && peek().type != TokenType::COLON) {
-			throw error(peek(), "Expression must be a constant literal(string, number, boolean or nil).");
-		}
-	}
-	consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
-	vector<ASTNodePtr> stmts;
-	while (!check(TokenType::CASE) && !check(TokenType::RIGHT_BRACE) && !check(TokenType::DEFAULT)) {
-		stmts.push_back(localDeclaration());
-	}
-	return make_shared<CaseStmt>(matchConstants, stmts);
+    vector<Token> matchConstants;
+    //default cases don't have a match expression
+    if (previous().type != TokenType::DEFAULT) {
+        while (match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE })) {
+            matchConstants.push_back(previous());
+            if (!match(TokenType::BITWISE_OR)) break;
+        }
+        if (!match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE }) && peek().type != TokenType::COLON) {
+            throw error(peek(), "Expression must be a constant literal(string, number, boolean or nil).");
+        }
+    }
+    consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
+    vector<ASTNodePtr> stmts;
+    while (!check(TokenType::CASE) && !check(TokenType::RIGHT_BRACE) && !check(TokenType::DEFAULT)) {
+        stmts.push_back(localDeclaration());
+    }
+    return make_shared<CaseStmt>(matchConstants, stmts);
 }
 
-ASTNodePtr Parser::advanceStmt() {
-	if (switchDepth == 0) throw error(previous(), "Cannot use 'advance' outside of switch statements.");
-	consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
-	return make_shared<AdvanceStmt>(previous());
+shared_ptr<AdvanceStmt> Parser::advanceStmt() {
+    if (switchDepth == 0) throw error(previous(), "Cannot use 'advance' outside of switch statements.");
+    consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
+    return make_shared<AdvanceStmt>(previous());
 }
 
-ASTNodePtr Parser::returnStmt() {
-	ASTNodePtr expr = nullptr;
-	Token keyword = previous();
-	if (!match(TokenType::SEMICOLON)) {
-		expr = expression();
-		consume(TokenType::SEMICOLON, "Expect ';' at the end of 'return'.");
-	}
-	return make_shared<ReturnStmt>(expr, keyword);
+shared_ptr<ReturnStmt> Parser::returnStmt() {
+    ASTNodePtr expr = nullptr;
+    Token keyword = previous();
+    if (!match(TokenType::SEMICOLON)) {
+        expr = expression();
+        consume(TokenType::SEMICOLON, "Expect ';' at the end of 'return'.");
+    }
+    return make_shared<ReturnStmt>(expr, keyword);
 }
 
 #pragma endregion
@@ -863,19 +873,19 @@ ASTNodePtr Parser::returnStmt() {
 #pragma region Helpers
 //if the parserCurrent token type matches any of the provided tokenTypes it's consumed, if not false is returned
 bool Parser::match(const std::initializer_list<TokenType>& tokenTypes) {
-	if (check(tokenTypes)) {
+    if (check(tokenTypes)) {
         advance();
         return true;
     }
-	return false;
+    return false;
 }
 
 bool Parser::match(const TokenType type) {
-	return match({ type });
+    return match({ type });
 }
 
 bool Parser::isAtEnd() {
-	return currentContainer->size() <= currentPtr;
+    return currentContainer->size() <= currentPtr;
 }
 
 bool Parser::check(const std::initializer_list<TokenType>& tokenTypes){
@@ -889,45 +899,45 @@ bool Parser::check(const std::initializer_list<TokenType>& tokenTypes){
 }
 
 bool Parser::check(const TokenType type) {
-	return check({ type });
+    return check({ type });
 }
 
 //returns parserCurrent token and increments to the next one
 Token Parser::advance() {
-	if (isAtEnd()) throw error(currentContainer->back(), "Expected token.");
+    if (isAtEnd()) throw error(currentContainer->back(), "Expected token.");
     currentPtr++;
-	return previous();
+    return previous();
 }
 
 //gets parserCurrent token
 Token Parser::peek() {
-	if (isAtEnd()) throw error(currentContainer->back(), "Expected token.");
-	return currentContainer->at(currentPtr);
+    if (isAtEnd()) throw error(currentContainer->back(), "Expected token.");
+    return currentContainer->at(currentPtr);
 }
 
 //gets next token
 Token Parser::peekNext() {
-	if (currentContainer->size() <= currentPtr + 1) throw error(currentContainer->back(), "Expected token.");
-	return currentContainer->at(currentPtr + 1);
+    if (currentContainer->size() <= currentPtr + 1) throw error(currentContainer->back(), "Expected token.");
+    return currentContainer->at(currentPtr + 1);
 }
 
 Token Parser::previous() {
-	if (currentPtr - 1 < 0) throw error(currentContainer->at(0), "Expected token.");
-	return currentContainer->at(currentPtr - 1);
+    if (currentPtr - 1 < 0) throw error(currentContainer->at(0), "Expected token.");
+    return currentContainer->at(currentPtr - 1);
 }
 
 //if the parserCurrent token is of the correct type, it's consumed, if not an error is thrown
 Token Parser::consume(TokenType type, string msg) {
-	if (check(type)) return advance();
+    if (check(type)) return advance();
 
-	throw error(peek(), msg);
+    throw error(peek(), msg);
 }
 
 ParserException Parser::error(Token token, string msg) {
     if (parseMode != ParseMode::Matcher) {
         errorHandler::addCompileError(msg, token);
     }
-	return ParserException();
+    return ParserException();
 }
 
 vector<Token> Parser::readTokenTree(bool isNonLeaf)
@@ -977,33 +987,33 @@ void Parser::expandMacros()
 
 //syncs when we find a ';' or one of the keywords
 void Parser::sync() {
-	while (!isAtEnd()) {
-		if (peek().type == TokenType::SEMICOLON){
+    while (!isAtEnd()) {
+        if (peek().type == TokenType::SEMICOLON){
             advance();
             return;
         }
 
-		switch (peek().type) {
-		case TokenType::CLASS:
-		case TokenType::FN:
-		case TokenType::LET:
-		case TokenType::FOR:
-		case TokenType::IF:
-		case TokenType::ELSE:
-		case TokenType::WHILE:
-		case TokenType::RETURN:
-		case TokenType::SWITCH:
-		case TokenType::CASE:
-		case TokenType::DEFAULT:
-		case TokenType::RIGHT_BRACE:
-        case TokenType::STATIC:
-        case TokenType::PUB:
-			return;
-        default: break;
-		}
+        switch (peek().type) {
+            case TokenType::CLASS:
+            case TokenType::FN:
+            case TokenType::LET:
+            case TokenType::FOR:
+            case TokenType::IF:
+            case TokenType::ELSE:
+            case TokenType::WHILE:
+            case TokenType::RETURN:
+            case TokenType::SWITCH:
+            case TokenType::CASE:
+            case TokenType::DEFAULT:
+            case TokenType::RIGHT_BRACE:
+            case TokenType::STATIC:
+            case TokenType::PUB:
+                return;
+            default: break;
+        }
 
-		advance();
-	}
+        advance();
+    }
 }
 
 void Parser::addPrefix(TokenType type, Precedence prec, PrefixFunc func){

@@ -7,10 +7,10 @@ using std::get;
 using namespace valueHelpers;
 
 runtime::VM::VM(compileCore::Compiler* compiler) {
-	// Have to do this before assigning compiler->mainCodeBlock to code because endFuncDecl mutates mainCodeBlock
-	Value val = encodeObj(new object::ObjClosure(compiler->mainBlockFunc));
-	// Main code block
-	code = compiler->mainCodeBlock;
+    // Have to do this before assigning compiler->mainCodeBlock to code because endFuncDecl mutates mainCodeBlock
+    Value val = encodeObj(new object::ObjClosure(compiler->mainBlockFunc));
+    // Main code block
+    code = compiler->mainCodeBlock;
     // Used by all threads
     nativeFuncs = compiler->nativeFuncs;
     nativeClasses = runtime::createBuiltinClasses(compiler->baseClass);
@@ -20,30 +20,30 @@ runtime::VM::VM(compileCore::Compiler* compiler) {
     // For stack tracing during error printing
     sourceFiles = compiler->sourceFiles;
     memory::gc.vm = this;
-	mainThread = new Thread(this);
-	// First value on the stack is the future holding the thread, mainThread has nil
-	mainThread->copyVal(encodeNil());
-	mainThread->startThread(&val, 1);
+    mainThread = new Thread(this);
+    // First value on the stack is the future holding the thread, mainThread has nil
+    mainThread->copyVal(encodeNil());
+    mainThread->startThread(&val, 1);
 }
 
 void runtime::VM::mark(memory::GarbageCollector* gc) {
-	for (Globalvar& var : globals) valueHelpers::mark(var.val);
-	// All threads in vector are active, finished threads get deleted automatically
-	for (Thread* t : childThreads) t->mark(gc);
-	mainThread->mark(gc);
-	for (Value& val : code.constants) valueHelpers::mark(val);
+    for (Globalvar& var : globals) valueHelpers::mark(var.val);
+    // All threads in vector are active, finished threads get deleted automatically
+    for (Thread* t : childThreads) t->mark(gc);
+    mainThread->mark(gc);
+    for (Value& val : code.constants) valueHelpers::mark(val);
     for (auto func : nativeFuncs) func->marked = true;
     for(auto c : nativeClasses) gc->markObj(c);
 }
 
 void runtime::VM::execute() {
-	mainThread->executeBytecode();
+    mainThread->executeBytecode();
 }
 
 bool runtime::VM::allThreadsPaused() {
-	// Another thread might try to add/remove a Thread object while the main thread is waiting for all threads to pause
-	std::scoped_lock<std::mutex> lk(mtx);
-	return threadsPaused == childThreads.size();
+    // Another thread might try to add/remove a Thread object while the main thread is waiting for all threads to pause
+    std::scoped_lock<std::mutex> lk(mtx);
+    return threadsPaused == childThreads.size();
 }
 
 void runtime::VM::pauseAllThreads(){

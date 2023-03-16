@@ -11,41 +11,41 @@ using std::get;
 using namespace valueHelpers;
 
 runtime::Thread::Thread(VM* _vm){
-	stackTop = stack;
-	frameCount = 0;
+    stackTop = stack;
+    frameCount = 0;
     cancelToken.store(false);
     pauseToken.store(false);
-	vm = _vm;
+    vm = _vm;
 }
 
 // Copies the callee and all arguments, otherStack points to the callee, arguments are on top of it on the stack
 void runtime::Thread::startThread(Value* otherStack, int num) {
-	memcpy(stackTop, otherStack, sizeof(Value) * num);
-	stackTop += num;
-	callValue(*otherStack, num - 1);
+    memcpy(stackTop, otherStack, sizeof(Value) * num);
+    stackTop += num;
+    callValue(*otherStack, num - 1);
 }
 
 // Copies value to the stack
 void runtime::Thread::copyVal(Value val) {
-	push(val);
+    push(val);
 }
 
 void runtime::Thread::mark(memory::GarbageCollector* gc) {
-	for (Value* i = stack; i < stackTop; i++) {
-		valueHelpers::mark(*i);
-	}
-	for (int i = 0; i < frameCount; i++) gc->markObj(frames[i].closure);
+    for (Value* i = stack; i < stackTop; i++) {
+        valueHelpers::mark(*i);
+    }
+    for (int i = 0; i < frameCount; i++) gc->markObj(frames[i].closure);
 }
 
 void runtime::Thread::push(Value val) {
-	if (stackTop >= stack + STACK_MAX) {
-		runtimeError("Stack overflow", 1);
-	}
-	*(stackTop++) = val;
+    if (stackTop >= stack + STACK_MAX) {
+        runtimeError("Stack overflow", 1);
+    }
+    *(stackTop++) = val;
 }
 
 Value runtime::Thread::pop() {
-	return *(--stackTop);
+    return *(--stackTop);
 }
 
 void runtime::Thread::popn(int n) {
@@ -62,62 +62,62 @@ void runtime::Thread::runtimeError(string err, int errorCode) {
 }
 
 void runtime::Thread::callValue(Value callee, int8_t argCount) {
-	if (isObj(callee)) {
-		switch (decodeObj(callee)->type) {
-		case object::ObjType::CLOSURE:
-			return callFunc(asClosure(callee), argCount);
-		case object::ObjType::NATIVE: {
-            int8_t arity = asNativeFn(callee)->arity;
-			//if arity is -1 it means that the function takes in a variable number of args
-			if (arity != -1 && argCount != arity) {
-				runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
-			}
-			object::NativeFn native = asNativeFn(callee)->func;
-            native(this, argCount);
-            //ObjNativeFunc is still on the stack and should be popped and replaced with the result
-            stackTop[-2] = stackTop[-1];
-            stackTop--;
-            return;
-		}
-		case object::ObjType::CLASS: {
-			// We do this so if a GC runs we safely update all the pointers(since the stack is considered a root)
-            object::ObjClass* klass = asClass(callee);
-			stackTop[-argCount - 1] = encodeObj(new object::ObjInstance(klass));
-            auto it = klass->methods.find(klass->name);
-			if (it != klass->methods.end()) {
-				return callMethod(it->second, argCount);
-			}
-			else if (argCount != 0) {
-				runtimeError(fmt::format("Class constructor expects 0 arguments but got {}.", argCount), 2);
-			}
-			return;
-		}
-		case object::ObjType::BOUND_METHOD: {
-			//puts the receiver instance in the 0th slot of the current callframe('this' points to the 0th slot)
-			object::ObjBoundMethod* bound = asBoundMethod(callee);
-			stackTop[-argCount - 1] = bound->receiver;
-			return callMethod(bound->method, argCount);
-		}
-		default:
-			break; // Non-callable object type.
-		}
-	}
-	runtimeError("Can only call functions and classes.", 3);
+    if (isObj(callee)) {
+        switch (decodeObj(callee)->type) {
+            case object::ObjType::CLOSURE:
+                return callFunc(asClosure(callee), argCount);
+            case object::ObjType::NATIVE: {
+                int8_t arity = asNativeFn(callee)->arity;
+                //if arity is -1 it means that the function takes in a variable number of args
+                if (arity != -1 && argCount != arity) {
+                    runtimeError(fmt::format("Function {} expects {} arguments but got {}.", asNativeFn(callee)->name, arity, argCount), 2);
+                }
+                object::NativeFn native = asNativeFn(callee)->func;
+                native(this, argCount);
+                //ObjNativeFunc is still on the stack and should be popped and replaced with the result
+                stackTop[-2] = stackTop[-1];
+                stackTop--;
+                return;
+            }
+            case object::ObjType::CLASS: {
+                // We do this so if a GC runs we safely update all the pointers(since the stack is considered a root)
+                object::ObjClass* klass = asClass(callee);
+                stackTop[-argCount - 1] = encodeObj(new object::ObjInstance(klass));
+                auto it = klass->methods.find(klass->name);
+                if (it != klass->methods.end()) {
+                    return callMethod(it->second, argCount);
+                }
+                else if (argCount != 0) {
+                    runtimeError(fmt::format("Class constructor expects 0 arguments but got {}.", argCount), 2);
+                }
+                return;
+            }
+            case object::ObjType::BOUND_METHOD: {
+                //puts the receiver instance in the 0th slot of the current callframe('this' points to the 0th slot)
+                object::ObjBoundMethod* bound = asBoundMethod(callee);
+                stackTop[-argCount - 1] = bound->receiver;
+                return callMethod(bound->method, argCount);
+            }
+            default:
+                break; // Non-callable object type.
+        }
+    }
+    runtimeError("Can only call functions and classes.", 3);
 }
 
 void runtime::Thread::callFunc(object::ObjClosure* closure, int8_t argCount) {
-	if (argCount != closure->func->arity) {
-		runtimeError(fmt::format("Expected {} arguments for function call but got {}.", closure->func->arity, argCount), 2);
-	}
+    if (argCount != closure->func->arity) {
+        runtimeError(fmt::format("Expected {} arguments for function call but got {}.", closure->func->arity, argCount), 2);
+    }
 
-	if (frameCount == FRAMES_MAX) {
-		runtimeError("Stack overflow.", 1);
-	}
+    if (frameCount == FRAMES_MAX) {
+        runtimeError("Stack overflow.", 1);
+    }
 
-	CallFrame* frame = &frames[frameCount++];
-	frame->closure = closure;
-	frame->ip = &vm->code.bytecode[closure->func->bytecodeOffset];
-	frame->slots = stackTop - argCount - 1;
+    CallFrame* frame = &frames[frameCount++];
+    frame->closure = closure;
+    frame->ip = &vm->code.bytecode[closure->func->bytecodeOffset];
+    frame->slots = stackTop - argCount - 1;
 }
 
 void runtime::Thread::callMethod(object::Method method, int8_t argCount) {
@@ -147,7 +147,7 @@ void runtime::Thread::callMethod(object::Method method, int8_t argCount) {
 }
 
 static object::ObjUpval* captureUpvalue(Value* local) {
-	return asUpvalue(*local);
+    return asUpvalue(*local);
 }
 
 inline static object::ObjClass* getClass(vector<object::ObjClass*>& classes, Value val){
@@ -165,39 +165,41 @@ inline static object::ObjClass* getClass(vector<object::ObjClass*>& classes, Val
 }
 
 void runtime::Thread::bindMethod(object::ObjClass* klass, object::ObjString* name, Value receiver) {
-	auto it = klass->methods.find(name);
-	if (it == klass->methods.end()) {
+    auto it = klass->methods.find(name);
+    if (it == klass->methods.end()) {
         runtimeError(fmt::format("Class '{}' doesn't contain method '{}'", klass->name->str, name->str), 4);
     }
-	//peek(0) to get the ObjInstance
-	auto* bound = new object::ObjBoundMethod(receiver, it->second);
+    //peek(0) to get the ObjInstance
+    auto* bound = new object::ObjBoundMethod(receiver, it->second);
     // Replace top of the stack
     push(encodeObj(bound));
 }
 
 void runtime::Thread::invoke(object::ObjString* fieldName, int8_t argCount) {
-	Value receiver = peek(argCount);
+    Value receiver = peek(argCount);
     ObjClass* klass = nullptr;
 
-	if (isInstance(receiver)) {
+    if (isInstance(receiver)) {
         object::ObjInstance* instance = asInstance(receiver);
         auto it = instance->fields.find(fieldName);
+        // Invoke can be used on functions that are part of a struct or in a instances field
+        // when not used for methods they need to replace the instance
         if (it != instance->fields.end()) {
             stackTop[-argCount - 1] = it->second;
             return callValue(it->second, argCount);
         }
         klass = instance->klass;
-	}else klass = getClass(vm->nativeClasses, receiver);
+    }else klass = getClass(vm->nativeClasses, receiver);
     invokeFromClass(klass, fieldName, argCount);
 }
 
 void runtime::Thread::invokeFromClass(object::ObjClass* klass, object::ObjString* methodName, int8_t argCount) {
-	auto it = klass->methods.find(methodName);
-	if (it == klass->methods.end()) {
+    auto it = klass->methods.find(methodName);
+    if (it == klass->methods.end()) {
         runtimeError(fmt::format("Class '{}' doesn't contain method '{}'.", klass->name->str, methodName->str), 4);
     }
-	// The bottom of the call stack will contain the receiver instance
-	callMethod(it->second, argCount);
+    // The bottom of the call stack will contain the receiver instance
+    callMethod(it->second, argCount);
 }
 
 static int32_t checkArrayBounds(runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
@@ -304,45 +306,44 @@ __attribute__((noinline)) static void printRuntimeError(CallFrame* frames, uint1
 #pragma endregion
 
 void runtime::Thread::executeBytecode() {
-
-	#ifdef DEBUG_TRACE_EXECUTION
-	std::cout << "-------------Code execution starts-------------\n";
-	#endif // DEBUG_TRACE_EXECUTION
-	// C++ is more likely to put these locals in registers which speeds things up
-	CallFrame* frame = &frames[frameCount - 1];
+    #ifdef DEBUG_TRACE_EXECUTION
+    std::cout << "-------------Code execution starts-------------\n";
+    #endif // DEBUG_TRACE_EXECUTION
+    // C++ is more likely to put these locals in registers which speeds things up
+    CallFrame* frame = &frames[frameCount - 1];
     byte* ip = &vm->code.bytecode[frame->closure->func->bytecodeOffset];
-	Value* slotStart = frame->slots;
+    Value* slotStart = frame->slots;
     uint64_t constantOffset = frame->closure->func->constantsOffset;
     Value* constants = vm->code.constants.data();
 
 
-	#pragma region Helpers & Macros
-	#define READ_BYTE() (*ip++)
-	#define READ_SHORT() (ip += 2, static_cast<uint16_t>((ip[-2] << 8) | ip[-1]))
-	#define READ_CONSTANT() (constants[constantOffset + READ_BYTE()])
-	#define READ_CONSTANT_LONG() (constants[constantOffset + READ_SHORT()])
-	#define READ_STRING() (asString(READ_CONSTANT()))
-	#define READ_STRING_LONG() (asString(READ_CONSTANT_LONG()))
+    #pragma region Helpers & Macros
+    #define READ_BYTE() (*ip++)
+    #define READ_SHORT() (ip += 2, static_cast<uint16_t>((ip[-2] << 8) | ip[-1]))
+    #define READ_CONSTANT() (constants[constantOffset + READ_BYTE()])
+    #define READ_CONSTANT_LONG() (constants[constantOffset + READ_SHORT()])
+    #define READ_STRING() (asString(READ_CONSTANT()))
+    #define READ_STRING_LONG() (asString(READ_CONSTANT_LONG()))
 
-	// Stores the ip to the current frame before a new one is pushed
-	#define STORE_FRAME() frame->ip = ip
-	// When a frame is pushed/popped load its variables to the locals
-	#define LOAD_FRAME() (													\
-	frame = &frames[frameCount - 1],										\
-	slotStart = frame->slots,												\
-	ip = frame->ip,                                                         \
+    // Stores the ip to the current frame before a new one is pushed
+    #define STORE_FRAME() frame->ip = ip
+    // When a frame is pushed/popped load its variables to the locals
+    #define LOAD_FRAME() (													\
+    frame = &frames[frameCount - 1],										\
+    slotStart = frame->slots,												\
+    ip = frame->ip,                                                         \
     constantOffset = frame->closure->func->constantsOffset)
 
-	#define BINARY_OP(op)                                                                                                                               \
-        Value a = peek(1), b = peek(0);                                                                                                                 \
-        if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-        *(--stackTop - 1) = encodeNumber(decodeNumber(a) op decodeNumber(b))                                                                            \
+    #define BINARY_OP(op)                                                                                                                           \
+    Value a = peek(1), b = peek(0);                                                                                                                 \
+    if (!isNumber(a) || !isNumber(b)) { runtimeError(fmt::format("Operands must be numbers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+    *(--stackTop - 1) = encodeNumber(decodeNumber(a) op decodeNumber(b))                                                                            \
 
 
-	#define INT_BINARY_OP(op)                                                                                                                      \
-        Value a = peek(1), b = peek(0);                                                                                                            \
-        if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
-        *(--stackTop - 1) = encodeNumber(decodeInt(a) op decodeInt(b));                                                                            \
+    #define INT_BINARY_OP(op)                                                                                                                  \
+    Value a = peek(1), b = peek(0);                                                                                                            \
+    if (!isInt(a) || !isInt(b)) { runtimeError(fmt::format("Operands must be integers, got '{}' and '{}'.", typeToStr(a), typeToStr(b)), 3); } \
+    *(--stackTop - 1) = encodeNumber(decodeInt(a) op decodeInt(b));                                                                            \
 
     #pragma endregion
 
@@ -447,17 +448,11 @@ void runtime::Thread::executeBytecode() {
                     case 3: {
                         byte index = READ_BYTE();
                         Globalvar &var = vm->globals[index];
-                        if (!var.isDefined) {
-                            runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                        }
                         INCREMENT(var.val);
                     }
                     case 4: {
                         byte index = READ_SHORT();
                         Globalvar &var = vm->globals[index];
-                        if (!var.isDefined) {
-                            runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                        }
                         INCREMENT(var.val);
                     }
                     case 5:[[fallthrough]];
@@ -626,18 +621,12 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::GET_GLOBAL:{
                 byte index = READ_BYTE();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 push(var.val);
                 DISPATCH();
             }
             case +OpCode::GET_GLOBAL_LONG:{
                 uInt index = READ_SHORT();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 push(var.val);
                 DISPATCH();
             }
@@ -645,18 +634,12 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::SET_GLOBAL:{
                 byte index = READ_BYTE();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 var.val = peek(0);
                 DISPATCH();
             }
             case +OpCode::SET_GLOBAL_LONG:{
                 uInt index = READ_SHORT();
                 Globalvar &var = vm->globals[index];
-                if (!var.isDefined) {
-                    runtimeError(fmt::format("Undefined variable '{}'.", var.name), 5);
-                }
                 var.val = peek(0);
                 DISPATCH();
             }
@@ -1112,12 +1095,12 @@ void runtime::Thread::executeBytecode() {
         STORE_FRAME();
         printRuntimeError(frames, frameCount, vm, errCode, errorString);
     }
-	#undef READ_BYTE
-	#undef READ_SHORT
-	#undef READ_CONSTANT
-	#undef READ_CONSTANT_LONG
-	#undef READ_STRING
-	#undef READ_STRING_LONG
-	#undef BINARY_OP
-	#undef INT_BINARY_OP
+#undef READ_BYTE
+#undef READ_SHORT
+#undef READ_CONSTANT
+#undef READ_CONSTANT_LONG
+#undef READ_STRING
+#undef READ_STRING_LONG
+#undef BINARY_OP
+#undef INT_BINARY_OP
 }

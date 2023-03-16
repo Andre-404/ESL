@@ -66,7 +66,9 @@ void AST::MacroExpander::visitStructLiteralExpr(StructLiteral* expr) {
 }
 void AST::MacroExpander::visitLiteralExpr(LiteralExpr* expr) {}
 void AST::MacroExpander::visitFuncLiteral(FuncLiteral* expr) {
-    expand(expr->body);
+    for (auto& line : expr->body->statements) {
+        expand(line);
+    }
 }
 void AST::MacroExpander::visitSuperExpr(SuperExpr* expr) {}
 void AST::MacroExpander::visitModuleAccessExpr(ModuleAccessExpr* expr) {}
@@ -98,7 +100,11 @@ void AST::MacroExpander::visitVarDecl(VarDecl* decl) {
     expand(decl->value);
 }
 
-void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) { expand(decl->body); }
+void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) {
+    for (auto& line : decl->body->statements) {
+        expand(line);
+    }
+}
 void AST::MacroExpander::visitClassDecl(ClassDecl* decl) {
     for (auto& method : decl->methods) {
         for (auto& line : method.method->body->statements) {
@@ -261,7 +267,7 @@ vector<Token> AST::Macro::expandLoops(vector<Token>& readFrom, int begin, int en
                 }
                 i++;
             }
-            // Loops
+                // Loops
             else if (check(i + 1, TokenType::LEFT_PAREN)){
                 loops++;
                 int loopStart = i + 2;
@@ -391,7 +397,7 @@ bool AST::MatchPattern::interpret(vector<Token> &args) const {
                 catch (ParserException& e) {}
                 parser->parseMode = ParseMode::Standard;
             }
-            // Expression
+                // Expression
             else {
                 for (int n_i : exprConsumeTransitions[i]){
                     transition(n_i, j + 4, TransitionType::ConsumeExpr);
@@ -562,7 +568,7 @@ void AST::MatchPattern::processPattern() {
                         addEdge(endParenIdx, i + 1);
                         addEdge(endParenIdx, endParenIdx + 1);
                     }
-                    // Non-skippable loop
+                        // Non-skippable loop
                     else if (check(i, TokenType::PLUS)){
                         // Start loop
                         tokenTypes[startParenIdx - 1] = MatcherTokenType::Ignore;
@@ -579,7 +585,7 @@ void AST::MatchPattern::processPattern() {
                         addEdge(endParenIdx, i + 1);
                         addEdge(endParenIdx, endParenIdx + 1);
                     }
-                    // Skippable sub-pattern
+                        // Skippable sub-pattern
                     else if (check(i, TokenType::QUESTIONMARK)){
                         // Start / Skip loop
                         tokenTypes[startParenIdx - 1] = MatcherTokenType::Skippable;

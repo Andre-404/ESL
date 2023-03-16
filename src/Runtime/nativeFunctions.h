@@ -3,26 +3,6 @@
 #include "../Objects/objects.h"
 
 namespace runtime {
-    struct BuiltinMethod{
-        object::NativeFn func;
-        // Arity of -1 means that the native function takes in a variable number of arguments
-        int8_t arity;
-
-        BuiltinMethod(object::NativeFn _func, int8_t _arity){
-            func = _func;
-            arity = _arity;
-        }
-    };
-    struct BuiltinClass {
-        // Only store raw native function pointers, at runtime an object::ObjBoundNative is created and the caller is bound to it
-        ankerl::unordered_dense::map<object::ObjString*, BuiltinMethod> methods;
-
-        BuiltinClass() = default;
-        BuiltinClass(BuiltinClass* parent){
-            methods.insert(parent->methods.begin(), parent->methods.end());
-        }
-    };
-
     enum class Builtin{
         STRING,
         ARRAY,
