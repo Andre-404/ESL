@@ -11,9 +11,11 @@ namespace AST {
 		void visitAssignmentExpr(AssignmentExpr* expr);
 		void visitSetExpr(SetExpr* expr);
 		void visitConditionalExpr(ConditionalExpr* expr);
+        void visitRangeExpr(RangeExpr* expr);
 		void visitBinaryExpr(BinaryExpr* expr);
 		void visitUnaryExpr(UnaryExpr* expr);
 		void visitCallExpr(CallExpr* expr);
+        void visitNewExpr(NewExpr* expr);
 		void visitFieldAccessExpr(FieldAccessExpr* expr);
 		void visitAsyncExpr(AsyncExpr* expr);
 		void visitAwaitExpr(AwaitExpr* expr);
@@ -24,6 +26,7 @@ namespace AST {
 		void visitSuperExpr(SuperExpr* expr);
 		void visitModuleAccessExpr(ModuleAccessExpr* expr);
         void visitMacroExpr(MacroExpr* expr);
+
 
 		void visitVarDecl(VarDecl* decl);
 		void visitFuncDecl(FuncDecl* decl);

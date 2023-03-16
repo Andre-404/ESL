@@ -3,9 +3,11 @@
 void AST::ASTProbe::visitAssignmentExpr(AssignmentExpr* expr){}
 void AST::ASTProbe::visitSetExpr(SetExpr* expr){}
 void AST::ASTProbe::visitConditionalExpr(ConditionalExpr* expr){}
+void AST::ASTProbe::visitRangeExpr(RangeExpr *expr) {}
 void AST::ASTProbe::visitBinaryExpr(BinaryExpr* expr){}
 void AST::ASTProbe::visitUnaryExpr(UnaryExpr* expr) {}
 void AST::ASTProbe::visitCallExpr(CallExpr* expr) {}
+void AST::ASTProbe::visitNewExpr(NewExpr* expr) {}
 void AST::ASTProbe::visitFieldAccessExpr(FieldAccessExpr* expr) {}
 void AST::ASTProbe::visitAsyncExpr(AsyncExpr* expr) {}
 void AST::ASTProbe::visitAwaitExpr(AwaitExpr* expr) {}

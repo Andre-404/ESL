@@ -15,6 +15,7 @@ namespace memory {
 	GarbageCollector::GarbageCollector() {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
+        vm = nullptr;
 
 		shouldCollect.store(false);
 	}
@@ -22,7 +23,10 @@ namespace memory {
 	void* GarbageCollector::alloc(uInt64 size) {
 		std::scoped_lock<std::mutex> lk(allocMtx);
 		heapSize += size;
-		if (heapSize > heapSizeLimit) shouldCollect = true;
+		if (heapSize > heapSizeLimit) {
+            shouldCollect = true;
+            if(vm) vm->pauseAllThreads();
+        }
 		byte* block = nullptr;
 		try {
 			block = new byte[size];
@@ -34,7 +38,7 @@ namespace memory {
 		return block;
 	}
 
-	void GarbageCollector::collect(runtime::VM* vm) {
+	void GarbageCollector::collect() {
 		markRoots(vm);
 		mark();
 		sweep();
@@ -44,6 +48,7 @@ namespace memory {
 			std::scoped_lock<std::mutex> lk(vm->pauseMtx);
 			shouldCollect.store(false);
 		}
+        vm->unpauseAllThreads();
 		vm->childThreadsCv.notify_all();
 	}
 
@@ -71,23 +76,30 @@ namespace memory {
 	}
 
 	void GarbageCollector::markRoots(compileCore::Compiler* compiler) {
-        for(Value& val : compiler->mainCodeBlock.constants) val.mark();
+        for(Value& val : compiler->mainCodeBlock.constants) valueHelpers::mark(val);
+        for(auto& val : compiler->globals) valueHelpers::mark(val.val);
         for(auto func : compiler->nativeFuncs) func->marked = true;
         compiler->mainBlockFunc->marked = true;
+        gc.markObj(compiler->baseClass);
 	}
 
 	void GarbageCollector::sweep() {
 		heapSize = 0;
+        for(auto it = interned.cbegin(); it != interned.cend(); ){
+            if(!it->second->marked) it = interned.erase(it);
+            else it = std::next(it);
+        }
 		for (int i = objects.size() - 1; i >= 0; i--) {
 			object::Obj* obj = objects[i];
 			if (!obj->marked) {
-				obj->~Obj();
+				delete obj;
 				objects.erase(objects.begin() + i);
 				continue;
 			}
 			heapSize += obj->getSize();
 			obj->marked = false;
 		}
+
 	}
 
 	void GarbageCollector::markObj(object::Obj* object) {

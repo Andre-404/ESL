@@ -1,4 +1,5 @@
 #include "MacroExpander.h"
+#include <algorithm>
 
 AST::MacroExpander::MacroExpander(Parser* _parser) {
     parser = _parser;
@@ -19,8 +20,12 @@ void AST::MacroExpander::visitAssignmentExpr(AssignmentExpr* expr) {
 void AST::MacroExpander::visitSetExpr(SetExpr* expr) { expand(expr->value); }
 void AST::MacroExpander::visitConditionalExpr(ConditionalExpr* expr) {
     expand(expr->condition);
-    expand(expr->thenBranch);
-    expand(expr->elseBranch);
+    expand(expr->mhs);
+    expand(expr->rhs);
+}
+void AST::MacroExpander::visitRangeExpr(RangeExpr *expr) {
+    expand(expr->start);
+    expand(expr->end);
 }
 void AST::MacroExpander::visitBinaryExpr(BinaryExpr* expr) {
     expand(expr->left);
@@ -30,10 +35,18 @@ void AST::MacroExpander::visitUnaryExpr(UnaryExpr* expr) {
     expand(expr->right);
 }
 void AST::MacroExpander::visitCallExpr(CallExpr* expr) {
+    expand(expr->callee);
     for (auto& arg : expr->args) {
         expand(arg);
     }
 }
+void AST::MacroExpander::visitNewExpr(NewExpr* expr) {
+    expand(expr->call->callee);
+    for (auto& arg : expr->call->args) {
+        expand(arg);
+    }
+}
+
 void AST::MacroExpander::visitFieldAccessExpr(FieldAccessExpr* expr) {}
 void AST::MacroExpander::visitAsyncExpr(AsyncExpr* expr) {
     for (auto& arg : expr->args) {
@@ -88,7 +101,9 @@ void AST::MacroExpander::visitVarDecl(VarDecl* decl) {
 void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) { expand(decl->body); }
 void AST::MacroExpander::visitClassDecl(ClassDecl* decl) {
     for (auto& method : decl->methods) {
-        expand(method);
+        for (auto& line : method.method->body->statements) {
+            expand(line);
+        }
     }
 }
 
@@ -138,14 +153,6 @@ AST::Macro::Macro() {
 AST::Macro::Macro(Token _name, Parser *_parser) {
     name = _name;
     parser = _parser;
-}
-
-// TODO: remove later?
-void debugTokens(vector<Token> tokens){
-    for (const auto& token : tokens){
-        std::cout << token.getLexeme() << " ";
-    }
-    std::cout << "\n";
 }
 
 AST::ASTNodePtr AST::Macro::expand(vector<Token> &args, const Token &callerToken) {

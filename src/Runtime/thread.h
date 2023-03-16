@@ -14,35 +14,34 @@ namespace runtime {
 		void mark(memory::GarbageCollector* gc);
 		void copyVal(Value val);
 
+
         // Used by Thread and native functions
         VM* vm;
         void push(Value val);
         Value pop();
         void popn(int n);
-        Value& peek(int depth);
+        Value peek(int8_t depth);
         std::atomic<bool> cancelToken;
+        // Tells the thread that it should pause it's execution, merely setting this to true doesn't pause
+        std::atomic<bool> pauseToken;
+        Value* stackTop;
 
         void runtimeError(string err, int errorCode);
 
-        void callValue(Value& callee, int argCount);
-	private:
+        void callValue(Value callee, int8_t argCount);
+
+    private:
 		Value stack[STACK_MAX];
-		Value* stackTop;
 		CallFrame frames[FRAMES_MAX];
-		int frameCount;
+        uint16_t frameCount;
 
         string errorString;
 
-		void call(object::ObjClosure* function, int argCount);
+		void callFunc(object::ObjClosure* function, int8_t argCount);
+        void callMethod(object::Method method, int8_t argCount);
 
-		void defineMethod(string& name);
-        // True if method exists and was bound to receiver
-		bool bindMethod(object::ObjClass* klass, string& name);
-		void invoke(string& fieldName, int argCount);
-        // True if method exists and was invoked
-		bool invokeFromClass(object::ObjClass* klass, string& fieldName, int argCount);
-
-        void bindMethodToPrimitive(Value& receiver, string& methodName);
-        BuiltinMethod& findNativeMethod(Value& receiver, string& name);
+		void bindMethod(object::ObjClass* klass, object::ObjString* name, Value receiver);
+		void invoke(object::ObjString* fieldName, int8_t argCount);
+		void invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int8_t argCount);
 	};
 }

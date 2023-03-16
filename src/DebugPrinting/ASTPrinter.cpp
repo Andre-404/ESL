@@ -22,9 +22,9 @@ void ASTPrinter::visitSetExpr(SetExpr* expr) {
 void ASTPrinter::visitConditionalExpr(ConditionalExpr* expr) {
 	expr->condition->accept(this);
 	cout << " ? ";
-	expr->thenBranch->accept(this);
+	expr->mhs->accept(this);
 	cout << " : ";
-	expr->elseBranch->accept(this);
+	expr->rhs->accept(this);
 }
 
 void ASTPrinter::visitBinaryExpr(BinaryExpr* expr) {
@@ -49,6 +49,11 @@ void ASTPrinter::visitCallExpr(CallExpr* expr) {
 		cout << ", ";
 	}
 	cout << ")";
+}
+
+void ASTPrinter::visitNewExpr(NewExpr* expr){
+    cout<<"new ";
+    expr->call->accept(this);
 }
 
 void ASTPrinter::visitFieldAccessExpr(FieldAccessExpr* expr) {
@@ -93,8 +98,8 @@ void ASTPrinter::visitLiteralExpr(LiteralExpr* expr) {
 
 void ASTPrinter::visitFuncLiteral(FuncLiteral* expr) {
 	cout << "func literal ( ";
-	for (Token arg : expr->args) {
-		cout << arg.getLexeme() << ", ";
+	for (auto arg : expr->args) {
+		cout << arg.name.getLexeme() << ", ";
 	}
 	cout << ") ";
 	expr->body->accept(this);
@@ -120,7 +125,7 @@ void ASTPrinter::visitMacroExpr(MacroExpr* expr)
 
 
 void ASTPrinter::visitVarDecl(VarDecl* decl) {
-	cout << "var decl: " << decl->name.getLexeme() << " = ";
+	cout << "var decl: " << decl->var.name.getLexeme() << " = ";
 	if (decl->value != nullptr) {
 		decl->value->accept(this);
 	}
@@ -132,8 +137,8 @@ void ASTPrinter::visitVarDecl(VarDecl* decl) {
 
 void ASTPrinter::visitFuncDecl(FuncDecl* decl) {
 	cout << "func " << decl->name.getLexeme() << "( ";
-	for (Token arg : decl->args) {
-		cout << arg.getLexeme() << ", ";
+	for (auto arg : decl->args) {
+		cout << arg.name.getLexeme() << ", ";
 	}
 	cout << ") ";
 	decl->body->accept(this);
@@ -142,11 +147,11 @@ void ASTPrinter::visitFuncDecl(FuncDecl* decl) {
 
 void ASTPrinter::visitClassDecl(ClassDecl* decl) {
 	cout << "class " << decl->name.getLexeme()
-		<< (decl->inherits ? ":" : "");
-	if(decl->inherits) decl->inheritedClass->accept(this);
+		<< (decl->inheritedClass ? ":" : "");
+	if(decl->inheritedClass) decl->inheritedClass->accept(this);
 	cout << "{ " << endl;
-	for (shared_ptr<ASTNode> method : decl->methods) {
-		method->accept(this);
+	for (auto& method : decl->methods) {
+		method.method->accept(this);
 	}
 	cout << "}" << endl;
 }

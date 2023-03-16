@@ -3,9 +3,14 @@
 #include <unordered_set>
 #include <iostream>
 #include "../Includes/fmt/format.h"
+#include "../codegen/valueHelpersInline.cpp"
+#include "upvalueFinder.h"
+#include "../Runtime/thread.h"
+#include "../Runtime/nativeFunctions.h"
 
 using namespace compileCore;
 using namespace object;
+using namespace valueHelpers;
 
 #ifdef COMPILER_USE_LONG_INSTRUCTION
 #define SHORT_CONSTANT_LIMIT 0
@@ -24,22 +29,24 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 	localCount = 0;
 	scopeDepth = 0;
 	line = 0;
-	//first slot is claimed for function name
-	Local* local = &locals[localCount++];
-	local->depth = 0;
-	if (type == FuncType::TYPE_CONSTRUCTOR || type == FuncType::TYPE_METHOD) {
-		local->name = "this";
-	}
-	else {
-		local->name = "";
+	// If a constructor or a method is being compiled, it implicitly declares "this" as the first slot
+	if (!(type == FuncType::TYPE_CONSTRUCTOR || type == FuncType::TYPE_METHOD)) {
+        // First slot is claimed for function name
+        Local* local = &locals[localCount++];
+        local->depth = 0;
+        local->name = "";
 	}
 	chunk = Chunk();
 	func = new ObjFunc();
 }
 
-
 Compiler::Compiler(vector<CSLModule*>& _units) {
+    upvalueFinder::UpvalueFinder f(_units);
 	current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
+    baseClass = new object::ObjClass("base class", nullptr);
+    baseClass->methods.insert_or_assign(ObjString::createStr("to_string"), new object::ObjNativeFunc([](runtime::Thread* thread, int8_t argCount){
+        thread->push(encodeObj(object::ObjString::createStr(valueHelpers::toString(thread->pop()))));
+    }, 0, "to_string"));
 	currentClass = nullptr;
 	curUnitIndex = 0;
 	curGlobalIndex = 0;
@@ -50,8 +57,9 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	for (CSLModule* unit : units) {
 		curUnit = unit;
 		sourceFiles.push_back(unit->file);
-		for (const Token& token : unit->topDeclarations) {
-			globals.emplace_back(token.getLexeme(), Value::nil());
+		for (const auto decl : unit->topDeclarations) {
+			globals.emplace_back(decl->getName().getLexeme(), encodeNil());
+            definedGlobals.push_back(false);
 		}
 		for (int i = 0; i < unit->stmts.size(); i++) {
 			//doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
@@ -71,6 +79,16 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 	for (CSLModule* unit : units) delete unit;
 }
 
+static Token probeToken(AST::ASTNodePtr ptr){
+    AST::ASTProbe p;
+    ptr->accept(&p);
+    return p.getProbedToken();
+}
+
+static bool isLiteralThis(AST::ASTNodePtr ptr){
+    if(ptr->type != AST::ASTType::LITERAL) return false;
+    return probeToken(ptr).type == TokenType::THIS;
+}
 
 void Compiler::visitAssignmentExpr(AST::AssignmentExpr* expr) {
 	//rhs of the expression is on the top of the stack and stays there, since assignment is an expression
@@ -82,86 +100,99 @@ void Compiler::visitSetExpr(AST::SetExpr* expr) {
 	//different behaviour for '[' and '.'
 	updateLine(expr->accessor);
 
-	switch (expr->accessor.type) {
-	case TokenType::LEFT_BRACKET: {
-		//allows for things like object["field" + "name"]
-		expr->value->accept(this);
-		expr->callee->accept(this);
-		expr->field->accept(this);
-		emitByte(+OpCode::SET);
-		break;
-	}
-	case TokenType::DOT: {
-		//the "." is always followed by a field name as a string, emitting a constant speeds things up and avoids unnecessary stack manipulation
-		expr->value->accept(this);
-		expr->callee->accept(this);
-		uInt16 name = identifierConstant(dynamic_cast<AST::LiteralExpr*>(expr->field.get())->token);
-		if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_PROPERTY, name);
-		else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, name);
-		break;
-	}
-	}
+    if(expr->accessor.type == TokenType::LEFT_BRACKET){
+        // Allows for things like object["field" + "name"]
+        expr->value->accept(this);
+        expr->callee->accept(this);
+        expr->field->accept(this);
+        emitByte(+OpCode::SET);
+        return;
+    }
+    if(resolveThis(expr)) return;
+    // The "." is always followed by a field name as a string, emitting a constant speeds things up and avoids unnecessary stack manipulation
+    expr->value->accept(this);
+    expr->callee->accept(this);
+    uint16_t name = identifierConstant(probeToken(expr->field));
+    if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_PROPERTY, name);
+    else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, name);
 }
 
 void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
 	//compile condition and emit a jump over then branch if the condition is false
 	expr->condition->accept(this);
 	int thenJump = emitJump(+OpCode::JUMP_IF_FALSE_POP);
-	expr->thenBranch->accept(this);
+	expr->mhs->accept(this);
 	//prevents fallthrough to else branch
 	int elseJump = emitJump(+OpCode::JUMP);
 	patchJump(thenJump);
 	//only emit code if else branch exists, since its optional
-	if (expr->elseBranch) expr->elseBranch->accept(this);
+	if (expr->rhs) expr->rhs->accept(this);
 	patchJump(elseJump);
+}
+
+void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
+    auto index = nativeFuncNames["create_range"];
+    emitByteAnd16Bit(+OpCode::GET_NATIVE, index);
+    if(expr->start) expr->start->accept(this);
+    else emitConstant(encodeNumber(-std::numeric_limits<double>::max()));
+    if(expr->end) expr->end->accept(this);
+    else emitConstant(encodeNumber(std::numeric_limits<double>::max()));
+    emitConstant(encodeBool(expr->endInclusive));
+    emitBytes(+OpCode::CALL, 3);
 }
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 	updateLine(expr->op);
 
 	expr->left->accept(this);
-	if (expr->op.type == TokenType::OR) {
-		//if the left side is true, we know that the whole expression will eval to true
-		int jump = emitJump(+OpCode::JUMP_IF_TRUE);
-		//pop the left side and eval the right side, right side result becomes the result of the whole expression
-		emitByte(+OpCode::POP);
-		expr->right->accept(this);
-		patchJump(jump);//left side of the expression becomes the result of the whole expression
-		return;
-	}
-	else if (expr->op.type == TokenType::AND) {
-		//at this point we have the left side of the expression on the stack, and if it's false we skip to the end
-		//since we know the whole expression will evaluate to false
-		int jump = emitJump(+OpCode::JUMP_IF_FALSE);
-		//if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
-		//whole expression
-		emitByte(+OpCode::POP);
-		expr->right->accept(this);
-		patchJump(jump);
-		return;
-	}
-
 	uint8_t op = 0;
 	switch (expr->op.type) {
-		//take in double or string(in case of add)
+  case TokenType::OR:{
+      //if the left side is true, we know that the whole expression will eval to true
+      int jump = emitJump(+OpCode::JUMP_IF_TRUE);
+      //pop the left side and eval the right side, right side result becomes the result of the whole expression
+      emitByte(+OpCode::POP);
+      expr->right->accept(this);
+      patchJump(jump);//left side of the expression becomes the result of the whole expression
+      return;
+  }
+  case TokenType::AND:{
+      //at this point we have the left side of the expression on the stack, and if it's false we skip to the end
+      //since we know the whole expression will evaluate to false
+      int jump = emitJump(+OpCode::JUMP_IF_FALSE);
+      //if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
+      //whole expression
+      emitByte(+OpCode::POP);
+      expr->right->accept(this);
+      patchJump(jump);
+      return;
+  }
+  case TokenType::INSTANCEOF:{
+      auto klass = getClassFromExpr(expr->right);
+      uint16_t index = makeConstant(encodeObj(klass));
+      emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
+      return;
+  }
+	//take in double or string(in case of add)
 	case TokenType::PLUS:	op = +OpCode::ADD; break;
 	case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
 	case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
 	case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
-		//for these operators, a check is preformed to confirm both numbers are integers, not decimals
+	//for these operators, a check is preformed to confirm both numbers are integers, not decimals
 	case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
 	case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
 	case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
 	case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
 	case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
 	case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
-		//these return bools and use an epsilon value when comparing
-	case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
-	case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
-	case TokenType::GREATER:		 op = +OpCode::GREATER; break;
-	case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
-	case TokenType::LESS:			 op = +OpCode::LESS; break;
-	case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+  //these return bools and use an epsilon value when comparing
+  case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
+  case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
+  case TokenType::GREATER:		 op = +OpCode::GREATER; break;
+  case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
+  case TokenType::LESS:			 op = +OpCode::LESS; break;
+  case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+  default: error(expr->op, "Unrecognized token in binary expression.");
 	}
 	expr->right->accept(this);
 	emitByte(op);
@@ -174,36 +205,55 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 	if (expr->op.type == TokenType::INCREMENT || expr->op.type == TokenType::DECREMENT) {
 		int arg = -1;
 		//type definition and arg size
-		//0: local(8bit index), 1: upvalue(8bit index), 2: global(8bit constant), 3: global(16bit constant)
-		//4: dot access(8bit constant), 5: dot access(16bit constant), 6: field access(none, field is compiled to stack)
+		//0: local(8bit index), 1: local upvalue(8bit index), 2: upvalue(8bit index), 3: global(8bit constant), 4: global(16bit constant)
+		//5: dot access(8bit constant), 6: dot access(16bit constant), 7: field access(none, field is compiled to stack)
 		byte type = 0;
 		if (expr->right->type == AST::ASTType::LITERAL) {
 			//if a variable is being incremented, first get what kind of variable it is(local, upvalue or global)
 			//also get argument(local: stack position, upvalue: upval position in func, global: name constant index)
-			AST::LiteralExpr* left = dynamic_cast<AST::LiteralExpr*>(expr->right.get());
+			Token token = probeToken(expr->right);
 
-			updateLine(left->token);
-			arg = resolveLocal(left->token);
-			if (arg != -1) type = 0;
-			else if ((arg = resolveUpvalue(current, left->token)) != -1) type = 1;
-			else if((arg = resolveGlobal(left->token, true)) != -1){
-				//all global variables have a numerical prefix which indicates which source file they came from, used for scoping
-				type = arg > SHORT_CONSTANT_LIMIT ? 3 : 2;
-			}else error(left->token, fmt::format("Variable '{}' isn't declared.", left->token.getLexeme()));
+			updateLine(token);
+			arg = resolveLocal(token);
+			if (arg != -1) {
+                type = 0;
+                if(current->locals[arg].isLocalUpvalue) type = 1;
+            }
+            else if ((arg = resolveUpvalue(current, token)) != -1) type = 2;
+            else if((arg = resolveClassField(token, true)) != -1){
+                if(current->type == FuncType::TYPE_FUNC) error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
+                namedVar(syntheticToken("this"), false);
+                type = arg > SHORT_CONSTANT_LIMIT ? 6 : 5;
+            }
+			else if((arg = resolveGlobal(token, true)) != -1){
+                if(arg == -2) error(token, fmt::format("Trying to access variable '{}' before it's initialized.", token.getLexeme()));
+				if(!definedGlobals[arg]) error(token, fmt::format("Use of undefined variable '{}'.", token.getLexeme()));
+				type = arg > SHORT_CONSTANT_LIMIT ? 4 : 3;
+			}
+            else error(token, fmt::format("Variable '{}' isn't declared.", token.getLexeme()));
 		}
 		else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
-			//if a field is being incremented, compile the object, and then if it's not a dot access also compile the field
-			AST::FieldAccessExpr* left = dynamic_cast<AST::FieldAccessExpr*>(expr->right.get());
+			// If a field is being incremented, compile the object, and then if it's not a dot access also compile the field
+			auto left = std::static_pointer_cast<AST::FieldAccessExpr>(expr->right);
 			updateLine(left->accessor);
 			left->callee->accept(this);
 
 			if (left->accessor.type == TokenType::DOT) {
-				arg = identifierConstant(dynamic_cast<AST::LiteralExpr*>(left->field.get())->token);
-				type = arg > SHORT_CONSTANT_LIMIT ? 5 : 4;
+                // Little check to see if field access is to 'this', in which case the correct(public/private) name must be chosen
+                if(isLiteralThis(left->callee)){
+                    Token name = probeToken(left->field);
+                    int res = resolveClassField(name, false);
+                    if(res != -1) {
+                        namedVar(syntheticToken("this"), false);
+                        arg = res;
+                    }
+                }
+				else arg = identifierConstant(probeToken(left->field));
+				type = arg > SHORT_CONSTANT_LIMIT ? 6 : 5;
 			}
 			else {
 				left->field->accept(this);
-				type = 6;
+				type = 7;
 			}
 		}
 		else error(expr->op, "Left side is not incrementable.");
@@ -242,36 +292,44 @@ void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
 }
 
 void Compiler::visitCallExpr(AST::CallExpr* expr) {
-	//invoking is field access + call, when the compiler recognizes this pattern it optimizes
+	// Invoking is field access + call, when the compiler recognizes this pattern it optimizes
 	if (invoke(expr)) return;
 	//todo: tail recursion optimization
-	expr->callee->accept(this);
+    expr->callee->accept(this);
 	for (AST::ASTNodePtr arg : expr->args) {
 		arg->accept(this);
 	}
 	emitBytes(+OpCode::CALL, expr->args.size());
+}
 
+void Compiler::visitNewExpr(AST::NewExpr* expr){
+    // Parser guarantees that expr->call->callee is either a literal or a module access
+    auto klass = getClassFromExpr(expr->call->callee);
+
+    emitConstant(encodeObj(klass));
+
+    for (AST::ASTNodePtr arg : expr->call->args) {
+        arg->accept(this);
+    }
+    emitBytes(+OpCode::CALL, expr->call->args.size());
 }
 
 void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 	updateLine(expr->accessor);
+    //array[index] or object["propertyAsString"]
+    if(expr->accessor.type == TokenType::LEFT_BRACKET){
+        expr->callee->accept(this);
+        expr->field->accept(this);
+        emitByte(+OpCode::GET);
+        return;
+    }
 
-	expr->callee->accept(this);
-
-	switch (expr->accessor.type) {
-	//array[index] or object["propertyAsString"]
-	case TokenType::LEFT_BRACKET: {
-		expr->field->accept(this);
-		emitByte(+OpCode::GET);
-		break;
-	}
-	//object.property, we can optimize since we know the string in advance
-	case TokenType::DOT:
-		uInt16 name = identifierConstant(dynamic_cast<AST::LiteralExpr*>(expr->field.get())->token);
-		if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
-		else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, name);
-		break;
-	}
+    if(resolveThis(expr)) return;
+    expr->callee->accept(this);
+    uint16_t name = identifierConstant(probeToken(expr->field));
+    if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
+    else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, name);
+    return;
 }
 
 void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
@@ -282,7 +340,11 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
 	for (AST::StructEntry entry : expr->fields) {
 		entry.expr->accept(this);
 		updateLine(entry.name);
-		uInt16 num = identifierConstant(entry.name);
+        //this gets rid of quotes, ""Hello world""->"Hello world"
+        string temp = entry.name.getLexeme();
+        temp.erase(0, 1);
+        temp.erase(temp.size() - 1, 1);
+        uint16_t num = makeConstant(encodeObj(ObjString::createStr(temp)));
 		if (num > SHORT_CONSTANT_LIMIT) isLong = true;
 		constants.push_back(num);
 	}
@@ -305,12 +367,12 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
 	if (currentClass == nullptr) {
 		error(expr->methodName, "Can't use 'super' outside of a class.");
 	}
-	else if (!currentClass->hasSuperclass) {
+	else if (!currentClass->klass->superclass) {
 		error(expr->methodName, "Can't use 'super' in a class with no superclass.");
 	}
 	//we use syntethic tokens since we know that 'super' and 'this' are defined if we're currently compiling a class method
 	namedVar(syntheticToken("this"), false);
-	namedVar(syntheticToken("super"), false);
+  emitConstant(encodeObj(currentClass->klass->superclass));
 	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
 	else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
 }
@@ -320,9 +382,10 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
 
 	switch (expr->token.type) {
 	case TokenType::NUMBER: {
-		double num = std::stod(expr->token.getLexeme());
-		if (IS_INT(num) && num <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::LOAD_INT, std::floor(num));
-		else emitConstant(Value(num));
+        string num = expr->token.getLexeme();
+        double val = std::stod(num);
+        if (isInt(val) && val <= SHORT_CONSTANT_LIMIT) { emitBytes(+OpCode::LOAD_INT, val); }
+        else { emitConstant(encodeNumber(val)); }
 		break;
 	}
 	case TokenType::TRUE: emitByte(+OpCode::TRUE); break;
@@ -333,15 +396,12 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
 		string temp = expr->token.getLexeme();
 		temp.erase(0, 1);
 		temp.erase(temp.size() - 1, 1);
-		emitConstant(Value(new ObjString(temp)));
+		emitConstant(encodeObj(ObjString::createStr(temp)));
 		break;
 	}
 
 	case TokenType::THIS: {
-		if (currentClass == nullptr) {
-			error(expr->token, "Can't use keyword 'this' outside of a class.");
-			break;
-		}
+		if (currentClass == nullptr) error(expr->token, "Can't use keyword 'this' outside of a class.");
 		//'this' get implicitly defined by the compiler
 		namedVar(expr->token, false);
 		break;
@@ -361,12 +421,17 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 	beginScope();
 	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
 	//we just assign those positions to each arg
-	for (Token& var : expr->args) {
-		updateLine(var);
-		uint8_t constant = parseVar(var);
-		defineVar(constant);
+	for (AST::ASTVar& var : expr->args) {
+        declareLocalVar(var);
+        defineLocalVar();
 	}
-	expr->body->accept(this);
+  for(auto stmt : expr->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
+
+      }
+  }
 	current->func->arity = expr->args.size();
 	current->func->name = "Anonymous function";
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -375,12 +440,11 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 
 	//if there are no upvalues captured, compile the function enclosed in a closure and we're done
 	if (func->upvalueCount == 0) {
-		ObjClosure* closure = new ObjClosure(func);
-		emitConstant(Value(closure));
+		emitConstant(encodeObj(new ObjClosure(func)));
 		return;
 	}
 
-	uInt16 constant = makeConstant(Value(func));
+	uint16_t constant = makeConstant(encodeObj(func));
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
 	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
 	//if this function does capture any upvalues, we emit the code for getting them,
@@ -392,8 +456,7 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 }
 
 void Compiler::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
-
-	uInt16 arg = resolveModuleVariable(expr->moduleName, expr->ident);
+	uint16_t arg = resolveModuleVariable(expr->moduleName, expr->ident);
 
 	if (arg > SHORT_CONSTANT_LIMIT) {
 		emitByteAnd16Bit(+OpCode::GET_GLOBAL_LONG, arg);
@@ -422,12 +485,12 @@ void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
 	emitByte(+OpCode::AWAIT);
 }
 
-
-
 void Compiler::visitVarDecl(AST::VarDecl* decl) {
-	//if this is a global, we get a string constant index, if it's a local, it returns a dummy 0
-	uInt16 global = parseVar(decl->name);
-	//compile the right side of the declaration, if there is no right side, the variable is initialized as nil
+  uint16_t global;
+  if(decl->var.type == AST::ASTVarType::GLOBAL){
+      global = declareGlobalVar(decl->var.name);
+  }else declareLocalVar(decl->var);
+	// Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 	AST::ASTNodePtr expr = decl->value;
 	if (expr == nullptr) {
 		emitByte(+OpCode::NIL);
@@ -435,14 +498,18 @@ void Compiler::visitVarDecl(AST::VarDecl* decl) {
 	else {
 		expr->accept(this);
 	}
-	//if this is a global var, we emit the code to define it in the VMs global hash table, if it's a local, do nothing
-	//the slot that the compiled value is at becomes a local var
-	defineVar(global);
+    if(decl->var.type == AST::ASTVarType::GLOBAL){
+        defineGlobalVar(global);
+        if(global <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, global);
+        else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, global);
+        emitByte(+OpCode::POP);
+    }else defineLocalVar();
 }
 
 void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
-	uInt16 name = parseVar(decl->getName());
-	markInit();
+	uint16_t index = declareGlobalVar(decl->getName());
+    // Defining the function here to allow for recursion
+    defineGlobalVar(index);
 	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
 	//is stored in parserCurrent->enclosing
 	current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
@@ -450,12 +517,17 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 	beginScope();
 	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
 	//we just assign those positions to each arg
-	for (Token& var : decl->args) {
-		updateLine(var);
-		uint8_t constant = parseVar(var);
-		defineVar(constant);
-	}
-	decl->body->accept(this);
+  for (AST::ASTVar& var : decl->args) {
+      declareLocalVar(var);
+      defineLocalVar();
+  }
+  for(auto stmt : decl->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
+
+      }
+  }
 	current->func->arity = decl->args.size();
 	current->func->name = decl->getName().getLexeme();
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -463,79 +535,62 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 
 	ObjFunc* func = endFuncDecl();
 
-	if (func->upvalueCount == 0) {
-		ObjClosure* closure = new ObjClosure(dynamic_cast<ObjFunc*>(func));
-		emitConstant(Value(closure));
-		defineVar(name);
-		return;
-	}
-
-	uInt16 constant = makeConstant(Value(func));
-	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
-	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-	//if this function does capture any upvalues, we emit the code for getting them,
-	//when "OP_CLOSURE" is executed it will check to see how many upvalues the function captures by going directly to the func->upvalueCount
-	for (int i = 0; i < func->upvalueCount; i++) {
-		emitByte(upvals[i].isLocal ? 1 : 0);
-		emitByte(upvals[i].index);
-	}
-	defineVar(name);
+  //Not possible but just in case
+  if(func->upvalueCount != 0){
+      error(decl->getName(), "Global function with upvalues detected, aborting...");
+  }
+  // Assigning at compile time to save on bytecode
+  globals[index].val = encodeObj(new ObjClosure(func));
 }
 
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	Token className = decl->getName();
-	uInt16 constant = parseVar(className);
+	uInt16 index = declareGlobalVar(className);
+    auto klass = new object::ObjClass(className.getLexeme(), nullptr);
 
-	//name of the class is different than the name of the variable containing the class(global vars get a prefix)
-	emitByteAnd16Bit(+OpCode::CLASS, identifierConstant(className));
 
-	ClassChunkInfo temp(currentClass, false);
-	currentClass = &temp;
+	currentClass = std::make_unique<ClassChunkInfo>(klass);
 
-	//define the class here, so that we can use it inside it's own methods
-	defineVar(constant);
-
-	if (decl->inherits) {
+	if (decl->inheritedClass) {
 		//if the class inherits from some other class, load the parent class and declare 'super' as a local variable which holds the superclass
 		//decl->inheritedClass is always either a LiteralExpr with an identifier token or a ModuleAccessExpr
 
 		//if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
 		//undefined behavior (eg. class a : a)
-		if (decl->inheritedClass->type == AST::ASTType::LITERAL) {
-			AST::LiteralExpr* expr = dynamic_cast<AST::LiteralExpr*>(decl->inheritedClass.get());
-			if (className.equals(expr->token)) {
-				error(expr->token, "A class can't inherit from itself.");
-			}
-		}
-		decl->inheritedClass->accept(this);
-		//when compiling methods, "this" is implicitly defined as the first local, "super" gets accessed as an upvalue
-		beginScope();
-		addLocal(syntheticToken("super"));
-		defineVar(0);//0 is a dummy number, all this does it mark the latest local variable as ready to use
+    auto superclass = getClassFromExpr(decl->inheritedClass);
+    klass->superclass = superclass;
+    //Copies methods and fields from superclass
+    klass->methods = superclass->methods;
+    klass->fieldsInit = superclass->fieldsInit;
+	}else{
+      // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
+      // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
+      klass->methods = baseClass->methods;
+      klass->superclass = baseClass;
+  }
 
-		namedVar(className, false);
-		emitByte(+OpCode::INHERIT);
-		currentClass->hasSuperclass = true;
-	}
-	else {
-		//we need to load the class onto the top of the stack so that 'this' keyword can work correctly inside of methods
-		//the class that 'this' refers to is captured as a upvalue inside of methods
-		if (!decl->inherits) namedVar(className, false);
-	}
+  // Put field and method names into the class
+  for(auto& field : decl->fields){
+      klass->fieldsInit.insert_or_assign(ObjString::createStr((field.isPublic ? "" : "!") + field.field.getLexeme()), encodeNil());
+  }
+  // First put the method names into the class, then compiled the methods later to be able to correctly detect the methods when
+  // resolveClassField is called
+  for(auto& method : decl->methods){
+      klass->methods.insert_or_assign(ObjString::createStr((method.isPublic ? "" : "!") + method.method->getName().getLexeme()), nullptr);
+  }
 
-	for (AST::ASTNodePtr _method : decl->methods) {
-		method(dynamic_cast<AST::FuncDecl*>(_method.get()), className);
-	}
-	//pop the parserCurrent class
-	emitByte(+OpCode::POP);
+  // Define the class here, so that it can be called inside its own methods
+  // Defining after inheriting so that a class can't be used as its own parent
+  defineGlobalVar(index);
+  // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
+  globals[index].val = encodeObj(klass);
 
-	if (currentClass->hasSuperclass) {
-		endScope();//pops the superclass variable
+	for (auto& _method : decl->methods) {
+        //At this point the name is guaranteed to exist as a string, so createStr just returns the already created string
+        klass->methods[ObjString::createStr((_method.isPublic ? "" : "!") + _method.method->getName().getLexeme())] = method(_method.method.get(), className);
 	}
-
-	currentClass = currentClass->enclosing;
+	currentClass = nullptr;
 }
-
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
 	stmt->expr->accept(this);
 	emitByte(+OpCode::POP);
@@ -685,8 +740,8 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 	current->scopeWithSwitch.push_back(current->scopeDepth);
 	//compile the expression in parentheses
 	stmt->expr->accept(this);
-	vector<uInt16> constants;
-	vector<uInt16> jumps;
+	vector<uint16_t> constants;
+	vector<uint16_t> jumps;
 	bool isLong = false;
 	for (const auto & _case : stmt->cases) {
 		//a single case can contain multiple constants(eg. case 1 | 4 | 9:), each constant is compiled and its jump will point to the
@@ -699,18 +754,18 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 				switch (constant.type) {
 				case TokenType::NUMBER: {
 					double num = std::stod(constant.getLexeme());//doing this becuase stod doesn't accept string_view
-					val = Value(num);
+					val = encodeNumber(num);
 					break;
 				}
-				case TokenType::TRUE: val = Value(true); break;
-				case TokenType::FALSE: val = Value(false); break;
-				case TokenType::NIL: val = Value::nil(); break;
+				case TokenType::TRUE: val = encodeBool(true); break;
+				case TokenType::FALSE: val = encodeBool(false); break;
+				case TokenType::NIL: val = encodeNil(); break;
 				case TokenType::STRING: {
 					//this gets rid of quotes, "Hello world"->Hello world
 					string temp = constant.getLexeme();
 					temp.erase(0, 1);
 					temp.erase(temp.size() - 1, 1);
-					val = Value(new ObjString(temp));
+					val = encodeObj(ObjString::createStr(temp));
 					break;
 				}
 				default: {
@@ -720,9 +775,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 				constants.push_back(makeConstant(val));
 				if (constants.back() > SHORT_CONSTANT_LIMIT) isLong = true;
 			}
-			catch (CompilerException e) {
-
-			}
+			catch (CompilerException e) {}
 		}
 	}
 	//the arguments for a switch op code are:
@@ -752,7 +805,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 	emit16Bit(0xffff);
 
 	//at the end of each case is a implicit break
-	vector<uInt> implicitBreaks;
+	vector<uint32_t> implicitBreaks;
 
 	//compile the code of all cases, before each case update the jump for that case to the parserCurrent ip
 	int i = 0;
@@ -790,8 +843,8 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 
 void Compiler::visitCaseStmt(AST::CaseStmt* stmt) {
 	//compile every statement in the case
-	for (AST::ASTNodePtr stmt : stmt->stmts) {
-		stmt->accept(this);
+	for (AST::ASTNodePtr caseStmt : stmt->stmts) {
+        caseStmt->accept(this);
 	}
 }
 
@@ -859,7 +912,7 @@ void Compiler::emitByteAnd16Bit(byte byte, uInt16 num) {
 	emit16Bit(num);
 }
 
-uInt16 Compiler::makeConstant(Value value) {
+uint16_t Compiler::makeConstant(Value value) {
 	uInt constant = getChunk()->addConstant(value);
 	if (constant > UINT16_MAX) {
 		error("Too many constants in one chunk.");
@@ -869,7 +922,7 @@ uInt16 Compiler::makeConstant(Value value) {
 
 void Compiler::emitConstant(Value value) {
 	// Shorthand for adding a constant to the chunk and emitting it
-	uInt16 constant = makeConstant(value);
+	uint16_t constant = makeConstant(value);
 	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CONSTANT, constant);
 	else emitByteAnd16Bit(+OpCode::CONSTANT_LONG, constant);
 }
@@ -911,23 +964,23 @@ void Compiler::patchScopeJumps(ScopeJumpType type) {
 	int curCode = getChunk()->bytecode.size();
 	//most recent jumps are going to be on top
 	for (int i = current->scopeJumps.size() - 1; i >= 0; i--) {
-		uInt jumpPatchPos = current->scopeJumps[i];
+		uint32_t jumpPatchPos = current->scopeJumps[i];
 		byte jumpType = getChunk()->bytecode[jumpPatchPos - 1];
-		uInt jumpDepth = (getChunk()->bytecode[jumpPatchPos] << 8) | getChunk()->bytecode[jumpPatchPos + 1];
-		uInt toPop = getChunk()->bytecode[jumpPatchPos + 2];
+		uint32_t jumpDepth = (getChunk()->bytecode[jumpPatchPos] << 8) | getChunk()->bytecode[jumpPatchPos + 1];
+		uint32_t toPop = getChunk()->bytecode[jumpPatchPos + 2];
 		//break and advance statements which are in a strictly deeper scope get patched, on the other hand
 		//continue statements which are in parserCurrent or a deeper scope get patched
 		if (jumpDepth > current->scopeDepth && +type == jumpType) {
-			int jumpLenght = curCode - jumpPatchPos - 3;
-			if (jumpLenght > UINT16_MAX) error("Too much code to jump over.");
+			int jumpLength = curCode - jumpPatchPos - 3;
+			if (jumpLength > UINT16_MAX) error("Too much code to jump over.");
 			if (toPop > UINT8_MAX) error("Too many variables to pop.");
 
 			getChunk()->bytecode[jumpPatchPos - 1] = +OpCode::JUMP_POPN;
 			//variables declared by the time we hit the break whose depth is lower or equal to this break stmt
 			getChunk()->bytecode[jumpPatchPos] = toPop;
 			//amount to jump
-			getChunk()->bytecode[jumpPatchPos + 1] = (jumpLenght >> 8) & 0xff;
-			getChunk()->bytecode[jumpPatchPos + 2] = jumpLenght & 0xff;
+			getChunk()->bytecode[jumpPatchPos + 1] = (jumpLength >> 8) & 0xff;
+			getChunk()->bytecode[jumpPatchPos + 2] = jumpLength & 0xff;
 
 			current->scopeJumps.erase(current->scopeJumps.begin() + i);
 		}
@@ -941,25 +994,18 @@ void Compiler::patchScopeJumps(ScopeJumpType type) {
 #pragma region Variables
 
 //creates a string constant from a token
-uInt16 Compiler::identifierConstant(Token name) {
+uint16_t Compiler::identifierConstant(Token name) {
 	updateLine(name);
 	string temp = name.getLexeme();
-	return makeConstant(Value(new ObjString(temp)));
+	return makeConstant(encodeObj(ObjString::createStr(temp)));
 }
 
-//if this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
-void Compiler::defineVar(uInt16 name) {
-	if (current->scopeDepth > 0) {
-		markInit();
-		return;
-	}
-	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::DEFINE_GLOBAL, name);
-	else {
-		emitByteAnd16Bit(+OpCode::DEFINE_GLOBAL_LONG, name);
-	}
+// If this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
+void Compiler::defineGlobalVar(uInt16 index) {
+    definedGlobals[index] = true;
 }
 
-//gets/sets a variable, respects the scoping rules(locals->upvalues->globals)
+// Gets/sets a variable, respects the scoping rules(locals->upvalues->class fields(if inside a method)->globals)
 void Compiler::namedVar(Token token, bool canAssign) {
 	updateLine(token);
 	byte getOp;
@@ -968,15 +1014,32 @@ void Compiler::namedVar(Token token, bool canAssign) {
 	if (arg != -1) {
 		getOp = +OpCode::GET_LOCAL;
 		setOp = +OpCode::SET_LOCAL;
+        if(current->locals[arg].isLocalUpvalue){
+            getOp = +OpCode::GET_LOCAL_UPVALUE;
+            setOp = +OpCode::SET_LOCAL_UPVALUE;
+        }
 	}
 	else if ((arg = resolveUpvalue(current, token)) != -1) {
 		getOp = +OpCode::GET_UPVALUE;
 		setOp = +OpCode::SET_UPVALUE;
 	}
-	else if((arg = resolveGlobal(token, canAssign)) != -1){
-		// All global variables are stored in an array, resolveGlobal gets the array
+  else if((arg = resolveClassField(token, canAssign)) != -1){
+      if(current->type == FuncType::TYPE_FUNC){
+          error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
+      }
+      getOp = +OpCode::GET_PROPERTY_EFFICIENT;
+      setOp = +OpCode::SET_PROPERTY_EFFICIENT;
+      emitByteAnd16Bit((canAssign ? setOp : getOp), arg);
+      return;
+  }
+	else if((arg = resolveGlobal(token, canAssign)) != -1 && arg != -2){
+		// All global variables are stored in an array, resolveGlobal gets index into the array
 		getOp = +OpCode::GET_GLOBAL;
 		setOp = +OpCode::SET_GLOBAL;
+        // Classes cannot be accessed with variable get/set, only way they can be accessed is when inheriting,
+        // within the 'instanceof' operator and within the 'new' operator
+        if(isClass(globals[arg].val)) error(token, "Cannot access or mutate classes.");
+
 		if (arg > SHORT_CONSTANT_LIMIT) {
 			getOp = +OpCode::GET_GLOBAL_LONG;
 			setOp = +OpCode::SET_GLOBAL_LONG;
@@ -995,16 +1058,12 @@ void Compiler::namedVar(Token token, bool canAssign) {
 	emitBytes(canAssign ? setOp : getOp, arg);
 }
 
-//if 'name' is a global variable it's parsed and a string constant is returned
-//otherwise, if 'name' is a local variable it's passed to declareVar()
-uInt16 Compiler::parseVar(Token name) {
+// If 'name' is a global variable it's index in the globals array is returned
+// Otherwise, if 'name' is a local variable it's passed to declareVar()
+uint16_t Compiler::declareGlobalVar(Token name) {
 	updateLine(name);
-	declareVar(name);
-	if (current->scopeDepth > 0) return 0;
-	//if this is a global variable, we tack on the index of this CSLModule at the start of the variable name(variable names can't start with numbers)
-	//used to differentiate variables of the same name from different souce files
-
-	//tacking on the parserCurrent index since parseVar is only used for declaring a variable, which can only be done in the parserCurrent source file
+	// Searches for the index of the global variable in the current file
+    // (globals.size() - curGlobalIndex = globals declared in current file)
 	int index = curGlobalIndex;
 	for (Token token : curUnit->topDeclarations) {
 		if (name.equals(token)) return index;
@@ -1014,34 +1073,33 @@ uInt16 Compiler::parseVar(Token name) {
 	return 0;
 }
 
-//makes sure the compiler is aware that a stack slot is occupied by this local variable
-void Compiler::declareVar(Token& name) {
-	updateLine(name);
-	//if we are currently in global scope, this has no use
-	if (current->scopeDepth == 0) return;
+// Makes sure the compiler is aware that a stack slot is occupied by this local variable
+void Compiler::declareLocalVar(AST::ASTVar& var) {
+	updateLine(var.name);
 	for (int i = current->localCount - 1; i >= 0; i--) {
 		Local* local = &current->locals[i];
 		if (local->depth != -1 && local->depth < current->scopeDepth) {
 			break;
 		}
-		string str = name.getLexeme();
+		string str = var.name.getLexeme();
 		if (str.compare(local->name) == 0) {
-			error(name, "Already a variable with this name in this scope.");
+			error(var.name, "Already a variable with this name in this scope.");
 		}
 	}
-	addLocal(name);
+	addLocal(var);
 }
 
-//locals are stored on the stack, at compile time this is tracked with the 'locals' array
-void Compiler::addLocal(Token name) {
-	updateLine(name);
+// If a variable is declared as "
+void Compiler::addLocal(AST::ASTVar var) {
+	updateLine(var.name);
 	if (current->localCount == LOCAL_MAX) {
-		error(name, "Too many local variables in function.");
+		error(var.name, "Too many local variables in function.");
 		return;
 	}
 	Local* local = &current->locals[current->localCount++];
-	local->name = name.getLexeme();
+	local->name = var.name.getLexeme();
 	local->depth = -1;
+    local->isLocalUpvalue = var.type == AST::ASTVarType::LOCAL_UPVALUE;
 }
 
 void Compiler::beginScope() {
@@ -1091,23 +1149,22 @@ int Compiler::resolveUpvalue(CurrentChunkInfo* func, Token name) {
 
 	int local = resolveLocal(func->enclosing, name);
 	if (local != -1) {
-		func->enclosing->locals[local].isCaptured = true;
 		func->enclosing->hasCapturedLocals = true;
-		return addUpvalue((uint8_t)local, true);
+		return addUpvalue(func, (uint8_t)local, true);
 	}
 	int upvalue = resolveUpvalue(func->enclosing, name);
 	if (upvalue != -1) {
-		return addUpvalue((uint8_t)upvalue, false);
+		return addUpvalue(func, (uint8_t)upvalue, false);
 	}
 
 	return -1;
 }
 
-int Compiler::addUpvalue(byte index, bool isLocal) {
-	int upvalueCount = current->func->upvalueCount;
+int Compiler::addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal) {
+	int upvalueCount = func->func->upvalueCount;
 	//first check if this upvalue has already been captured
 	for (int i = 0; i < upvalueCount; i++) {
-		Upvalue* upval = &current->upvalues[i];
+		Upvalue* upval = &func->upvalues[i];
 		if (upval->index == index && upval->isLocal == isLocal) {
 			return i;
 		}
@@ -1116,15 +1173,17 @@ int Compiler::addUpvalue(byte index, bool isLocal) {
 		error("Too many closure variables in function.");
 		return 0;
 	}
-	current->upvalues[upvalueCount].isLocal = isLocal;
-	current->upvalues[upvalueCount].index = index;
-	return current->func->upvalueCount++;
+	func->upvalues[upvalueCount].isLocal = isLocal;
+	func->upvalues[upvalueCount].index = index;
+	return func->func->upvalueCount++;
 }
 
-//marks the local at the top of the stack as ready to use
-void Compiler::markInit() {
-	if (current->scopeDepth == 0) return;
+// Marks the local at the top of the stack as ready to use
+void Compiler::defineLocalVar() {
 	current->locals[current->localCount - 1].depth = current->scopeDepth;
+    if(current->locals[current->localCount - 1].isLocalUpvalue) {
+        emitBytes(+OpCode::CREATE_UPVALUE, current->localCount - 1);
+    }
 }
 
 Token Compiler::syntheticToken(string str) {
@@ -1136,22 +1195,25 @@ Token Compiler::syntheticToken(string str) {
 #pragma region Classes and methods
 void Compiler::method(AST::FuncDecl* _method, Token className) {
 	updateLine(_method->getName());
-	uInt16 name = identifierConstant(_method->getName());
-	//creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-	//is stored in parserCurrent->enclosing
+	uint16_t name = identifierConstant(_method->getName());
 	FuncType type = FuncType::TYPE_METHOD;
 	//constructors are treated separatly, but are still methods
 	if (_method->getName().equals(className)) type = FuncType::TYPE_CONSTRUCTOR;
 	current = new CurrentChunkInfo(current, type);
 	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
-	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
-	//we just assign those positions to each arg
-	for (Token& var : _method->args) {
-		uInt16 constant = parseVar(var);
-		defineVar(constant);
-	}
-	_method->body->accept(this);
+	// Args defined as local in order they were passed to the function
+  for (AST::ASTVar& var : _method->args) {
+      declareLocalVar(var);
+      defineLocalVar();
+  }
+  for(auto stmt : _method->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
+
+      }
+  }
 	current->func->arity = _method->arity;
 
 	current->func->name = _method->getName().getLexeme();
@@ -1181,17 +1243,24 @@ void Compiler::method(AST::FuncDecl* _method, Token className) {
 bool Compiler::invoke(AST::CallExpr* expr) {
 	if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
 		//currently we only optimizes field invoking(struct.field() or array[field]())
-		auto* call = dynamic_cast<AST::FieldAccessExpr*>(expr->callee.get());
+		auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
         if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
 
 		call->callee->accept(this);
+        uint16_t constant;
+        Token name = probeToken(call->field);
+        // If invoking a method inside another method, make sure to get the right(public/private) name
+        if(isLiteralThis(call->callee)){
+            int res = resolveClassField(name, false);
+            if(res == -1) error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(), currentClass->klass->name->str));
+            constant = res;
+        }else constant = identifierConstant(name);
 
 		int argCount = 0;
 		for (AST::ASTNodePtr arg : expr->args) {
 			arg->accept(this);
 			argCount++;
 		}
-        uInt16 constant = identifierConstant(dynamic_cast<AST::LiteralExpr*>(call->field.get())->token);
         if(constant > SHORT_CONSTANT_LIMIT){
             emitBytes(+OpCode::INVOKE_LONG, argCount);
             emit16Bit(constant);
@@ -1203,13 +1272,13 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 		return true;
 	}
 	else if (expr->callee->type == AST::ASTType::SUPER) {
-		AST::SuperExpr* superCall = dynamic_cast<AST::SuperExpr*>(expr->callee.get());
-		uInt16 name = identifierConstant(superCall->methodName);
+		auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
+		uint16_t name = identifierConstant(superCall->methodName);
 
 		if (currentClass == nullptr) {
 			error(superCall->methodName, "Can't use 'super' outside of a class.");
 		}
-		else if (!currentClass->hasSuperclass) {
+		else if (!currentClass->klass->superclass) {
 			error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
 		}
 		//in methods and constructors, "this" is implicitly defined as the first local
@@ -1219,22 +1288,134 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			arg->accept(this);
 			argCount++;
 		}
-		//super gets popped, leaving only the receiver and args on the stack
-		namedVar(syntheticToken("super"), false);
-        if(name > SHORT_CONSTANT_LIMIT){
-            emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
-            emit16Bit(name);
-        }
-        else {
-            emitBytes(+OpCode::SUPER_INVOKE, argCount);
-            emitByte(name);
-        }
+		// superclass gets popped, leaving only the receiver and args on the stack
+    emitConstant(encodeObj(currentClass->klass->superclass));
+    if(name > SHORT_CONSTANT_LIMIT){
+        emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
+        emit16Bit(name);
+    }
+    else {
+        emitBytes(+OpCode::SUPER_INVOKE, argCount);
+        emitByte(name);
+    }
 		return true;
 	}
-	return false;
+    // Class methods can be accessed without 'this' keyword inside of methods and called
+	return resolveImplicitObjectField(expr);
+}
+
+// Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
+// First bool in pair is if the search was succesful, second is if the field found was public or private
+static std::pair<bool, bool> classContainsField(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Value>& map){
+    string privateField = "!" + publicField;
+    for(auto it : map){
+        if(publicField == it.first->str) return std::pair(true, true);
+        else if(privateField == it.first->str) return std::pair(true, false);
+    }
+    return std::pair(false, false);
+}
+static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Method>& map){
+    string privateField = "!" + publicField;
+    for(auto it : map){
+        if(publicField == it.first->str) return std::pair(true, true);
+        else if(privateField == it.first->str) return std::pair(true, false);
+    }
+    return std::pair(false, false);
+}
+
+int Compiler::resolveClassField(Token name, bool canAssign){
+    if(!currentClass) return -1;
+    bool isMethod = false;
+    string fieldName = name.getLexeme();
+    auto res = classContainsField(fieldName, currentClass->klass->fieldsInit);
+    if(res.first){
+        return makeConstant(encodeObj(ObjString::createStr((res.second ? "" : "!") + fieldName)));
+    }
+
+    res = classContainsMethod(fieldName, currentClass->klass->methods);
+    if(res.first){
+        if(canAssign) error(name, "Tried assigning to a method, which is forbidden.");
+        return makeConstant(encodeObj(ObjString::createStr((res.second ? "" : "!") + fieldName)));
+    }
+    return -1;
+}
+
+// Makes sure the correct prefix is used when accessing private fields
+// this.private_field -> this.!private_field
+bool Compiler::resolveThis(AST::SetExpr *expr) {
+    if(!isLiteralThis(expr->callee)) return false;
+    Token name = probeToken(expr->field);
+    int res = resolveClassField(name, false);
+    if(res == -1) return false;
+
+    expr->value->accept(this);
+    expr->callee->accept(this);
+    if (res <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_PROPERTY, res);
+    else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, res);
+    return true;
+}
+bool Compiler::resolveThis(AST::FieldAccessExpr *expr) {
+    if(!isLiteralThis(expr->callee)) return false;
+    Token name = probeToken(expr->field);
+    int res = resolveClassField(name, false);
+    if(res == -1) return false;
+
+    expr->callee->accept(this);
+    if (res <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, res);
+    else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, res);
+    return true;
+}
+// Recognizes object_field() as an invoke operation
+// If object_field() is encountered inside a closure which is inside a method, throw an error since only this.object_field() is allowed in closures
+bool Compiler::resolveImplicitObjectField(AST::CallExpr *expr) {
+    if(expr->callee->type != AST::ASTType::LITERAL) return false;
+    Token name = probeToken(expr->callee);
+    int res = resolveClassField(name, false);
+    if(res == -1) return false;
+    if(current->type == FuncType::TYPE_FUNC) error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
+    namedVar(syntheticToken("this"), false);
+
+    int8_t argCount = 0;
+    for (AST::ASTNodePtr arg : expr->args) {
+        arg->accept(this);
+        argCount++;
+    }
+    if(res > SHORT_CONSTANT_LIMIT){
+        emitBytes(+OpCode::INVOKE_LONG, argCount);
+        emit16Bit(res);
+    }
+    else {
+        emitBytes(+OpCode::INVOKE, argCount);
+        emitByte(res);
+    }
+
+    return true;
+}
+
+// Any call to getClassFromExpr assumes expr is either AST::LiteralExpr and AST::ModuleAccessExpr
+object::ObjClass* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
+    uint16_t classIndex = 0;
+    Token token;
+    if (expr->type == AST::ASTType::LITERAL) {
+        Token superclass = probeToken(expr);
+        // Gets the index into globals in which the superclass is stored
+        int arg = resolveGlobal(superclass, false);
+        if(arg == -1) error(superclass, "Class doesn't exist.");
+        else if(arg == -2) {
+            error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
+        }
+        classIndex = arg;
+        token = superclass;
+    }
+    else {
+        auto moduleExpr = std::static_pointer_cast<AST::ModuleAccessExpr>(expr);
+        classIndex = resolveModuleVariable(moduleExpr->moduleName, moduleExpr->ident);
+        token = moduleExpr->ident;
+    }
+    if(!isClass(globals[classIndex].val)) error(token, "Variable isn't a class.");
+    return asClass(globals[classIndex].val);
 }
 #pragma endregion
-
 
 Chunk* Compiler::getChunk() {
 	return &current->chunk;
@@ -1292,26 +1473,17 @@ int Compiler::checkSymbol(Token symbol) {
 	string lexeme = symbol.getLexeme();
 	for (Dependency dep : curUnit->deps) {
 		if (dep.alias.type == TokenType::NONE) {
-			for (Token token : dep.module->exports) {
-
-				if (token.equals(symbol)) {
-					//if the correct symbol is found, find the index of the global variable inside of globals array
-					int globalIndex = 0;
-					for (int i = 0; i < units.size(); i++) {
-						if (units[i] != dep.module) {
-							globalIndex += units[i]->topDeclarations.size();
-							continue;
-						}
-						for (Token token : units[i]->topDeclarations) {
-							if (token.equals(symbol)) {
-								return globalIndex;
-							}
-							globalIndex++;
-						}
-					}
-					error(symbol, "Couldn't find source file of the definition.");
-				}
-			}
+      int globalIndex = 0;
+      for (int i = 0; i < units.size(); i++) {
+          if (units[i] == dep.module) break;
+          globalIndex += units[i]->topDeclarations.size();
+      }
+      int upperLimit = globalIndex + decls.size();
+      for(int i = 0; i < upperLimit; i++){
+          if(!decls[i]->getName().equals(symbol)) continue;
+          return i;
+      }
+      error(symbol, "Error, variable wasn't loaded into globals array.");
 		}
 	}
     return -1;
@@ -1342,9 +1514,9 @@ int Compiler::resolveGlobal(Token name, bool canAssign) {
     return -1;
 }
 
-//checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
-//if it exists append that modules index to the variable
-uInt Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
+// Checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
+// If it exists return the index of the 'variable' in globals array
+uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 	//first find the module with the correct alias
 	Dependency* depPtr = nullptr;
 	for (Dependency dep : curUnit->deps) {

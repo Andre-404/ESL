@@ -10,6 +10,7 @@ namespace AST {
 		void visitBinaryExpr(BinaryExpr* expr);
 		void visitUnaryExpr(UnaryExpr* expr);
 		void visitCallExpr(CallExpr* expr);
+        void visitNewExpr(NewExpr* expr);
 		void visitFieldAccessExpr(FieldAccessExpr* expr);
 		void visitAsyncExpr(AsyncExpr* expr);
 		void visitAwaitExpr(AwaitExpr* expr);

@@ -13,6 +13,7 @@ namespace AST {
 		UNARY,
 		ARRAY_LITERAL,
 		CALL,
+        NEW,
 		FIELD_ACCESS,
 		ASYNC,
 		AWAIT,
@@ -22,6 +23,7 @@ namespace AST {
 		FUNC_LITERAL,
 		MODULE_ACCESS,
         MACRO,
+        RANGE,
 
 		VAR,
 		FUNC,
@@ -46,6 +48,7 @@ namespace AST {
 	class UnaryExpr;
 	class ArrayLiteralExpr;
 	class CallExpr;
+    class NewExpr;
 	class FieldAccessExpr;
 	class AsyncExpr;
 	class AwaitExpr;
@@ -55,6 +58,7 @@ namespace AST {
 	class FuncLiteral;
 	class ModuleAccessExpr;
     class MacroExpr;
+    class RangeExpr;
 
 	class VarDecl;
 	class FuncDecl;
@@ -78,9 +82,11 @@ namespace AST {
 		virtual void visitAssignmentExpr(AssignmentExpr* expr) = 0;
 		virtual void visitSetExpr(SetExpr* expr) = 0;
 		virtual void visitConditionalExpr(ConditionalExpr* expr) = 0;
+        virtual void visitRangeExpr(RangeExpr* expr) = 0;
 		virtual void visitBinaryExpr(BinaryExpr* expr) = 0;
 		virtual void visitUnaryExpr(UnaryExpr* expr) = 0;
 		virtual void visitCallExpr(CallExpr* expr) = 0;
+        virtual void visitNewExpr(NewExpr* expr) = 0;
 		virtual void visitFieldAccessExpr(FieldAccessExpr* expr) = 0;
 		virtual void visitAsyncExpr(AsyncExpr* expr) = 0;
 		virtual void visitAwaitExpr(AwaitExpr* expr) = 0;
@@ -123,6 +129,25 @@ namespace AST {
 		virtual Token getName() = 0;
 	};
 
+    enum class ASTVarType{
+        LOCAL,
+        LOCAL_UPVALUE,
+        GLOBAL,
+        NONE
+    };
+    struct ASTVar{
+        Token name;
+        ASTVarType type;
+
+        ASTVar(){
+            type = ASTVarType::NONE;
+        }
+        ASTVar(Token _name){
+            name = _name;
+            type = ASTVarType::NONE;
+        }
+    };
+
 	#pragma region Expressions
 
 	class AssignmentExpr : public ASTNode {
@@ -146,15 +171,13 @@ namespace AST {
 		ASTNodePtr callee;
 		ASTNodePtr field;
 		Token accessor;
-		Token op;
 		ASTNodePtr value;
 
-		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, Token _op, ASTNodePtr _val) {
+		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, ASTNodePtr _val) {
 			callee = _callee;
 			field = _field;
 			accessor = _accessor;
 			value = _val;
-			op = _op;
 			type = ASTType::SET;
 		}
 		void accept(Visitor* vis) override {
@@ -165,13 +188,13 @@ namespace AST {
 	class ConditionalExpr : public ASTNode {
 	public:
 		ASTNodePtr condition;
-		ASTNodePtr thenBranch;
-		ASTNodePtr elseBranch;
+		ASTNodePtr mhs;
+		ASTNodePtr rhs;
 
 		ConditionalExpr(ASTNodePtr _condition, ASTNodePtr _thenBranch, ASTNodePtr _elseBranch) {
 			condition = _condition;
-			thenBranch = _thenBranch;
-			elseBranch = _elseBranch;
+            mhs = _thenBranch;
+            rhs = _elseBranch;
 			type = ASTType::CONDITIONAL;
 		}
 		void accept(Visitor* vis) override {
@@ -240,6 +263,21 @@ namespace AST {
 			vis->visitCallExpr(this);
 		}
 	};
+
+    class NewExpr : public ASTNode{
+    public:
+        shared_ptr<CallExpr> call;
+        Token token;
+
+        NewExpr(shared_ptr<CallExpr> _call, Token _token) {
+            call = _call;
+            token = _token;
+            type = ASTType::NEW;
+        }
+        void accept(Visitor* vis) override {
+            vis->visitNewExpr(this);
+        }
+    };
 
 	//getting values from compound types using '.' or '[]'
 	class FieldAccessExpr : public ASTNode {
@@ -341,11 +379,11 @@ namespace AST {
 
 	class FuncLiteral : public ASTNode {
 	public:
-		vector<Token> args;
-		int arity;
-		ASTNodePtr body;
+		vector<ASTVar> args;
+        int8_t arity;
+		shared_ptr<BlockStmt> body;
 
-		FuncLiteral(vector<Token> _args, ASTNodePtr _body) {
+		FuncLiteral(vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
 			args = _args;
 			arity = _args.size();
 			body = _body;
@@ -388,7 +426,27 @@ namespace AST {
         }
     };
 
-#pragma endregion
+    class RangeExpr : public ASTNode{
+    public:
+        Token token;
+        ASTNodePtr start;
+        ASTNodePtr end;
+        bool endInclusive;
+
+        RangeExpr(Token _token, ASTNodePtr _start, ASTNodePtr _end, bool _endInclusive) {
+            token = _token;
+            start = _start;
+            end = _end;
+            endInclusive = _endInclusive;
+            type = ASTType::RANGE;
+        }
+
+        void accept(Visitor* vis) {
+            vis->visitRangeExpr(this);
+        }
+    };
+
+    #pragma endregion
 
 	#pragma region Statements
 
@@ -408,17 +466,17 @@ namespace AST {
 	class VarDecl : public ASTDecl {
 	public:
 		ASTNodePtr value;
-		Token name;
+        ASTVar var;
 
 		VarDecl(Token _name, ASTNodePtr _value) {
-			name = _name;
+			var.name = _name;
 			value = _value;
 			type = ASTType::VAR;
 		}
 		void accept(Visitor* vis) {
 			vis->visitVarDecl(this);
 		}
-		Token getName() { return name; }
+		Token getName() { return var.name; }
 	};
 
 	class BlockStmt : public ASTNode {
@@ -559,12 +617,12 @@ namespace AST {
 
 	class FuncDecl : public ASTDecl {
 	public:
-		vector<Token> args;
-		uInt arity;
-		ASTNodePtr body;
+		vector<ASTVar> args;
+        int8_t arity;
+		shared_ptr<BlockStmt> body;
 		Token name;
 
-		FuncDecl(Token _name, vector<Token> _args, ASTNodePtr _body) {
+		FuncDecl(Token _name, vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
 			name = _name;
 			args = _args;
 			arity = _args.size();
@@ -593,18 +651,35 @@ namespace AST {
 		}
 	};
 
+    struct ClassMethod{
+        bool isPublic;
+        shared_ptr<FuncDecl> method;
+
+        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method) : isPublic(_isPublic), method(_method) {}
+    };
+
+    struct ClassField{
+        bool isPublic;
+        Token field;
+
+        ClassField(bool _isPublic, Token _field) : isPublic(_isPublic), field(_field) {}
+    };
+
 	class ClassDecl : public ASTDecl {
 	public:
 		Token name;
 		ASTNodePtr inheritedClass;
-		vector<ASTNodePtr> methods;
-		bool inherits;
+		vector<ClassMethod> methods;
+        vector<ClassField> fields;
 
-		ClassDecl(Token _name, vector<ASTNodePtr> _methods, ASTNodePtr _inheritedClass, bool _inherits) {
+		ClassDecl(Token _name, vector<ClassMethod> _methods,
+                  vector<ClassField> _fields,
+                  ASTNodePtr _inheritedClass) {
+
 			name = _name;
 			methods = _methods;
+            fields = _fields;
 			inheritedClass = _inheritedClass;
-			inherits = _inherits;
 			type = ASTType::CLASS;
 		}
 		void accept(Visitor* vis) {

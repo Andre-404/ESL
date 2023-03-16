@@ -3,7 +3,6 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
-#include "../Runtime/nativeFunctions.h"
 #include <array>
 
 namespace compileCore {
@@ -20,7 +19,7 @@ namespace compileCore {
 	struct Local {
 		string name = "";
 		int depth = -1;
-		bool isCaptured = false;//whether this local variable has been captured as an upvalue
+		bool isLocalUpvalue = false;//whether this local variable has been captured as an upvalue
 	};
 
 	struct Upvalue {
@@ -61,9 +60,9 @@ namespace compileCore {
 	};
 
 	struct ClassChunkInfo {
-		ClassChunkInfo* enclosing;
-		bool hasSuperclass;
-		ClassChunkInfo(ClassChunkInfo* _enclosing, bool _hasSuperclass) : enclosing(_enclosing), hasSuperclass(_hasSuperclass) {};
+    // For statics
+    object::ObjClass* klass;
+    ClassChunkInfo(object::ObjClass* _klass) : klass(_klass) {};
 	};
 
 	struct CompilerException {
@@ -74,95 +73,115 @@ namespace compileCore {
 	public:
 		// Compiler only ever emits the code for a single function, top level code is considered a function
 		CurrentChunkInfo* current;
-		ClassChunkInfo* currentClass;
+		std::unique_ptr<ClassChunkInfo> currentClass;
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 		// Passed to the VM
 		vector<Globalvar> globals;
 		Chunk mainCodeBlock;
-        object::ObjFunc* mainBlockFunc;
-        // Here to do name checking at compile time
-        vector<object::ObjNativeFunc*> nativeFuncs;
-        robin_hood::unordered_map<string, uInt> nativeFuncNames;
+    object::ObjFunc* mainBlockFunc;
+    // Here to do name checking at compile time
+    vector<object::ObjNativeFunc*> nativeFuncs;
+    //Base class which implements toString
+    object::ObjClass* baseClass;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();
 		object::ObjFunc* endFuncDecl();
 
 		#pragma region Visitor pattern
-		void visitAssignmentExpr(AST::AssignmentExpr* expr);
-		void visitSetExpr(AST::SetExpr* expr);
-		void visitConditionalExpr(AST::ConditionalExpr* expr);
-		void visitBinaryExpr(AST::BinaryExpr* expr);
-		void visitUnaryExpr(AST::UnaryExpr* expr);
-		void visitCallExpr(AST::CallExpr* expr);
-		void visitFieldAccessExpr(AST::FieldAccessExpr* expr);
-		void visitAsyncExpr(AST::AsyncExpr* expr);
-		void visitAwaitExpr(AST::AwaitExpr* expr);
-		void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr);
-		void visitStructLiteralExpr(AST::StructLiteral* expr);
-		void visitLiteralExpr(AST::LiteralExpr* expr);
-		void visitSuperExpr(AST::SuperExpr* expr);
-		void visitFuncLiteral(AST::FuncLiteral* expr);
-		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr);
-        void visitMacroExpr(AST::MacroExpr* expr);
+		void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
+		void visitSetExpr(AST::SetExpr* expr) override;
+		void visitConditionalExpr(AST::ConditionalExpr* expr) override;
+    void visitRangeExpr(AST::RangeExpr* expr) override;
+		void visitBinaryExpr(AST::BinaryExpr* expr) override;
+		void visitUnaryExpr(AST::UnaryExpr* expr) override;
+		void visitCallExpr(AST::CallExpr* expr) override;
+    void visitNewExpr(AST::NewExpr* expr) override;
+		void visitFieldAccessExpr(AST::FieldAccessExpr* expr) override;
+		void visitAsyncExpr(AST::AsyncExpr* expr) override;
+		void visitAwaitExpr(AST::AwaitExpr* expr) override;
+		void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
+		void visitStructLiteralExpr(AST::StructLiteral* expr) override;
+		void visitLiteralExpr(AST::LiteralExpr* expr) override;
+		void visitSuperExpr(AST::SuperExpr* expr) override;
+		void visitFuncLiteral(AST::FuncLiteral* expr) override;
+		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr) override;
+    void visitMacroExpr(AST::MacroExpr* expr) override;
 
-		void visitVarDecl(AST::VarDecl* decl);
-		void visitFuncDecl(AST::FuncDecl* decl);
-		void visitClassDecl(AST::ClassDecl* decl);
+		void visitVarDecl(AST::VarDecl* decl) override;
+		void visitFuncDecl(AST::FuncDecl* decl) override;
+		void visitClassDecl(AST::ClassDecl* decl) override;
 
-		void visitExprStmt(AST::ExprStmt* stmt);
-		void visitBlockStmt(AST::BlockStmt* stmt);
-		void visitIfStmt(AST::IfStmt* stmt);
-		void visitWhileStmt(AST::WhileStmt* stmt);
-		void visitForStmt(AST::ForStmt* stmt);
-		void visitBreakStmt(AST::BreakStmt* stmt);
-		void visitContinueStmt(AST::ContinueStmt* stmt);
-		void visitSwitchStmt(AST::SwitchStmt* stmt);
-		void visitCaseStmt(AST::CaseStmt* _case);
-		void visitAdvanceStmt(AST::AdvanceStmt* stmt);
-		void visitReturnStmt(AST::ReturnStmt* stmt);
+		void visitExprStmt(AST::ExprStmt* stmt) override;
+		void visitBlockStmt(AST::BlockStmt* stmt) override;
+		void visitIfStmt(AST::IfStmt* stmt) override;
+		void visitWhileStmt(AST::WhileStmt* stmt) override;
+		void visitForStmt(AST::ForStmt* stmt) override;
+		void visitBreakStmt(AST::BreakStmt* stmt) override;
+		void visitContinueStmt(AST::ContinueStmt* stmt) override;
+		void visitSwitchStmt(AST::SwitchStmt* stmt) override;
+		void visitCaseStmt(AST::CaseStmt* _case) override;
+		void visitAdvanceStmt(AST::AdvanceStmt* stmt) override;
+		void visitReturnStmt(AST::ReturnStmt* stmt) override;
 		#pragma endregion 
 	private:
 		CSLModule* curUnit;
 		int curUnitIndex;
 		int curGlobalIndex;
 		vector<CSLModule*> units;
+    // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
+    // a undefined global variable is being used
+    vector<bool> definedGlobals;
+    ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
 
 		#pragma region Helpers
-		//emitters
+		// Emitters
 		void emitByte(byte byte);
 		void emitBytes(byte byte1, byte byte2);
 		void emit16Bit(uInt16 number);
 		void emitByteAnd16Bit(byte byte, uInt16 num);
 		void emitConstant(Value value);
 		void emitReturn();
-		//control flow
+		// Control flow
 		int emitJump(byte jumpType);
 		void patchJump(int offset);
 		void emitLoop(int start);
+
 		void patchScopeJumps(ScopeJumpType type);
+
 		uInt16 makeConstant(Value value);
-		//variables
+		// Variables
 		uInt16 identifierConstant(Token name);
-		void defineVar(uInt16 name);
+
+        uint16_t declareGlobalVar(Token name);
+		void defineGlobalVar(uInt16 name);
+
 		void namedVar(Token name, bool canAssign);
-		uInt16 parseVar(Token name);
-		//locals
-		void declareVar(Token& name);
-		void addLocal(Token name);
+		// Locals
+		void declareLocalVar(AST::ASTVar& name);
+    void defineLocalVar();
+
+		void addLocal(AST::ASTVar name);
 		int resolveLocal(Token name);
 		int resolveLocal(CurrentChunkInfo* func, Token name);
+
 		int resolveUpvalue(CurrentChunkInfo* func, Token name);
-		int addUpvalue(byte index, bool isLocal);
-		void markInit();
+		int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
+
 		void beginScope();
 		void endScope();
-		//classes and methods
-		void method(AST::FuncDecl* _method, Token className);
+		// Classes and methods
+		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
 		bool invoke(AST::CallExpr* expr);
-		Token syntheticToken(string str);
-		//misc
+    int resolveClassField(Token name, bool canAssign);
+    object::ObjClass* getClassFromExpr(AST::ASTNodePtr expr);
+    // Resolve public/private fields when this.object_field in encountered
+    bool resolveThis(AST::FieldAccessExpr* expr);
+    bool resolveThis(AST::SetExpr* expr);
+    bool resolveImplicitObjectField(AST::CallExpr* expr);
+		// Misc
+    Token syntheticToken(string str);
 		void updateLine(Token token);
 		void error(Token token, const string& msg) noexcept(false);
 		void error(const string& message) noexcept(false);

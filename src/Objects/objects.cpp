@@ -2,9 +2,11 @@
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Runtime/thread.h"
 #include "../Includes/fmt/format.h"
+#include "../codegen/valueHelpersInline.cpp"
 
 using namespace object;
 using namespace memory;
+using namespace valueHelpers;
 
 #pragma region ObjString
 ObjString::ObjString(string& _str) {
@@ -20,7 +22,7 @@ void ObjString::trace() {
 	//nothing to mark
 }
 
-string ObjString::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjString::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return str;
 }
 
@@ -35,6 +37,15 @@ bool ObjString::compare(string other) {
 ObjString* ObjString::concat(ObjString* other) {
 	string temp = str + other->str;
 	return new ObjString(temp);
+}
+
+ObjString* ObjString::createStr(string str){
+    auto it = memory::gc.interned.find(str);
+    if(it != memory::gc.interned.end()) return it->second;
+    auto newStr = new ObjString(str);
+    memory::gc.heapSize += str.size();
+    memory::gc.interned[str] = newStr;
+    return newStr;
 }
 #pragma endregion
 
@@ -53,7 +64,7 @@ void ObjFunc::trace() {
 	// Nothing
 }
 
-string ObjFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return "<" + name + ">";
 }
 
@@ -63,7 +74,7 @@ uInt64 ObjFunc::getSize() {
 #pragma endregion
 
 #pragma region ObjNativeFunc
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, int _arity, string _name) {
+ObjNativeFunc::ObjNativeFunc(NativeFn _func, int8_t _arity, const char* _name) {
 	func = _func;
 	arity = _arity;
     name = _name;
@@ -75,37 +86,13 @@ void ObjNativeFunc::trace() {
 	//nothing
 }
 
-string ObjNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjNativeFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return fmt::format("<native function {}>", name);
 }
 
 uInt64 ObjNativeFunc::getSize() {
 	return sizeof(ObjNativeFunc);
 }
-#pragma endregion
-
-#pragma region ObjBoundNativeFunc
-ObjBoundNativeFunc::ObjBoundNativeFunc(NativeFn _func, int _arity, string _name, Value& _receiver) {
-    func = _func;
-    arity = _arity;
-    name = _name;
-    receiver = _receiver;
-    marked = false;
-    type = ObjType::BOUND_NATIVE;
-}
-
-void ObjBoundNativeFunc::trace() {
-    receiver.mark();
-}
-
-string ObjBoundNativeFunc::toString(robin_hood::unordered_set<object::Obj*>& stack) {
-    return fmt::format("<native function {}>", name);
-}
-
-uInt64 ObjBoundNativeFunc::getSize() {
-    return sizeof(ObjBoundNativeFunc);
-}
-
 #pragma endregion
 
 #pragma region ObjClosure
@@ -123,7 +110,7 @@ void ObjClosure::trace() {
 	gc.markObj(func);
 }
 
-string ObjClosure::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjClosure::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return func->toString(stack);
 }
 
@@ -140,10 +127,10 @@ ObjUpval::ObjUpval(Value& _val) {
 }
 
 void ObjUpval::trace() {
-	val.mark();
+	mark(val);
 }
 
-string ObjUpval::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjUpval::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return "<upvalue>";
 }
 
@@ -159,7 +146,7 @@ ObjArray::ObjArray() {
     marked = false;
 }
 ObjArray::ObjArray(size_t size) {
-	values = vector<Value>(size);
+	values.resize(size);
 	type = ObjType::ARRAY;
 	numOfHeapPtr = 0;
 }
@@ -171,40 +158,47 @@ void ObjArray::trace() {
 	int i = 0;
 	uInt64 arrSize = values.size();
 	while (i < arrSize && temp < numOfHeapPtr) {
-		values[i].mark();
-		if(values[i].isObj()) temp++;
+		mark(values[i]);
+		if(isObj(values[i])) temp++;
 	}
 }
 
-string ObjArray::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjArray::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	string str = "[";
     for(Value& val : values){
-        str.append(" " + val.toString(stack)).append(",");
+        str.append(" " + valueHelpers::toString(val, stack)).append(",");
     }
     str.erase(str.size() - 1).append(" ]");
     return str;
 }
 
 uInt64 ObjArray::getSize() {
-	return sizeof(ObjArray);
+	return sizeof(ObjArray) + sizeof(Value)*values.size();
 }
 #pragma endregion
 
 #pragma region ObjClass
-ObjClass::ObjClass(string _name) {
-	name = std::move(_name);
+ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
+	name = ObjString::createStr(_name);
     marked = false;
+    superclass = _superclass;
 	type = ObjType::CLASS;
 }
 
 void ObjClass::trace() {
-	for (auto & method : methods) {
-		method.second.mark();
+	for (auto & m : methods) {
+        gc.markObj(m.second);
+        m.first->marked = true;
 	}
+    for (auto & f : fieldsInit) {
+        f.first->marked = true;
+    }
+    name->marked = true;
+    if(superclass) gc.markObj(superclass);
 }
 
-string ObjClass::toString(robin_hood::unordered_set<object::Obj*>& stack) {
-	return "<class " + name + ">";
+string ObjClass::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+	return "<class " + name->str + ">";
 }
 
 uInt64 ObjClass::getSize() {
@@ -215,26 +209,21 @@ uInt64 ObjClass::getSize() {
 #pragma region ObjInstance
 ObjInstance::ObjInstance(ObjClass* _klass) {
 	klass = _klass;
+	fields = klass->fieldsInit;
     marked = false;
 	type = ObjType::INSTANCE;
 }
 
 void ObjInstance::trace() {
 	for (auto & field : fields) {
-		field.second.mark();
+        field.first->marked = true;
+		mark(field.second);
 	}
 	if(klass) gc.markObj(klass);
 }
 
-string ObjInstance::toString(robin_hood::unordered_set<object::Obj*>& stack) {
-	if(klass) "<" + klass->name + " instance>";
-    string str = "{";
-    for(auto it : fields){
-        str.append(" \"").append(it.first).append("\" : ");
-        str.append(it.second.toString(stack)).append(",");
-    }
-    str.erase(str.size() - 1).append(" }");
-    return str;
+string ObjInstance::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+	return "<" + klass->name->str + " instance>";
 }
 
 uInt64 ObjInstance::getSize() {
@@ -242,8 +231,36 @@ uInt64 ObjInstance::getSize() {
 }
 #pragma endregion
 
+#pragma region ObjHashMap
+ObjHashMap::ObjHashMap() {
+	marked = false;
+	type = ObjType::HASH_MAP;
+}
+
+void ObjHashMap::trace() {
+	for (auto & field : fields) {
+		field.first->marked = true;
+		mark(field.second);
+	}
+}
+
+string ObjHashMap::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+	string str = "{";
+	for(auto it : fields){
+		str.append(" \"").append(it.first->str).append("\" : ");
+		str.append(valueHelpers::toString(it.second, stack)).append(",");
+	}
+	str.erase(str.size() - 1).append(" }");
+	return str;
+}
+
+uInt64 ObjHashMap::getSize() {
+	return sizeof(ObjHashMap);
+}
+#pragma endregion
+
 #pragma region ObjBoundMethod
-ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjClosure* _method) {
+ObjBoundMethod::ObjBoundMethod(Value _receiver, Method _method) {
 	receiver = _receiver;
 	method = _method;
     marked = false;
@@ -251,12 +268,12 @@ ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjClosure* _method) {
 }
 
 void ObjBoundMethod::trace() {
-	receiver.mark();
+	mark(receiver);
 	gc.markObj(method);
 }
 
-string ObjBoundMethod::toString(robin_hood::unordered_set<object::Obj*>& stack) {
-	return method->func->toString(stack);
+string ObjBoundMethod::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+	return "<bound method>";
 }
 
 uInt64 ObjBoundMethod::getSize() {
@@ -280,7 +297,7 @@ void ObjFile::trace() {
 	//nothing
 }
 
-string ObjFile::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFile::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return "<file>";
 }
 
@@ -302,7 +319,7 @@ void ObjMutex::trace() {
 	//nothing
 }
 
-string ObjMutex::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjMutex::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return "<mutex>";
 }
 
@@ -315,7 +332,7 @@ uInt64 ObjMutex::getSize() {
 ObjFuture::ObjFuture(runtime::Thread* t) {
 	thread = t;
     marked = false;
-	val = Value::nil();
+	val = encodeNil();
 	type = ObjType::FUTURE;
 }
 ObjFuture::~ObjFuture() {
@@ -328,10 +345,10 @@ void ObjFuture::startParallelExecution() {
 
 void ObjFuture::trace() {
 	//when tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-	val.mark();
+	mark(val);
 }
 
-string ObjFuture::toString(robin_hood::unordered_set<object::Obj*>& stack) {
+string ObjFuture::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
 	return "<future>";
 }
 
@@ -340,3 +357,27 @@ uInt64 ObjFuture::getSize() {
 }
 #pragma endregion
 
+#pragma region ObjRange
+ObjRange::ObjRange(double _start, double _end, bool _isEndInclusive) {
+    start = _start;
+    end = _end;
+    isEndInclusive = _isEndInclusive;
+    marked = false;
+    type = ObjType::RANGE;
+}
+ObjRange::~ObjRange() {
+
+}
+
+void ObjRange::trace() {
+
+}
+
+string ObjRange::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
+    return "<range>";
+}
+
+uInt64 ObjRange::getSize() {
+    return sizeof(ObjRange);
+}
+#pragma endregion

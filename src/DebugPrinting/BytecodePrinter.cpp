@@ -1,8 +1,10 @@
 #include "BytecodePrinter.h"
 #include "../Includes/fmt/format.h"
 #include "../Objects/objects.h"
+#include "../codegen/valueHelpersInline.cpp"
 #include <iostream>
 
+using namespace valueHelpers;
 
 static int simpleInstruction(string name, int offset) {
 	std::cout << name << "\n";
@@ -26,7 +28,7 @@ static int constantInstruction(string name, Chunk* chunk, int offset, bool isLon
 	if (!isLong) constant = chunk->bytecode[offset + 1];
 	else constant = ((chunk->bytecode[offset + 1] << 8) | chunk->bytecode[offset + 2]);
 	std::cout << fmt::format("{:16} {:4d} ", name, constantsOffset + constant);
-	chunk->constants[constantsOffset + constant].print();
+	print(chunk->constants[constantsOffset + constant]);
 	std::cout<<"\n";
 	return offset + (isLong ? 3 : 2);
 }
@@ -50,7 +52,7 @@ static int invokeInstruction(string name, Chunk* chunk, int offset, int constant
 	uint8_t constant = chunk->bytecode[offset + 1];
 	uint8_t argCount = chunk->bytecode[offset + 2];
 	std::cout << fmt::format("{:16} ({} args) {:4d} ", name, argCount, constantsOffset + constant);
-	chunk->constants[constantsOffset + constant].print();
+	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "\n";
 	return offset + 3;
 }
@@ -59,7 +61,7 @@ static int longInvokeInstruction(string name, Chunk* chunk, int offset, int cons
 	uint8_t constant = (chunk->bytecode[offset + 1] | chunk->bytecode[offset + 2] | (chunk->bytecode[offset + 3] << 16));
 	uint8_t argCount = chunk->bytecode[offset + 4];
 	std::cout << fmt::format("{:16} ({} args) {:4d}", name, argCount, constantsOffset + constant);
-	chunk->constants[constantsOffset + constant].print();
+	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "'\n";
 	return offset + 5;
 }
@@ -106,36 +108,39 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		case 0: {
 			std::cout << fmt::format("OP INCREMENT {} {} local: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
 		}
-		case 1: {
+        case 1: {
+            std::cout << fmt::format("OP INCREMENT {} {} local upvalue: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
+        }
+		case 2: {
 			std::cout << fmt::format("OP INCREMENT {} {} upvalue: {}", sign, fix, chunk->bytecode[offset++]) << std::endl; break;
 		}
-		case 2: {
+		case 3: {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} global: {} \n", sign, fix, constant);
 			break;
 		}
-		case 3: {
+		case 4: {
 			uInt constant = chunk->bytecode[offset++];
 			constant |= chunk->bytecode[offset++];
 			std::cout << fmt::format("OP INCREMENT {} {} global 16-bit: {} \n", sign, fix, constantsOffset +constant);
 			break;
 		}
-		case 4: {
-			uInt constant = constantsOffset + chunk->bytecode[offset++];
-			std::cout << fmt::format("OP INCREMENT {} {} dot access: {} ", sign, fix, constant);
-			chunk->constants[constant].print();
-			std::cout << std::endl;
-			break;
-		}
 		case 5: {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
-			constant |= chunk->bytecode[offset++];
-			std::cout << fmt::format("OP INCREMENT {} {} dot access 16-bit: {} ", sign, fix, constant);
-			chunk->constants[constant].print();
+			std::cout << fmt::format("OP INCREMENT {} {} dot access: {} ", sign, fix, constant);
+			print(chunk->constants[constant]);
 			std::cout << std::endl;
 			break;
 		}
 		case 6: {
+			uInt constant = constantsOffset + chunk->bytecode[offset++];
+			constant |= chunk->bytecode[offset++];
+			std::cout << fmt::format("OP INCREMENT {} {} dot access 16-bit: {} ", sign, fix, constant);
+			print(chunk->constants[constant]);
+			std::cout << std::endl;
+			break;
+		}
+		case 7: {
 			std::cout << fmt::format("OP INCREMENT {} {} field access", sign, fix) << std::endl; break;
 		}
 		}
@@ -177,10 +182,6 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return simpleInstruction("OP LESS EQUAL", offset);
     case +OpCode::GET_NATIVE:
          return shortInstruction("OP GET NATIVE", chunk, offset);
-	case +OpCode::DEFINE_GLOBAL:
-		return globalInstruction("OP DEFINE GLOBAL", chunk, offset, false);
-	case +OpCode::DEFINE_GLOBAL_LONG:
-		return globalInstruction("OP DEFINE GLOBAL LONG", chunk, offset, true);
 	case +OpCode::GET_GLOBAL:
 		return globalInstruction("OP GET GLOBAL", chunk, offset, false);
 	case +OpCode::GET_GLOBAL_LONG:
@@ -193,6 +194,12 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return byteInstruction("OP GET LOCAL", chunk, offset);
 	case +OpCode::SET_LOCAL:
 		return byteInstruction("OP SET LOCAL", chunk, offset);
+    case +OpCode::CREATE_UPVALUE:
+        return byteInstruction("OP CREATE UPVALUE", chunk, offset);
+    case +OpCode::GET_LOCAL_UPVALUE:
+        return byteInstruction("OP GET LOCAL UPVALUE", chunk, offset);
+    case +OpCode::SET_LOCAL_UPVALUE:
+        return byteInstruction("OP SET LOCAL UPVALUE", chunk, offset);
 	case +OpCode::GET_UPVALUE:
 		return byteInstruction("OP GET UPVALUE", chunk, offset);
 	case +OpCode::SET_UPVALUE:
@@ -232,7 +239,7 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		for (int i = 0; i < numOfConstants; i++) {
 			uInt constant = constantsOffset + chunk->bytecode[offset++];
 			std::cout << fmt::format("{:0>4d}    | {:16} {:4d} ", offset - 1, "CASE CONSTANT", constant);
-			chunk->constants[constant].print();
+			print(chunk->constants[constant]);
 			uInt16 caseJmp = (uInt16)(chunk->bytecode[jumps + i * 2] << 8) | chunk->bytecode[(jumps + i * 2) + 1];
 			std::cout << fmt::format(" {} -> {:4d}", jumps + i * 2, jumps + i * 2 + 2 + caseJmp) << std::endl;
 		}
@@ -250,7 +257,7 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		for (int i = 0; i < numOfConstants; i++) {
 			uInt constant = constantsOffset + (static_cast<uInt16>(chunk->bytecode[offset] << 8) | chunk->bytecode[offset + 1]);
 			std::cout << fmt::format("{:0>4d}    | {:16} {:4d} ", offset, "CASE CONSTANT", constant);
-			chunk->constants[constant].print();
+			print(chunk->constants[constant]);
 			uInt16 caseJmp = (uInt16)(chunk->bytecode[jumps + i * 2] << 8) | chunk->bytecode[(jumps + i * 2) + 1];
 			std::cout << fmt::format(" {} -> {:4d}", jumps + i * 2, jumps + i * 2 + 2 + caseJmp) << std::endl;
 			offset += 2;
@@ -267,10 +274,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		offset++;
 		uInt constant = constantsOffset + chunk->bytecode[offset++];
 		std::cout << fmt::format("{:16} {:4d} ", "OP CLOSURE", constant);
-		chunk->constants[constant].print();
+		print(chunk->constants[constant]);
 		std::cout << std::endl;
 
-		object::ObjFunc* function = chunk->constants[constant].asFunction();
+		object::ObjFunc* function = asFunction(chunk->constants[constant]);
 		for (int j = 0; j < function->upvalueCount; j++) {
 			int isLocal = chunk->bytecode[offset++];
 			int index = chunk->bytecode[offset++];
@@ -283,10 +290,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		uInt constant = constantsOffset + ((chunk->bytecode[offset] << 8) | chunk->bytecode[offset + 1]);
 		offset += 2;
 		std::cout << fmt::format("{:16} {:4d} ", "OP CLOSURE LONG", constant);
-		chunk->constants[constant].print();
+		print(chunk->constants[constant]);
 		std::cout << std::endl;
 
-		object::ObjFunc* function = chunk->constants[constant].asFunction();
+		object::ObjFunc* function = asFunction(chunk->constants[constant]);
 		for (int j = 0; j < function->upvalueCount; j++) {
 			int isLocal = chunk->bytecode[offset++];
 			int index = chunk->bytecode[offset++];
@@ -298,8 +305,6 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return byteInstruction("OP LAUNCH ASYNC", chunk, offset);
 	case +OpCode::AWAIT:
 		return simpleInstruction("OP AWAIT", offset);
-	case +OpCode::CLASS:
-		return constantInstruction("OP CLASS", chunk, offset, true, constantsOffset);
 	case +OpCode::GET_PROPERTY:
 		return constantInstruction("OP GET PROPERTY", chunk, offset, false, constantsOffset);
 	case +OpCode::GET_PROPERTY_LONG:
@@ -308,6 +313,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return constantInstruction("OP SET PROPERTY", chunk, offset, false, constantsOffset);
 	case +OpCode::SET_PROPERTY_LONG:
 		return constantInstruction("OP SET PROPERTY LONG", chunk, offset, true, constantsOffset);
+    case +OpCode::GET_PROPERTY_EFFICIENT:
+        return constantInstruction("OP GET PROPERTY EFFICIENT", chunk, offset, true, constantsOffset);
+    case +OpCode::SET_PROPERTY_EFFICIENT:
+        return constantInstruction("OP SET PROPERTY EFFICIENT", chunk, offset, true, constantsOffset);
 	case +OpCode::CREATE_STRUCT: {
 		offset++;
 		uint8_t fieldNum = chunk->bytecode[offset++];
@@ -329,14 +338,10 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		}
 		return offset;
 	}
-	case +OpCode::METHOD:
-		return constantInstruction("OP METHOD", chunk, offset, true, constantsOffset);
 	case +OpCode::INVOKE:
 		return invokeInstruction("OP INVOKE", chunk, offset, constantsOffset);
 	case +OpCode::INVOKE_LONG:
 		return longInvokeInstruction("OP INVOKE LONG", chunk, offset, constantsOffset);
-	case +OpCode::INHERIT:
-		return simpleInstruction("OP INHERIT", offset);
 	case +OpCode::GET_SUPER:
 		return constantInstruction("OP GET SUPER", chunk, offset, false, constantsOffset);
 	case +OpCode::GET_SUPER_LONG:
@@ -345,6 +350,8 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		return invokeInstruction("OP SUPER INVOKE", chunk, offset, constantsOffset);
 	case +OpCode::SUPER_INVOKE_LONG:
 		return longInvokeInstruction("OP SUPER INVOKE LONG", chunk, offset, constantsOffset);
+    case +OpCode::INSTANCEOF:
+        return constantInstruction("OP INSTANCEOF", chunk, offset, true, constantsOffset);
 	default:
 		std::cout << "Unknown opcode " << (int)instruction << "\n";
 		return offset + 1;

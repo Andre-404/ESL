@@ -2,6 +2,7 @@
 #include "../common.h"
 #include <mutex>
 #include <atomic>
+#include "../Includes/unorderedDense.h"
 
 namespace runtime {
 	class VM;
@@ -13,6 +14,7 @@ namespace compileCore {
 
 namespace object {
 	class Obj;
+    class ObjString;
 }
 
 
@@ -21,14 +23,16 @@ namespace memory {
 	class GarbageCollector {
 	public:
 		void* alloc(uInt64 size);
-		void collect(runtime::VM* vm);
+		void collect();
 		void collect(compileCore::Compiler* compiler);
 		GarbageCollector();
 		void markObj(object::Obj* object);
 		std::atomic<bool> shouldCollect;
+        std::atomic<uInt64> heapSize;
+        runtime::VM* vm;
+        ankerl::unordered_dense::map<string, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
-		uInt64 heapSize;
 		uInt64 heapSizeLimit;
 		//static allocations that get transfered to heap at next 'collect'
 		vector<object::Obj*> objects;

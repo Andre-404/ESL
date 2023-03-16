@@ -7,6 +7,7 @@
 #include "Runtime/vm.h"
 #include <chrono>
 
+#if defined(_WIN32) || defined(WIN32)
 #include <windows.h>
 
 static void windowsSetTerminalProcessing(){
@@ -18,13 +19,17 @@ static void windowsSetTerminalProcessing(){
     consoleMode |= ENABLE_PROCESSED_OUTPUT;
     SetConsoleMode( handleOut , consoleMode );
 };
+#endif
 
 int main(int argc, char* argv[]) {
-
     string path;
     // For ease of use during development
     #ifdef DEBUG_MODE
+    #if defined(_WIN32) || defined(WIN32)
     path = "C:\\Temp\\main.esl";
+    #else
+    path = "/mnt/c/Temp/main.esl";
+    #endif
     #else
     if(argc == 2) path = string(argv[1]);
     else{
@@ -32,8 +37,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     #endif
-
+    #if defined(_WIN32) || defined(WIN32)
     windowsSetTerminalProcessing();
+    #endif
     preprocessing::Preprocessor preprocessor;
     preprocessor.preprocessProject(path);
     vector<CSLModule*> modules = preprocessor.getSortedUnits();

@@ -66,7 +66,6 @@ CSLModule* Preprocessor::scanFile(string filePath) {
 }
 
 void Preprocessor::toposort(CSLModule* unit) {
-    //TODO: we can get a stack overflow if this goes into deep recursion, try making a iterative stack based DFS implementation
     //TODO: basically implement Kahn's algorithm...
     unit->traversed = true;
     for (Dependency& dep : unit->deps) {

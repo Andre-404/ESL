@@ -10,7 +10,7 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"continue", TokenType::CONTINUE},
         {"default", TokenType::DEFAULT},
         {"else", TokenType::ELSE},
-        {"export", TokenType::EXPORT},
+        {"pub", TokenType::PUB},
         {"if", TokenType::IF},
         {"import", TokenType::IMPORT},
         {"null", TokenType::NIL},
@@ -19,11 +19,11 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"return", TokenType::RETURN},
         {"super", TokenType::SUPER},
         {"switch", TokenType::SWITCH},
-        {"var", TokenType::VAR},
+        {"let", TokenType::LET},
         {"while", TokenType::WHILE},
         {"false", TokenType::FALSE},
         {"for", TokenType::FOR},
-        {"func", TokenType::FUNC},
+        {"fn", TokenType::FN},
         {"this", TokenType::THIS},
         {"true", TokenType::TRUE},
         {"as", TokenType::AS},
@@ -31,7 +31,10 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"async", TokenType::ASYNC},
         {"addMacro", TokenType::ADDMACRO},
         {"expr", TokenType::EXPR},
-        {"tt", TokenType::TT}
+        {"tt", TokenType::TT},
+        {"static", TokenType::STATIC},
+        {"instanceof", TokenType::INSTANCEOF},
+        {"new", TokenType::NEW}
 };
 
 using namespace preprocessing;
@@ -115,7 +118,7 @@ Token Scanner::scanToken() {
         case ']': return makeToken(TokenType::RIGHT_BRACKET);
         case ';': return makeToken(TokenType::SEMICOLON);
         case ',': return makeToken(TokenType::COMMA);
-        case '.': return makeToken(TokenType::DOT);
+        case '.': return makeToken(match('.') ? (match('=') ? TokenType::DOUBLE_DOT_EQUAL : TokenType::DOUBLE_DOT) : TokenType::DOT);
         case '$': return makeToken(TokenType::DOLLAR);
         case '-': return makeToken(match('=') ? TokenType::MINUS_EQUAL : match('-') ? TokenType::DECREMENT : TokenType::MINUS);
         case '+': return makeToken(match('=') ? TokenType::PLUS_EQUAL : match('+') ? TokenType::INCREMENT : TokenType::PLUS);
