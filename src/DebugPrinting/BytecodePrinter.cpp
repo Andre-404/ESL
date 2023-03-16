@@ -49,8 +49,8 @@ static int jumpInstruction(string name, int sign, Chunk* chunk, int offset) {
 }
 
 static int invokeInstruction(string name, Chunk* chunk, int offset, int constantsOffset) {
-    uint8_t argCount = chunk->bytecode[offset + 1];
-	uint8_t constant = chunk->bytecode[offset + 2];
+	uint8_t constant = chunk->bytecode[offset + 1];
+	uint8_t argCount = chunk->bytecode[offset + 2];
 	std::cout << fmt::format("{:16} ({} args) {:4d} ", name, argCount, constantsOffset + constant);
 	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "\n";
@@ -58,9 +58,8 @@ static int invokeInstruction(string name, Chunk* chunk, int offset, int constant
 }
 
 static int longInvokeInstruction(string name, Chunk* chunk, int offset, int constantsOffset) {
-    uint8_t argCount = chunk->bytecode[offset + 1];
-	uint8_t constant = ((chunk->bytecode[offset + 2] << 8) | chunk->bytecode[offset + 3]);
-
+	uint8_t constant = (chunk->bytecode[offset + 1] | chunk->bytecode[offset + 2] | (chunk->bytecode[offset + 3] << 16));
+	uint8_t argCount = chunk->bytecode[offset + 4];
 	std::cout << fmt::format("{:16} ({} args) {:4d}", name, argCount, constantsOffset + constant);
 	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "'\n";

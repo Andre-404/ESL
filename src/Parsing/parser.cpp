@@ -441,40 +441,30 @@ void Parser::parse(vector<CSLModule*>& modules) {
 
         expandMacros();
 	}
-	// 2 units being imported using the same alias is illegal
-    // Units imported without an alias must abide by the rule that every symbol must be unique
+	//look at each unit and determine if any of its dependencies that are imported without an alias are exporting the same symbol,
+	//or if 2 or more units using aliases share the same alias, which is forbidden
 	for (CSLModule* unit : modules) {
-		std::unordered_map<string, Dependency*> symbols;
-        // Symbols of this unit are also taken into account when checking uniqueness
-        for(auto decl : unit->topDeclarations){
-            symbols[decl->getName().getLexeme()] = nullptr;
-        }
+		std::unordered_map<string, Dependency*> importedSymbols;
 		std::unordered_map<string, Dependency*> importAliases;
 
 		for (Dependency& dep : unit->deps) {
 			if (dep.alias.type == TokenType::NONE) {
-				for (const auto decl : dep.module->exports) {
-					string lexeme = decl->getName().getLexeme();
+				for (const Token& token : dep.module->exports) {
+					string lexeme = token.getLexeme();
 
-					if (symbols.count(lexeme) == 0) {
-                        symbols[lexeme] = &dep;
+					if (importedSymbols.count(lexeme) == 0) {
+						importedSymbols[lexeme] = &dep;
 						continue;
 					}
-					// If there are 2 or more declaration which use the same symbol,
-					// throw an error and tell the user exactly which dependencies caused the error
-
+					//if there are 2 or more declaration which use the same symbol,
+					//throw an error and tell the user exactly which dependencies caused the error
 					string str = fmt::format("Ambiguous definition, symbol '{}' defined in {} and {}.",
-						lexeme, symbols[lexeme] ? symbols[lexeme]->pathString.getLexeme() : "this file", dep.pathString.getLexeme());
-                    if(!symbols[lexeme]){
-                        for(auto thisFileDecl : unit->topDeclarations){
-                            if(thisFileDecl->getName().getLexeme() != lexeme) continue;
-                            error(thisFileDecl->getName(), str);
-                        }
-                    }else error(dep.pathString, str);
+						lexeme, importedSymbols[lexeme]->pathString.getLexeme(), dep.pathString.getLexeme());
+					error(dep.pathString, str);
 				}
 			}
 			else {
-				// Check if any imported dependencies share the same alias
+				//check if any imported dependencies share the same alias
 				if (importAliases.count(dep.alias.getLexeme()) > 0) {
 					error(importAliases[dep.alias.getLexeme()]->alias, "Cannot use the same alias for 2 module imports.");
 					error(dep.alias, "Cannot use the same alias for 2 module imports.");
@@ -558,7 +548,7 @@ ASTNodePtr Parser::expression() {
 #pragma region Statements and declarations
 //module level variables are put in a list to help with error reporting in compiler
 ASTNodePtr Parser::topLevelDeclaration() {
-	//export is only allowed in global scope
+	  //export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
     bool isExported = false;
     if (match(TokenType::PUB)) isExported = true;
@@ -620,7 +610,7 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
 	}
 	consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments");
 	consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
-    shared_ptr<BlockStmt> body = blockStmt();
+	ASTNodePtr body = blockStmt();
 
 	loopDepth = tempLoopDepth;
 	switchDepth = tempSwitchDepth;
@@ -724,13 +714,13 @@ ASTNodePtr Parser::statement() {
 	return exprStmt();
 }
 
-shared_ptr<ExprStmt> Parser::exprStmt() {
+ASTNodePtr Parser::exprStmt() {
 	ASTNodePtr expr = expression();
 	consume(TokenType::SEMICOLON, "Expected ';' after expression.");
 	return make_shared<ExprStmt>(expr);
 }
 
-shared_ptr<BlockStmt> Parser::blockStmt() {
+ASTNodePtr Parser::blockStmt() {
 	vector<ASTNodePtr> stmts;
 	//TokenType::LEFT_BRACE is already consumed
 	while (!check(TokenType::RIGHT_BRACE)) {
@@ -740,7 +730,7 @@ shared_ptr<BlockStmt> Parser::blockStmt() {
 	return make_shared<BlockStmt>(stmts);
 }
 
-shared_ptr<IfStmt> Parser::ifStmt() {
+ASTNodePtr Parser::ifStmt() {
 	consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'.");
 	ASTNodePtr condition = expression();
 	consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
@@ -754,7 +744,7 @@ shared_ptr<IfStmt> Parser::ifStmt() {
 	return make_shared<IfStmt>(thenBranch, elseBranch, condition);
 }
 
-shared_ptr<WhileStmt> Parser::whileStmt() {
+ASTNodePtr Parser::whileStmt() { 
 	//loopDepth is used to see if a 'continue' or 'break' statement is allowed within the body
 	loopDepth++;
 	consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
@@ -765,7 +755,7 @@ shared_ptr<WhileStmt> Parser::whileStmt() {
 	return make_shared<WhileStmt>(body, condition);
 }
 
-shared_ptr<ForStmt> Parser::forStmt() {
+ASTNodePtr Parser::forStmt() {
 	loopDepth++;
 	consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.");
 	//initializer can either be: empty, a new variable declaration, or any expression
@@ -791,19 +781,19 @@ shared_ptr<ForStmt> Parser::forStmt() {
 	return make_shared<ForStmt>(init, condition, increment, body);
 }
 
-shared_ptr<BreakStmt> Parser::breakStmt() {
+ASTNodePtr Parser::breakStmt() {
 	if (loopDepth == 0 && switchDepth == 0) throw error(previous(), "Cannot use 'break' outside of loops or switch statements.");
 	consume(TokenType::SEMICOLON, "Expect ';' after break.");
 	return make_shared<BreakStmt>(previous());
 }
 
-shared_ptr<ContinueStmt> Parser::continueStmt() {
+ASTNodePtr Parser::continueStmt() {
 	if (loopDepth == 0) throw error(previous(), "Cannot use 'continue' outside of loops.");
 	consume(TokenType::SEMICOLON, "Expect ';' after continue.");
 	return make_shared<ContinueStmt>(previous());
 }
 
-shared_ptr<SwitchStmt> Parser::switchStmt() {
+ASTNodePtr Parser::switchStmt() {
 	//structure:
 	//switch(<expression>){
 	//case <expression>: <statements>
@@ -852,13 +842,13 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
 	return make_shared<CaseStmt>(matchConstants, stmts);
 }
 
-shared_ptr<AdvanceStmt> Parser::advanceStmt() {
+ASTNodePtr Parser::advanceStmt() {
 	if (switchDepth == 0) throw error(previous(), "Cannot use 'advance' outside of switch statements.");
 	consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
 	return make_shared<AdvanceStmt>(previous());
 }
 
-shared_ptr<ReturnStmt> Parser::returnStmt() {
+ASTNodePtr Parser::returnStmt() {
 	ASTNodePtr expr = nullptr;
 	Token keyword = previous();
 	if (!match(TokenType::SEMICOLON)) {

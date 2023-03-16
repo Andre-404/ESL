@@ -67,10 +67,10 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
 				unit->stmts[i]->accept(this);
 			}
 			catch (CompilerException e) {
-                // Do nothing, only used for unwinding the stack
+				int a = 1;
 			}
 		}
-		curGlobalIndex = globals.size();
+		curGlobalIndex += unit->topDeclarations.size();
 		curUnitIndex++;
 	}
     mainBlockFunc = endFuncDecl();
@@ -147,52 +147,52 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 	expr->left->accept(this);
 	uint8_t op = 0;
 	switch (expr->op.type) {
-        case TokenType::OR:{
-            //if the left side is true, we know that the whole expression will eval to true
-            int jump = emitJump(+OpCode::JUMP_IF_TRUE);
-            //pop the left side and eval the right side, right side result becomes the result of the whole expression
-            emitByte(+OpCode::POP);
-            expr->right->accept(this);
-            patchJump(jump);//left side of the expression becomes the result of the whole expression
-            return;
-        }
-        case TokenType::AND:{
-            //at this point we have the left side of the expression on the stack, and if it's false we skip to the end
-            //since we know the whole expression will evaluate to false
-            int jump = emitJump(+OpCode::JUMP_IF_FALSE);
-            //if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
-            //whole expression
-            emitByte(+OpCode::POP);
-            expr->right->accept(this);
-            patchJump(jump);
-            return;
-        }
-        case TokenType::INSTANCEOF:{
-            auto klass = getClassFromExpr(expr->right);
-            uint16_t index = makeConstant(encodeObj(klass));
-            emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
-            return;
-        }
-		//take in double or string(in case of add)
-        case TokenType::PLUS:	op = +OpCode::ADD; break;
-        case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
-        case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
-        case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
-		//for these operators, a check is preformed to confirm both numbers are integers, not decimals
-        case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
-        case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
-        case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
-        case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
-        case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
-        case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
-		//these return bools and use an epsilon value when comparing
-        case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
-        case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
-        case TokenType::GREATER:		 op = +OpCode::GREATER; break;
-        case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
-        case TokenType::LESS:			 op = +OpCode::LESS; break;
-        case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
-        default: error(expr->op, "Unrecognized token in binary expression.");
+  case TokenType::OR:{
+      //if the left side is true, we know that the whole expression will eval to true
+      int jump = emitJump(+OpCode::JUMP_IF_TRUE);
+      //pop the left side and eval the right side, right side result becomes the result of the whole expression
+      emitByte(+OpCode::POP);
+      expr->right->accept(this);
+      patchJump(jump);//left side of the expression becomes the result of the whole expression
+      return;
+  }
+  case TokenType::AND:{
+      //at this point we have the left side of the expression on the stack, and if it's false we skip to the end
+      //since we know the whole expression will evaluate to false
+      int jump = emitJump(+OpCode::JUMP_IF_FALSE);
+      //if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
+      //whole expression
+      emitByte(+OpCode::POP);
+      expr->right->accept(this);
+      patchJump(jump);
+      return;
+  }
+  case TokenType::INSTANCEOF:{
+      auto klass = getClassFromExpr(expr->right);
+      uint16_t index = makeConstant(encodeObj(klass));
+      emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
+      return;
+  }
+	//take in double or string(in case of add)
+	case TokenType::PLUS:	op = +OpCode::ADD; break;
+	case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
+	case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
+	case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
+	//for these operators, a check is preformed to confirm both numbers are integers, not decimals
+	case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
+	case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
+	case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
+	case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
+	case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
+	case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
+  //these return bools and use an epsilon value when comparing
+  case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
+  case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
+  case TokenType::GREATER:		 op = +OpCode::GREATER; break;
+  case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
+  case TokenType::LESS:			 op = +OpCode::LESS; break;
+  case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+  default: error(expr->op, "Unrecognized token in binary expression.");
 	}
 	expr->right->accept(this);
 	emitByte(op);
@@ -370,9 +370,9 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
 	else if (!currentClass->klass->superclass) {
 		error(expr->methodName, "Can't use 'super' in a class with no superclass.");
 	}
-	// We use a synthetic token since 'this' is defined if we're currently compiling a class method
+	//we use syntethic tokens since we know that 'super' and 'this' are defined if we're currently compiling a class method
 	namedVar(syntheticToken("this"), false);
-    emitConstant(encodeObj(currentClass->klass->superclass));
+  emitConstant(encodeObj(currentClass->klass->superclass));
 	if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
 	else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
 }
@@ -425,13 +425,13 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
         declareLocalVar(var);
         defineLocalVar();
 	}
-    for(auto stmt : expr->body->statements){
-        try {
-            stmt->accept(this);
-        }catch(CompilerException e){
+  for(auto stmt : expr->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
 
-        }
-    }
+      }
+  }
 	current->func->arity = expr->args.size();
 	current->func->name = "Anonymous function";
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -486,10 +486,10 @@ void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
 }
 
 void Compiler::visitVarDecl(AST::VarDecl* decl) {
-    uint16_t global;
-    if(decl->var.type == AST::ASTVarType::GLOBAL){
-        global = declareGlobalVar(decl->var.name);
-    }else declareLocalVar(decl->var);
+  uint16_t global;
+  if(decl->var.type == AST::ASTVarType::GLOBAL){
+      global = declareGlobalVar(decl->var.name);
+  }else declareLocalVar(decl->var);
 	// Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 	AST::ASTNodePtr expr = decl->value;
 	if (expr == nullptr) {
@@ -517,17 +517,17 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 	beginScope();
 	//we define the args as locals, when the function is called, the args will be sitting on the stack in order
 	//we just assign those positions to each arg
-    for (AST::ASTVar& var : decl->args) {
-        declareLocalVar(var);
-        defineLocalVar();
-    }
-    for(auto stmt : decl->body->statements){
-        try {
-            stmt->accept(this);
-        }catch(CompilerException e){
+  for (AST::ASTVar& var : decl->args) {
+      declareLocalVar(var);
+      defineLocalVar();
+  }
+  for(auto stmt : decl->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
 
-        }
-    }
+      }
+  }
 	current->func->arity = decl->args.size();
 	current->func->name = decl->getName().getLexeme();
 	//have to do this here since endFuncDecl() deletes the compilerInfo
@@ -535,12 +535,12 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 
 	ObjFunc* func = endFuncDecl();
 
-    //Not possible but just in case
-    if(func->upvalueCount != 0){
-        error(decl->getName(), "Global function with upvalues detected, aborting...");
-    }
-    // Assigning at compile time to save on bytecode
-    globals[index].val = encodeObj(new ObjClosure(func));
+  //Not possible but just in case
+  if(func->upvalueCount != 0){
+      error(decl->getName(), "Global function with upvalues detected, aborting...");
+  }
+  // Assigning at compile time to save on bytecode
+  globals[index].val = encodeObj(new ObjClosure(func));
 }
 
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
@@ -557,33 +557,33 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 
 		//if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
 		//undefined behavior (eg. class a : a)
-        auto superclass = getClassFromExpr(decl->inheritedClass);
-        klass->superclass = superclass;
-        //Copies methods and fields from superclass
-        klass->methods = superclass->methods;
-        klass->fieldsInit = superclass->fieldsInit;
+    auto superclass = getClassFromExpr(decl->inheritedClass);
+    klass->superclass = superclass;
+    //Copies methods and fields from superclass
+    klass->methods = superclass->methods;
+    klass->fieldsInit = superclass->fieldsInit;
 	}else{
-        // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
-        // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
-        klass->methods = baseClass->methods;
-        klass->superclass = baseClass;
-    }
+      // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
+      // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
+      klass->methods = baseClass->methods;
+      klass->superclass = baseClass;
+  }
 
-    // Put field and method names into the class
-    for(auto& field : decl->fields){
-        klass->fieldsInit.insert_or_assign(ObjString::createStr((field.isPublic ? "" : "!") + field.field.getLexeme()), encodeNil());
-    }
-    // First put the method names into the class, then compiled the methods later to be able to correctly detect the methods when
-    // resolveClassField is called
-    for(auto& method : decl->methods){
-        klass->methods.insert_or_assign(ObjString::createStr((method.isPublic ? "" : "!") + method.method->getName().getLexeme()), nullptr);
-    }
+  // Put field and method names into the class
+  for(auto& field : decl->fields){
+      klass->fieldsInit.insert_or_assign(ObjString::createStr((field.isPublic ? "" : "!") + field.field.getLexeme()), encodeNil());
+  }
+  // First put the method names into the class, then compiled the methods later to be able to correctly detect the methods when
+  // resolveClassField is called
+  for(auto& method : decl->methods){
+      klass->methods.insert_or_assign(ObjString::createStr((method.isPublic ? "" : "!") + method.method->getName().getLexeme()), nullptr);
+  }
 
-    // Define the class here, so that it can be called inside its own methods
-    // Defining after inheriting so that a class can't be used as its own parent
-    defineGlobalVar(index);
-    // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
-    globals[index].val = encodeObj(klass);
+  // Define the class here, so that it can be called inside its own methods
+  // Defining after inheriting so that a class can't be used as its own parent
+  defineGlobalVar(index);
+  // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
+  globals[index].val = encodeObj(klass);
 
 	for (auto& _method : decl->methods) {
         //At this point the name is guaranteed to exist as a string, so createStr just returns the already created string
@@ -591,7 +591,6 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 	}
 	currentClass = nullptr;
 }
-
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
 	stmt->expr->accept(this);
 	emitByte(+OpCode::POP);
@@ -1024,15 +1023,15 @@ void Compiler::namedVar(Token token, bool canAssign) {
 		getOp = +OpCode::GET_UPVALUE;
 		setOp = +OpCode::SET_UPVALUE;
 	}
-    else if((arg = resolveClassField(token, canAssign)) != -1){
-        if(current->type == FuncType::TYPE_FUNC){
-            error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
-        }
-        getOp = +OpCode::GET_PROPERTY_EFFICIENT;
-        setOp = +OpCode::SET_PROPERTY_EFFICIENT;
-        emitByteAnd16Bit((canAssign ? setOp : getOp), arg);
-        return;
-    }
+  else if((arg = resolveClassField(token, canAssign)) != -1){
+      if(current->type == FuncType::TYPE_FUNC){
+          error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
+      }
+      getOp = +OpCode::GET_PROPERTY_EFFICIENT;
+      setOp = +OpCode::SET_PROPERTY_EFFICIENT;
+      emitByteAnd16Bit((canAssign ? setOp : getOp), arg);
+      return;
+  }
 	else if((arg = resolveGlobal(token, canAssign)) != -1 && arg != -2){
 		// All global variables are stored in an array, resolveGlobal gets index into the array
 		getOp = +OpCode::GET_GLOBAL;
@@ -1051,11 +1050,8 @@ void Compiler::namedVar(Token token, bool canAssign) {
     else{
         string name = token.getLexeme();
         auto it = nativeFuncNames.find(name);
-        if(it == nativeFuncNames.end()){
-            if(arg == -1) error(token, fmt::format("'{}' doesn't match any declared variable name or native function name.", name));
-            else if(arg == -2) error(token, fmt::format("Trying to access variable '{}' before it's initialized.", name));
-        }
-
+        if(it == nativeFuncNames.end())
+            error(token, fmt::format("'{}' doesn't match any declared variable name or native function name", name));
         emitByteAnd16Bit(+OpCode::GET_NATIVE, it->second);
         return;
     }
@@ -1069,10 +1065,10 @@ uint16_t Compiler::declareGlobalVar(Token name) {
 	// Searches for the index of the global variable in the current file
     // (globals.size() - curGlobalIndex = globals declared in current file)
 	int index = curGlobalIndex;
-	for (int i = curGlobalIndex; i < globals.size(); i++) {
-		if (name.getLexeme() == globals[i].name) return i;
+	for (Token token : curUnit->topDeclarations) {
+		if (name.equals(token)) return index;
+		index++;
 	}
-    // Should never be hit, but here just in case
 	error(name, "Couldn't find variable.");
 	return 0;
 }
@@ -1197,33 +1193,51 @@ Token Compiler::syntheticToken(string str) {
 #pragma endregion
 
 #pragma region Classes and methods
-object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
+void Compiler::method(AST::FuncDecl* _method, Token className) {
 	updateLine(_method->getName());
 	uint16_t name = identifierConstant(_method->getName());
 	FuncType type = FuncType::TYPE_METHOD;
-	// Constructors are treated separately, but are still methods
+	//constructors are treated separatly, but are still methods
 	if (_method->getName().equals(className)) type = FuncType::TYPE_CONSTRUCTOR;
-    // "this" gets implicitly defined as the first local in methods and the constructor
 	current = new CurrentChunkInfo(current, type);
+	//no need for a endScope, since returning from the function discards the entire callstack
 	beginScope();
 	// Args defined as local in order they were passed to the function
-    for (AST::ASTVar& var : _method->args) {
-        declareLocalVar(var);
-        defineLocalVar();
-    }
-    for(auto stmt : _method->body->statements){
-        try {
-            stmt->accept(this);
-        }catch(CompilerException e){
+  for (AST::ASTVar& var : _method->args) {
+      declareLocalVar(var);
+      defineLocalVar();
+  }
+  for(auto stmt : _method->body->statements){
+      try {
+          stmt->accept(this);
+      }catch(CompilerException e){
 
-        }
-    }
+      }
+  }
 	current->func->arity = _method->arity;
 
 	current->func->name = _method->getName().getLexeme();
+	//have to do this here since endFuncDecl() deletes the compilerInfo
+	std::array<Upvalue, UPVAL_MAX> upvals = current->upvalues;
+
 	ObjFunc* func = endFuncDecl();
-	if (func->upvalueCount != 0) error(_method->getName(), "Upvalues captured in method, aborting...");
-    return new ObjClosure(func);
+	if (func->upvalueCount == 0) {
+		ObjClosure* closure = new ObjClosure(dynamic_cast<ObjFunc*>(func));
+		emitConstant(Value(closure));
+		emitByteAnd16Bit(+OpCode::METHOD, name);
+		return;
+	}
+	uInt16 constant = makeConstant(Value(func));
+
+	if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
+	else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
+	//if this function does capture any upvalues, we emit the code for getting them,
+	//when we execute "OP_CLOSURE" we will check to see how many upvalues the function captures by going directly to the func->upvalueCount
+	for (int i = 0; i < func->upvalueCount; i++) {
+		emitByte(upvals[i].isLocal ? 1 : 0);
+		emitByte(upvals[i].index);
+	}
+	emitByteAnd16Bit(+OpCode::METHOD, name);
 }
 
 bool Compiler::invoke(AST::CallExpr* expr) {
@@ -1275,15 +1289,15 @@ bool Compiler::invoke(AST::CallExpr* expr) {
 			argCount++;
 		}
 		// superclass gets popped, leaving only the receiver and args on the stack
-        emitConstant(encodeObj(currentClass->klass->superclass));
-        if(name > SHORT_CONSTANT_LIMIT){
-            emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
-            emit16Bit(name);
-        }
-        else {
-            emitBytes(+OpCode::SUPER_INVOKE, argCount);
-            emitByte(name);
-        }
+    emitConstant(encodeObj(currentClass->klass->superclass));
+    if(name > SHORT_CONSTANT_LIMIT){
+        emitBytes(+OpCode::SUPER_INVOKE_LONG, argCount);
+        emit16Bit(name);
+    }
+    else {
+        emitBytes(+OpCode::SUPER_INVOKE, argCount);
+        emitByte(name);
+    }
 		return true;
 	}
     // Class methods can be accessed without 'this' keyword inside of methods and called
@@ -1455,61 +1469,49 @@ void Compiler::updateLine(Token token) {
 
 // For every dependency that's imported without an alias, check if any of its exports match 'symbol', return -1 if not
 int Compiler::checkSymbol(Token symbol) {
+	std::unordered_map<string, CSLModule*> importedSymbols;
 	string lexeme = symbol.getLexeme();
 	for (Dependency dep : curUnit->deps) {
-        auto& decls = dep.module->topDeclarations;
 		if (dep.alias.type == TokenType::NONE) {
-            int globalIndex = 0;
-            for (int i = 0; i < units.size(); i++) {
-                if (units[i] == dep.module) break;
-                globalIndex += units[i]->topDeclarations.size();
-            }
-            int upperLimit = globalIndex + decls.size();
-            for(int i = 0; i < upperLimit; i++){
-                if(!decls[i]->getName().equals(symbol)) continue;
-                return i;
-            }
-            error(symbol, "Error, variable wasn't loaded into globals array.");
+      int globalIndex = 0;
+      for (int i = 0; i < units.size(); i++) {
+          if (units[i] == dep.module) break;
+          globalIndex += units[i]->topDeclarations.size();
+      }
+      int upperLimit = globalIndex + decls.size();
+      for(int i = 0; i < upperLimit; i++){
+          if(!decls[i]->getName().equals(symbol)) continue;
+          return i;
+      }
+      error(symbol, "Error, variable wasn't loaded into globals array.");
 		}
 	}
     return -1;
 }
 
-// Checks if 'symbol' is declared in the current file, if not passes it to checkSymbol
-// -1 is returned only if no global variable 'symbol' exists, which is checked by checkSymbol
-// -2 if variable exists but isn't defined
-int Compiler::resolveGlobal(Token symbol, bool canAssign) {
+// Finds the correct module from which a given top level variable originated, and appends the correct index as a prefix
+// If it doesn't find any matching names, returns -1
+int Compiler::resolveGlobal(Token name, bool canAssign) {
 	bool inThisFile = false;
 	int index = curGlobalIndex;
-    std::shared_ptr<AST::ASTDecl> ptr = nullptr;
-	for (auto decl : curUnit->topDeclarations) {
-		if (symbol.equals(decl->getName())) {
-            // It's an error to read from a variable during its initialization
-            if(!definedGlobals[index]) return -2;
+	for (Token token : curUnit->topDeclarations) {
+		if (name.getLexeme().compare(token.getLexeme()) == 0) {
 			inThisFile = true;
-            ptr = decl;
 			break;
 		}
 		index++;
 	}
 	if (canAssign) {
-		if (inThisFile){
-            if(ptr->type == AST::ASTType::FUNC) error(symbol, "Cannot assign to a function.");
-            else if(ptr->type == AST::ASTType::CLASS) error(symbol, "Cannot assign to a class.");
-
-            return index;
-        }
-        error(symbol, "Cannot assign to a variable not declared in this module.");
+		if (inThisFile) return index;
 	}
 	else {
 		if (inThisFile) return index;
 		else {
-            // Global variables defined in an imported file are guaranteed to be already defined
-			return checkSymbol(symbol);
+			return checkSymbol(name);
 		}
 	}
-    // Never hit, checkSymbol returns -1 upon failure
-	return -1;
+	error(name, "Variable isn't declared.");
+    return -1;
 }
 
 // Checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
@@ -1534,20 +1536,20 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 			index += i->topDeclarations.size();
 			continue;
 		}
-		// Checks every export of said module against 'variable'
-		for (auto decl : unit->exports) {
-			if (decl->getName().equals(variable)) return index;
+		//equals every export of said module against 'variable'
+		for (Token& token : unit->exports) {
+			if (token.equals(variable)) return index;
 			index++;
 		}
 	}
 
 	error(variable, fmt::format("Module {} doesn't export this symbol.", depPtr->alias.getLexeme()));
-    // Never hit
+
     return -1;
 }
 #pragma endregion
 
-// Only used when debugging _LONG versions of op codes
+//only used when debugging _LONG versions of op codes
 #undef SHORT_CONSTANT_LIMIT
 
 #undef CHECK_SCOPE_FOR_LOOP

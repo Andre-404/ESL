@@ -66,9 +66,7 @@ void AST::MacroExpander::visitStructLiteralExpr(StructLiteral* expr) {
 }
 void AST::MacroExpander::visitLiteralExpr(LiteralExpr* expr) {}
 void AST::MacroExpander::visitFuncLiteral(FuncLiteral* expr) {
-    for (auto& line : expr->body->statements) {
-        expand(line);
-    }
+    expand(expr->body);
 }
 void AST::MacroExpander::visitSuperExpr(SuperExpr* expr) {}
 void AST::MacroExpander::visitModuleAccessExpr(ModuleAccessExpr* expr) {}
@@ -100,11 +98,7 @@ void AST::MacroExpander::visitVarDecl(VarDecl* decl) {
     expand(decl->value);
 }
 
-void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) {
-    for (auto& line : decl->body->statements) {
-        expand(line);
-    }
-}
+void AST::MacroExpander::visitFuncDecl(FuncDecl* decl) { expand(decl->body); }
 void AST::MacroExpander::visitClassDecl(ClassDecl* decl) {
     for (auto& method : decl->methods) {
         for (auto& line : method.method->body->statements) {

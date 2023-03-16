@@ -1,4 +1,5 @@
 #pragma once
+#pragma once
 #include "../moduleDefs.h"
 
 namespace AST {
