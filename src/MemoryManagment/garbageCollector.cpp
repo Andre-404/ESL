@@ -1,6 +1,6 @@
 #include "garbageCollector.h"
 #include "../ErrorHandling/errorHandler.h"
-#include "../codegen/compiler.h"
+#include "../Codegen/compiler.h"
 #include "../Objects/objects.h"
 #include "../Runtime/vm.h"
 #include "../Includes/fmt/format.h"
