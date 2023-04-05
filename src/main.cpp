@@ -21,6 +21,8 @@ static void windowsSetTerminalProcessing(){
 };
 #endif
 
+#define DEBUG_MODE
+
 int main(int argc, char* argv[]) {
     string path;
     // For ease of use during development
