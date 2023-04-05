@@ -18,7 +18,7 @@ using namespace object;
 #define MASK_TYPE_FALSE 0x0001000000000000
 #define MASK_TYPE_TRUE  0x0002000000000000
 #define MASK_TYPE_NIL   0x0003000000000000
-#define MASK_TYPE_OBJ   MASK_SIGN
+#define MASK_TYPE_OBJ   0x0004000000000000
 
 
 // Signatures
@@ -26,7 +26,7 @@ using namespace object;
 #define MASK_SIGNATURE_FALSE (MASK_NAN | MASK_TYPE_FALSE)
 #define MASK_SIGNATURE_TRUE (MASK_NAN | MASK_TYPE_TRUE)
 #define MASK_SIGNATURE_NIL (MASK_NAN | MASK_TYPE_NIL)
-#define MASK_SIGNATURE_OBJ (MASK_SIGN | MASK_NAN | MASK_TYPE_OBJ)
+#define MASK_SIGNATURE_OBJ (MASK_NAN | MASK_TYPE_OBJ)
 
 // Things with values (NaN boxing)
 static ValueType getType(Value x){

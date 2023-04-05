@@ -353,12 +353,11 @@ void runtime::Thread::executeBytecode() {
         if(pauseToken.load(std::memory_order_relaxed)) {
             if(handlePauseToken(this, asFuture(stack[0]))) return;
         }
-
         #ifdef DEBUG_TRACE_EXECUTION
         std::cout << "          ";
             for (Value* slot = stack; slot < stackTop; slot++) {
                 std::cout << "[";
-                (*slot).print();
+                valueHelpers::print(*slot);
                 std::cout << "] ";
             }
             std::cout << "\n";

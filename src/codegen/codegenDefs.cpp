@@ -60,6 +60,7 @@ string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::
         case ValueType::NUMBER:
             // TODO: Make custom precision with string streams?
             // TODO: Do some funky stuff with ints
+            if(isInt(x)) return std::to_string(static_cast<uInt64>(round(decodeNumber(x))));
             return std::to_string(decodeNumber(x));
         case ValueType::BOOL:
             return (decodeBool(x)) ? "true" : "false";
