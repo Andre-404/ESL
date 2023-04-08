@@ -58,7 +58,7 @@ namespace AST {
 	public:
 		Parser();
 		void parse(vector<CSLModule*>& modules);
-
+        void highlight(vector<CSLModule*>& modules, string moduleToHighlight);
 	private:
 		ASTProbe* probe;
 		MacroExpander* macroExpander;

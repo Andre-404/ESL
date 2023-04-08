@@ -1,5 +1,6 @@
 #include "errorHandler.h"
 #include "../Preprocessing/scanner.h"
+#include "../Includes/fmt/format.h"
 #include <iostream>
 
 //name:line:column: error: msg
@@ -65,17 +66,17 @@ void report(File* src, Token& token, string msg) {
 
 namespace errorHandler {
 	namespace {
-		struct CompileTimeError {
-			string errorText;
-			File* origin;
-			Token token;
+        struct CompileTimeError {
+            string errorText;
+            File* origin;
+            Token token;
 
-			CompileTimeError(string _errorText, File* _origin, Token _token) {
-				errorText = _errorText;
-				origin = _origin;
-				token = _token;
-			}
-		};
+            CompileTimeError(string _errorText, File* _origin, Token _token) {
+                errorText = _errorText;
+                origin = _origin;
+                token = _token;
+            }
+        };
 
 		//errors during preprocessing, building of the AST tree and compiling
 		vector<CompileTimeError> compileErrors;
@@ -98,4 +99,17 @@ namespace errorHandler {
 	bool hasErrors() {
 		return !compileErrors.empty();
 	}
+
+    vector<string> convertCompilerErrorsToJson(){
+        vector<string> errors;
+        for (CompileTimeError error : compileErrors) {
+            string final = "{";
+            final += fmt::format("\"path\": \"{}\", \"code\": {}, \"message\": \"{}\", \"line\": {}, \"start\": {}, \"end\": {}, \"severity\": \"{}\", \"relatedInformation\" :",
+                                 error.origin->path, 0, error.errorText, error.token.str.line, error.token.str.column, error.token.str.column + error.token.str.length,
+                                 "error");
+            final += "[] }";
+            errors.push_back(final);
+        }
+        return errors;
+    }
 }

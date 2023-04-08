@@ -2,6 +2,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../DebugPrinting/ASTPrinter.h"
 #include "../Includes/fmt/format.h"
+#include "../SemanticAnalysis/semanticTokenGenerator.h"
 
 using std::make_shared;
 using namespace AST;
@@ -137,35 +138,35 @@ namespace AST {
                 break;
             }
             case TokenType::PLUS_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, "+"), right);
                 break;
             }
             case TokenType::MINUS_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, "-"), right);
                 break;
             }
             case TokenType::SLASH_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, "/"), right);
                 break;
             }
             case TokenType::STAR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, "*"), right);
                 break;
             }
             case TokenType::BITWISE_XOR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, "^"), right);
                 break;
             }
             case TokenType::BITWISE_AND_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, "&"), right);
                 break;
             }
             case TokenType::BITWISE_OR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, "|"), right);
                 break;
             }
             case TokenType::PERCENTAGE_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, op), right);
+                right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, "%"), right);
                 break;
             }
         }
@@ -485,6 +486,37 @@ void Parser::parse(vector<CSLModule*>& modules) {
     }
 }
 
+void Parser::highlight(vector<CSLModule*>& modules, string moduleToHighlight){
+    // Modules are already sorted using topsort
+    for (CSLModule* unit : modules) {
+        parsedUnit = unit;
+
+        // Parse tokenized source into AST
+        loopDepth = 0;
+        switchDepth = 0;
+        currentContainer = &parsedUnit->tokens;
+        currentPtr = 0;
+        while (!isAtEnd()) {
+            try {
+                if (match(TokenType::ADDMACRO)) {
+                    defineMacro();
+                    continue;
+                }
+                unit->stmts.push_back(topLevelDeclaration());
+            }
+            catch (ParserException& e) {
+                sync();
+            }
+        }
+        if(unit->file->path == moduleToHighlight){
+            SemanticAnalysis::SemanticAnalyzer semanticAnalyzer;
+            std::cout << semanticAnalyzer.highlight(modules, unit);
+            return;
+        }
+        expandMacros();
+    }
+}
+
 void Parser::defineMacro() {
     consume(TokenType::BANG, "Expected '!' after 'addMacro' token.");
     Token macroName = consume(TokenType::IDENTIFIER, "Expected macro name to be an identifier.");
@@ -646,25 +678,19 @@ shared_ptr<ClassDecl> Parser::classDecl() {
     vector<ClassMethod> methods;
     vector<ClassField> fields;
 
-    auto checkName = [&](Token token, bool isMethod, bool isPublic){
-        if(isMethod){
-            for(auto& m : methods){
-                if(token.equals(m.method->name)) {
-                    throw error(token, "Re-declaration of method.");
-                    throw error(m.method->name, "Method first defined here.");
-                    return;
-                }
+    auto checkName = [&](Token token){
+        for(auto& m : methods){
+            if(token.equals(m.method->name)) {
+                error(token, "Re-declaration of method.");
+                throw error(m.method->name, "Method first defined here.");
             }
-            return;
         }
         for(auto& field : fields){
             if(token.equals(field.field)) {
-                throw error(token, "Re-declaration of field.");
+                error(token, "Re-declaration of field.");
                 throw error(field.field, "Field first defined here.");
-                return;
             }
         }
-        return;
     };
 
     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
@@ -676,20 +702,20 @@ shared_ptr<ClassDecl> Parser::classDecl() {
             if (match(TokenType::LET)) {
                 Token field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
 
-                checkName(field, false, isPublic);
+                checkName(field);
                 fields.emplace_back(isPublic, field);
 
                 while (!check(TokenType::SEMICOLON) && !check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
                     if (!match(TokenType::COMMA)) break;
                     field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
-                    checkName(field, false, isPublic);
+                    checkName(field);
                     fields.emplace_back(isPublic, field);
                 }
 
                 consume(TokenType::SEMICOLON, "Expected ';' after field name");
             } else if (match(TokenType::FN)) {
                 auto decl = funcDecl();
-                checkName(decl->name, true, isPublic);
+                checkName(decl->name);
                 // Implicitly declare "this"
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
                 methods.emplace_back(isPublic, decl);
@@ -734,7 +760,11 @@ shared_ptr<BlockStmt> Parser::blockStmt() {
     vector<ASTNodePtr> stmts;
     //TokenType::LEFT_BRACE is already consumed
     while (!check(TokenType::RIGHT_BRACE)) {
-        stmts.push_back(localDeclaration());
+        try {
+            stmts.push_back(localDeclaration());
+        }catch(ParserException& e){
+            sync();
+        }
     }
     consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
     return make_shared<BlockStmt>(stmts);
@@ -847,7 +877,11 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
     while (!check(TokenType::CASE) && !check(TokenType::RIGHT_BRACE) && !check(TokenType::DEFAULT)) {
-        stmts.push_back(localDeclaration());
+        try {
+            stmts.push_back(localDeclaration());
+        }catch(ParserException& e){
+            sync();
+        }
     }
     return make_shared<CaseStmt>(matchConstants, stmts);
 }
@@ -970,6 +1004,7 @@ vector<Token> Parser::readTokenTree(bool isNonLeaf)
         }
 
         tokenTree.push_back(advance());
+        tokenTree[tokenTree.size() - 1].isPartOfMacro = true;
     } while (!closerStack.empty());
 
     return tokenTree;

@@ -192,6 +192,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
         case TokenType::LESS:			 op = +OpCode::LESS; break;
         case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+        // Should never be hit
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
     expr->right->accept(this);
@@ -242,7 +243,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
                 // Little check to see if field access is to 'this', in which case the correct(public/private) name must be chosen
                 if(isLiteralThis(left->callee)){
                     Token name = probeToken(left->field);
-                    int res = resolveClassField(name, false);
+                    int res = resolveClassField(name, true);
                     if(res != -1) {
                         namedVar(syntheticToken("this"), false);
                         arg = res;
@@ -600,7 +601,11 @@ void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
 void Compiler::visitBlockStmt(AST::BlockStmt* stmt) {
     beginScope();
     for (AST::ASTNodePtr node : stmt->statements) {
-        node->accept(this);
+        try {
+            node->accept(this);
+        }catch(CompilerException e){
+
+        }
     }
     endScope();
 }
@@ -1331,8 +1336,8 @@ int Compiler::resolveClassField(Token name, bool canAssign){
 bool Compiler::resolveThis(AST::SetExpr *expr) {
     if(!isLiteralThis(expr->callee)) return false;
     Token name = probeToken(expr->field);
-    int res = resolveClassField(name, false);
-    if(res == -1) return false;
+    int res = resolveClassField(name, true);
+    if(res == -1) error(name, fmt::format("Field '{}' doesn't exist in class '{}'.", name.getLexeme(), currentClass->klass->name->str));
 
     expr->value->accept(this);
     expr->callee->accept(this);
@@ -1344,7 +1349,7 @@ bool Compiler::resolveThis(AST::FieldAccessExpr *expr) {
     if(!isLiteralThis(expr->callee)) return false;
     Token name = probeToken(expr->field);
     int res = resolveClassField(name, false);
-    if(res == -1) return false;
+    if(res == -1) error(name, fmt::format("Field '{}' doesn't exist in class '{}'.", name.getLexeme(), currentClass->klass->name->str));
 
     expr->callee->accept(this);
     if (res <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, res);
@@ -1464,12 +1469,10 @@ int Compiler::checkSymbol(Token symbol) {
                 if (units[i] == dep.module) break;
                 globalIndex += units[i]->topDeclarations.size();
             }
-            int upperLimit = globalIndex + decls.size();
-            for(int i = 0; i < upperLimit; i++){
+            for(int i = 0; i < decls.size(); i++){
                 if(!decls[i]->getName().equals(symbol)) continue;
-                return i;
+                return globalIndex + i;
             }
-            error(symbol, "Error, variable wasn't loaded into globals array.");
         }
     }
     return -1;

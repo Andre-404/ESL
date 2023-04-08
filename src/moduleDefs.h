@@ -43,9 +43,10 @@ struct File {
     //file name
     string name;
     string sourceFile;
+    string path;
     //number that represents start of each line in the source string
     std::vector<uInt> lines;
-    File(string& src, string& _name) : sourceFile(src), name(_name) {};
+    File(string _sourceFile, string& _name, string _path) : sourceFile(_sourceFile), name(_name), path(_path) {};
     File() = default;
 };
 
@@ -89,29 +90,23 @@ struct Token {
     //for things like synthetic tokens and expanded macros
     bool isSynthetic;
     string syntheticStr;
-    std::shared_ptr<Token> parentPtr; // Pointer to the token this token originated from
+    bool isPartOfMacro;
     //default constructor
     Token() {
         isSynthetic = false;
-        parentPtr = nullptr;
+        isPartOfMacro = false;
         type = TokenType::NONE;
     }
     //construct a token from source file string data
     Token(Span _str, TokenType _type) {
         isSynthetic = false;
-        parentPtr = nullptr;
+        isPartOfMacro = false;
         str = _str;
-        type = _type;
-    }
-    //construct a token which doesn't appear in the source file(eg. splitting a += b into a = a + b, where '+' is synthetic)
-    Token(TokenType _type, Token parentToken) {
-        parentPtr = std::make_shared<Token>(parentToken);
-        isSynthetic = true;
         type = _type;
     }
     Token(TokenType _type, string str) {
         isSynthetic = true;
-        parentPtr = nullptr;
+        isPartOfMacro = true;
         type = _type;
         syntheticStr = str;
     }

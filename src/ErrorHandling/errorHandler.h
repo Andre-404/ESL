@@ -8,4 +8,6 @@ namespace errorHandler {
 	void addCompileError(string msg, Token token);
 	void addSystemError(string msg);
 	bool hasErrors();
+    vector<string> convertCompilerErrorsToJson();
+
 }

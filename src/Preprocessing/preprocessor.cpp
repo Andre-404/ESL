@@ -53,7 +53,7 @@ void Preprocessor::preprocessProject(string mainFilePath) {
 
 CSLModule* Preprocessor::scanFile(string filePath) {
     path p(filePath);
-    vector<Token> tokens = scanner.tokenizeSource(readFile(filePath), p.stem().string());
+    vector<Token> tokens = scanner.tokenizeSource(filePath, p.stem().string());
     CSLModule* unit = new CSLModule(tokens, scanner.getFile());
     allUnits[filePath] = unit;
 

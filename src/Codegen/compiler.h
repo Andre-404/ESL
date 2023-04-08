@@ -6,8 +6,6 @@
 #include <array>
 
 namespace compileCore {
-	#define LOCAL_MAX 256
-	#define UPVAL_MAX 256
 
 	enum class FuncType {
 		TYPE_FUNC,
@@ -79,11 +77,11 @@ namespace compileCore {
 		// Passed to the VM
 		vector<Globalvar> globals;
 		Chunk mainCodeBlock;
-    object::ObjFunc* mainBlockFunc;
-    // Here to do name checking at compile time
-    vector<object::ObjNativeFunc*> nativeFuncs;
-    //Base class which implements toString
-    object::ObjClass* baseClass;
+        object::ObjFunc* mainBlockFunc;
+        // Here to do name checking at compile time
+        vector<object::ObjNativeFunc*> nativeFuncs;
+        //Base class which implements toString
+        object::ObjClass* baseClass;
 
 		Compiler(vector<CSLModule*>& units);
 		Chunk* getChunk();
@@ -93,11 +91,11 @@ namespace compileCore {
 		void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
 		void visitSetExpr(AST::SetExpr* expr) override;
 		void visitConditionalExpr(AST::ConditionalExpr* expr) override;
-    void visitRangeExpr(AST::RangeExpr* expr) override;
+        void visitRangeExpr(AST::RangeExpr* expr) override;
 		void visitBinaryExpr(AST::BinaryExpr* expr) override;
 		void visitUnaryExpr(AST::UnaryExpr* expr) override;
 		void visitCallExpr(AST::CallExpr* expr) override;
-    void visitNewExpr(AST::NewExpr* expr) override;
+        void visitNewExpr(AST::NewExpr* expr) override;
 		void visitFieldAccessExpr(AST::FieldAccessExpr* expr) override;
 		void visitAsyncExpr(AST::AsyncExpr* expr) override;
 		void visitAwaitExpr(AST::AwaitExpr* expr) override;
@@ -107,7 +105,7 @@ namespace compileCore {
 		void visitSuperExpr(AST::SuperExpr* expr) override;
 		void visitFuncLiteral(AST::FuncLiteral* expr) override;
 		void visitModuleAccessExpr(AST::ModuleAccessExpr* expr) override;
-    void visitMacroExpr(AST::MacroExpr* expr) override;
+        void visitMacroExpr(AST::MacroExpr* expr) override;
 
 		void visitVarDecl(AST::VarDecl* decl) override;
 		void visitFuncDecl(AST::FuncDecl* decl) override;
@@ -130,67 +128,67 @@ namespace compileCore {
 		int curUnitIndex;
 		int curGlobalIndex;
 		vector<CSLModule*> units;
-    // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
-    // a undefined global variable is being used
-    vector<bool> definedGlobals;
-    ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
+        // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
+        // a undefined global variable is being used
+        vector<bool> definedGlobals;
+        ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
 
-		#pragma region Helpers
-		// Emitters
-		void emitByte(byte byte);
-		void emitBytes(byte byte1, byte byte2);
-		void emit16Bit(uInt16 number);
-		void emitByteAnd16Bit(byte byte, uInt16 num);
-		void emitConstant(Value value);
-		void emitReturn();
-		// Control flow
-		int emitJump(byte jumpType);
-		void patchJump(int offset);
-		void emitLoop(int start);
+        #pragma region Helpers
+        // Emitters
+        void emitByte(byte byte);
+        void emitBytes(byte byte1, byte byte2);
+        void emit16Bit(uInt16 number);
+        void emitByteAnd16Bit(byte byte, uInt16 num);
+        void emitConstant(Value value);
+        void emitReturn();
+        // Control flow
+        int emitJump(byte jumpType);
+        void patchJump(int offset);
+        void emitLoop(int start);
 
-		void patchScopeJumps(ScopeJumpType type);
+        void patchScopeJumps(ScopeJumpType type);
 
-		uInt16 makeConstant(Value value);
-		// Variables
-		uInt16 identifierConstant(Token name);
+        uInt16 makeConstant(Value value);
+        // Variables
+        uInt16 identifierConstant(Token name);
 
         uint16_t declareGlobalVar(Token name);
-		void defineGlobalVar(uInt16 name);
+        void defineGlobalVar(uInt16 name);
 
-		void namedVar(Token name, bool canAssign);
-		// Locals
-		void declareLocalVar(AST::ASTVar& name);
-    void defineLocalVar();
+        void namedVar(Token name, bool canAssign);
+        // Locals
+        void declareLocalVar(AST::ASTVar& name);
+        void defineLocalVar();
 
-		void addLocal(AST::ASTVar name);
-		int resolveLocal(Token name);
-		int resolveLocal(CurrentChunkInfo* func, Token name);
+        void addLocal(AST::ASTVar name);
+        int resolveLocal(Token name);
+        int resolveLocal(CurrentChunkInfo* func, Token name);
 
-		int resolveUpvalue(CurrentChunkInfo* func, Token name);
-		int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
+        int resolveUpvalue(CurrentChunkInfo* func, Token name);
+        int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
 
-		void beginScope();
-		void endScope();
-		// Classes and methods
-		object::ObjClosure* method(AST::FuncDecl* _method, Token className);
-		bool invoke(AST::CallExpr* expr);
-    int resolveClassField(Token name, bool canAssign);
-    object::ObjClass* getClassFromExpr(AST::ASTNodePtr expr);
-    // Resolve public/private fields when this.object_field in encountered
-    bool resolveThis(AST::FieldAccessExpr* expr);
-    bool resolveThis(AST::SetExpr* expr);
-    bool resolveImplicitObjectField(AST::CallExpr* expr);
-		// Misc
-    Token syntheticToken(string str);
-		void updateLine(Token token);
-		void error(Token token, const string& msg) noexcept(false);
-		void error(const string& message) noexcept(false);
-		// Checks all imports to see if the symbol 'token' is imported
-		int checkSymbol(Token token);
-		// Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
-		int resolveGlobal(Token token, bool canAssign);
-		// Given a token for module alias and a token for variable name, returns correct symbol to use
-		uInt resolveModuleVariable(Token moduleAlias, Token variable);
-		#pragma endregion
+        void beginScope();
+        void endScope();
+        // Classes and methods
+        object::ObjClosure* method(AST::FuncDecl* _method, Token className);
+        bool invoke(AST::CallExpr* expr);
+        int resolveClassField(Token name, bool canAssign);
+        object::ObjClass* getClassFromExpr(AST::ASTNodePtr expr);
+        // Resolve public/private fields when this.object_field in encountered
+        bool resolveThis(AST::FieldAccessExpr* expr);
+        bool resolveThis(AST::SetExpr* expr);
+        bool resolveImplicitObjectField(AST::CallExpr* expr);
+        // Misc
+        Token syntheticToken(string str);
+        void updateLine(Token token);
+        void error(Token token, const string& msg) noexcept(false);
+        void error(const string& message) noexcept(false);
+        // Checks all imports to see if the symbol 'token' is imported
+        int checkSymbol(Token token);
+        // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
+        int resolveGlobal(Token token, bool canAssign);
+        // Given a token for module alias and a token for variable name, returns correct symbol to use
+        uInt resolveModuleVariable(Token moduleAlias, Token variable);
+        #pragma endregion
 	};
 }

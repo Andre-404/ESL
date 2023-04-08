@@ -1,4 +1,5 @@
 #include "scanner.h"
+#include "../files.h"
 #include <iostream>
 
 // Map to convert keywords in string form to their corresponding TokenType
@@ -48,9 +49,9 @@ Scanner::Scanner() {
     curFile = nullptr;
 }
 
-vector<Token> Scanner::tokenizeSource(string source, string sourceName) {
+vector<Token> Scanner::tokenizeSource(string path, string sourceName) {
     // Setup
-    curFile = new File(source, sourceName);
+    curFile = new File(readFile(path), sourceName, path);
     line = 0;
     start = 0;
     current = start;
