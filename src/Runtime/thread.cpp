@@ -963,7 +963,10 @@ void runtime::Thread::executeBytecode() {
             // Still need to do typechecking since 'this' could be a primitive
             case +OpCode::GET_PROPERTY_EFFICIENT:{
                 object::ObjString *name = READ_STRING_LONG();
-                Value val = *slotStart;
+                Value val;
+                if(isUpvalue(*slotStart)){
+                    val = asUpvalue(*slotStart)->val;
+                }else val = *slotStart;
                 object::ObjClass* klass = nullptr;
                 if (isInstance(val)) {
                     object::ObjInstance *instance = asInstance(val);
@@ -979,10 +982,14 @@ void runtime::Thread::executeBytecode() {
             }
             case +OpCode::SET_PROPERTY_EFFICIENT:{
                 object::ObjString *name = READ_STRING_LONG();
-                if (!isInstance(*slotStart)) {
-                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", typeToStr(*slotStart)), 3);
+                Value val;
+                if(isUpvalue(*slotStart)){
+                    val = asUpvalue(*slotStart)->val;
+                }else val = *slotStart;
+                if (!isInstance(val)) {
+                    runtimeError(fmt::format("Only instances/structs have properties, got {}.", typeToStr(val)), 3);
                 }
-                object::ObjInstance *instance = asInstance(*slotStart);
+                object::ObjInstance *instance = asInstance(val);
                 auto it = instance->fields.find(name);
                 if (it == instance->fields.end()) {
                     runtimeError(fmt::format("Class '{}' doesn't contain field '{}'", instance->klass->name->str, name->str), 4);

@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
     #else
     path = "/mnt/c/Temp/main.esl";
     #endif
-    flag = "-validate-file";
+    flag = "-run";
     #else
     if(argc == 2) {
         path = string(argv[1]);

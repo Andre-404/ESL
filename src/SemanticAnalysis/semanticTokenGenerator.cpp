@@ -279,7 +279,8 @@ void SemanticAnalyzer::visitSuperExpr(AST::SuperExpr* expr) {
     else if (!currentClass->superclass) {
         error(expr->methodName, "Can't use 'super' in a class with no superclass.");
     }
-    else createSemanticToken(expr->methodName, "method");
+    resolveSuperClassField(expr->methodName);
+    createSemanticToken(expr->methodName, "method");
 }
 
 void SemanticAnalyzer::visitLiteralExpr(AST::LiteralExpr* expr) {
@@ -386,9 +387,15 @@ void SemanticAnalyzer::visitClassDecl(AST::ClassDecl* decl) {
 
     if (decl->inheritedClass) {
         // getClassFromExpr returns the class chunk for this
-        // allows semantic analyzer to determine which variables are class properties
-        auto superclass = getClassFromExpr(decl->inheritedClass);
-        if(superclass) currentClass->fields = superclass->fields;
+        // Allows semantic analyzer to determine which variables are class properties
+        // Use try block since this shouldn't throw out of the whole class definition
+        try {
+            auto superclass = getClassFromExpr(decl->inheritedClass);
+            if (superclass) currentClass->fields = superclass->fields;
+            currentClass->superclass = superclass;
+        }catch(SemanticAnalyzerException& e){
+
+        }
     }
 
     // Put field and method names into the class
@@ -691,6 +698,7 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
     }
     else if (expr->callee->type == AST::ASTType::SUPER) {
         auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
+        resolveSuperClassField(superCall->methodName);
         createSemanticToken(superCall->methodName, "method");
 
         if (currentClass == nullptr) {
@@ -709,7 +717,7 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
 }
 
 // Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
-// First bool in pair is if the search was succesful, second is if the field found was public or private
+// First bool in pair is if the search was successful, second is if the field found was public or private
 static std::pair<bool, bool> classContainsField(string& publicField, std::unordered_map<string, bool>& map){
     string privateField = "!" + publicField;
     for(auto it : map){
@@ -729,7 +737,6 @@ static std::pair<bool, bool> classContainsMethod(string& publicField, std::unord
 
 string SemanticAnalyzer::resolveClassField(Token name, bool canAssign){
     if(!currentClass) return "";
-    bool isMethod = false;
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass->fields);
     if(res.first){
@@ -744,6 +751,15 @@ string SemanticAnalyzer::resolveClassField(Token name, bool canAssign){
     return "";
 }
 
+// Only called if a superclass exists
+void SemanticAnalyzer::resolveSuperClassField(Token name){
+    string fieldName = name.getLexeme();
+    auto res = classContainsMethod(fieldName, currentClass->superclass->fields);
+    if(!res.first){
+        error(name, fmt::format("Superclass '{}' doesn't contain method '{}'.", currentClass->superclass->name.getLexeme(), name.getLexeme()));
+    }
+}
+
 // Makes sure the correct prefix is used when accessing private fields
 // this.private_field -> this.!private_field
 bool SemanticAnalyzer::resolveThis(AST::SetExpr *expr) {
@@ -756,7 +772,6 @@ bool SemanticAnalyzer::resolveThis(AST::SetExpr *expr) {
     }
     createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
     expr->value->accept(this);
-    expr->callee->accept(this);
     return true;
 }
 bool SemanticAnalyzer::resolveThis(AST::FieldAccessExpr *expr) {
@@ -768,7 +783,6 @@ bool SemanticAnalyzer::resolveThis(AST::FieldAccessExpr *expr) {
         return true;
     }
     createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-    expr->callee->accept(this);
     return true;
 }
 // Recognizes object_field() as an invoke operation

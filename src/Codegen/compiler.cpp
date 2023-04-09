@@ -363,6 +363,8 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
     }
 }
 
+static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Method>& map);
+
 void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
     int name = identifierConstant(expr->methodName);
     if (currentClass == nullptr) {
@@ -370,6 +372,11 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
     }
     else if (!currentClass->klass->superclass) {
         error(expr->methodName, "Can't use 'super' in a class with no superclass.");
+    }
+    string fieldName = expr->methodName.getLexeme();
+    auto res = classContainsMethod(fieldName, currentClass->klass->superclass->methods);
+    if(!res.first){
+        error(expr->methodName, fmt::format("Superclass '{}' doesn't contain method '{}'.", currentClass->klass->superclass->name->str, expr->methodName.getLexeme()));
     }
     // We use a synthetic token since 'this' is defined if we're currently compiling a class method
     namedVar(syntheticToken("this"), false);
@@ -558,11 +565,15 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 
         //if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
         //undefined behavior (eg. class a : a)
-        auto superclass = getClassFromExpr(decl->inheritedClass);
-        klass->superclass = superclass;
-        //Copies methods and fields from superclass
-        klass->methods = superclass->methods;
-        klass->fieldsInit = superclass->fieldsInit;
+        try {
+            auto superclass = getClassFromExpr(decl->inheritedClass);
+            klass->superclass = superclass;
+            //Copies methods and fields from superclass
+            klass->methods = superclass->methods;
+            klass->fieldsInit = superclass->fieldsInit;
+        }catch(CompilerException& e){
+
+        }
     }else{
         // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
         // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
@@ -1272,6 +1283,11 @@ bool Compiler::invoke(AST::CallExpr* expr) {
         else if (!currentClass->klass->superclass) {
             error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
         }
+        string fieldName = superCall->methodName.getLexeme();
+        auto res = classContainsMethod(fieldName, currentClass->klass->superclass->methods);
+        if(!res.first){
+            error(superCall->methodName, fmt::format("Superclass '{}' doesn't contain method '{}'.", currentClass->klass->superclass->name->str, superCall->methodName.getLexeme()));
+        }
         //in methods and constructors, "this" is implicitly defined as the first local
         namedVar(syntheticToken("this"), false);
         int argCount = 0;
@@ -1316,7 +1332,6 @@ static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::un
 
 int Compiler::resolveClassField(Token name, bool canAssign){
     if(!currentClass) return -1;
-    bool isMethod = false;
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass->klass->fieldsInit);
     if(res.first){

@@ -306,6 +306,8 @@ namespace SemanticAnalysis {
 
         string resolveClassField(Token name, bool canAssign);
 
+        void resolveSuperClassField(Token name);
+
         std::shared_ptr<ClassChunkInfo> getClassFromExpr(AST::ASTNodePtr expr);
 
         // Resolve public/private fields when this.object_field in encountered
