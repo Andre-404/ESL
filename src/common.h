@@ -24,7 +24,7 @@ typedef uint64_t Value;
 #define UPVAL_MAX 256
 
 //#define AST_DEBUG
-#define COMPILER_DEBUG
+//#define COMPILER_DEBUG
 //#define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
 //#define DEBUG_TRACE_EXECUTION

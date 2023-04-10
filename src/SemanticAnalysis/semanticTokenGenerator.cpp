@@ -698,6 +698,13 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
     }
     else if (expr->callee->type == AST::ASTType::SUPER) {
         auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
+        if (currentClass == nullptr) {
+            error(superCall->methodName, "Can't use 'super' outside of a class.");
+            createSemanticToken(superCall->methodName, "method");
+        }
+        else if (!currentClass->superclass) {
+            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
+        }
         resolveSuperClassField(superCall->methodName);
         createSemanticToken(superCall->methodName, "method");
 
@@ -728,10 +735,8 @@ static std::pair<bool, bool> classContainsField(string& publicField, std::unorde
 }
 static std::pair<bool, bool> classContainsMethod(string& publicField, std::unordered_map<string, bool>& map){
     string privateField = "!" + publicField;
-    for(auto it : map){
-        if(publicField == it.first && it.second) return std::pair(true, true);
-        else if(privateField == it.first && it.second) return std::pair(true, false);
-    }
+    if(map.contains(publicField) && map[publicField]) return std::pair(true, true);
+    else if(map.contains(privateField) && map[privateField]) return std::pair(true, false);
     return std::pair(false, false);
 }
 

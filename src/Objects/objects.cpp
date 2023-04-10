@@ -39,7 +39,35 @@ ObjString* ObjString::concat(ObjString* other) {
 	return new ObjString(temp);
 }
 
+string convertBackSlashToEscape(const std::string& input)
+{
+    string output;
+    auto isEscapeChar = [](char c){
+        return c == 'n' || c == 'r' || c == 't' || c == 'a' || c == 'b' || c == 'f' || c == 'v';
+    };
+    for (int i = 0; i < input.length(); i++) {
+        if (input[i] == '\\' && i < input.length() - 1 && isEscapeChar(input[i+1])) {
+            // replace \\n with \n, \\r with \r, and \\t with \t
+            switch (input[i+1]) {
+                case 'n': output += '\n'; break;
+                case 'r': output += '\r'; break;
+                case 't': output += '\t'; break;
+                case 'a': output += '\a'; break;
+                case 'b': output += '\b'; break;
+                case 'f': output += '\f'; break;
+                case 'v': output += '\v'; break;
+            }
+            i++; // skip the next character
+        } else {
+            // copy the current character
+            output += input[i];
+        }
+    }
+    return output;
+}
+
 ObjString* ObjString::createStr(string str){
+    str = convertBackSlashToEscape(str);
     auto it = memory::gc.interned.find(str);
     if(it != memory::gc.interned.end()) return it->second;
     auto newStr = new ObjString(str);
@@ -374,7 +402,7 @@ void ObjRange::trace() {
 }
 
 string ObjRange::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-    return "<range>";
+    return fmt::format("{}..{}{}", start, isEndInclusive ? "=" : "", end);
 }
 
 uInt64 ObjRange::getSize() {
