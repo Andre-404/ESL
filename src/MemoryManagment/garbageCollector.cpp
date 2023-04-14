@@ -39,7 +39,7 @@ namespace memory {
 	}
 
 	void GarbageCollector::collect() {
-		markRoots(vm);
+		markRoots();
 		mark();
 		sweep();
 		if (heapSize > heapSizeLimit) heapSizeLimit << 1;
@@ -71,7 +71,7 @@ namespace memory {
 		}
 	}
 
-	void GarbageCollector::markRoots(runtime::VM* vm) {
+	void GarbageCollector::markRoots() {
 		vm->mark(this);
 	}
 

@@ -71,7 +71,7 @@ string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::
             if (!stack) stack = std::make_shared<ankerl::unordered_dense::set<object::Obj*>>();
             if (stack->contains(ptr)) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uint64_t>(ptr));
             stack->insert(ptr);
-            string str =  ptr->toString(stack);
+            string str = ptr->toString(stack);
             stack->erase(ptr);
             return str;
     }
@@ -89,7 +89,7 @@ void valueHelpers::mark(Value x){
 
 string valueHelpers::typeToStr(Value x) {
     switch (getType(x)) {
-        case ValueType::NUMBER: return "<double>";
+        case ValueType::NUMBER: return "<number>";
         case ValueType::BOOL: return "<bool>";
         case ValueType::NIL: return "<null>";
         case ValueType::OBJ:
@@ -108,6 +108,7 @@ string valueHelpers::typeToStr(Value x) {
                 case ObjType::FILE: return "<file>";
                 case ObjType::MUTEX: return "<mutex>";
                 case ObjType::FUTURE: return "<future>";
+                case ObjType::RANGE: return "<range>";
             }
     }
     return "error, couldn't determine type of value";

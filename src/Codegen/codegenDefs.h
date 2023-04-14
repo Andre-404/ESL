@@ -95,6 +95,7 @@ enum class OpCode {
 	GREATER_EQUAL,
 	LESS,
 	LESS_EQUAL,
+    IN,
 
 
 	// Variables

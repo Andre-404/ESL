@@ -2,6 +2,8 @@
 #include "vm.h"
 #include <iostream>
 #include <utility>
+#include <cmath>
+#include <stdint.h>
 #include "../Includes/fmt/format.h"
 #include "../Includes/fmt/color.h"
 #include "../codegen/valueHelpersInline.cpp"
@@ -178,7 +180,6 @@ void runtime::Thread::bindMethod(object::ObjClass* klass, object::ObjString* nam
 void runtime::Thread::invoke(object::ObjString* fieldName, int8_t argCount) {
     Value receiver = peek(argCount);
     ObjClass* klass = nullptr;
-
     if (isInstance(receiver)) {
         object::ObjInstance* instance = asInstance(receiver);
         auto it = instance->fields.find(fieldName);
@@ -202,9 +203,11 @@ void runtime::Thread::invokeFromClass(object::ObjClass* klass, object::ObjString
     callMethod(it->second, argCount);
 }
 
-static int32_t checkArrayBounds(runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
+static int64_t checkArrayBounds(runtime::Thread* t, Value& field, Value& callee, object::ObjArray* arr) {
     if (!isInt(field)) { t->runtimeError(fmt::format("Index must be an integer, got {}.", typeToStr(callee)), 3); }
-    int32_t index = decodeInt(field);
+    int64_t index = decodeInt(field);
+    // Negative indexes are treated like arrlen - index, if index is still negative after this throw error
+    if(index < 0) index = static_cast<int64_t>(arr->values.size()) + index;
     if (index < 0 || index > arr->values.size() - 1) { t->runtimeError(fmt::format("Index {} outside of range [0, {}].", index, arr->values.size() - 1), 9); }
     return index;
 }
@@ -303,6 +306,56 @@ __attribute__((noinline)) static void printRuntimeError(CallFrame* frames, uint1
     fmt::print("\nExited with code: {}\n", errCode);
 }
 
+__attribute__((noinline)) static int64_t normalizeRangeStart(runtime::Thread* t, object::ObjRange* range, int64_t arrlen){
+    if(std::isinf(range->start)){
+        if(range->start < 0) return 0;
+        else {
+            t->runtimeError(fmt::format("Start of range {} cannot be infinity.", range->toString(nullptr)), 3);
+        }
+    }
+    int64_t res = 0;
+    if(isInt(encodeNumber(range->start))){
+        if(range->start < 0) res = arrlen + static_cast<int64_t>(range->start);
+        else res = static_cast<int64_t>(range->start);
+    }
+    else t->runtimeError(fmt::format("Start of range {} cannot be floating point number.", range->toString(nullptr)), 10);
+    if(res >= arrlen){
+        t->runtimeError(fmt::format("Start of range {} is larger than array length which is {}.", range->toString(nullptr), arrlen), 9);
+    }
+    return res;
+}
+__attribute__((noinline)) static int64_t normalizeRangeEnd(runtime::Thread* t, object::ObjRange* range, int64_t arrlen){
+    if(std::isinf(range->end)){
+        if(range->end < 0) {
+            t->runtimeError(fmt::format("End of range {} cannot be negative infinity.", range->toString(nullptr)), 3);
+        }
+        else return arrlen;
+    }
+    int64_t res = 0;
+    if(isInt(encodeNumber(range->end))){
+        if(range->end < 0) res = arrlen + static_cast<int64_t>(range->end);
+        else res = static_cast<int64_t>(range->end);
+        res += (range->isEndInclusive ? 1 : 0);
+    }else t->runtimeError(fmt::format("End of range {} cannot be floating point number.", range->toString(nullptr)), 10);
+    if(res < 0){
+        t->runtimeError(fmt::format("End of range {} is a negative number.", range->toString(nullptr)), 9);
+    }
+    return res;
+}
+
+__attribute__((noinline)) static bool isInRange(object::ObjRange* range, double num) {
+    int lowerBound, upperBound;
+    if (range->start <= range->end) {
+        lowerBound = range->start;
+        upperBound = range->end + range->isEndInclusive;
+    }
+    else {
+        lowerBound = range->end - range->isEndInclusive;
+        upperBound = range->start + 1;
+    }
+
+    return (num >= lowerBound && num < upperBound);
+}
 #pragma endregion
 
 void runtime::Thread::executeBytecode() {
@@ -354,7 +407,7 @@ void runtime::Thread::executeBytecode() {
             if(handlePauseToken(this, asFuture(stack[0]))) return;
         }
         #ifdef DEBUG_TRACE_EXECUTION
-        std::cout << "          ";
+            std::cout << "          ";
             for (Value* slot = stack; slot < stackTop; slot++) {
                 std::cout << "[";
                 valueHelpers::print(*slot);
@@ -559,7 +612,7 @@ void runtime::Thread::executeBytecode() {
             }
             #pragma endregion
 
-            #pragma region Binary opcodes that return bool
+            #pragma region Comparison opcodes
             case +OpCode::EQUAL:{
                 Value b = pop();
                 Value a = pop();
@@ -607,6 +660,17 @@ void runtime::Thread::executeBytecode() {
                                              typeToStr(peek(0))), 3);
                 }
                 *(--stackTop - 1) = encodeBool(decodeNumber(a) < decodeNumber(b) + DBL_EPSILON);
+                DISPATCH();
+            }
+            case +OpCode::IN:{
+                Value range = pop(), num = pop();
+                if(!isRange(range)){
+                    runtimeError(fmt::format("Expected range as right operand, got {}.", typeToStr(range)), 3);
+                }
+                if(!isNumber(num)){
+                    runtimeError(fmt::format("Expected number as left operand, got {}.", typeToStr(num)), 3);
+                }
+                push(encodeBool(isInRange(asRange(range), decodeNumber(num))));
                 DISPATCH();
             }
             #pragma endregion
@@ -876,6 +940,20 @@ void runtime::Thread::executeBytecode() {
 
                 if (isArray(callee)) {
                     object::ObjArray *arr = asArray(callee);
+                    if(isRange(field)){
+                        auto range = asRange(field);
+                        double start = normalizeRangeStart(this, range, arr->values.size());
+                        double end = normalizeRangeEnd(this, range, arr->values.size());
+                        if(start > end){
+                            runtimeError(fmt::format("Start of range {} is a larger than end of range.", range->toString(nullptr)), 9);
+                        }
+                        auto *newArr = new object::ObjArray(end - start);
+                        for(int i = 0; i < newArr->values.size(); i++){
+                            newArr->values[i] = arr->values[start + i];
+                        }
+                        push(encodeObj(newArr));
+                        DISPATCH();
+                    }
                     uInt64 index = checkArrayBounds(this, field, callee, arr);
                     push(arr->values[index]);
                     DISPATCH();
@@ -905,8 +983,17 @@ void runtime::Thread::executeBytecode() {
 
                 if (isArray(callee)) {
                     object::ObjArray *arr = asArray(callee);
+                    if(isRange(field)){
+                        auto range = asRange(field);
+                        double start = normalizeRangeStart(this, range, arr->values.size());
+                        double end = normalizeRangeEnd(this, range, arr->values.size());
+                        if(start > end){
+                            runtimeError(fmt::format("Start of range {} is a larger than end of range.", range->toString(nullptr)), 9);
+                        }
+                        std::fill(arr->values.begin() + start, arr->values.begin() + end, val);
+                        DISPATCH();
+                    }
                     uInt64 index = checkArrayBounds(this, field, callee, arr);
-
                     //if numOfHeapPtr is 0 we don't trace or update the array when garbage collecting
                     if (isObj(val) && !isObj(arr->values[index])) arr->numOfHeapPtr++;
                     else if (!isObj(val) && isObj(arr->values[index])) arr->numOfHeapPtr--;

@@ -177,6 +177,7 @@ ObjArray::ObjArray(size_t size) {
 	values.resize(size);
 	type = ObjType::ARRAY;
 	numOfHeapPtr = 0;
+    marked = false;
 }
 
 //small optimization: if numOfHeapPtrs is 0 then we don't even scan the array for objects

@@ -66,7 +66,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         for(int i = argCount - 1; i >= 0; i--){
             print(t->peek(i));
         }
-        std::cout << "\n";
+        std::cout << std::endl;
         t->popn(argCount);
         t->push(encodeNil());
     });

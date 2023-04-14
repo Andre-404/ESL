@@ -49,8 +49,8 @@ static int jumpInstruction(string name, int sign, Chunk* chunk, int offset) {
 }
 
 static int invokeInstruction(string name, Chunk* chunk, int offset, int constantsOffset) {
-	uint8_t constant = chunk->bytecode[offset + 1];
-	uint8_t argCount = chunk->bytecode[offset + 2];
+    uint8_t argCount = chunk->bytecode[offset + 1];
+    uint8_t constant = chunk->bytecode[offset + 2];
 	std::cout << fmt::format("{:16} ({} args) {:4d} ", name, argCount, constantsOffset + constant);
 	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "\n";
@@ -58,8 +58,9 @@ static int invokeInstruction(string name, Chunk* chunk, int offset, int constant
 }
 
 static int longInvokeInstruction(string name, Chunk* chunk, int offset, int constantsOffset) {
-	uint8_t constant = (chunk->bytecode[offset + 1] | chunk->bytecode[offset + 2] | (chunk->bytecode[offset + 3] << 16));
-	uint8_t argCount = chunk->bytecode[offset + 4];
+    uint8_t argCount = chunk->bytecode[offset + 1];
+	uint8_t constant = (chunk->bytecode[offset + 2] | (chunk->bytecode[offset + 3] << 8));
+
 	std::cout << fmt::format("{:16} ({} args) {:4d}", name, argCount, constantsOffset + constant);
 	print(chunk->constants[constantsOffset + constant]);
 	std::cout << "'\n";
@@ -179,9 +180,11 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 	case +OpCode::LESS:
 		return simpleInstruction("OP LESS", offset);
 	case +OpCode::LESS_EQUAL:
-		return simpleInstruction("OP LESS EQUAL", offset);
+        return simpleInstruction("OP LESS EQUAL", offset);
+    case +OpCode::IN:
+        return simpleInstruction("OP IN", offset);
     case +OpCode::GET_NATIVE:
-         return shortInstruction("OP GET NATIVE", chunk, offset);
+        return shortInstruction("OP GET NATIVE", chunk, offset);
 	case +OpCode::GET_GLOBAL:
 		return globalInstruction("OP GET GLOBAL", chunk, offset, false);
 	case +OpCode::GET_GLOBAL_LONG:

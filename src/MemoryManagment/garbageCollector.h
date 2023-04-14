@@ -40,7 +40,7 @@ namespace memory {
 		vector<object::Obj*> markStack;
 
 		void mark();
-		void markRoots(runtime::VM* vm);
+		void markRoots();
 		void markRoots(compileCore::Compiler* compiler);
 		void sweep();
 	};

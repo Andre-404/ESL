@@ -32,6 +32,7 @@ using namespace object;
 static ValueType getType(Value x){
     if (((~x) & MASK_EXPONENT) != 0) return ValueType::NUMBER;
     switch (x & MASK_SIGNATURE){
+        case MASK_SIGN | MASK_SIGNATURE_NAN:
         case MASK_SIGNATURE_NAN: return ValueType::NUMBER;
         case MASK_SIGNATURE_FALSE:
         case MASK_SIGNATURE_TRUE: return ValueType::BOOL;
@@ -50,7 +51,7 @@ inline int32_t decodeInt(Value x){ return std::round(decodeNumber(x)); }
 inline bool decodeBool(Value x){ return x & MASK_TYPE_TRUE; }
 inline object::Obj* decodeObj(Value x){ return reinterpret_cast<object::Obj*>(x & MASK_PAYLOAD_OBJ); }
 
-inline bool isNumber(Value x){ return ((~x) & MASK_EXPONENT) != 0  || (x & MASK_SIGNATURE) == MASK_SIGNATURE_NAN; }
+inline bool isNumber(Value x){ return ((~x) & MASK_EXPONENT) != 0  || (x & MASK_SIGNATURE) == MASK_SIGNATURE_NAN || (x & MASK_SIGNATURE) == (MASK_SIGN | MASK_SIGNATURE_NAN); }
 inline bool isBool(Value x){ return ((x & MASK_SIGNATURE) == MASK_SIGNATURE_TRUE || (x & MASK_SIGNATURE) == MASK_SIGNATURE_FALSE); }
 inline bool isNil(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_NIL; }
 inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
@@ -70,6 +71,7 @@ inline bool isUpvalue(Value x) { return isObj(x) && decodeObj(x)->type == ObjTyp
 inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::FILE; }
 inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::MUTEX; }
 inline bool isFuture(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::FUTURE; }
+inline bool isRange(Value x) { return isObj(x) && decodeObj(x)->type == ObjType::RANGE; }
 
 inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
 
@@ -87,6 +89,7 @@ inline object::ObjUpval* asUpvalue(Value x) { return reinterpret_cast<ObjUpval*>
 inline object::ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
 inline object::ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }
 inline object::ObjFuture* asFuture(Value x) { return reinterpret_cast<ObjFuture*>(decodeObj(x)); }
+inline object::ObjRange* asRange(Value x) { return reinterpret_cast<ObjRange*>(decodeObj(x)); }
 
 inline bool equals(Value x, Value y){
     ValueType type = getType(x);

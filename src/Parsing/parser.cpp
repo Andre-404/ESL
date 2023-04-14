@@ -375,6 +375,8 @@ Parser::Parser() {
     addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
     addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
 
+    addInfix(TokenType::IN, Precedence::COMPARISON, parseBinary);
+
     addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
     addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
 

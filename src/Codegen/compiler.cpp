@@ -134,9 +134,9 @@ void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
     auto index = nativeFuncNames["create_range"];
     emitByteAnd16Bit(+OpCode::GET_NATIVE, index);
     if(expr->start) expr->start->accept(this);
-    else emitConstant(encodeNumber(-std::numeric_limits<double>::max()));
+    else emitConstant(encodeNumber(-std::numeric_limits<double>::infinity()));
     if(expr->end) expr->end->accept(this);
-    else emitConstant(encodeNumber(std::numeric_limits<double>::max()));
+    else emitConstant(encodeNumber(std::numeric_limits<double>::infinity()));
     emitConstant(encodeBool(expr->endInclusive));
     emitBytes(+OpCode::CALL, 3);
 }
@@ -173,25 +173,26 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
             emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
             return;
         }
-            //take in double or string(in case of add)
+        //take in double or string(in case of add)
         case TokenType::PLUS:	op = +OpCode::ADD; break;
         case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
         case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
         case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
-            //for these operators, a check is preformed to confirm both numbers are integers, not decimals
+        //for these operators, a check is preformed to confirm both numbers are integers, not decimals
         case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
         case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
         case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
         case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
         case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
         case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
-            //these return bools and use an epsilon value when comparing
+        //these return bools and use an epsilon value when comparing
         case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
         case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
         case TokenType::GREATER:		 op = +OpCode::GREATER; break;
         case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
         case TokenType::LESS:			 op = +OpCode::LESS; break;
         case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+        case TokenType::IN:              op = +OpCode::IN; break;
         // Should never be hit
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
