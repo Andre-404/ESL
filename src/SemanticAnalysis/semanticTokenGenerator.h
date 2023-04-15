@@ -75,6 +75,7 @@ namespace SemanticAnalysis {
     };
 
     struct SemanticAnalyzerException {
+        int a = 0;
     };
 
     struct SemanticToken {
@@ -184,7 +185,7 @@ namespace SemanticAnalysis {
 
         SemanticAnalyzer();
 
-        string highlight(vector<CSLModule *> &units, CSLModule* unitToHighlight);
+        string highlight(vector<CSLModule *> &units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros);
 
         string generateDiagnostics(vector<CSLModule *> &units);
 

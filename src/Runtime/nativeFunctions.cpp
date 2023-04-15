@@ -222,7 +222,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(encodeNumber(sin((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(sin(decodeNumber(num)*( std::numbers::pi_v<double> / 180.))));
     });
     NATIVE_FUNC("cos", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
@@ -234,7 +234,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(encodeNumber(cos((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(cos(decodeNumber(num)*( std::numbers::pi_v<double> / 180.))));
     });
     NATIVE_FUNC("tan", 1, [](Thread* t, int8_t argCount) {
         Value num = t->pop();
@@ -246,7 +246,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
         Value num = t->pop();
         if(!isNumber(num)) TYPE_ERROR("number", 0, num);
 
-        t->push(encodeNumber(tan((decodeNumber(num) * 180) / std::numbers::pi_v<double>)));
+        t->push(encodeNumber(tan(decodeNumber(num)*( std::numbers::pi_v<double> / 180.))));
     });
 
     NATIVE_FUNC("min", -1, [](Thread* t, int8_t argCount) {
@@ -293,7 +293,7 @@ vector<object::ObjNativeFunc*> runtime::createNativeFuncs(){
     // Create objects
     NATIVE_FUNC("create_array", -1, [](Thread* t, int8_t argCount) {
         if(argCount == 0 || argCount > 2 ) t->runtimeError(fmt::format("Function 'create_array' expects 1 or 2 arguments, got {}", argCount), 2);
-        Value fillVal;
+        Value fillVal = encodeNil();
         Value arraySize;
         if(argCount == 2){
             fillVal = t->pop();
@@ -562,7 +562,7 @@ vector<object::ObjClass*> runtime::createBuiltinClasses(object::ObjClass* baseCl
     });
     BOUND_NATIVE("resize", -1, [](Thread*t, int8_t argCount){
         Value fill = encodeNil();
-        Value newSize;
+        Value newSize = encodeNil();
         if(argCount == 2){
             fill = t->pop();
             newSize = t->pop();

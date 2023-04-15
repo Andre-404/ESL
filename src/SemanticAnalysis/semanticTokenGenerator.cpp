@@ -29,7 +29,7 @@ SemanticAnalyzer::SemanticAnalyzer() {
     generateSemanticTokens = false;
 }
 
-string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitToHighlight){
+string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros){
     units = _units;
     for (CSLModule* unit : units) {
         if(unit == unitToHighlight) generateSemanticTokens = true;
@@ -49,6 +49,26 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
+    for(auto& it : macros){
+        createSemanticToken(it.second->name, "macro", {"declaration"});
+        for(auto& matcher : it.second->matchers){
+            auto pattern = matcher.getPattern();
+            for(int i = 0; i < pattern.size(); i++){
+                Token& token = pattern[i];
+                if(token.type == TokenType::DOLLAR && i+1 < pattern.size() && pattern[++i].type == TokenType::IDENTIFIER){
+                    createSemanticToken(pattern[i], "parameter", {"declaration"});
+                }
+            }
+        }
+        for(auto& transcriber : it.second->transcribers){
+            for(int i = 0; i < transcriber.size(); i++){
+                Token& token = transcriber[i];
+                if(token.type == TokenType::DOLLAR && i+1 < transcriber.size() && transcriber[++i].type == TokenType::IDENTIFIER){
+                    createSemanticToken(transcriber[i], "parameter", {"declaration"});
+                }
+            }
+        }
+    }
     for (CSLModule* unit : units) delete unit;
     string final = "[";
     for(auto token : semanticTokens){
@@ -61,9 +81,10 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
 
 string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
     units = _units;
-    for (CSLModule* unit : units) {
+    vector<string> previousErrors = errorHandler::convertCompilerErrorsToJson();
+    for (CSLModule *unit: units) {
         curUnit = unit;
-        for (const auto decl : unit->topDeclarations) {
+        for (const auto decl: unit->topDeclarations) {
             globals.push_back(decl->getName());
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
@@ -78,7 +99,6 @@ string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    vector<string> previousErrors = errorHandler::convertCompilerErrorsToJson();
     for (CSLModule* unit : units) delete unit;
     string final = "[";
     for(auto& str : previousErrors) final += str + ",";
@@ -139,31 +159,32 @@ void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
     expr->left->accept(this);
     uint8_t op = 0;
     switch (expr->op.type) {
-        case TokenType::OR:
-        case TokenType::AND:
         case TokenType::INSTANCEOF:{
             getClassFromExpr(expr->right);
             return;
         }
-            //take in double or string(in case of add)
+        case TokenType::OR:
+        case TokenType::AND:
+        //take in double or string(in case of add)
         case TokenType::PLUS:
         case TokenType::MINUS:
         case TokenType::SLASH:
         case TokenType::STAR:
-            //for these operators, a cbers are integers, not decimals
+        //for these operators, a cbers are integers, not decimals
         case TokenType::PERCENTAGE:
         case TokenType::BITSHIFT_LEFT:
         case TokenType::BITSHIFT_RIGHT:
         case TokenType::BITWISE_AND:
         case TokenType::BITWISE_OR:
         case TokenType::BITWISE_XOR:
-            //these return bools and use an epsilon value when comparing
+        //these return bools and use an epsilon value when comparing
         case TokenType::EQUAL_EQUAL:
         case TokenType::BANG_EQUAL:
         case TokenType::GREATER:
         case TokenType::GREATER_EQUAL:
         case TokenType::LESS:
-        case TokenType::LESS_EQUAL:	break;
+        case TokenType::LESS_EQUAL:
+        case TokenType::IN: break;
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
     expr->right->accept(this);
@@ -679,19 +700,20 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
     if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
         //currently we only optimizes field invoking(struct.field() or array[field]())
         auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
-        if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
+        if (call->accessor.type == TokenType::LEFT_BRACKET) return false;
 
         call->callee->accept(this);
         uint16_t constant;
         Token name = probeToken(call->field);
         // If invoking a method inside another method, make sure to get the right(public/private) name
-        if(isLiteralThis(call->callee)){
+        if (isLiteralThis(call->callee)) {
             string res = resolveClassField(name, false);
-            if(res == "") error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(), currentClass->name.getLexeme()));
+            if (res == "") error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(),
+                                                   currentClass->name.getLexeme()));
             createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-        }else createSemanticToken(name, "method");
+        } else createSemanticToken(name, "method");
 
-        for (AST::ASTNodePtr arg : expr->args) {
+        for (AST::ASTNodePtr arg: expr->args) {
             arg->accept(this);
         }
         return true;

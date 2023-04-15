@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     // For ease of use during development
     #ifdef DEBUG_MODE
     #if defined(_WIN32) || defined(WIN32)
-    path = "C:\\Temp\\main.esl";
+    path = "C:\\Temp\\mergeSort.esl";
     #else
     path = "/mnt/c/Temp/main.esl";
     #endif

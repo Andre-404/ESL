@@ -85,13 +85,15 @@ namespace AST {
         }
 
         bool interpret(vector<Token>& args) const;
+
+        vector<Token> getPattern() { return pattern; }
     };
 
     class Macro {
     private:
         Parser* parser;
-        Token name;
     public:
+        Token name;
         vector<MatchPattern> matchers;
         vector<vector<Token>> transcribers;
 

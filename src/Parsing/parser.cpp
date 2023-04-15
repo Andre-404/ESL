@@ -512,7 +512,7 @@ void Parser::highlight(vector<CSLModule*>& modules, string moduleToHighlight){
         }
         if(unit->file->path == moduleToHighlight){
             SemanticAnalysis::SemanticAnalyzer semanticAnalyzer;
-            std::cout << semanticAnalyzer.highlight(modules, unit);
+            std::cout << semanticAnalyzer.highlight(modules, unit, macros);
             return;
         }
         expandMacros();
