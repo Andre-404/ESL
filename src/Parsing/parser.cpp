@@ -296,21 +296,15 @@ namespace AST {
 
     ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, Token token){
         ASTNodePtr field = nullptr;
-        Token newToken = token;
         if (token.type == TokenType::LEFT_BRACKET) {// Array/struct with string access
             field = parser->expression();
-            // object["field"] gets optimized to object.field
-            if (field->type == ASTType::LITERAL) {
-                field->accept(parser->probe);
-                if (parser->probe->getProbedToken().type == TokenType::STRING) newToken.type = TokenType::DOT;
-            }
             parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' after array/map access.");
         }
         else if (token.type == TokenType::DOT) {// Object access
             Token fieldName = parser->consume(TokenType::IDENTIFIER, "Expected a field identifier.");
             field = make_shared<LiteralExpr>(fieldName);
         }
-        return make_shared<FieldAccessExpr>(left, newToken, field);
+        return make_shared<FieldAccessExpr>(left, token, field);
     }
 }
 
@@ -545,14 +539,13 @@ void Parser::defineMacro() {
 }
 
 ASTNodePtr Parser::expression(int prec) {
-    Token token = peek();
+    Token token = advance();
     //check if the token has a prefix function associated with it, and if it does, parse with it
     if (prefixParselets.count(token.type) == 0) {
         // TODO: Fix hackyness
         if (token.str.length == 0) token = currentContainer->at(currentPtr - 2);
         throw error(token, "Expected expression.");
     }
-    advance();
     if (token.type == TokenType::DOLLAR && parseMode != ParseMode::Macro){
         throw error(token, "Unexpected '$' found outside of macro transcriber.");
     }
