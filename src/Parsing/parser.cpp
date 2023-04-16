@@ -545,13 +545,14 @@ void Parser::defineMacro() {
 }
 
 ASTNodePtr Parser::expression(int prec) {
-    Token token = advance();
+    Token token = peek();
     //check if the token has a prefix function associated with it, and if it does, parse with it
     if (prefixParselets.count(token.type) == 0) {
         // TODO: Fix hackyness
         if (token.str.length == 0) token = currentContainer->at(currentPtr - 2);
         throw error(token, "Expected expression.");
     }
+    advance();
     if (token.type == TokenType::DOLLAR && parseMode != ParseMode::Macro){
         throw error(token, "Unexpected '$' found outside of macro transcriber.");
     }
@@ -761,7 +762,7 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
 shared_ptr<BlockStmt> Parser::blockStmt() {
     vector<ASTNodePtr> stmts;
     //TokenType::LEFT_BRACE is already consumed
-    while (!check(TokenType::RIGHT_BRACE)) {
+    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
             stmts.push_back(localDeclaration());
         }catch(ParserException& e){
@@ -878,7 +879,7 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
     }
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
-    while (!check(TokenType::CASE) && !check(TokenType::RIGHT_BRACE) && !check(TokenType::DEFAULT)) {
+    while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd()) {
         try {
             stmts.push_back(localDeclaration());
         }catch(ParserException& e){
@@ -1042,6 +1043,7 @@ void Parser::sync() {
             case TokenType::SWITCH:
             case TokenType::CASE:
             case TokenType::DEFAULT:
+            case TokenType::LEFT_BRACE:
             case TokenType::RIGHT_BRACE:
             case TokenType::STATIC:
             case TokenType::PUB:

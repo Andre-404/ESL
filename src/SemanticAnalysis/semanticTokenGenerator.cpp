@@ -24,6 +24,7 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 SemanticAnalyzer::SemanticAnalyzer() {
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
     currentClass = nullptr;
+    curUnit = nullptr;
     curUnitIndex = 0;
     curGlobalIndex = 0;
     generateSemanticTokens = false;
@@ -34,6 +35,7 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
     for (CSLModule* unit : units) {
         if(unit == unitToHighlight) generateSemanticTokens = true;
         curUnit = unit;
+
         for (const auto decl : unit->topDeclarations) {
             globals.push_back(decl->getName());
         }
@@ -140,7 +142,7 @@ void SemanticAnalyzer::visitSetExpr(AST::SetExpr* expr) {
     // The "." is always followed by a field name as a string, emitting a constant speeds things up and avoids unnecessary stack manipulation
     expr->value->accept(this);
     expr->callee->accept(this);
-    semanticTokens.emplace_back(probeToken(expr->field), string("property"));
+    createSemanticToken(probeToken(expr->field), "property");
 }
 
 void SemanticAnalyzer::visitConditionalExpr(AST::ConditionalExpr* expr) {
@@ -257,7 +259,7 @@ void SemanticAnalyzer::visitCallExpr(AST::CallExpr* expr) {
     if (invoke(expr)) return;
     if(expr->callee->type == AST::ASTType::LITERAL){
         Token token = probeToken(expr->callee);
-        semanticTokens.emplace_back(token, string("function"));
+        createSemanticToken(token, "function");
     }else expr->callee->accept(this);
     for (AST::ASTNodePtr arg : expr->args) {
         arg->accept(this);
@@ -346,10 +348,15 @@ void SemanticAnalyzer::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
 }
 
 void SemanticAnalyzer::visitMacroExpr(AST::MacroExpr* expr) {
-    semanticTokens.emplace_back(expr->macroName, string("macro"));
+    createSemanticToken(expr->macroName, "macro");
 }
 
 void SemanticAnalyzer::visitAsyncExpr(AST::AsyncExpr* expr) {
+    if (invoke(expr)) return;
+    if(expr->callee->type == AST::ASTType::LITERAL){
+        Token token = probeToken(expr->callee);
+        createSemanticToken(token, "function");
+    }else expr->callee->accept(this);
     expr->callee->accept(this);
     for (AST::ASTNodePtr arg : expr->args) {
         arg->accept(this);
@@ -745,6 +752,55 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
     return resolveImplicitObjectField(expr);
 }
 
+bool SemanticAnalyzer::invoke(AST::AsyncExpr* expr) {
+    if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
+        //currently we only optimizes field invoking(struct.field() or array[field]())
+        auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
+        if (call->accessor.type == TokenType::LEFT_BRACKET) return false;
+
+        call->callee->accept(this);
+        uint16_t constant;
+        Token name = probeToken(call->field);
+        // If invoking a method inside another method, make sure to get the right(public/private) name
+        if (isLiteralThis(call->callee)) {
+            string res = resolveClassField(name, false);
+            if (res == "") error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(),
+                                                   currentClass->name.getLexeme()));
+            createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
+        } else createSemanticToken(name, "method");
+
+        for (AST::ASTNodePtr arg: expr->args) {
+            arg->accept(this);
+        }
+        return true;
+    }
+    else if (expr->callee->type == AST::ASTType::SUPER) {
+        auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
+        if (currentClass == nullptr) {
+            error(superCall->methodName, "Can't use 'super' outside of a class.");
+            createSemanticToken(superCall->methodName, "method");
+        }
+        else if (!currentClass->superclass) {
+            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
+        }
+        resolveSuperClassField(superCall->methodName);
+        createSemanticToken(superCall->methodName, "method");
+
+        if (currentClass == nullptr) {
+            error(superCall->methodName, "Can't use 'super' outside of a class.");
+        }
+        else if (!currentClass->superclass) {
+            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
+        }
+        for (AST::ASTNodePtr arg : expr->args) {
+            arg->accept(this);
+        }
+        return true;
+    }
+    // Class methods can be accessed without 'this' keyword inside of methods and called
+    return resolveImplicitObjectField(expr);
+}
+
 // Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
 // First bool in pair is if the search was successful, second is if the field found was public or private
 static std::pair<bool, bool> classContainsField(string& publicField, std::unordered_map<string, bool>& map){
@@ -815,6 +871,20 @@ bool SemanticAnalyzer::resolveThis(AST::FieldAccessExpr *expr) {
 // Recognizes object_field() as an invoke operation
 // If object_field() is encountered inside a closure which is inside a method, throw an error since only this.object_field() is allowed in closures
 bool SemanticAnalyzer::resolveImplicitObjectField(AST::CallExpr *expr) {
+    if(expr->callee->type != AST::ASTType::LITERAL) return false;
+    Token name = probeToken(expr->callee);
+    string res = resolveClassField(name, false);
+    if(res == "") return false;
+    if(current->type == FuncType::TYPE_FUNC) error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
+    createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
+    for (AST::ASTNodePtr arg : expr->args) {
+        arg->accept(this);
+    }
+
+    return true;
+}
+
+bool SemanticAnalyzer::resolveImplicitObjectField(AST::AsyncExpr *expr) {
     if(expr->callee->type != AST::ASTType::LITERAL) return false;
     Token name = probeToken(expr->callee);
     string res = resolveClassField(name, false);

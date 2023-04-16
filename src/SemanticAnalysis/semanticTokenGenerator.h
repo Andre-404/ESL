@@ -305,6 +305,8 @@ namespace SemanticAnalysis {
 
         bool invoke(AST::CallExpr *expr);
 
+        bool invoke(AST::AsyncExpr *expr);
+
         string resolveClassField(Token name, bool canAssign);
 
         void resolveSuperClassField(Token name);
@@ -317,6 +319,8 @@ namespace SemanticAnalysis {
         bool resolveThis(AST::SetExpr *expr);
 
         bool resolveImplicitObjectField(AST::CallExpr *expr);
+
+        bool resolveImplicitObjectField(AST::AsyncExpr *expr);
 
         SemanticAnalyzerException error(Token token, const string &msg) noexcept(false);
 

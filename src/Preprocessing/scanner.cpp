@@ -36,7 +36,8 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"static", TokenType::STATIC},
         {"instanceof", TokenType::INSTANCEOF},
         {"new", TokenType::NEW},
-        {"in", TokenType::IN}
+        {"in", TokenType::IN},
+        {"as", TokenType::AS}
 };
 
 using namespace preprocessing;
