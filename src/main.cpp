@@ -4,7 +4,7 @@
 #include "ErrorHandling/errorHandler.h"
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
-#include "SemanticAnalysis/semanticTokenGenerator.h"
+#include "SemanticAnalysis/semanticAnalyzer.h"
 #include "Runtime/vm.h"
 #include <chrono>
 

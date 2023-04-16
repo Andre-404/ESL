@@ -1,4 +1,4 @@
-#include "semanticTokenGenerator.h"
+#include "semanticAnalyzer.h"
 #include <iostream>
 #include "../Includes/fmt/format.h"
 #include "../Codegen/upvalueFinder.h"

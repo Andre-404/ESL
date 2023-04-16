@@ -2,7 +2,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../DebugPrinting/ASTPrinter.h"
 #include "../Includes/fmt/format.h"
-#include "../SemanticAnalysis/semanticTokenGenerator.h"
+#include "../SemanticAnalysis/semanticAnalyzer.h"
 
 using std::make_shared;
 using namespace AST;
