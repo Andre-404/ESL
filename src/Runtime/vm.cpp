@@ -1,6 +1,6 @@
 #include "vm.h"
-#include "../codegen/compiler.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/compiler.h"
+#include "../Codegen/valueHelpersInline.cpp"
 #include "nativeFunctions.h"
 
 using std::get;

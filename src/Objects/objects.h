@@ -1,5 +1,5 @@
 #pragma once
-#include "../codegen/codegenDefs.h"
+#include "../Codegen/codegenDefs.h"
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Includes/unorderedDense.h"
 #include <fstream>

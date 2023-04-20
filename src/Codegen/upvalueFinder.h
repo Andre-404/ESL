@@ -1,4 +1,6 @@
 #pragma once
+
+#include <array>
 #include "../Parsing/ASTDefs.h"
 // Identifies types of variable declarations(and function arguments)
 // Variable declarations can be: global, local, local upvalue

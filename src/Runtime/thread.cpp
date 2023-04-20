@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "../Includes/fmt/format.h"
 #include "../Includes/fmt/color.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 #include "../DebugPrinting/BytecodePrinter.h"
 
 using std::get;

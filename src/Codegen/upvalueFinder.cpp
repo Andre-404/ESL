@@ -3,7 +3,7 @@
 #include <iostream>
 #include "../Includes/fmt/format.h"
 #include "../ErrorHandling/errorHandler.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 
 using namespace upvalueFinder;
 using namespace object;
