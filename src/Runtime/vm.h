@@ -1,5 +1,5 @@
 #pragma once
-#include "../codegen/codegenDefs.h"
+#include "../Codegen/codegenDefs.h"
 #include "../Objects/objects.h"
 #include "thread.h"
 #include <condition_variable>

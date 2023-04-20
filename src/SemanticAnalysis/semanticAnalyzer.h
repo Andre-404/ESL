@@ -1,3 +1,4 @@
+#include <array>
 #include "../common.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"

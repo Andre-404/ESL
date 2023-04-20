@@ -2,7 +2,7 @@
 #include "../MemoryManagment/garbageCollector.h"
 #include "../Runtime/thread.h"
 #include "../Includes/fmt/format.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 
 using namespace object;
 using namespace memory;
