@@ -2,7 +2,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../DebugPrinting/BytecodePrinter.h"
 #include "../Includes/fmt/format.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 #include <iostream>
 #include <iomanip>
 

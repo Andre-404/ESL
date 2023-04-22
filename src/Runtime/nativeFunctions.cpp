@@ -2,7 +2,7 @@
 #include "thread.h"
 #include "vm.h"
 #include "../Includes/fmt/format.h"
-#include "../codegen/valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 #include <iostream>
 #include <chrono>
 #include <algorithm>
