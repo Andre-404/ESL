@@ -42,8 +42,8 @@ void runtime::VM::execute() {
 
 bool runtime::VM::allThreadsPaused() {
     // Another thread might try to add/remove a Thread object while the main thread is waiting for all threads to pause
-    std::scoped_lock<std::mutex> lk(mtx);
-    return threadsPaused == childThreads.size();
+    std::scoped_lock<std::mutex> lk(mtx);;
+    return threadsPaused.load() == childThreads.size();
 }
 
 void runtime::VM::pauseAllThreads(){

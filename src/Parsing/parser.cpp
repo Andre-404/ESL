@@ -459,9 +459,13 @@ void Parser::parse(vector<CSLModule*>& modules) {
                     }
                     // If there are 2 or more declaration which use the same symbol,
                     // throw an error and tell the user exactly which dependencies caused the error
-
-                    string str = fmt::format("Ambiguous definition, symbol '{}' defined in {} and {}.",
-                                             lexeme, symbols[lexeme] ? symbols[lexeme]->pathString.getLexeme() : "this file", dep.pathString.getLexeme());
+                    string firstPath = "this file";
+                    if(symbols[lexeme]){
+                        firstPath = symbols[lexeme]->pathString.getLexeme().substr(1, symbols[lexeme]->pathString.getLexeme().length() - 2);
+                    }
+                    string secondPath = dep.pathString.getLexeme();
+                    string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and '{}'.",
+                                             lexeme, firstPath, secondPath.substr(1, secondPath.length() - 2));
                     if(!symbols[lexeme]){
                         for(auto thisFileDecl : unit->topDeclarations){
                             if(thisFileDecl->getName().getLexeme() != lexeme) continue;
@@ -593,7 +597,7 @@ ASTNodePtr Parser::topLevelDeclaration() {
     if (match(TokenType::LET)) node = varDecl();
     else if (match(TokenType::CLASS)) node = classDecl();
     else if (match(TokenType::FN)) node = funcDecl();
-    else if(isExported) throw error(previous(), "Only declarations are allowed after 'export'");
+    else if(isExported) throw error(previous(), "Only declarations are allowed after 'pub'");
     if(node){
         for(const auto decl : parsedUnit->topDeclarations){
             if (node->getName().equals(decl->getName())) {
@@ -688,9 +692,8 @@ shared_ptr<ClassDecl> Parser::classDecl() {
             }
         }
     };
-
-    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-        try {
+    try {
+        while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
             bool isPublic = false;
             if (match(TokenType::PUB)) {
                 isPublic = true;
@@ -718,9 +721,12 @@ shared_ptr<ClassDecl> Parser::classDecl() {
             } else {
                 throw error(peek(), "Expected let or fn keywords.");
             }
-        }catch(ParserException& e){
-            sync();
         }
+    }catch(ParserException& e){
+        while (!check({TokenType::RIGHT_BRACE}) && !isAtEnd()) {
+            advance();
+        }
+        if(!isAtEnd()) advance();
     }
     consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
     return make_shared<ClassDecl>(name, methods, fields, inherited);
@@ -872,7 +878,7 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
     }
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
-    while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd()) {
+    while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd() && peek().type != TokenType::RIGHT_BRACE) {
         try {
             stmts.push_back(localDeclaration());
         }catch(ParserException& e){

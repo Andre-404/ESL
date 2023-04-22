@@ -117,7 +117,7 @@ struct Token {
     }
 
     bool equals(const Token& token) const {
-        return getLexeme().compare(token.getLexeme()) == 0 && type == token.type;
+        return type == token.type && getLexeme().compare(token.getLexeme()) == 0;
     }
 };
 

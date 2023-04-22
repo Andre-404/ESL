@@ -882,17 +882,17 @@ void runtime::Thread::executeBytecode() {
             {
                 byte argCount = READ_BYTE();
                 auto *t = new Thread(vm);
+                {
+                    // Only one thread can add/remove a new child thread at any time
+                    std::lock_guard<std::mutex> lk(vm->mtx);
+                    vm->childThreads.push_back(t);
+                }
                 auto *newFut = new object::ObjFuture(t);
                 // Ensures that ObjFuture tied to this thread lives long enough for the thread to finish execution
                 t->copyVal(encodeObj(newFut));
                 // Copies the function being called and the arguments
                 t->startThread(&stackTop[-1 - argCount], argCount + 1);
                 stackTop -= argCount + 1;
-                {
-                    // Only one thread can add/remove a new child thread at any time
-                    std::lock_guard<std::mutex> lk(vm->mtx);
-                    vm->childThreads.push_back(t);
-                }
                 newFut->startParallelExecution();
                 push(encodeObj(newFut));
                 DISPATCH();

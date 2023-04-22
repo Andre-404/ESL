@@ -52,8 +52,7 @@ namespace SemanticAnalysis {
     enum class GlobalvarType {
         VARIABLE,
         FUNCTION,
-        CLASS,
-        NONE
+        CLASS
     };
 
     struct GlobalVar {
@@ -61,16 +60,16 @@ namespace SemanticAnalysis {
         GlobalvarType type;
         //If type is CLASS ptr points to the class(used for inheritance)
         std::shared_ptr<ClassChunkInfo> ptr;
-
-        GlobalVar() {
-            type = GlobalvarType::NONE;
-            ptr = nullptr;
-        }
-
-        GlobalVar(Token _name) {
+        bool isDefined;
+        GlobalVar(Token _name, AST::ASTDeclType _type) {
             name = _name;
-            type = GlobalvarType::NONE;
+            switch(_type){
+                case AST::ASTDeclType::VAR: type = GlobalvarType::VARIABLE; break;
+                case AST::ASTDeclType::FUNCTION: type = GlobalvarType::FUNCTION; break;
+                case AST::ASTDeclType::CLASS: type = GlobalvarType::CLASS; break;
+            }
             ptr = nullptr;
+            isDefined = false;
         }
     };
 
@@ -284,7 +283,7 @@ namespace SemanticAnalysis {
 
         uint16_t declareGlobalVar(Token name);
 
-        void defineGlobalVar(uInt16 name, GlobalvarType type, Token token);
+        void defineGlobalVar(uInt16 name, Token token);
 
         void addLocal(AST::ASTVar name, bool isParam);
 

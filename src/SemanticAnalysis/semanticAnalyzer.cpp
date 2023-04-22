@@ -37,7 +37,7 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
         curUnit = unit;
 
         for (const auto decl : unit->topDeclarations) {
-            globals.push_back(decl->getName());
+            globals.emplace_back(decl->getName(), decl->getType());
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
             //doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
@@ -53,20 +53,21 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
     }
     for(auto& it : macros){
         createSemanticToken(it.second->name, "macro", {"declaration"});
-        for(auto& matcher : it.second->matchers){
+        for(int i = 0; i < it.second->matchers.size(); i++){
+            auto& matcher = it.second->matchers[i];
+            auto& transcriber = it.second->transcribers[i];
             auto pattern = matcher.getPattern();
-            for(int i = 0; i < pattern.size(); i++){
-                Token& token = pattern[i];
-                if(token.type == TokenType::DOLLAR && i+1 < pattern.size() && pattern[++i].type == TokenType::IDENTIFIER){
-                    createSemanticToken(pattern[i], "parameter", {"declaration"});
+            std::unordered_set<string> params;
+
+            for(int j = 0; j < pattern.size(); j++){
+                if(pattern[j].type == TokenType::DOLLAR && j+1 < pattern.size() && pattern[++j].type == TokenType::IDENTIFIER){
+                    params.insert(pattern[j].getLexeme());
+                    createSemanticToken(pattern[j], "parameter", {"declaration"});
                 }
             }
-        }
-        for(auto& transcriber : it.second->transcribers){
-            for(int i = 0; i < transcriber.size(); i++){
-                Token& token = transcriber[i];
-                if(token.type == TokenType::DOLLAR && i+1 < transcriber.size() && transcriber[++i].type == TokenType::IDENTIFIER){
-                    createSemanticToken(transcriber[i], "parameter", {"declaration"});
+            for(int j = 0; j < transcriber.size(); j++){
+                if(transcriber[j].type == TokenType::DOLLAR && j+1 < transcriber.size() && transcriber[++j].type == TokenType::IDENTIFIER && params.contains(transcriber[j].getLexeme())){
+                    createSemanticToken(transcriber[j], "parameter", {"declaration"});
                 }
             }
         }
@@ -87,7 +88,7 @@ string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
     for (CSLModule *unit: units) {
         curUnit = unit;
         for (const auto decl: unit->topDeclarations) {
-            globals.push_back(decl->getName());
+            globals.emplace_back(decl->getName(), decl->getType());
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
             //doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
@@ -376,14 +377,14 @@ void SemanticAnalyzer::visitVarDecl(AST::VarDecl* decl) {
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
     if (decl->value != nullptr) decl->value->accept(this);
     if(current->scopeDepth == 0){
-        defineGlobalVar(global, GlobalvarType::VARIABLE, decl->var.name);
+        defineGlobalVar(global, decl->var.name);
     }else defineLocalVar();
 }
 
 void SemanticAnalyzer::visitFuncDecl(AST::FuncDecl* decl) {
     uint16_t index = declareGlobalVar(decl->getName());
     // Defining the function here to allow for recursion
-    defineGlobalVar(index, GlobalvarType::FUNCTION, decl->getName());
+    defineGlobalVar(index, decl->getName());
     //creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
     //is stored in parserCurrent->enclosing
     current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
@@ -440,7 +441,7 @@ void SemanticAnalyzer::visitClassDecl(AST::ClassDecl* decl) {
 
     // Define the class here, so that it can be called inside its own methods
     // Defining after inheriting so that a class can't be used as its own parent
-    defineGlobalVar(index, GlobalvarType::CLASS, className);
+    defineGlobalVar(index, className);
     // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
     globals[index].ptr = currentClass;
 
@@ -547,10 +548,9 @@ void SemanticAnalyzer::visitReturnStmt(AST::ReturnStmt* stmt) {
 
 #pragma region Variables
 
-void SemanticAnalyzer::defineGlobalVar(uInt16 index, GlobalvarType type, Token token) {
-    globals[index].type = type;
+void SemanticAnalyzer::defineGlobalVar(uInt16 index, Token token) {
     string _type;
-    switch(type){
+    switch(globals[index].type){
         case GlobalvarType::VARIABLE: _type = "variable"; break;
         case GlobalvarType::CLASS: _type = "class"; break;
         case GlobalvarType::FUNCTION: _type = "function"; break;
@@ -941,6 +941,13 @@ int SemanticAnalyzer::checkSymbol(Token symbol) {
             }
             for(int i = 0; i < decls.size(); i++){
                 if(!decls[i]->getName().equals(symbol)) continue;
+                string _type;
+                switch(decls[i]->getType()){
+                    case AST::ASTDeclType::VAR: _type = "variable"; break;
+                    case AST::ASTDeclType::FUNCTION: _type = "function"; break;
+                    case AST::ASTDeclType::CLASS: _type = "class"; break;
+                }
+                createSemanticToken(symbol, _type, {"readonly"});
                 return globalIndex + i;
             }
         }
@@ -955,7 +962,7 @@ int SemanticAnalyzer::resolveGlobal(Token symbol, bool canAssign) {
     for (auto decl : curUnit->topDeclarations) {
         if (symbol.equals(decl->getName())) {
             // It's an error to read from a variable during its initialization
-            if(globals[index].type == GlobalvarType::NONE) return -2;
+            if(globals[index].isDefined) return -2;
             inThisFile = true;
             ptr = decl;
             break;
@@ -967,12 +974,22 @@ int SemanticAnalyzer::resolveGlobal(Token symbol, bool canAssign) {
             if(ptr->type == AST::ASTType::FUNC) error(symbol, "Cannot assign to a function.");
             else if(ptr->type == AST::ASTType::CLASS) error(symbol, "Cannot assign to a class.");
 
+            createSemanticToken(symbol, "variable", {"readonly"});
             return index;
         }
         throw error(symbol, "Cannot assign to a variable not declared in this module.");
     }
     else {
-        if (inThisFile) return index;
+        if (inThisFile) {
+            string _type;
+            switch(ptr->getType()){
+                case AST::ASTDeclType::VAR: _type = "variable"; break;
+                case AST::ASTDeclType::FUNCTION: _type = "function"; break;
+                case AST::ASTDeclType::CLASS: _type = "class"; break;
+            }
+            createSemanticToken(symbol, _type, {"readonly"});
+            return index;
+        }
         else {
             // Global variables defined in an imported file are guaranteed to be already defined
             return checkSymbol(symbol);
@@ -1008,7 +1025,16 @@ uint32_t SemanticAnalyzer::resolveModuleVariable(Token moduleAlias, Token variab
         }
         // Checks every export of said module against 'variable'
         for (auto decl : unit->exports) {
-            if (decl->getName().equals(variable)) return index;
+            if (decl->getName().equals(variable)) {
+                string _type;
+                switch(decl->getType()){
+                    case AST::ASTDeclType::VAR: _type = "variable"; break;
+                    case AST::ASTDeclType::FUNCTION: _type = "function"; break;
+                    case AST::ASTDeclType::CLASS: _type = "class"; break;
+                }
+                createSemanticToken(variable, _type, {"readonly"});
+                return index;
+            }
             index++;
         }
     }

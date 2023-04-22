@@ -124,9 +124,16 @@ namespace AST {
 	};
 	using ASTNodePtr = shared_ptr<ASTNode>;
 
+    enum class ASTDeclType{
+        VAR,
+        FUNCTION,
+        CLASS
+    };
+
 	class ASTDecl : public ASTNode {
 	public:
 		virtual Token getName() = 0;
+        virtual ASTDeclType getType() = 0;
 	};
 
     enum class ASTVarType{
@@ -477,6 +484,7 @@ namespace AST {
 			vis->visitVarDecl(this);
 		}
 		Token getName() { return var.name; }
+        ASTDeclType getType() { return ASTDeclType::VAR; }
 	};
 
 	class BlockStmt : public ASTNode {
@@ -633,6 +641,7 @@ namespace AST {
 			vis->visitFuncDecl(this);
 		}
 		Token getName() { return name; }
+        ASTDeclType getType() { return ASTDeclType::FUNCTION; }
 	};
 
 	class ReturnStmt : public ASTNode {
@@ -686,6 +695,7 @@ namespace AST {
 			vis->visitClassDecl(this);
 		}
 		Token getName() { return name; }
+        ASTDeclType getType() { return ASTDeclType::CLASS; }
 	};
 #pragma endregion
 
