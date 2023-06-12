@@ -3,6 +3,20 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
+#include "JIT.h"
+
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
+
 #include <array>
 
 namespace compileCore {
@@ -84,6 +98,7 @@ namespace compileCore {
         object::ObjClass* baseClass;
 
 		Compiler(vector<CSLModule*>& units);
+        void compile();
 		Chunk* getChunk();
 		object::ObjFunc* endFuncDecl();
 
@@ -132,6 +147,14 @@ namespace compileCore {
         // a undefined global variable is being used
         vector<bool> definedGlobals;
         ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
+
+        std::unique_ptr<llvm::LLVMContext> ctx;
+        llvm::IRBuilder<> builder;
+        std::unique_ptr<llvm::Module> curModule;
+        llvm::Value* returnValue;
+        std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
+
+        llvm::Value* visitASTNode(AST::ASTNode* node);
 
         #pragma region Helpers
         // Emitters

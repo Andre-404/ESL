@@ -67,9 +67,9 @@ int main(int argc, char* argv[]) {
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) exit(64);
 
-        auto vm = new runtime::VM(&compiler);
+        //auto vm = new runtime::VM(&compiler);
 
-        vm->execute();
+        //vm->execute();
     }else if(flag == "-validate-file"){
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);

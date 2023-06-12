@@ -1,16 +1,24 @@
 #include "compiler.h"
 #include "../ErrorHandling/errorHandler.h"
-#include <unordered_set>
-#include <iostream>
 #include "../Includes/fmt/format.h"
 #include "../Codegen/valueHelpersInline.cpp"
 #include "upvalueFinder.h"
 #include "../Runtime/thread.h"
 #include "../Runtime/nativeFunctions.h"
+#include "llvmHelperFunctions.h"
+#include "compiledValueHelpers.cpp"
+
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+
+#include <unordered_set>
+#include <iostream>
 
 using namespace compileCore;
 using namespace object;
 using namespace valueHelpers;
+
 
 #ifdef COMPILER_USE_LONG_INSTRUCTION
 #define SHORT_CONSTANT_LIMIT 0
@@ -40,7 +48,9 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
     func = new ObjFunc();
 }
 
-Compiler::Compiler(vector<CSLModule*>& _units) {
+
+
+Compiler::Compiler(vector<CSLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     upvalueFinder::UpvalueFinder f(_units);
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
     baseClass = new object::ObjClass("base class", nullptr);
@@ -53,6 +63,25 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
     units = _units;
     nativeFuncs = runtime::createNativeFuncs();
     nativeFuncNames = runtime::createNativeNameTable(nativeFuncs);
+
+    curModule = std::make_unique<llvm::Module>("Module", *ctx);
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+    auto err = llvm::orc::KaleidoscopeJIT::Create().moveInto(JIT);
+    curModule->setDataLayout(JIT->getDataLayout());
+
+    llvmHelpers::addHelperFunctionsToModule(curModule.get(), *ctx);
+
+    compile();
+}
+
+void Compiler::compile(){
+    // Create a new basic block to start insertion into.
+    llvm::FunctionType *FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
+    llvm::Function *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "anon", curModule.get());
+    llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
+    builder.SetInsertPoint(BB);
 
     for (CSLModule* unit : units) {
         curUnit = unit;
@@ -73,10 +102,15 @@ Compiler::Compiler(vector<CSLModule*>& _units) {
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    mainBlockFunc = endFuncDecl();
-    mainBlockFunc->name = "script";
-    memory::gc.collect(this);
     for (CSLModule* unit : units) delete unit;
+
+    //Temporary
+    builder.CreateCall(curModule->getFunction("print"), returnValue);
+    builder.CreateRetVoid();
+    verifyFunction(*F);
+    curModule->print(llvm::errs(), nullptr);
+
+    llvmHelpers::runModule(curModule, JIT, ctx, false);
 }
 
 static Token probeToken(AST::ASTNodePtr ptr){
@@ -91,60 +125,27 @@ static bool isLiteralThis(AST::ASTNodePtr ptr){
 }
 
 void Compiler::visitAssignmentExpr(AST::AssignmentExpr* expr) {
-    //rhs of the expression is on the top of the stack and stays there, since assignment is an expression
-    expr->value->accept(this);
-    namedVar(expr->name, true);
+
 }
 
 void Compiler::visitSetExpr(AST::SetExpr* expr) {
-    //different behaviour for '[' and '.'
-    updateLine(expr->accessor);
 
-    if(expr->accessor.type == TokenType::LEFT_BRACKET){
-        // Allows for things like object["field" + "name"]
-        expr->value->accept(this);
-        expr->callee->accept(this);
-        expr->field->accept(this);
-        emitByte(+OpCode::SET);
-        return;
-    }
-    if(resolveThis(expr)) return;
-    // The "." is always followed by a field name as a string, emitting a constant speeds things up and avoids unnecessary stack manipulation
-    expr->value->accept(this);
-    expr->callee->accept(this);
-    uint16_t name = identifierConstant(probeToken(expr->field));
-    if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_PROPERTY, name);
-    else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, name);
 }
 
 void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
-    //compile condition and emit a jump over then branch if the condition is false
-    expr->condition->accept(this);
-    int thenJump = emitJump(+OpCode::JUMP_IF_FALSE_POP);
-    expr->mhs->accept(this);
-    //prevents fallthrough to else branch
-    int elseJump = emitJump(+OpCode::JUMP);
-    patchJump(thenJump);
-    //only emit code if else branch exists, since its optional
-    if (expr->rhs) expr->rhs->accept(this);
-    patchJump(elseJump);
+
 }
 
 void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
-    auto index = nativeFuncNames["create_range"];
-    emitByteAnd16Bit(+OpCode::GET_NATIVE, index);
-    if(expr->start) expr->start->accept(this);
-    else emitConstant(encodeNumber(-std::numeric_limits<double>::infinity()));
-    if(expr->end) expr->end->accept(this);
-    else emitConstant(encodeNumber(std::numeric_limits<double>::infinity()));
-    emitConstant(encodeBool(expr->endInclusive));
-    emitBytes(+OpCode::CALL, 3);
+
 }
+
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
     updateLine(expr->op);
 
-    expr->left->accept(this);
+    llvm::Value* lhs = visitASTNode(expr->left.get());
+    llvm::Value* rhs = visitASTNode(expr->right.get());
     uint8_t op = 0;
     switch (expr->op.type) {
         case TokenType::OR:{
@@ -167,14 +168,17 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
             patchJump(jump);
             return;
         }
-        case TokenType::INSTANCEOF:{
-            auto klass = getClassFromExpr(expr->right);
-            uint16_t index = makeConstant(encodeObj(klass));
-            emitByteAnd16Bit(+OpCode::INSTANCEOF, index);
-            return;
-        }
         //take in double or string(in case of add)
-        case TokenType::PLUS:	op = +OpCode::ADD; break;
+        case TokenType::PLUS:	{
+            llvm::Value* tmp1;
+            llvm::Value* tmp2;
+            tmp1 = builder.CreateCall(curModule->getFunction("asNum"), lhs);
+            tmp2 = builder.CreateCall(curModule->getFunction("asNum"), rhs);
+
+            llvm::Value* fp = builder.CreateFAdd(tmp1, tmp2, "addtmp");
+            returnValue = builder.CreateBitCast(fp, llvm::Type::getInt64Ty(*ctx));
+            break;
+        }
         case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
         case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
         case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
@@ -192,12 +196,9 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
         case TokenType::LESS:			 op = +OpCode::LESS; break;
         case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
-        case TokenType::IN:              op = +OpCode::IN; break;
         // Should never be hit
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
-    expr->right->accept(this);
-    emitByte(op);
 }
 
 void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
@@ -393,12 +394,15 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
         case TokenType::NUMBER: {
             string num = expr->token.getLexeme();
             double val = std::stod(num);
-            if (isInt(val) && val <= SHORT_CONSTANT_LIMIT) { emitBytes(+OpCode::LOAD_INT, val); }
-            else { emitConstant(encodeNumber(val)); }
+            llvm::Constant* fp = llvm::ConstantFP::get(*ctx, llvm::APFloat(val));
+            returnValue = builder.CreateBitCast(fp, llvm::Type::getInt64Ty(*ctx));
             break;
         }
-        case TokenType::TRUE: emitByte(+OpCode::TRUE); break;
-        case TokenType::FALSE: emitByte(+OpCode::FALSE); break;
+        case TokenType::TRUE:
+        case TokenType::FALSE: {
+            returnValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), encodeBool(expr->token.type == TokenType::TRUE));
+            break;
+        }
         case TokenType::NIL: emitByte(+OpCode::NIL); break;
         case TokenType::STRING: {
             //this gets rid of quotes, ""Hello world""->"Hello world"
@@ -1563,6 +1567,11 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
     error(variable, fmt::format("Module {} doesn't export this symbol.", depPtr->alias.getLexeme()));
     // Never hit
     return -1;
+}
+
+llvm::Value* Compiler::visitASTNode(AST::ASTNode *node) {
+    node->accept(this);
+    return returnValue;
 }
 #pragma endregion
 
