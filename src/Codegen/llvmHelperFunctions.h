@@ -8,7 +8,7 @@
 #include "JIT.h"
 
 namespace llvmHelpers {
-    void addHelperFunctionsToModule(llvm::Module* module, llvm::LLVMContext &context, llvm::IRBuilder<>& builder);
+    void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &context, llvm::IRBuilder<>& builder);
 
     void runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize);
 

@@ -156,6 +156,7 @@ namespace compileCore {
 
         llvm::Value* visitASTNode(AST::ASTNode* node);
         void retVal(llvm::Value* val);
+        void createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode);
 
         #pragma region Helpers
         // Emitters

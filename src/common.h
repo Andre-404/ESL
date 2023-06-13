@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <bitset>
+#include <cstdint>
 
 using std::string;
 using std::vector;

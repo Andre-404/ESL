@@ -1,6 +1,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include "valueHelpersInline.cpp"
+#include "../Includes/fmt/format.h"
 // Functions which the compiler calls, seperate from the native functions provided by the language as part of runtime library
 
 #ifdef _WIN32
@@ -26,11 +27,18 @@ EXPORT Value createStr(char* ptr){
     return encodeObj(ObjString::createStr(str));
 }
 
-EXPORT bool valueIsTrue(Value x){
-    return !((isBool(x) && !decodeBool(x)) || isNil(x));
-}
+EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
+    string str(ptr);
+    size_t pos = 0;
+    for(uInt i = 0; i < argSize; i++){
+        pos = str.find("{}", pos);
+        if(pos == str.npos){
+            std::cout<< "Error\n";
+        }
+        str.replace(pos, 2, args[i]);
+        pos += strlen(args[i]);
+    }
 
-// Encode functions are temporary and should be moved to LLVM IR, inline version in C++ are to be used by the GC
-EXPORT Value nativeEncodeBool(bool b){
-    return encodeBool(b);
+    std::cout<<str<<std::endl;
+    exit(64);
 }

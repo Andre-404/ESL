@@ -74,7 +74,7 @@ Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
     curModule->setDataLayout(JIT->getDataLayout());
     curModule->setTargetTriple(targetTriple);
 
-    llvmHelpers::addHelperFunctionsToModule(curModule.get(), *ctx, builder);
+    llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder);
 
     compile();
 }
@@ -108,11 +108,23 @@ void Compiler::compile(){
     for (ESLModule* unit : units) delete unit;
 
     //Temporary
+    auto str1 = builder.CreateGlobalStringPtr("a", "internalString");
+    auto str2 = builder.CreateGlobalStringPtr("lol", "internalString");
+    std::vector<llvm::Value*> args = {str1, str2};
+    auto str = builder.CreateGlobalStringPtr("Lol {} a {}", "internalString");
+    auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
+    auto arrType = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*ctx), args.size());
+    auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), 0, argNum, "allocArr");
+    for(int i = 0; i < args.size(); i++){
+        auto gep = builder.CreateInBoundsGEP(llvm::Type::getInt8PtrTy(*ctx), alloca, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), i));
+        builder.CreateStore(args[i], gep);
+    }
+    auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
+    builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
     builder.CreateCall(curModule->getFunction("print"), returnValue);
     builder.CreateRetVoid();
     llvm::verifyFunction(*F);
     curModule->print(llvm::errs(), nullptr);
-
     llvmHelpers::runModule(curModule, JIT, ctx, false);
 }
 
@@ -188,15 +200,32 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         return;
     }
     llvm::Value* rhs = visitASTNode(expr->right.get());
-    switch (expr->op.type) {
+    switch (op) {
         //take in double or string(in case of add)
         case TokenType::PLUS:	{
-            llvm::Value* tmp1;
-            llvm::Value* tmp2;
-            tmp1 = builder.CreateCall(curModule->getFunction("asNum"), lhs);
-            tmp2 = builder.CreateCall(curModule->getFunction("asNum"), rhs);
+            /*auto isnum = curModule->getFunction("isNum");
+            auto c1 = builder.CreateCall(isnum, lhs);
+            auto c2 = builder.CreateCall(isnum, rhs);
+            auto bothNum = builder.CreateAnd(c1, c2);
 
-            retVal(builder.CreateFAdd(tmp1, tmp2, "addtmp"));
+            llvm::Function *F = builder.GetInsertBlock()->getParent();
+
+            //
+            llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "then", F);
+            llvm::BasicBlock *ElseBB = llvm::BasicBlock::Create(*ctx, "else");
+            llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(*ctx, "ifcont");
+
+            builder.CreateCondBr(bothNum, addNumBB, ElseBB);
+
+            // Emit then value.
+            builder.SetInsertPoint(addNumBB);
+            auto castToNum = curModule->getFunction("decodeNum");
+            auto tmp1 = builder.CreateCall(castToNum, lhs);
+            auto tmp2 = builder.CreateCall(castToNum, rhs);
+
+            auto res = builder.CreateFAdd(tmp1, tmp2, "addtmp");
+            builder.CreateBr(MergeBB);*/
+
             break;
         }
         /*
@@ -1598,6 +1627,19 @@ llvm::Value* Compiler::visitASTNode(AST::ASTNode *node) {
 
 void Compiler::retVal(llvm::Value* val){
     returnValue = builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
+}
+
+void Compiler::createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode){
+    auto str = builder.CreateGlobalStringPtr(fmtErr, "internalString");
+    auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
+    auto arrType = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*ctx), args.size());
+    auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), argNum, "allocArr");
+    for(int i = 0; i < args.size(); i++){
+        auto gep = builder.CreateInBoundsGEP(llvm::Type::getInt8PtrTy(*ctx), alloca, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), i));
+        builder.CreateStore(args[i], gep);
+    }
+    auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
+    builder.CreateCall(curModule->getFunction("runtimeError"), {str, alloca, argNum});
 }
 #pragma endregion
 
