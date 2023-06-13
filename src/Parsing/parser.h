@@ -57,13 +57,13 @@ namespace AST {
 	class Parser {
 	public:
 		Parser();
-		void parse(vector<CSLModule*>& modules);
-        void highlight(vector<CSLModule*>& modules, string moduleToHighlight);
+		void parse(vector<ESLModule*>& modules);
+        void highlight(vector<ESLModule*>& modules, string moduleToHighlight);
 	private:
 		ASTProbe* probe;
 		MacroExpander* macroExpander;
 
-		CSLModule* parsedUnit;
+		ESLModule* parsedUnit;
 
         vector<Token>* currentContainer;
         int currentPtr;

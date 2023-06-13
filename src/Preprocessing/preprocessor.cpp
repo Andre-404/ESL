@@ -47,14 +47,14 @@ void Preprocessor::preprocessProject(string mainFilePath) {
     }
 
     projectRootPath = p.parent_path().string() + "/";
-    CSLModule* mainModule = scanFile(p.string());
+    ESLModule* mainModule = scanFile(p.string());
     toposort(mainModule);
 }
 
-CSLModule* Preprocessor::scanFile(string filePath) {
+ESLModule* Preprocessor::scanFile(string filePath) {
     path p(filePath);
     vector<Token> tokens = scanner.tokenizeSource(filePath, p.stem().string());
-    CSLModule* unit = new CSLModule(tokens, scanner.getFile());
+    ESLModule* unit = new ESLModule(tokens, scanner.getFile());
     allUnits[filePath] = unit;
 
     // Dependencies
@@ -65,7 +65,7 @@ CSLModule* Preprocessor::scanFile(string filePath) {
     return unit;
 }
 
-void Preprocessor::toposort(CSLModule* unit) {
+void Preprocessor::toposort(ESLModule* unit) {
     //TODO: basically implement Kahn's algorithm...
     unit->traversed = true;
     for (Dependency& dep : unit->deps) {
@@ -75,7 +75,7 @@ void Preprocessor::toposort(CSLModule* unit) {
 }
 
 // Gets directives to import into the parserCurrent file
-vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
+vector<pair<Token, Token>> Preprocessor::retrieveDirectives(ESLModule* unit) {
     vector<Token>& tokens = unit->tokens;
     vector<Token> resultTokens; // Tokenization after processing imports and macros
     vector<pair<Token, Token>> importTokens;
@@ -120,7 +120,7 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(CSLModule* unit) {
 }
 
 // Processes directives to import into the parserCurrent file
-void Preprocessor::processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath) {
+void Preprocessor::processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath) {
     // Absolute path to the same directory as the unit that these directives belong to
     path absP = path(absolutePath).parent_path();
     for (auto& [pathToken, alias] : depsToParse) {

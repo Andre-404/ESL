@@ -18,20 +18,20 @@ namespace preprocessing {
         ~Preprocessor();
         void preprocessProject(string mainFilePath);
 
-        vector<CSLModule*> getSortedUnits() { return sortedUnits; }
+        vector<ESLModule*> getSortedUnits() { return sortedUnits; }
     private:
         string projectRootPath;
         Scanner scanner;
 
-        unordered_map<string, CSLModule*> allUnits;
-        vector<CSLModule*> sortedUnits;
+        unordered_map<string, ESLModule*> allUnits;
+        vector<ESLModule*> sortedUnits;
 
-        vector<pair<Token, Token>> retrieveDirectives(CSLModule* unit);
+        vector<pair<Token, Token>> retrieveDirectives(ESLModule* unit);
 
-        void processDirectives(CSLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath);
+        void processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath);
 
-        CSLModule* scanFile(string unitName);
-        void toposort(CSLModule* unit);
+        ESLModule* scanFile(string unitName);
+        void toposort(ESLModule* unit);
     };
 
 }

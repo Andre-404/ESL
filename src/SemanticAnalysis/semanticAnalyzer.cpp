@@ -30,9 +30,9 @@ SemanticAnalyzer::SemanticAnalyzer() {
     generateSemanticTokens = false;
 }
 
-string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros){
+string SemanticAnalyzer::highlight(vector<ESLModule *> &_units, ESLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros){
     units = _units;
-    for (CSLModule* unit : units) {
+    for (ESLModule* unit : units) {
         if(unit == unitToHighlight) generateSemanticTokens = true;
         curUnit = unit;
 
@@ -72,7 +72,7 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
             }
         }
     }
-    for (CSLModule* unit : units) delete unit;
+    for (ESLModule* unit : units) delete unit;
     string final = "[";
     for(auto token : semanticTokens){
         final += token.toJSON() + ",";
@@ -82,10 +82,10 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
     return final;
 }
 
-string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
+string SemanticAnalyzer::generateDiagnostics(vector<ESLModule *> &_units){
     units = _units;
     vector<string> previousErrors = errorHandler::convertCompilerErrorsToJson();
-    for (CSLModule *unit: units) {
+    for (ESLModule *unit: units) {
         curUnit = unit;
         for (const auto decl: unit->topDeclarations) {
             globals.emplace_back(decl->getName(), decl->getType());
@@ -102,7 +102,7 @@ string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    for (CSLModule* unit : units) delete unit;
+    for (ESLModule* unit : units) delete unit;
     string final = "[";
     for(auto& str : previousErrors) final += str + ",";
     if(diagnostics.empty() && !previousErrors.empty()) final.pop_back();
@@ -1016,7 +1016,7 @@ uint32_t SemanticAnalyzer::resolveModuleVariable(Token moduleAlias, Token variab
 
     createSemanticToken(moduleAlias, "namespace");
 
-    CSLModule* unit = depPtr->module;
+    ESLModule* unit = depPtr->module;
     int index = 0;
     for (auto& i : units) {
         if (i != unit) {

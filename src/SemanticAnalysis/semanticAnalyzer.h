@@ -185,9 +185,9 @@ namespace SemanticAnalysis {
 
         SemanticAnalyzer();
 
-        string highlight(vector<CSLModule *> &units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros);
+        string highlight(vector<ESLModule *> &units, ESLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros);
 
-        string generateDiagnostics(vector<CSLModule *> &units);
+        string generateDiagnostics(vector<ESLModule *> &units);
 
         #pragma region Visitor pattern
 
@@ -257,10 +257,10 @@ namespace SemanticAnalysis {
 
         #pragma endregion
     private:
-        CSLModule *curUnit;
+        ESLModule *curUnit;
         int curUnitIndex;
         int curGlobalIndex;
-        vector<CSLModule *> units;
+        vector<ESLModule *> units;
 
         vector<GlobalVar> globals;
         std::shared_ptr<ClassChunkInfo> currentClass;

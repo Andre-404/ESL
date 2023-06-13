@@ -121,7 +121,7 @@ struct Token {
     }
 };
 
-struct CSLModule;
+struct ESLModule;
 
 namespace AST {
     class ASTNode;
@@ -131,12 +131,12 @@ namespace AST {
 struct Dependency {
     Token alias;
     Token pathString;// For error reporting in the compiler
-    CSLModule* module;
+    ESLModule* module;
 
-    Dependency(Token _alias, Token _pathString, CSLModule* _module) : alias(_alias), pathString(_pathString), module(_module) {};
+    Dependency(Token _alias, Token _pathString, ESLModule* _module) : alias(_alias), pathString(_pathString), module(_module) {};
 };
 
-struct CSLModule {
+struct ESLModule {
     File* file;
     vector<Token> tokens;
     vector<Dependency> deps;
@@ -153,7 +153,7 @@ struct CSLModule {
     // Used by the compiler to look up if a global variable exists since globals are late bound
     vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
 
-    CSLModule(vector<Token> _tokens, File* _file) {
+    ESLModule(vector<Token> _tokens, File* _file) {
         tokens = _tokens;
         file = _file;
         resolvedDeps = false;

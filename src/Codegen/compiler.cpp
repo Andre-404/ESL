@@ -1,16 +1,17 @@
 #include "compiler.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpersInline.cpp"
 #include "upvalueFinder.h"
 #include "../Runtime/thread.h"
 #include "../Runtime/nativeFunctions.h"
 #include "llvmHelperFunctions.h"
-#include "compiledValueHelpers.cpp"
+#include "LLVMNativeFunctions.h"
 
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Host.h"
 
 #include <unordered_set>
 #include <iostream>
@@ -50,7 +51,7 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 
 
 
-Compiler::Compiler(vector<CSLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
+Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     upvalueFinder::UpvalueFinder f(_units);
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
     baseClass = new object::ObjClass("base class", nullptr);
@@ -69,9 +70,11 @@ Compiler::Compiler(vector<CSLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
     auto err = llvm::orc::KaleidoscopeJIT::Create().moveInto(JIT);
+    auto targetTriple = llvm::sys::getDefaultTargetTriple();
     curModule->setDataLayout(JIT->getDataLayout());
+    curModule->setTargetTriple(targetTriple);
 
-    llvmHelpers::addHelperFunctionsToModule(curModule.get(), *ctx);
+    llvmHelpers::addHelperFunctionsToModule(curModule.get(), *ctx, builder);
 
     compile();
 }
@@ -83,7 +86,7 @@ void Compiler::compile(){
     llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
     builder.SetInsertPoint(BB);
 
-    for (CSLModule* unit : units) {
+    for (ESLModule* unit : units) {
         curUnit = unit;
         sourceFiles.push_back(unit->file);
         for (const auto decl : unit->topDeclarations) {
@@ -102,12 +105,12 @@ void Compiler::compile(){
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    for (CSLModule* unit : units) delete unit;
+    for (ESLModule* unit : units) delete unit;
 
     //Temporary
     builder.CreateCall(curModule->getFunction("print"), returnValue);
     builder.CreateRetVoid();
-    verifyFunction(*F);
+    llvm::verifyFunction(*F);
     curModule->print(llvm::errs(), nullptr);
 
     llvmHelpers::runModule(curModule, JIT, ctx, false);
@@ -145,29 +148,47 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
     updateLine(expr->op);
 
     llvm::Value* lhs = visitASTNode(expr->left.get());
+    auto op = expr->op.type;
+    if(op == TokenType::OR || op == TokenType::AND){
+        auto castToBool = curModule->getFunction("isTruthy");
+        auto castToVal = curModule->getFunction("encodeBool");
+
+        llvm::Function* func = builder.GetInsertBlock()->getParent();
+
+        // Original block is the one we're coming from, both originalBB and evalRhsBB go to mergeBB
+        llvm::BasicBlock* originalBB = builder.GetInsertBlock();
+        llvm::BasicBlock* evalRhsBB = llvm::BasicBlock::Create(*ctx, op == TokenType::OR ? "lhsFalse" : "lhsTrue", func);
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+
+        // Cast lhs from val to bool and create a check
+        // For 'or' operator if lhs is false we eval rhs
+        // For 'and' operator if lhs is true we eval rhs
+        lhs = builder.CreateCall(castToBool, lhs);
+        builder.CreateCondBr(op == TokenType::OR ? builder.CreateNot(lhs) : lhs, evalRhsBB, mergeBB);
+
+        // If lhs is false(or in the case of 'and' operator true) eval rhs and then go into mergeBB
+        builder.SetInsertPoint(evalRhsBB);
+        llvm::Value* rhs = builder.CreateCall(castToBool, visitASTNode(expr->right.get()));
+        builder.CreateBr(mergeBB);
+        // In case we have a nested 'or' or 'and' lhsFalseBB could no longer be the block the builder is emitting to
+        evalRhsBB = builder.GetInsertBlock();
+        // Emit merge block, code from this point on will be generated into this block
+        func->insert(func->end(), mergeBB);
+        builder.SetInsertPoint(mergeBB);
+        llvm::PHINode *PN = builder.CreatePHI(llvm::Type::getInt1Ty(*ctx), 2, op == TokenType::OR ? "ortmp" : "andtmp");
+
+        // If we're coming from the originalBB and the operator is 'or' it means that lhs is true, and thus the entire expression is true
+        // For 'and' its the opposite, if lhs is false, then the entire expression is false
+        PN->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*ctx), op == TokenType::OR ? true : false), originalBB);
+        // For both operators, if control flow is coming from evalRhsBB ths becomes the value of the entire expression
+        PN->addIncoming(rhs, evalRhsBB);
+
+        // Cast the bool to a Value
+        returnValue = builder.CreateCall(castToVal, PN);
+        return;
+    }
     llvm::Value* rhs = visitASTNode(expr->right.get());
-    uint8_t op = 0;
     switch (expr->op.type) {
-        case TokenType::OR:{
-            //if the left side is true, we know that the whole expression will eval to true
-            int jump = emitJump(+OpCode::JUMP_IF_TRUE);
-            //pop the left side and eval the right side, right side result becomes the result of the whole expression
-            emitByte(+OpCode::POP);
-            expr->right->accept(this);
-            patchJump(jump);//left side of the expression becomes the result of the whole expression
-            return;
-        }
-        case TokenType::AND:{
-            //at this point we have the left side of the expression on the stack, and if it's false we skip to the end
-            //since we know the whole expression will evaluate to false
-            int jump = emitJump(+OpCode::JUMP_IF_FALSE);
-            //if the left side is true, we pop it and then push the right side to the stack, and the result of right side becomes the result of
-            //whole expression
-            emitByte(+OpCode::POP);
-            expr->right->accept(this);
-            patchJump(jump);
-            return;
-        }
         //take in double or string(in case of add)
         case TokenType::PLUS:	{
             llvm::Value* tmp1;
@@ -175,10 +196,10 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
             tmp1 = builder.CreateCall(curModule->getFunction("asNum"), lhs);
             tmp2 = builder.CreateCall(curModule->getFunction("asNum"), rhs);
 
-            llvm::Value* fp = builder.CreateFAdd(tmp1, tmp2, "addtmp");
-            returnValue = builder.CreateBitCast(fp, llvm::Type::getInt64Ty(*ctx));
+            retVal(builder.CreateFAdd(tmp1, tmp2, "addtmp"));
             break;
         }
+        /*
         case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
         case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
         case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
@@ -195,7 +216,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER:		 op = +OpCode::GREATER; break;
         case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
         case TokenType::LESS:			 op = +OpCode::LESS; break;
-        case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;
+        case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;*/
         // Should never be hit
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
@@ -394,8 +415,7 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
         case TokenType::NUMBER: {
             string num = expr->token.getLexeme();
             double val = std::stod(num);
-            llvm::Constant* fp = llvm::ConstantFP::get(*ctx, llvm::APFloat(val));
-            returnValue = builder.CreateBitCast(fp, llvm::Type::getInt64Ty(*ctx));
+            retVal(llvm::ConstantFP::get(*ctx, llvm::APFloat(val)));
             break;
         }
         case TokenType::TRUE:
@@ -403,13 +423,15 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
             returnValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), encodeBool(expr->token.type == TokenType::TRUE));
             break;
         }
-        case TokenType::NIL: emitByte(+OpCode::NIL); break;
+        case TokenType::NIL: returnValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), encodeNil()); break;
         case TokenType::STRING: {
             //this gets rid of quotes, ""Hello world""->"Hello world"
             string temp = expr->token.getLexeme();
             temp.erase(0, 1);
             temp.erase(temp.size() - 1, 1);
-            emitConstant(encodeObj(ObjString::createStr(temp)));
+            auto str = builder.CreateGlobalStringPtr(temp, "internalString");
+            // Returns Value, no need to cast
+            returnValue = builder.CreateCall(curModule->getFunction("createStr"), str);
             break;
         }
 
@@ -1550,7 +1572,7 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
         error(moduleAlias, "Module alias doesn't exist.");
     }
 
-    CSLModule* unit = depPtr->module;
+    ESLModule* unit = depPtr->module;
     int index = 0;
     for (auto& i : units) {
         if (i != unit) {
@@ -1572,6 +1594,10 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
 llvm::Value* Compiler::visitASTNode(AST::ASTNode *node) {
     node->accept(this);
     return returnValue;
+}
+
+void Compiler::retVal(llvm::Value* val){
+    returnValue = builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
 }
 #pragma endregion
 

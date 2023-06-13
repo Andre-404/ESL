@@ -97,7 +97,7 @@ namespace compileCore {
         //Base class which implements toString
         object::ObjClass* baseClass;
 
-		Compiler(vector<CSLModule*>& units);
+		Compiler(vector<ESLModule*>& units);
         void compile();
 		Chunk* getChunk();
 		object::ObjFunc* endFuncDecl();
@@ -139,10 +139,10 @@ namespace compileCore {
 		void visitReturnStmt(AST::ReturnStmt* stmt) override;
 		#pragma endregion 
 	private:
-		CSLModule* curUnit;
+		ESLModule* curUnit;
 		int curUnitIndex;
 		int curGlobalIndex;
-		vector<CSLModule*> units;
+		vector<ESLModule*> units;
         // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
         // a undefined global variable is being used
         vector<bool> definedGlobals;
@@ -155,6 +155,7 @@ namespace compileCore {
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
 
         llvm::Value* visitASTNode(AST::ASTNode* node);
+        void retVal(llvm::Value* val);
 
         #pragma region Helpers
         // Emitters

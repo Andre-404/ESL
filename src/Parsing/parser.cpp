@@ -406,12 +406,12 @@ Parser::Parser() {
 #pragma endregion
 }
 
-void Parser::parse(vector<CSLModule*>& modules) {
+void Parser::parse(vector<ESLModule*>& modules) {
 #ifdef AST_DEBUG
     ASTPrinter* astPrinter = new ASTPrinter;
 #endif
     // Modules are already sorted using topsort
-    for (CSLModule* unit : modules) {
+    for (ESLModule* unit : modules) {
         parsedUnit = unit;
 
         // Parse tokenized source into AST
@@ -440,7 +440,7 @@ void Parser::parse(vector<CSLModule*>& modules) {
     }
     // 2 units being imported using the same alias is illegal
     // Units imported without an alias must abide by the rule that every symbol must be unique
-    for (CSLModule* unit : modules) {
+    for (ESLModule* unit : modules) {
         std::unordered_map<string, Dependency*> symbols;
         // Symbols of this unit are also taken into account when checking uniqueness
         for(auto decl : unit->topDeclarations){
@@ -486,9 +486,9 @@ void Parser::parse(vector<CSLModule*>& modules) {
     }
 }
 
-void Parser::highlight(vector<CSLModule*>& modules, string moduleToHighlight){
+void Parser::highlight(vector<ESLModule*>& modules, string moduleToHighlight){
     // Modules are already sorted using topsort
-    for (CSLModule* unit : modules) {
+    for (ESLModule* unit : modules) {
         parsedUnit = unit;
 
         // Parse tokenized source into AST

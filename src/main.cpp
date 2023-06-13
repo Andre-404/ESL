@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
     if(flag == "-run") {
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
+        vector<ESLModule *> modules = preprocessor.getSortedUnits();
 
         AST::Parser parser;
 
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
     }else if(flag == "-validate-file"){
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
+        vector<ESLModule *> modules = preprocessor.getSortedUnits();
 
         AST::Parser().parse(modules);
 
@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
     }else if(flag == "-semantic-analysis"){
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
+        vector<ESLModule *> modules = preprocessor.getSortedUnits();
 
         AST::Parser parser;
 

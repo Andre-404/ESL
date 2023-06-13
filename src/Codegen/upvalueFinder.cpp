@@ -18,10 +18,10 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing){
     enclosing = _enclosing;
 }
 
-UpvalueFinder::UpvalueFinder(vector<CSLModule*>& _units) {
+UpvalueFinder::UpvalueFinder(vector<ESLModule*>& _units) {
     current = new CurrentChunkInfo(nullptr);
 
-    for (CSLModule* unit : _units) {
+    for (ESLModule* unit : _units) {
         for (int i = 0; i < unit->stmts.size(); i++) {
             unit->stmts[i]->accept(this);
         }

@@ -43,7 +43,7 @@ namespace upvalueFinder {
     public:
         CurrentChunkInfo* current;
 
-        UpvalueFinder(vector<CSLModule*>& units);
+        UpvalueFinder(vector<ESLModule*>& units);
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
