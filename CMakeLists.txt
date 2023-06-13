@@ -4,6 +4,7 @@ project(ESL)
 if(WIN32)
     set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
 else()
+    set(LLVM_DIR "~/Git/llvm-project/build-static/lib/cmake/llvm")
 
 endif()
 find_package(LLVM REQUIRED CONFIG)
@@ -13,7 +14,7 @@ message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
-#set(CMAKE_EXE_LINKER_FLAGS "-static")
+set(CMAKE_EXE_LINKER_FLAGS "-export-dynamic")
 
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})

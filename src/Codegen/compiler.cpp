@@ -18,7 +18,7 @@
 
 using namespace compileCore;
 using namespace object;
-using namespace valueHelpers;
+//using namespace valueHelpers;
 
 
 #ifdef COMPILER_USE_LONG_INSTRUCTION
@@ -120,11 +120,12 @@ void Compiler::compile(){
         builder.CreateStore(args[i], gep);
     }
     auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
-    builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
+    //builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
     builder.CreateCall(curModule->getFunction("print"), returnValue);
     builder.CreateRetVoid();
     llvm::verifyFunction(*F);
     curModule->print(llvm::errs(), nullptr);
+    std::cout << (int64_t)(&print) << std::endl; 
     llvmHelpers::runModule(curModule, JIT, ctx, false);
 }
 
