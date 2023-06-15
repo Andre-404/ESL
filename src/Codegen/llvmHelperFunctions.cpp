@@ -26,8 +26,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
     CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
-    CREATE_FUNC("runtimeErr", false, TYPE(Void), TYPE(Int8Ptr), llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)), TYPE(Int32));
-    CREATE_FUNC("printf", false, TYPE(Void), TYPE(Int8Ptr));
+    auto i8ptrptr = llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx));
+    CREATE_FUNC("runtimeErr", false, TYPE(Void), TYPE(Int8Ptr), i8ptrptr, TYPE(Int32));
+    CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
+    CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32));
+
     buildLLVMNativeFunctions(module, ctx, builder);
 }
 

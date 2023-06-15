@@ -108,25 +108,11 @@ void Compiler::compile(){
     for (ESLModule* unit : units) delete unit;
 
     //Temporary
-    auto str1 = builder.CreateGlobalStringPtr("a", "internalString");
-    auto str2 = builder.CreateGlobalStringPtr("lol", "internalString");
-    std::vector<llvm::Value*> args = {str1, str2};
-    auto str = builder.CreateGlobalStringPtr("Lol {} a {}", "internalString");
-    auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
-    auto arrType = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*ctx), args.size());
-    auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), 0, argNum, "allocArr");
-    for(int i = 0; i < args.size(); i++){
-        auto gep = builder.CreateInBoundsGEP(llvm::Type::getInt8PtrTy(*ctx), alloca, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), i));
-        builder.CreateStore(args[i], gep);
-    }
-    auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
-    //builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
     builder.CreateCall(curModule->getFunction("print"), returnValue);
     builder.CreateRetVoid();
     llvm::verifyFunction(*F);
     curModule->print(llvm::errs(), nullptr);
-    std::cout << (int64_t)(&print) << std::endl; 
-    llvmHelpers::runModule(curModule, JIT, ctx, false);
+    llvmHelpers::runModule(curModule, JIT, ctx, true);
 }
 
 static Token probeToken(AST::ASTNodePtr ptr){
@@ -159,6 +145,14 @@ void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
     updateLine(expr->op);
+
+    // Shorthand for check if both values are numbers, every operation requires this check
+    auto bothNum = [&](llvm::Value* lhs, llvm::Value* rhs){
+        auto isnum = curModule->getFunction("isNum");
+        auto c1 = builder.CreateCall(isnum, lhs);
+        auto c2 = builder.CreateCall(isnum, rhs);
+        return builder.CreateAnd(c1, c2);
+    };
 
     llvm::Value* lhs = visitASTNode(expr->left.get());
     auto op = expr->op.type;
@@ -204,33 +198,69 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
     switch (op) {
         //take in double or string(in case of add)
         case TokenType::PLUS:	{
-            /*auto isnum = curModule->getFunction("isNum");
-            auto c1 = builder.CreateCall(isnum, lhs);
-            auto c2 = builder.CreateCall(isnum, rhs);
-            auto bothNum = builder.CreateAnd(c1, c2);
-
             llvm::Function *F = builder.GetInsertBlock()->getParent();
 
-            //
-            llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "then", F);
-            llvm::BasicBlock *ElseBB = llvm::BasicBlock::Create(*ctx, "else");
-            llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(*ctx, "ifcont");
+            // If both are a number go to addNum, if not try adding as string
+            // If both aren't strings, throw error(error is thrown inside addString C++ function)
+            llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "addNum", F);
+            llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "addString");
+            llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-            builder.CreateCondBr(bothNum, addNumBB, ElseBB);
+            builder.CreateCondBr(bothNum(lhs, rhs), addNumBB, addStringBB);
 
-            // Emit then value.
+            // If both values are numbers, add them and go to mergeBB
             builder.SetInsertPoint(addNumBB);
-            auto castToNum = curModule->getFunction("decodeNum");
-            auto tmp1 = builder.CreateCall(castToNum, lhs);
-            auto tmp2 = builder.CreateCall(castToNum, rhs);
+            auto tmp1 = builder.CreateBitCast(lhs, llvm::Type::getDoubleTy(*ctx));
+            auto tmp2 = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
+            auto numAddRes = castToVal(builder.CreateFAdd(tmp1, tmp2, "addtmp"));
+            builder.CreateBr(mergeBB);
 
-            auto res = builder.CreateFAdd(tmp1, tmp2, "addtmp");
-            builder.CreateBr(MergeBB);*/
+            // Tries to add lhs and rhs as strings, if it fails throw a type error
+            F->insert(F->end(), addStringBB);
+            builder.SetInsertPoint(addStringBB);
+            // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
+            llvm::Constant* file = createConstStr(curUnit->file->path);
+            llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+            // Returns Value
+            auto stringAddRes = builder.CreateCall(curModule->getFunction("strAdd"), {lhs, rhs, file, line});
+            builder.CreateBr(mergeBB);
 
+            // Final destination for both branches, if both values were numbers or strings(meaning no error was thrown)
+            // Use a phi node to determine which one it is and then set it as returnValue
+            F->insert(F->end(), mergeBB);
+            builder.SetInsertPoint(mergeBB);
+            auto phi = builder.CreatePHI(llvm::Type::getInt64Ty(*ctx), 2);
+            phi->addIncoming(numAddRes, addNumBB);
+            phi->addIncoming(stringAddRes, addStringBB);
+            returnValue = phi;
             break;
         }
-        /*
-        case TokenType::MINUS:	op = +OpCode::SUBTRACT; break;
+
+        case TokenType::MINUS:	{
+            llvm::Function *F = builder.GetInsertBlock()->getParent();
+
+            // If either or both aren't numbers, go to error, otherwise proceed as normal
+            llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+            llvm::BasicBlock *subNumBB = llvm::BasicBlock::Create(*ctx, "subNum");
+
+            builder.CreateCondBr(builder.CreateNot(bothNum(lhs, rhs)), errorBB, subNumBB);
+
+            // Calls the type error function which throws
+            builder.SetInsertPoint(errorBB);
+            createTyErr("Operands must be numbers, got '{}' and '{}'.", lhs, rhs);
+            // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
+            builder.CreateBr(subNumBB);
+
+            // Subtracts rhs from lhs
+            F->insert(F->end(), subNumBB);
+            builder.SetInsertPoint(subNumBB);
+            auto tmp1 = builder.CreateBitCast(lhs, llvm::Type::getDoubleTy(*ctx));
+            auto tmp2 = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
+
+            auto numAddRes = builder.CreateFSub(tmp1, tmp2, "subtmp");
+            retVal(numAddRes);
+            break;
+        }/*
         case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
         case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
         //for these operators, a check is preformed to confirm both numbers are integers, not decimals
@@ -1631,16 +1661,44 @@ void Compiler::retVal(llvm::Value* val){
 }
 
 void Compiler::createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode){
-    auto str = builder.CreateGlobalStringPtr(fmtErr, "internalString");
+    llvm::Constant* str = createConstStr(fmtErr);
     auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
     auto arrType = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*ctx), args.size());
     auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), argNum, "allocArr");
+    // Gets size(in bytes) of a pointer
+    int ptrSize = curModule->getDataLayout().getTypeAllocSize(llvm::Type::getInt8PtrTy(*ctx));
+    builder.CreateLifetimeStart(alloca, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), ptrSize * args.size()));
     for(int i = 0; i < args.size(); i++){
         auto gep = builder.CreateInBoundsGEP(llvm::Type::getInt8PtrTy(*ctx), alloca, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), i));
         builder.CreateStore(args[i], gep);
     }
     auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
-    builder.CreateCall(curModule->getFunction("runtimeError"), {str, alloca, argNum});
+    builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
+    builder.CreateLifetimeEnd(alloca, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), ptrSize * args.size()));
+}
+
+llvm::Constant* Compiler::createConstStr(string str){
+    if(stringConstants.contains(str)) return stringConstants[str];
+    auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
+    stringConstants[str] = constant;
+    return constant;
+}
+
+void Compiler::createTyErr(string err, llvm::Value* val){
+    llvm::Constant* str = createConstStr(err);
+    llvm::Constant* file = createConstStr(curUnit->file->path);
+    llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+    builder.CreateCall(curModule->getFunction("tyErrSingle"), {str, file, line, val});
+}
+void Compiler::createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs){
+    llvm::Constant* str = createConstStr(err);
+    llvm::Constant* file = createConstStr(curUnit->file->path);
+    llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+    builder.CreateCall(curModule->getFunction("tyErrDouble"), {str, file, line, lhs, rhs});
+}
+
+llvm::Value* Compiler::castToVal(llvm::Value* val){
+    return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
 }
 #pragma endregion
 

@@ -57,7 +57,7 @@ namespace compileCore {
 		FuncType type;
 		bool hasReturnStmt;
 
-		uInt line;
+		int line;
 		//information about unpatched 'continue' and 'break' statements
 		vector<uInt> scopeJumps;
 		//locals
@@ -154,9 +154,15 @@ namespace compileCore {
         llvm::Value* returnValue;
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
 
+        ankerl::unordered_dense::map<string, llvm::Constant*> stringConstants;
+
         llvm::Value* visitASTNode(AST::ASTNode* node);
         void retVal(llvm::Value* val);
         void createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode);
+        void createTyErr(string err, llvm::Value* val);
+        void createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs);
+        llvm::Constant* createConstStr(string str);
+        llvm::Value* castToVal(llvm::Value* val);
 
         #pragma region Helpers
         // Emitters

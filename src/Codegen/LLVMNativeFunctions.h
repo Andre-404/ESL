@@ -42,3 +42,39 @@ EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
     std::cout<<str<<std::endl;
     exit(64);
 }
+
+EXPORT void tyErrSingle(const char* ptr, const char* fileName, const int line, Value val){
+    string str(ptr);
+    string type = valueHelpers::typeToStr(val);
+
+    size_t pos = str.find("{}");
+    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
+    str.replace(pos, 2, type);
+
+    std::cout<<str<<std::endl;
+    exit(64);
+}
+
+EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, Value lhs, Value rhs){
+    string str(ptr);
+    string lhsTy = valueHelpers::typeToStr(lhs);
+    string rhsTy = valueHelpers::typeToStr(rhs);
+
+    // Doesn't look pretty, but better than a loop
+    size_t pos = str.find("{}");
+    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
+    str.replace(pos, 2, lhsTy);
+    pos += lhsTy.length();
+
+    pos = str.find("{}", pos);
+    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
+    str.replace(pos, 2, rhsTy);
+
+
+    std::cout<<str<<std::endl;
+    exit(64);
+}
+
+EXPORT Value strAdd(Value lhs, Value rhs, const char* fileName, const int line){
+    return 0;
+}
