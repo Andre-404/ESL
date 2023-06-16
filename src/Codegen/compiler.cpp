@@ -153,6 +153,19 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         auto c2 = builder.CreateCall(isnum, rhs);
         return builder.CreateAnd(c1, c2);
     };
+    auto dblCast = [&](llvm::Value* val){
+        return builder.CreateBitCast(val, llvm::Type::getDoubleTy(*ctx));
+    };
+    // TODO: this can break if val > 2^63
+    auto dblToInt = [&](llvm::Value* val){
+        return builder.CreateFPToSI(val, llvm::Type::getInt64Ty(*ctx));
+    };
+    auto matchTT = [&](TokenType type, std::initializer_list<TokenType> list){
+        for(auto it = list.begin(); it != list.end(); it++){
+            if(*it == type) return true;
+        }
+        return false;
+    };
 
     llvm::Value* lhs = visitASTNode(expr->left.get());
     auto op = expr->op.type;
@@ -164,7 +177,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 
         // Original block is the one we're coming from, both originalBB and evalRhsBB go to mergeBB
         llvm::BasicBlock* originalBB = builder.GetInsertBlock();
-        llvm::BasicBlock* evalRhsBB = llvm::BasicBlock::Create(*ctx, op == TokenType::OR ? "lhsFalse" : "lhsTrue", func);
+        llvm::BasicBlock* evalRhsBB = llvm::BasicBlock::Create(*ctx, op == TokenType::OR ? "lhsfalse" : "lhstrue", func);
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
         // Cast lhs from val to bool and create a check
@@ -182,7 +195,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         // Emit merge block, code from this point on will be generated into this block
         func->insert(func->end(), mergeBB);
         builder.SetInsertPoint(mergeBB);
-        llvm::PHINode *PN = builder.CreatePHI(llvm::Type::getInt1Ty(*ctx), 2, op == TokenType::OR ? "ortmp" : "andtmp");
+        llvm::PHINode *PN = builder.CreatePHI(llvm::Type::getInt1Ty(*ctx), 2, op == TokenType::OR ? "lortmp" : "landtmp");
 
         // If we're coming from the originalBB and the operator is 'or' it means that lhs is true, and thus the entire expression is true
         // For 'and' its the opposite, if lhs is false, then the entire expression is false
@@ -194,92 +207,152 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         returnValue = builder.CreateCall(castToVal, PN);
         return;
     }
+
     llvm::Value* rhs = visitASTNode(expr->right.get());
-    switch (op) {
-        //take in double or string(in case of add)
-        case TokenType::PLUS:	{
-            llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
 
-            // If both are a number go to addNum, if not try adding as string
-            // If both aren't strings, throw error(error is thrown inside addString C++ function)
-            llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "addNum", F);
-            llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "addString");
-            llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+    if(op == TokenType::PLUS){
+        // If both are a number go to addNum, if not try adding as string
+        // If both aren't strings, throw error(error is thrown inside addString C++ function)
+        llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "addnum", F);
+        llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "addstring");
+        llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-            builder.CreateCondBr(bothNum(lhs, rhs), addNumBB, addStringBB);
+        builder.CreateCondBr(bothNum(lhs, rhs), addNumBB, addStringBB);
 
-            // If both values are numbers, add them and go to mergeBB
-            builder.SetInsertPoint(addNumBB);
-            auto tmp1 = builder.CreateBitCast(lhs, llvm::Type::getDoubleTy(*ctx));
-            auto tmp2 = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
-            auto numAddRes = castToVal(builder.CreateFAdd(tmp1, tmp2, "addtmp"));
-            builder.CreateBr(mergeBB);
+        // If both values are numbers, add them and go to mergeBB
+        builder.SetInsertPoint(addNumBB);
+        auto numAddRes = castToVal(builder.CreateFAdd(dblCast(lhs), dblCast(rhs), "addtmp"));
+        builder.CreateBr(mergeBB);
 
-            // Tries to add lhs and rhs as strings, if it fails throw a type error
-            F->insert(F->end(), addStringBB);
-            builder.SetInsertPoint(addStringBB);
-            // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
-            llvm::Constant* file = createConstStr(curUnit->file->path);
-            llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
-            // Returns Value
-            auto stringAddRes = builder.CreateCall(curModule->getFunction("strAdd"), {lhs, rhs, file, line});
-            builder.CreateBr(mergeBB);
+        // Tries to add lhs and rhs as strings, if it fails throw a type error
+        F->insert(F->end(), addStringBB);
+        builder.SetInsertPoint(addStringBB);
+        // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
+        llvm::Constant* file = createConstStr(curUnit->file->path);
+        llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+        // Returns Value
+        auto stringAddRes = builder.CreateCall(curModule->getFunction("strAdd"), {lhs, rhs, file, line});
+        builder.CreateBr(mergeBB);
 
-            // Final destination for both branches, if both values were numbers or strings(meaning no error was thrown)
-            // Use a phi node to determine which one it is and then set it as returnValue
-            F->insert(F->end(), mergeBB);
-            builder.SetInsertPoint(mergeBB);
-            auto phi = builder.CreatePHI(llvm::Type::getInt64Ty(*ctx), 2);
-            phi->addIncoming(numAddRes, addNumBB);
-            phi->addIncoming(stringAddRes, addStringBB);
-            returnValue = phi;
-            break;
-        }
-
-        case TokenType::MINUS:	{
-            llvm::Function *F = builder.GetInsertBlock()->getParent();
-
-            // If either or both aren't numbers, go to error, otherwise proceed as normal
-            llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-            llvm::BasicBlock *subNumBB = llvm::BasicBlock::Create(*ctx, "subNum");
-
-            builder.CreateCondBr(builder.CreateNot(bothNum(lhs, rhs)), errorBB, subNumBB);
-
-            // Calls the type error function which throws
-            builder.SetInsertPoint(errorBB);
-            createTyErr("Operands must be numbers, got '{}' and '{}'.", lhs, rhs);
-            // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-            builder.CreateBr(subNumBB);
-
-            // Subtracts rhs from lhs
-            F->insert(F->end(), subNumBB);
-            builder.SetInsertPoint(subNumBB);
-            auto tmp1 = builder.CreateBitCast(lhs, llvm::Type::getDoubleTy(*ctx));
-            auto tmp2 = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
-
-            auto numAddRes = builder.CreateFSub(tmp1, tmp2, "subtmp");
-            retVal(numAddRes);
-            break;
-        }/*
-        case TokenType::SLASH:	op = +OpCode::DIVIDE; break;
-        case TokenType::STAR:	op = +OpCode::MULTIPLY; break;
-        //for these operators, a check is preformed to confirm both numbers are integers, not decimals
-        case TokenType::PERCENTAGE:		op = +OpCode::MOD; break;
-        case TokenType::BITSHIFT_LEFT:	op = +OpCode::BITSHIFT_LEFT; break;
-        case TokenType::BITSHIFT_RIGHT:	op = +OpCode::BITSHIFT_RIGHT; break;
-        case TokenType::BITWISE_AND:	op = +OpCode::BITWISE_AND; break;
-        case TokenType::BITWISE_OR:		op = +OpCode::BITWISE_OR; break;
-        case TokenType::BITWISE_XOR:	op = +OpCode::BITWISE_XOR; break;
-        //these return bools and use an epsilon value when comparing
-        case TokenType::EQUAL_EQUAL:	 op = +OpCode::EQUAL; break;
-        case TokenType::BANG_EQUAL:		 op = +OpCode::NOT_EQUAL; break;
-        case TokenType::GREATER:		 op = +OpCode::GREATER; break;
-        case TokenType::GREATER_EQUAL:	 op = +OpCode::GREATER_EQUAL; break;
-        case TokenType::LESS:			 op = +OpCode::LESS; break;
-        case TokenType::LESS_EQUAL:		 op = +OpCode::LESS_EQUAL; break;*/
-        // Should never be hit
-        default: error(expr->op, "Unrecognized token in binary expression.");
+        // Final destination for both branches, if both values were numbers or strings(meaning no error was thrown)
+        // Use a phi node to determine which one it is and then set it as returnValue
+        F->insert(F->end(), mergeBB);
+        builder.SetInsertPoint(mergeBB);
+        auto phi = builder.CreatePHI(llvm::Type::getInt64Ty(*ctx), 2);
+        phi->addIncoming(numAddRes, addNumBB);
+        phi->addIncoming(stringAddRes, addStringBB);
+        returnValue = phi;
+        return;
     }
+    else if(matchTT(op, {TokenType::EQUAL_EQUAL, TokenType::BANG_EQUAL})){
+        bool neg = (op == TokenType::BANG_EQUAL);
+
+        llvm::Value* icmptmp;
+        llvm::Value* fcmptmp;
+        if(neg){
+            icmptmp = builder.CreateICmpNE(lhs, rhs, "icmptmp");
+            fcmptmp = builder.CreateFCmpONE(dblCast(lhs), dblCast(rhs), "fcmptmp");
+        }else {
+            icmptmp = builder.CreateICmpEQ(lhs, rhs, "icmptmp");
+            fcmptmp = builder.CreateFCmpOEQ(dblCast(lhs), dblCast(rhs), "fcmptmp");
+        }
+        // To reduce branching on a common operation, select instruction is used
+        auto sel = builder.CreateSelect(bothNum(lhs, rhs), fcmptmp, icmptmp);
+        returnValue = builder.CreateCall(curModule->getFunction("encodeBool"), sel);
+        return;
+    }
+
+    string opType;
+    switch(op){
+        case TokenType::MINUS: opType = "sub";break;
+        case TokenType::STAR: opType = "mul"; break;
+        case TokenType::SLASH: opType = "fdiv"; break;
+        case TokenType::PERCENTAGE: opType = "rem"; break;
+        case TokenType::DIV: opType = "idiv"; break;
+        case TokenType::BITSHIFT_LEFT: opType = "shl"; break;
+        case TokenType::BITSHIFT_RIGHT: opType = "shr"; break;
+        case TokenType::BITWISE_AND: opType = "and"; break;
+        case TokenType::BITWISE_OR: opType = "or"; break;
+        case TokenType::BITWISE_XOR: opType = "xor"; break;
+        case TokenType::GREATER: opType = "gt"; break;
+        case TokenType::GREATER_EQUAL: opType = "gte"; break;
+        case TokenType::LESS: opType = "lt"; break;
+        case TokenType::LESS_EQUAL: opType = "lte"; break;
+        default: break;
+    }
+    // If either or both aren't numbers, go to error, otherwise proceed as normal
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, opType + "num");
+
+    builder.CreateCondBr(builder.CreateNot(bothNum(lhs, rhs)), errorBB, executeOpBB);
+
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    createTyErr("Operands must be numbers, got '{}' and '{}'.", lhs, rhs);
+    // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
+    builder.CreateBr(executeOpBB);
+    // Floors both numbers, then divides
+    F->insert(F->end(), executeOpBB);
+    builder.SetInsertPoint(executeOpBB);
+
+
+    if(op == TokenType::DIV){
+        auto tmp1 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, dblCast(lhs));
+        auto tmp2 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, dblCast(rhs));
+        retVal(builder.CreateFDiv(tmp1, tmp2, "floordivtmp"));
+        return;
+    }
+    else if(matchTT(op, {TokenType::MINUS, TokenType::STAR, TokenType::SLASH, TokenType::PERCENTAGE})){
+        switch(op){
+            case TokenType::MINUS:
+                retVal(builder.CreateFSub(dblCast(lhs), dblCast(rhs), "subtmp")); break;
+            case TokenType::STAR:
+                retVal(builder.CreateFMul(dblCast(lhs), dblCast(rhs), "multmp")); break;
+            case TokenType::SLASH:
+                retVal(builder.CreateFDiv(dblCast(lhs), dblCast(rhs), "divtmp")); break;
+            case TokenType::PERCENTAGE:
+                retVal(builder.CreateFRem(dblCast(lhs), dblCast(rhs), "remtmp")); break;
+            default: break;
+        }
+        return;
+    }
+    else if(matchTT(op, {TokenType::BITSHIFT_LEFT, TokenType::BITSHIFT_RIGHT, TokenType::BITWISE_AND, TokenType::BITWISE_OR, TokenType::BITWISE_XOR})){
+        llvm::Value* res;
+        switch(op){
+            case TokenType::BITSHIFT_LEFT:
+                res = builder.CreateShl(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "shltmp"); break;
+            case TokenType::BITSHIFT_RIGHT:
+                res = builder.CreateAShr(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "Ashrtmp"); break;
+            case TokenType::BITWISE_AND:
+                res = builder.CreateAnd(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "andtmp"); break;
+            case TokenType::BITWISE_OR:
+                res = builder.CreateOr(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "ortmp"); break;
+            case TokenType::BITWISE_XOR:
+                res = builder.CreateXor(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "xortmp"); break;
+            default: break;
+        }
+        retVal(builder.CreateSIToFP(res, llvm::Type::getDoubleTy(*ctx)));
+        return;
+    }
+    else if(matchTT(op, {TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL})){
+        llvm::Value* res;
+        switch(op){
+            case TokenType::GREATER:
+                res = builder.CreateFCmpOGT(dblCast(lhs), dblCast(rhs), "ogttmp"); break;
+            case TokenType::GREATER_EQUAL:
+                res = builder.CreateFCmpOGE(dblCast(lhs), dblCast(rhs), "ogetmp"); break;
+            case TokenType::LESS:
+                res = builder.CreateFCmpOLT(dblCast(lhs), dblCast(rhs), "olttmp"); break;
+            case TokenType::LESS_EQUAL:
+                res = builder.CreateFCmpOLE(dblCast(lhs), dblCast(rhs), "oletmp"); break;
+            default: break;
+        }
+        returnValue = builder.CreateCall(curModule->getFunction("encodeBool"), res);
+        return;
+    }
+    // Should never be hit
+    error(expr->op, "Unrecognized token in binary expression.");
 }
 
 void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
@@ -355,15 +428,65 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 
         return;
     }
-    //regular unary operations
+
+    // Regular unary operations
     if (expr->isPrefix) {
-        expr->right->accept(this);
+        llvm::Value* rhs = visitASTNode(expr->right.get());
+        llvm::Function *F = builder.GetInsertBlock()->getParent();
+        // If rhs isn't of the correct type, go to error, otherwise proceed as normal
+        llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+        // Name is set in the switch
+        llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx);
+
         switch (expr->op.type) {
-            case TokenType::MINUS: emitByte(+OpCode::NEGATE); break;
-            case TokenType::BANG: emitByte(+OpCode::NOT); break;
-            case TokenType::TILDA: emitByte(+OpCode::BIN_NOT); break;
+            case TokenType::TILDA:
+            case TokenType::MINUS: {
+                if(expr->op.type == TokenType::TILDA) executeOpBB->setName("binnegnum");
+                else executeOpBB->setName("negnum");
+
+                builder.CreateCondBr(builder.CreateNot(builder.CreateCall(curModule->getFunction("isNum"), rhs)), errorBB, executeOpBB);
+                // Calls the type error function which throws
+                builder.SetInsertPoint(errorBB);
+                createTyErr("Operand must be a number, got '{}'.", rhs);
+                // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
+                builder.CreateBr(executeOpBB);
+
+                F->insert(F->end(), executeOpBB);
+                builder.SetInsertPoint(executeOpBB);
+                // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
+                if(expr->op.type == TokenType::TILDA){
+                    auto tmp = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
+                    auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, llvm::Type::getInt64Ty(*ctx)),"binnegtmp");
+                    retVal(builder.CreateSIToFP(negated, llvm::Type::getDoubleTy(*ctx)));
+                }else{
+                    auto tmp = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
+                    retVal(builder.CreateFNeg(tmp, "fnegtmp"));
+                }
+                break;
+            }
+            case TokenType::BANG: {
+                executeOpBB->setName("negbool");
+
+                builder.CreateCondBr(builder.CreateNot(builder.CreateCall(curModule->getFunction("isBool"), rhs)), errorBB, executeOpBB);
+                // Calls the type error function which throws
+                builder.SetInsertPoint(errorBB);
+                createTyErr("Operand must be a boolean, got '{}'.", rhs);
+                // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
+                builder.CreateBr(executeOpBB);
+
+                F->insert(F->end(), executeOpBB);
+                builder.SetInsertPoint(executeOpBB);
+                // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
+                // Since that's just a single bit flag that's flipped on when true and off when false
+                // This does rely on the fact that true and false are the first flags and are thus represented with 00 and 01
+                returnValue = builder.CreateXor(rhs, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), MASK_TYPE_TRUE));
+                break;
+            }
+
         }
+        return;
     }
+    error(expr->op, "Unexpected operator.");
 }
 
 void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
