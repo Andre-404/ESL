@@ -1,4 +1,5 @@
 #pragma once
+/*
 #include "../Codegen/codegenDefs.h"
 #include "../Objects/objects.h"
 #include "thread.h"
@@ -36,3 +37,4 @@ namespace runtime {
 	};
 
 }
+*/

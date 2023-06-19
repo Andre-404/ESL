@@ -36,6 +36,8 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
 }
 
 void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize){
+    uintptr_t* mainThreadStackStart = getStackPointer();
+    memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
     // Create the analysis managers.
     llvm::LoopAnalysisManager LAM;
     llvm::FunctionAnalysisManager FAM;

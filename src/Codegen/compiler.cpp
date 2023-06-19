@@ -46,7 +46,6 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
         local->name = "";
     }
     chunk = Chunk();
-    func = new ObjFunc();
 }
 
 
@@ -54,16 +53,10 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type)
 Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     upvalueFinder::UpvalueFinder f(_units);
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
-    baseClass = new object::ObjClass("base class", nullptr);
-    baseClass->methods.insert_or_assign(ObjString::createStr("to_string"), new object::ObjNativeFunc([](runtime::Thread* thread, int8_t argCount){
-        thread->push(encodeObj(object::ObjString::createStr(valueHelpers::toString(thread->pop()))));
-    }, 0, "to_string"));
     currentClass = nullptr;
     curUnitIndex = 0;
     curGlobalIndex = 0;
     units = _units;
-    nativeFuncs = runtime::createNativeFuncs();
-    nativeFuncNames = runtime::createNativeNameTable(nativeFuncs);
 
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
     llvm::InitializeNativeTarget();
@@ -77,6 +70,7 @@ Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder);
 
     compile();
+    llvmHelpers::runModule(curModule, JIT, ctx, true);
 }
 
 void Compiler::compile(){
@@ -112,7 +106,6 @@ void Compiler::compile(){
     builder.CreateRetVoid();
     llvm::verifyFunction(*F);
     curModule->print(llvm::errs(), nullptr);
-    llvmHelpers::runModule(curModule, JIT, ctx, true);
 }
 
 static Token probeToken(AST::ASTNodePtr ptr){
@@ -486,6 +479,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
         }
         return;
     }
+
     error(expr->op, "Unexpected operator.");
 }
 
@@ -496,6 +490,7 @@ void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
         mem->accept(this);
     }
     emitBytes(+OpCode::CREATE_ARRAY, expr->members.size());
+
 }
 
 void Compiler::visitCallExpr(AST::CallExpr* expr) {
@@ -569,7 +564,7 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
     }
 }
 
-static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Method>& map);
+static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Obj*>& map);
 
 void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
     int name = identifierConstant(expr->methodName);
@@ -787,8 +782,6 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
     }else{
         // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
         // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
-        klass->methods = baseClass->methods;
-        klass->superclass = baseClass;
     }
 
     // Put field and method names into the class
@@ -1531,7 +1524,7 @@ static std::pair<bool, bool> classContainsField(string& publicField, ankerl::uno
     }
     return std::pair(false, false);
 }
-static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Method>& map){
+static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Obj*>& map){
     string privateField = "!" + publicField;
     for(auto it : map){
         if(publicField == it.first->str) return std::pair(true, true);
@@ -1668,9 +1661,6 @@ ObjFunc* Compiler::endFuncDecl() {
 #ifdef COMPILER_DEBUG
     mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset, constantsOffset);
 #endif
-    // Set the offsets in the function object
-    func->bytecodeOffset = bytecodeOffset;
-    func->constantsOffset = constantsOffset;
 
     CurrentChunkInfo* temp = current->enclosing;
     delete current;

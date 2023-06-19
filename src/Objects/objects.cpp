@@ -8,22 +8,70 @@ using namespace object;
 using namespace memory;
 using namespace valueHelpers;
 
+#pragma region Obj
+size_t Obj::getSize(){
+    switch(type){
+        case +ObjType::STRING: return sizeof(ObjString);
+        case +ObjType::FUNC: return sizeof(ObjFunc);
+        case +ObjType::ARRAY: return sizeof(ObjArray);
+        case +ObjType::CLOSURE: return sizeof(ObjClosure);
+        case +ObjType::UPVALUE: return sizeof(ObjUpval);
+        case +ObjType::CLASS: return sizeof(ObjClass);
+        case +ObjType::INSTANCE: return sizeof(ObjInstance);
+        case +ObjType::BOUND_METHOD: return sizeof(ObjBoundMethod);
+        case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
+        case +ObjType::FILE: return sizeof(ObjFile);
+        case +ObjType::MUTEX: return sizeof(ObjMutex);
+        case +ObjType::FUTURE: return sizeof(ObjFuture);
+        case +ObjType::RANGE: return sizeof(ObjRange);
+    }
+}
+
+string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
+    switch(type){
+        case +ObjType::STRING: return reinterpret_cast<ObjString*>(this)->str;
+        case +ObjType::FUNC: return "<" + reinterpret_cast<ObjFunc*>(this)->name + ">";;
+        case +ObjType::ARRAY:{
+            ObjArray* arr = reinterpret_cast<ObjArray*>(this);
+            string str = "[";
+            for(Value& val : arr->values){
+                str.append(" " + valueHelpers::toString(val, stack)).append(",");
+            }
+            str.erase(str.size() - 1).append(" ]");
+            return str;
+        }
+        case +ObjType::CLOSURE: return "<" + reinterpret_cast<ObjClosure*>(this)->func->toString(stack) + ">";;
+        case +ObjType::UPVALUE: return "<upvalue>";
+        case +ObjType::CLASS: return "<class " + reinterpret_cast<ObjClass*>(this)->name->str + ">";
+        case +ObjType::INSTANCE: return "<" + reinterpret_cast<ObjInstance*>(this)->klass->name->str + " instance>";
+        case +ObjType::BOUND_METHOD: return "<bound method>";
+        case +ObjType::HASH_MAP:{
+            ObjHashMap* map = reinterpret_cast<ObjHashMap*>(this);
+            string str = "{";
+            for(auto it : map->fields){
+                str.append(" \"").append(it.first->str).append("\" : ");
+                str.append(valueHelpers::toString(it.second, stack)).append(",");
+            }
+            str.erase(str.size() - 1).append(" }");
+            return str;
+        }
+        case +ObjType::FILE: return "<file>";
+        case +ObjType::MUTEX: return "<mutex>";;
+        case +ObjType::FUTURE: return "<future>";
+        case +ObjType::RANGE: {
+            ObjRange* range = reinterpret_cast<ObjRange*>(this);
+            return fmt::format("{}..{}{}", range->start, range->isEndInclusive ? "=" : "", range->end);
+        }
+    }
+    return "cannot stringfy object";
+}
+#pragma endregion
+
 #pragma region ObjString
 ObjString::ObjString(string& _str) {
 	str = _str;
     marked = false;
-	type = ObjType::STRING;
-}
-uInt64 ObjString::getSize() {
-	//+1 for terminator byte
-	return sizeof(ObjString);
-}
-void ObjString::trace() {
-	//nothing to mark
-}
-
-string ObjString::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return str;
+	type = +ObjType::STRING;
 }
 
 bool ObjString::compare(ObjString* other) {
@@ -68,11 +116,11 @@ string convertBackSlashToEscape(const std::string& input)
 
 ObjString* ObjString::createStr(string str){
     str = convertBackSlashToEscape(str);
-    auto it = memory::gc.interned.find(str);
-    if(it != memory::gc.interned.end()) return it->second;
+    auto it = memory::gc->interned.find(str);
+    if(it != memory::gc->interned.end()) return it->second;
     auto newStr = new ObjString(str);
-    memory::gc.heapSize += str.size();
-    memory::gc.interned[str] = newStr;
+    memory::gc->heapSize += str.size();
+    memory::gc->interned[str] = newStr;
     return newStr;
 }
 #pragma endregion
@@ -81,69 +129,18 @@ ObjString* ObjString::createStr(string str){
 ObjFunc::ObjFunc() {
 	arity = 0;
 	upvalueCount = 0;
-	bytecodeOffset = 0;
-	constantsOffset = 0;
-	type = ObjType::FUNC;
+	type = +ObjType::FUNC;
 	name = "";
     marked = false;
-}
-
-void ObjFunc::trace() {
-	// Nothing
-}
-
-string ObjFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<" + name + ">";
-}
-
-uInt64 ObjFunc::getSize() {
-	return sizeof(ObjFunc);
-}
-#pragma endregion
-
-#pragma region ObjNativeFunc
-ObjNativeFunc::ObjNativeFunc(NativeFn _func, int8_t _arity, const char* _name) {
-	func = _func;
-	arity = _arity;
-    name = _name;
-    marked = false;
-	type = ObjType::NATIVE;
-}
-
-void ObjNativeFunc::trace() {
-	//nothing
-}
-
-string ObjNativeFunc::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return fmt::format("<native function {}>", name);
-}
-
-uInt64 ObjNativeFunc::getSize() {
-	return sizeof(ObjNativeFunc);
 }
 #pragma endregion
 
 #pragma region ObjClosure
 ObjClosure::ObjClosure(ObjFunc* _func) {
 	func = _func;
-	upvals = vector<ObjUpval*>(func->upvalueCount);
+	upvals = new object::ObjUpval*[func->upvalueCount];
     marked = false;
-	type = ObjType::CLOSURE;
-}
-
-void ObjClosure::trace() {
-	for (ObjUpval* upval : upvals) {
-		gc.markObj(upval);
-	}
-	gc.markObj(func);
-}
-
-string ObjClosure::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return func->toString(stack);
-}
-
-uInt64 ObjClosure::getSize() {
-	return sizeof(ObjClosure);
+	type = +ObjType::CLOSURE;
 }
 #pragma endregion
 
@@ -151,58 +148,21 @@ uInt64 ObjClosure::getSize() {
 ObjUpval::ObjUpval(Value& _val) {
 	val = _val;
     marked = false;
-	type = ObjType::UPVALUE;
-}
-
-void ObjUpval::trace() {
-	mark(val);
-}
-
-string ObjUpval::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<upvalue>";
-}
-
-uInt64 ObjUpval::getSize() {
-	return sizeof(ObjUpval);
+	type = +ObjType::UPVALUE;
 }
 #pragma endregion
 
 #pragma region ObjArray
 ObjArray::ObjArray() {
-	type = ObjType::ARRAY;
+	type = +ObjType::ARRAY;
 	numOfHeapPtr = 0;
     marked = false;
 }
 ObjArray::ObjArray(size_t size) {
 	values.resize(size);
-	type = ObjType::ARRAY;
+	type = +ObjType::ARRAY;
 	numOfHeapPtr = 0;
     marked = false;
-}
-
-//small optimization: if numOfHeapPtrs is 0 then we don't even scan the array for objects
-//and if there are objects we only scan until we find all objects
-void ObjArray::trace() {
-	int temp = 0;
-	int i = 0;
-	uInt64 arrSize = values.size();
-	while (i < arrSize && temp < numOfHeapPtr) {
-		mark(values[i]);
-		if(isObj(values[i])) temp++;
-	}
-}
-
-string ObjArray::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	string str = "[";
-    for(Value& val : values){
-        str.append(" " + valueHelpers::toString(val, stack)).append(",");
-    }
-    str.erase(str.size() - 1).append(" ]");
-    return str;
-}
-
-uInt64 ObjArray::getSize() {
-	return sizeof(ObjArray) + sizeof(Value)*values.size();
 }
 #pragma endregion
 
@@ -211,27 +171,7 @@ ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
 	name = ObjString::createStr(_name);
     marked = false;
     superclass = _superclass;
-	type = ObjType::CLASS;
-}
-
-void ObjClass::trace() {
-	for (auto & m : methods) {
-        gc.markObj(m.second);
-        m.first->marked = true;
-	}
-    for (auto & f : fieldsInit) {
-        f.first->marked = true;
-    }
-    name->marked = true;
-    if(superclass) gc.markObj(superclass);
-}
-
-string ObjClass::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<class " + name->str + ">";
-}
-
-uInt64 ObjClass::getSize() {
-	return sizeof(ObjClass);
+	type = +ObjType::CLASS;
 }
 #pragma endregion
 
@@ -240,73 +180,23 @@ ObjInstance::ObjInstance(ObjClass* _klass) {
 	klass = _klass;
 	fields = klass->fieldsInit;
     marked = false;
-	type = ObjType::INSTANCE;
-}
-
-void ObjInstance::trace() {
-	for (auto & field : fields) {
-        field.first->marked = true;
-		mark(field.second);
-	}
-	if(klass) gc.markObj(klass);
-}
-
-string ObjInstance::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<" + klass->name->str + " instance>";
-}
-
-uInt64 ObjInstance::getSize() {
-	return sizeof(ObjInstance);
+	type = +ObjType::INSTANCE;
 }
 #pragma endregion
 
 #pragma region ObjHashMap
 ObjHashMap::ObjHashMap() {
 	marked = false;
-	type = ObjType::HASH_MAP;
-}
-
-void ObjHashMap::trace() {
-	for (auto & field : fields) {
-		field.first->marked = true;
-		mark(field.second);
-	}
-}
-
-string ObjHashMap::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	string str = "{";
-	for(auto it : fields){
-		str.append(" \"").append(it.first->str).append("\" : ");
-		str.append(valueHelpers::toString(it.second, stack)).append(",");
-	}
-	str.erase(str.size() - 1).append(" }");
-	return str;
-}
-
-uInt64 ObjHashMap::getSize() {
-	return sizeof(ObjHashMap);
+	type = +ObjType::HASH_MAP;
 }
 #pragma endregion
 
 #pragma region ObjBoundMethod
-ObjBoundMethod::ObjBoundMethod(Value _receiver, Method _method) {
+ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjFunc* _method) {
 	receiver = _receiver;
 	method = _method;
     marked = false;
-	type = ObjType::BOUND_METHOD;
-}
-
-void ObjBoundMethod::trace() {
-	mark(receiver);
-	gc.markObj(method);
-}
-
-string ObjBoundMethod::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<bound method>";
-}
-
-uInt64 ObjBoundMethod::getSize() {
-	return sizeof(ObjBoundMethod);
+	type = +ObjType::BOUND_METHOD;
 }
 #pragma endregion
 
@@ -316,74 +206,67 @@ ObjFile::ObjFile(string& _path, int _openType) {
     marked = false;
     openType = _openType;
 	stream.open(path, std::ios::in | std::ios::out);
-	type = ObjType::FILE;
+	type = +ObjType::FILE;
 }
 ObjFile::~ObjFile() {
 	stream.close();
-}
-
-void ObjFile::trace() {
-	//nothing
-}
-
-string ObjFile::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<file>";
-}
-
-uInt64 ObjFile::getSize() {
-	return sizeof(ObjFile);
 }
 #pragma endregion
 
 #pragma region ObjMutex
 ObjMutex::ObjMutex() {
     marked = false;
-	type = ObjType::MUTEX;
-}
-ObjMutex::~ObjMutex() {
-
-}
-
-void ObjMutex::trace() {
-	//nothing
-}
-
-string ObjMutex::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<mutex>";
-}
-
-uInt64 ObjMutex::getSize() {
-	return sizeof(ObjMutex);
+	type = +ObjType::MUTEX;
 }
 #pragma endregion
 
 #pragma region ObjFuture
-ObjFuture::ObjFuture(runtime::Thread* t) {
-	thread = t;
+// Function that executes on a newly started thread, handles initialization of thread data and cleanup after execution is finished
+void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
+    uintptr_t* stackStart = getStackPointer();
+    memory::gc->addStackStart(std::this_thread::get_id(), stackStart);
+
+    Value encodedFunc = encodeObj(closure);
+    Value val = encodeNil();
+    // Very, very, VERY ugly way to do this, but I can't think of a better way
+    switch(argc){
+        case 0: val = reinterpret_cast<Value(*)(Value)>(closure->func->func)(encodedFunc); break;
+        case 1: val = reinterpret_cast<Value(*)(Value, Value)>(closure->func->func)(encodedFunc, args[0]); break;
+        case 2: val = reinterpret_cast<Value(*)(Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1]); break;
+        case 3: val = reinterpret_cast<Value(*)(Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2]); break;
+        case 4: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3]); break;
+        case 5: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4]); break;
+        case 6: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5]); break;
+        case 7: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6]); break;
+        case 8: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]); break;
+        case 9: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]); break;
+        case 10: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]); break;
+        case 11: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]); break;
+        case 12: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]); break;
+    }
+    // If the future is deallocated, then the user doesn't care about the return value of this function
+    if(memory::gc->isValidPtr(fut)){
+        fut->val = val;
+        fut->done = true;
+    }
+    // Calling this AFTER setting val, since a gc cycle could potentially be in progress and waiting on this thread to suspend
+    // In such a case the gc cycle kicks of immediately after calling removeStackStart
+    memory::gc->removeStackStart(std::this_thread::get_id());
+}
+
+ObjFuture::ObjFuture(ObjClosure* closure, int argc, Value* args) {
     marked = false;
+    done = false;
 	val = encodeNil();
-	type = ObjType::FUTURE;
+	type = +ObjType::FUTURE;
+    thread = std::jthread(&threadWrapper, this, closure, argc, args);
 }
 ObjFuture::~ObjFuture() {
-
+    // If this future is deleted and the thread is still active detach the thread and have it run its course
+    // joinable check is because the user might have joined this thread using await
+    if(thread.joinable()) thread.detach();
 }
 
-void ObjFuture::startParallelExecution() {
-	fut = std::async(std::launch::async, &runtime::Thread::executeBytecode, thread);
-}
-
-void ObjFuture::trace() {
-	//when tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-	mark(val);
-}
-
-string ObjFuture::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-	return "<future>";
-}
-
-uInt64 ObjFuture::getSize() {
-	return sizeof(ObjFuture);
-}
 #pragma endregion
 
 #pragma region ObjRange
@@ -392,21 +275,6 @@ ObjRange::ObjRange(double _start, double _end, bool _isEndInclusive) {
     end = _end;
     isEndInclusive = _isEndInclusive;
     marked = false;
-    type = ObjType::RANGE;
-}
-ObjRange::~ObjRange() {
-
-}
-
-void ObjRange::trace() {
-
-}
-
-string ObjRange::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack) {
-    return fmt::format("{}..{}{}", start, isEndInclusive ? "=" : "", end);
-}
-
-uInt64 ObjRange::getSize() {
-    return sizeof(ObjRange);
+    type = +ObjType::RANGE;
 }
 #pragma endregion

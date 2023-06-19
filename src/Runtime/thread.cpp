@@ -1,4 +1,4 @@
-#include "thread.h"
+/*#include "thread.h"
 #include "vm.h"
 #include <iostream>
 #include <utility>
@@ -1196,4 +1196,4 @@ void runtime::Thread::executeBytecode() {
 #undef READ_STRING_LONG
 #undef BINARY_OP
 #undef INT_BINARY_OP
-}
+}*/

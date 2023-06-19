@@ -82,7 +82,7 @@ void valueHelpers::print(Value x) {
 }
 
 void valueHelpers::mark(Value x){
-    if (isObj(x)) memory::gc.markObj(decodeObj(x));
+    if (isObj(x)) memory::gc->markObj(decodeObj(x));
 }
 
 string valueHelpers::typeToStr(Value x) {
@@ -93,20 +93,19 @@ string valueHelpers::typeToStr(Value x) {
         case ValueType::OBJ:
             Obj* ptr = decodeObj(x);
             switch (ptr->type) {
-                case ObjType::ARRAY: return "<array>";
-                case ObjType::BOUND_METHOD: return "<method>";
-                case ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
-                case ObjType::CLOSURE: return "<function>";
-                case ObjType::FUNC: return "<function>";
-                case ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";
-                case ObjType::NATIVE: return "<native function>";
-                case ObjType::STRING: return "<string>";
-                case ObjType::UPVALUE: return "<upvalue>";
-                case ObjType::HASH_MAP: return "<hash map>";
-                case ObjType::FILE: return "<file>";
-                case ObjType::MUTEX: return "<mutex>";
-                case ObjType::FUTURE: return "<future>";
-                case ObjType::RANGE: return "<range>";
+                case +ObjType::ARRAY: return "<array>";
+                case +ObjType::BOUND_METHOD: return "<method>";
+                case +ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
+                case +ObjType::CLOSURE: return "<function>";
+                case +ObjType::FUNC: return "<function>";
+                case +ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";
+                case +ObjType::STRING: return "<string>";
+                case +ObjType::UPVALUE: return "<upvalue>";
+                case +ObjType::HASH_MAP: return "<hash map>";
+                case +ObjType::FILE: return "<file>";
+                case +ObjType::MUTEX: return "<mutex>";
+                case +ObjType::FUTURE: return "<future>";
+                case +ObjType::RANGE: return "<range>";
             }
     }
     return "error, couldn't determine type of value";

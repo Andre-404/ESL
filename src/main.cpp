@@ -5,7 +5,7 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
-#include "Runtime/vm.h"
+#include "MemoryManagment/garbageCollector.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)

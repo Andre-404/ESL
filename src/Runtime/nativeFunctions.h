@@ -1,4 +1,5 @@
 #pragma once
+/*
 #include <utility>
 #include "../Objects/objects.h"
 
@@ -18,5 +19,5 @@ namespace runtime {
     ankerl::unordered_dense::map<string, uInt> createNativeNameTable(vector<object::ObjNativeFunc *>& natives);
 
     vector<object::ObjClass*> createBuiltinClasses(object::ObjClass* baseClass);
-}
+}*/
 

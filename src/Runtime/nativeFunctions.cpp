@@ -1,3 +1,4 @@
+/*
 #include "nativeFunctions.h"
 #include "thread.h"
 #include "vm.h"
@@ -740,4 +741,4 @@ vector<object::ObjClass*> runtime::createBuiltinClasses(object::ObjClass* baseCl
     return classes;
 }
 #undef BOUND_NATIVE
-#undef NATIVE_FUNC
+#undef NATIVE_FUNC*/

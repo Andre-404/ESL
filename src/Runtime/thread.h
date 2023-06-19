@@ -1,4 +1,5 @@
 #pragma once
+/*
 #include "../Codegen/codegenDefs.h"
 #include "../Objects/objects.h"
 #include "nativeFunctions.h"
@@ -44,4 +45,4 @@ namespace runtime {
 		void invoke(object::ObjString* fieldName, int8_t argCount);
 		void invokeFromClass(object::ObjClass* klass, object::ObjString* fieldName, int8_t argCount);
 	};
-}
+}*/

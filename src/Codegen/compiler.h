@@ -92,10 +92,6 @@ namespace compileCore {
 		vector<Globalvar> globals;
 		Chunk mainCodeBlock;
         object::ObjFunc* mainBlockFunc;
-        // Here to do name checking at compile time
-        vector<object::ObjNativeFunc*> nativeFuncs;
-        //Base class which implements toString
-        object::ObjClass* baseClass;
 
 		Compiler(vector<ESLModule*>& units);
         void compile();

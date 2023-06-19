@@ -24,6 +24,13 @@ typedef uint64_t Value;
 #define LOCAL_MAX 256
 #define UPVAL_MAX 256
 
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((noinline))
+#endif
+
+
 //#define AST_DEBUG
 //#define COMPILER_DEBUG
 //#define DEBUG_MODE

@@ -1,4 +1,4 @@
-#include "vm.h"
+/*#include "vm.h"
 #include "../Codegen/compiler.h"
 #include "../Codegen/valueHelpersInline.cpp"
 #include "nativeFunctions.h"
@@ -60,4 +60,4 @@ void runtime::VM::unpauseAllThreads(){
         t->pauseToken.store(false, std::memory_order_relaxed);
     }
     mainThread->pauseToken.store(false, std::memory_order_relaxed);
-}
+}*/

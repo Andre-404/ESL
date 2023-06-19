@@ -13,8 +13,6 @@ namespace object {
 
 	class ObjFunc;
 
-	class ObjNativeFunc;
-
 	class ObjUpval;
 
 	class ObjClosure;
