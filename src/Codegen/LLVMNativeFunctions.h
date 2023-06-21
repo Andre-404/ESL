@@ -3,6 +3,7 @@
 #include "valueHelpersInline.cpp"
 #include "../Includes/fmt/format.h"
 #include <csetjmp>
+#include <stdarg.h>
 // Functions which the compiler calls, seperate from the native functions provided by the language as part of runtime library
 
 #ifdef _WIN32
@@ -105,12 +106,16 @@ EXPORT bool gcSafepoint(){
     return memory::gc->active == 1;
 }
 
-EXPORT Value createHashMap(){
-    return encodeObj(new object::ObjHashMap());
-}
-
 // hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString
-EXPORT void addToStruct(Value hashMap, Value str, Value val){
-    asHashMap(hashMap)->fields.insert_or_assign(asString(str), val);
+EXPORT Value createHashMap(int nFields, ...){
+    object::ObjHashMap* map = new object::ObjHashMap();
+    va_list ap;
+    va_start(ap, nFields);
+    for(int i=0; i<nFields; i++){
+        object::ObjString* str = asString(va_arg(ap, Value));
+        map->fields.insert_or_assign(str, va_arg(ap, Value));
+    }
+    va_end(ap);
+    return encodeObj(map);
 }
 

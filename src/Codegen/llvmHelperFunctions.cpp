@@ -33,8 +33,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
-    CREATE_FUNC("createHashMap", false, TYPE(Int64));
-    CREATE_FUNC("addToStruct", false, TYPE(Void), TYPE(Int64), TYPE(Int64), TYPE(Int64));
+    CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
 
     buildLLVMNativeFunctions(module, ctx, builder);
 }

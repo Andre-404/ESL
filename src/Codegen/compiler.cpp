@@ -541,7 +541,8 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 }
 
 void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
-    llvm::Value* hashMap = builder.CreateCall(curModule->getFunction("createHashMap"));
+    vector<llvm::Value*> args;
+    args.push_back(builder.getInt32(expr->fields.size()));
     //for each field, compile it and get the constant of the field name
     for (AST::StructEntry entry : expr->fields) {
         updateLine(entry.name);
@@ -549,11 +550,11 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
         string temp = entry.name.getLexeme();
         temp.erase(0, 1);
         temp.erase(temp.size() - 1, 1);
-        llvm::Value* str = builder.CreateCall(curModule->getFunction("createStr"), createConstStr(temp));
-        llvm::Value* val = visitASTNode(entry.expr.get());
-        builder.CreateCall(curModule->getFunction("addToStruct"), {hashMap, str, val});
+        args.push_back(builder.CreateCall(curModule->getFunction("createStr"), createConstStr(temp)));
+        args.push_back(visitASTNode(entry.expr.get()));
     }
-    returnValue = hashMap;
+
+    returnValue = builder.CreateCall(curModule->getFunction("createHashMap"), args);
 }
 
 static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Obj*>& map);
