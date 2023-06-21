@@ -14,12 +14,15 @@ namespace object {
 }
 
 #ifdef _MSC_VER
-#define ADDRESS_OF_RETURN_ADDRESS (_AddressOfReturnAddress())
+// When getStackPointer is called the return address is rsp
+#define GET_FRAME_ADDRESS ((uintptr_t*)_AddressOfReturnAddress())
 #else
-#define ADDRESS_OF_RETURN_ADDRESS (__builtin_frame_address(0))
+#define GET_FRAME_ADDRESS ((uintptr_t*)__builtin_frame_address(0))
 #endif
 // NOINLINE is just in case
 NOINLINE uintptr_t* getStackPointer();
+
+
 
 
 
@@ -67,7 +70,6 @@ namespace memory {
         ankerl::unordered_dense::map<string, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
-        std::mutex threadStackMtx;
 		uInt64 heapSizeLimit;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> objects;

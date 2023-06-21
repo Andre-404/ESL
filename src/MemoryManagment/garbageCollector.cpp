@@ -10,7 +10,7 @@ using namespace valueHelpers;
 #define HEAP_START_SIZE 1024
 
 NOINLINE uintptr_t* getStackPointer(){
-    return (uintptr_t*)(ADDRESS_OF_RETURN_ADDRESS);
+    return (uintptr_t*)(GET_FRAME_ADDRESS);
 }
 
 namespace memory {

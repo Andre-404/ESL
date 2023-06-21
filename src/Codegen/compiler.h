@@ -159,6 +159,7 @@ namespace compileCore {
         void createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs);
         llvm::Constant* createConstStr(string str);
         llvm::Value* castToVal(llvm::Value* val);
+        void createGcSafepoint();
 
         #pragma region Helpers
         // Emitters

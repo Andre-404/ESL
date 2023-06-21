@@ -541,33 +541,19 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
 }
 
 void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
-    vector<int> constants;
-
-    bool isLong = false;
+    llvm::Value* hashMap = builder.CreateCall(curModule->getFunction("createHashMap"));
     //for each field, compile it and get the constant of the field name
     for (AST::StructEntry entry : expr->fields) {
-        entry.expr->accept(this);
         updateLine(entry.name);
         //this gets rid of quotes, ""Hello world""->"Hello world"
         string temp = entry.name.getLexeme();
         temp.erase(0, 1);
         temp.erase(temp.size() - 1, 1);
-        uint16_t num = makeConstant(encodeObj(ObjString::createStr(temp)));
-        if (num > SHORT_CONSTANT_LIMIT) isLong = true;
-        constants.push_back(num);
+        llvm::Value* str = builder.CreateCall(curModule->getFunction("createStr"), createConstStr(temp));
+        llvm::Value* val = visitASTNode(entry.expr.get());
+        builder.CreateCall(curModule->getFunction("addToStruct"), {hashMap, str, val});
     }
-    //since the amount of fields is variable, we emit the number of fields follwed by constants for each field
-    //constants are emitted in reverse order, because we get the values by popping them from stack(reverse order from which they were pushed)
-    if (!isLong) {
-        emitBytes(+OpCode::CREATE_STRUCT, constants.size());
-
-        for (int i = constants.size() - 1; i >= 0; i--) emitByte(constants[i]);
-    }
-    else {
-        emitBytes(+OpCode::CREATE_STRUCT_LONG, constants.size());
-
-        for (int i = constants.size() - 1; i >= 0; i--) emit16Bit(constants[i]);
-    }
+    returnValue = hashMap;
 }
 
 static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Obj*>& map);
@@ -1818,6 +1804,12 @@ void Compiler::createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs){
 
 llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
+}
+
+void Compiler::createGcSafepoint(){
+    auto cmp = builder.CreateCall(curModule->getFunction("gcSafepoint"));
+    auto func = builder.CreateSelect(cmp, curModule->getFunction("stopThread"), curModule->getFunction("noop"));
+    builder.CreateCall(llvm::FunctionType::get(builder.getVoidTy(), false), func);
 }
 #pragma endregion
 

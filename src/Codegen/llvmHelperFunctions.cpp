@@ -32,6 +32,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("stopThread", false, TYPE(Void));
     CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
+    CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
+    CREATE_FUNC("createHashMap", false, TYPE(Int64));
+    CREATE_FUNC("addToStruct", false, TYPE(Void), TYPE(Int64), TYPE(Int64), TYPE(Int64));
 
     buildLLVMNativeFunctions(module, ctx, builder);
 }
@@ -148,5 +151,11 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         auto c3 = builder.CreateCall(module->getFunction("isNull"), arg);
         builder.CreateRet(builder.CreateNot(builder.CreateOr(builder.CreateAnd(c1, c2), c3)));
     llvm::verifyFunction(*f);
+    }();
+    [&]{
+        llvm::Function* f = createFunc("noop",llvm::FunctionType::get(TYPE(Void), false));
+        // Used to avoid IR level when creating a gc safepoint
+        builder.CreateRetVoid();
+        llvm::verifyFunction(*f);
     }();
 }

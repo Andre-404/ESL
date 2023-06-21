@@ -15,9 +15,9 @@
 
 EXPORT void stopThread(){
     // Get stack end(lowest address) and then spill the registers to the stack
+    uintptr_t* stackEnd = getStackPointer();
     jmp_buf jb;
     setjmp(jb);
-    uintptr_t* stackEnd = getStackPointer();
     memory::gc->setStackEnd(std::this_thread::get_id(), stackEnd);
     memory::gc->suspendMe();
 }
@@ -101,8 +101,16 @@ EXPORT Value* getArrPtr(Value arr){
     return asArray(arr)->values.data();
 }
 
-EXPORT char getGcFlagPtr(){
-    return 'a';
+EXPORT bool gcSafepoint(){
+    return memory::gc->active == 1;
 }
 
+EXPORT Value createHashMap(){
+    return encodeObj(new object::ObjHashMap());
+}
+
+// hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString
+EXPORT void addToStruct(Value hashMap, Value str, Value val){
+    asHashMap(hashMap)->fields.insert_or_assign(asString(str), val);
+}
 
