@@ -79,6 +79,7 @@ void Compiler::compile(){
     llvm::Function *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "anon", curModule.get());
     llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
     builder.SetInsertPoint(BB);
+    curModule->getOrInsertGlobal("gcFlag", builder.getInt8PtrTy());
 
     for (ESLModule* unit : units) {
         curUnit = unit;
@@ -147,11 +148,11 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         return builder.CreateAnd(c1, c2);
     };
     auto dblCast = [&](llvm::Value* val){
-        return builder.CreateBitCast(val, llvm::Type::getDoubleTy(*ctx));
+        return builder.CreateBitCast(val, builder.getDoubleTy());
     };
     // TODO: this can break if val > 2^63
     auto dblToInt = [&](llvm::Value* val){
-        return builder.CreateFPToSI(val, llvm::Type::getInt64Ty(*ctx));
+        return builder.CreateFPToSI(val, builder.getInt64Ty());
     };
     auto matchTT = [&](TokenType type, std::initializer_list<TokenType> list){
         for(auto it = list.begin(); it != list.end(); it++){
@@ -188,11 +189,11 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         // Emit merge block, code from this point on will be generated into this block
         func->insert(func->end(), mergeBB);
         builder.SetInsertPoint(mergeBB);
-        llvm::PHINode *PN = builder.CreatePHI(llvm::Type::getInt1Ty(*ctx), 2, op == TokenType::OR ? "lortmp" : "landtmp");
+        llvm::PHINode *PN = builder.CreatePHI(builder.getInt1Ty(), 2, op == TokenType::OR ? "lortmp" : "landtmp");
 
         // If we're coming from the originalBB and the operator is 'or' it means that lhs is true, and thus the entire expression is true
-        // For 'and' its the opposite, if lhs is false, then the entire expression is false
-        PN->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*ctx), op == TokenType::OR ? true : false), originalBB);
+        // For 'and' it's the opposite, if lhs is false, then the entire expression is false
+        PN->addIncoming(builder.getInt1(op == TokenType::OR ? true : false), originalBB);
         // For both operators, if control flow is coming from evalRhsBB ths becomes the value of the entire expression
         PN->addIncoming(rhs, evalRhsBB);
 
@@ -223,7 +224,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         builder.SetInsertPoint(addStringBB);
         // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
         llvm::Constant* file = createConstStr(curUnit->file->path);
-        llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+        llvm::Constant* line = builder.getInt32(current->line);
         // Returns Value
         auto stringAddRes = builder.CreateCall(curModule->getFunction("strAdd"), {lhs, rhs, file, line});
         builder.CreateBr(mergeBB);
@@ -232,7 +233,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         // Use a phi node to determine which one it is and then set it as returnValue
         F->insert(F->end(), mergeBB);
         builder.SetInsertPoint(mergeBB);
-        auto phi = builder.CreatePHI(llvm::Type::getInt64Ty(*ctx), 2);
+        auto phi = builder.CreatePHI(builder.getInt64Ty(), 2);
         phi->addIncoming(numAddRes, addNumBB);
         phi->addIncoming(stringAddRes, addStringBB);
         returnValue = phi;
@@ -325,7 +326,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
                 res = builder.CreateXor(dblToInt(dblCast(lhs)), dblToInt(dblCast(rhs)), "xortmp"); break;
             default: break;
         }
-        retVal(builder.CreateSIToFP(res, llvm::Type::getDoubleTy(*ctx)));
+        retVal(builder.CreateSIToFP(res, builder.getDoubleTy()));
         return;
     }
     else if(matchTT(op, {TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL})){
@@ -448,11 +449,11 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
                 builder.SetInsertPoint(executeOpBB);
                 // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
                 if(expr->op.type == TokenType::TILDA){
-                    auto tmp = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
-                    auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, llvm::Type::getInt64Ty(*ctx)),"binnegtmp");
+                    auto tmp = builder.CreateBitCast(rhs, builder.getDoubleTy());
+                    auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, builder.getInt64Ty()),"binnegtmp");
                     retVal(builder.CreateSIToFP(negated, llvm::Type::getDoubleTy(*ctx)));
                 }else{
-                    auto tmp = builder.CreateBitCast(rhs, llvm::Type::getDoubleTy(*ctx));
+                    auto tmp = builder.CreateBitCast(rhs, builder.getDoubleTy());
                     retVal(builder.CreateFNeg(tmp, "fnegtmp"));
                 }
                 break;
@@ -472,7 +473,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
                 // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
                 // Since that's just a single bit flag that's flipped on when true and off when false
                 // This does rely on the fact that true and false are the first flags and are thus represented with 00 and 01
-                returnValue = builder.CreateXor(rhs, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), MASK_TYPE_TRUE));
+                returnValue = builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
                 break;
             }
 
@@ -484,13 +485,18 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 }
 
 void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
-    //we need all of the array member values to be on the stack prior to executing "OP_CREATE_ARRAY"
-    //compiling members in reverse order because we add to the array by popping from the stack
+    vector<llvm::Value*> vals;
     for(auto mem : expr->members){
-        mem->accept(this);
+        vals.push_back(visitASTNode(mem.get()));
     }
-    emitBytes(+OpCode::CREATE_ARRAY, expr->members.size());
-
+    auto arrNum = builder.getInt32(vals.size());
+    auto arr = builder.CreateCall(curModule->getFunction("createArr"), arrNum, "array");
+    auto arrPtr = builder.CreateCall(curModule->getFunction("getArrPtr"), arr, "arrptr");
+    for(int i = 0; i < vals.size(); i++){
+        auto gep = builder.CreateInBoundsGEP(builder.getInt64Ty(), arrPtr, builder.getInt32(i));
+        builder.CreateStore(vals[i], gep);
+    }
+    returnValue = arr;
 }
 
 void Compiler::visitCallExpr(AST::CallExpr* expr) {
@@ -607,7 +613,7 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
             string temp = expr->token.getLexeme();
             temp.erase(0, 1);
             temp.erase(temp.size() - 1, 1);
-            auto str = builder.CreateGlobalStringPtr(temp, "internalString");
+            auto str = createConstStr(temp);
             // Returns Value, no need to cast
             returnValue = builder.CreateCall(curModule->getFunction("createStr"), str);
             break;
@@ -1800,13 +1806,13 @@ llvm::Constant* Compiler::createConstStr(string str){
 void Compiler::createTyErr(string err, llvm::Value* val){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(curUnit->file->path);
-    llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+    llvm::Constant* line = builder.getInt32(current->line);
     builder.CreateCall(curModule->getFunction("tyErrSingle"), {str, file, line, val});
 }
 void Compiler::createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(curUnit->file->path);
-    llvm::Constant* line = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), current->line);
+    llvm::Constant* line = builder.getInt32(current->line);
     builder.CreateCall(curModule->getFunction("tyErrDouble"), {str, file, line, lhs, rhs});
 }
 

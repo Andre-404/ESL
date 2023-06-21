@@ -43,8 +43,8 @@ inline bool decodeBool(Value x){ return x == MASK_SIGNATURE_TRUE; }
 inline object::Obj* decodeObj(Value x){ return reinterpret_cast<object::Obj*>(x & MASK_PAYLOAD_OBJ); }
 
 inline bool isNumber(Value x){ return (x & MASK_QNAN) != MASK_QNAN; }
-inline bool isBool(Value x){ return ((x & MASK_SIGNATURE) == MASK_SIGNATURE_TRUE || (x & MASK_SIGNATURE) == MASK_SIGNATURE_FALSE); }
-inline bool isNil(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_NIL; }
+inline bool isBool(Value x){ return (x == MASK_SIGNATURE_TRUE || x == MASK_SIGNATURE_FALSE); }
+inline bool isNil(Value x){ return x == MASK_SIGNATURE_NIL; }
 inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
 
 inline bool isInt(Value x) { return isNumber(x) && FLOAT_EQ(decodeNumber(x), std::round(decodeNumber(x))); }

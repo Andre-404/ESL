@@ -26,11 +26,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
     CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
-    auto i8ptrptr = llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx));
-    CREATE_FUNC("runtimeErr", false, TYPE(Void), TYPE(Int8Ptr), i8ptrptr, TYPE(Int32));
     CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
     CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
     CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("stopThread", false, TYPE(Void));
+    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
 
     buildLLVMNativeFunctions(module, ctx, builder);
 }
@@ -82,16 +83,13 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         builder.SetInsertPoint(BB);
         return F;
     };
-    // Extremenly cursed, but using lambdas that are immediately called avoids naming conflicts
+    // Extremely cursed, but using lambdas that are immediately called avoids naming conflicts
     // No encode/decodeObj right now, need to think of how to represent objects in llvm IR
     [&]{
         llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(TYPE(Int64), TYPE(Int1), false));
-        auto arg = builder.CreateIntCast(f->getArg(0), TYPE(Int64), false);
-        auto negArg = builder.CreateIntCast(builder.CreateNot(f->getArg(0)), TYPE(Int64), false);
-        auto lhs = builder.CreateMul(arg, llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_TRUE));
-        auto rhs = builder.CreateMul(negArg, llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_FALSE));
-
-        builder.CreateRet(builder.CreateAdd(lhs, rhs,"bin add"));
+        // x ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE
+        auto tmp = builder.CreateSelect(f->getArg(0), builder.getInt64(MASK_SIGNATURE_TRUE), builder.getInt64(MASK_SIGNATURE_FALSE));
+        builder.CreateRet(tmp);
         llvm::verifyFunction(*f);
     }();
     [&]{
@@ -101,48 +99,48 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
     [&]{
         llvm::Function* f = createFunc("decodeBool",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        builder.CreateRet(builder.CreateICmpEQ(f->getArg(0), llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_TRUE)));
+        // At this point we know that arg is either MASK_SIGNATURE_TRUE or MASK_SIGNATURE_FALSE, so just cmp with MASK_SIGNATURE_TRUE
+        builder.CreateRet(builder.CreateICmpEQ(f->getArg(0), builder.getInt64(MASK_SIGNATURE_TRUE)));
         llvm::verifyFunction(*f);
     }();
     [&]{
         llvm::Function* f = createFunc("isNum",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        // (x & MASK_QNAN) != MASK_QNAN
         auto arg = f->getArg(0);
-
-        auto constant = llvm::ConstantInt::get(TYPE(Int64), MASK_QNAN);
+        auto constant = builder.getInt64(MASK_QNAN);
         builder.CreateRet(builder.CreateICmpNE(builder.CreateAnd(arg, constant), constant));
         llvm::verifyFunction(*f);
     }();
     [&]{
         llvm::Function* f = createFunc("isBool",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        // x == MASK_SIGNATURE_TRUE || x == MASK_SIGNATURE_FALSE
         auto arg = f->getArg(0);
 
-        auto const0 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE);
-        auto const1 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_TRUE);
-        auto const2 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_FALSE);
-        auto tmp = builder.CreateAnd(arg, const0);
-        builder.CreateRet(builder.CreateOr(builder.CreateICmpEQ(tmp, const1), builder.CreateICmpEQ(tmp, const2)));
+        auto const1 = builder.getInt64(MASK_SIGNATURE_TRUE);
+        auto const2 = builder.getInt64(MASK_SIGNATURE_FALSE);
+        builder.CreateRet(builder.CreateOr(builder.CreateICmpEQ(arg, const1), builder.CreateICmpEQ(arg, const2)));
         llvm::verifyFunction(*f);
     }();
     [&]{
         llvm::Function* f = createFunc("isNull",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = f->getArg(0);
-
-        auto const0 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE);
-        auto const1 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_NIL);
-        builder.CreateRet(builder.CreateICmpEQ(builder.CreateAnd(arg, const0), const1));
+        // x == MASK_SIGNATURE_NIL
+        builder.CreateRet(builder.CreateICmpEQ(f->getArg(0), builder.getInt64(MASK_SIGNATURE_NIL)));
         llvm::verifyFunction(*f);
     }();
     [&]{
         llvm::Function* f = createFunc("isObj",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        // (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ
         auto arg = f->getArg(0);
 
-        auto const0 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE);
-        auto const1 = llvm::ConstantInt::get(TYPE(Int64), MASK_SIGNATURE_OBJ);
+        auto const0 = builder.getInt64(MASK_SIGNATURE);
+        auto const1 = builder.getInt64(MASK_SIGNATURE_OBJ);
         builder.CreateRet(builder.CreateICmpEQ(builder.CreateAnd(arg, const0), const1));
         llvm::verifyFunction(*f);
     }();
     [&]{
         llvm::Function* f = createFunc("isTruthy",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        // (isBool(x) && !decodeBool(x)) || isNil(x)
+        // Even though x might not be bool it will still be decoded as a bool, but that's just an icmp so it's ok
         auto arg = f->getArg(0);
 
         auto c1 = builder.CreateCall(module->getFunction("isBool"), arg);

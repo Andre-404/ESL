@@ -9,6 +9,9 @@ using namespace valueHelpers;
 //start size of heap in KB
 #define HEAP_START_SIZE 1024
 
+NOINLINE uintptr_t* getStackPointer(){
+    return (uintptr_t*)(ADDRESS_OF_RETURN_ADDRESS);
+}
 
 namespace memory {
 	GarbageCollector* gc = new GarbageCollector();

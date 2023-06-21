@@ -30,15 +30,13 @@ EXPORT double asNum(Value x){
 }
 
 EXPORT void print(Value x){
+    memory::gc->active = 1;
     if(memory::gc->active == 1) stopThread();
-    if(!memory::gc->isValidPtr(decodeObj(x))) std::cout<<" LOL\n";
     std::cout<< "Value is: "<< valueHelpers::toString(x)<<std::endl;
 }
 
 EXPORT Value createStr(char* ptr){
-    auto s = encodeObj(ObjString::createStr(string(ptr)));
-    memory::gc->active = 1;
-    return s;
+    return encodeObj(ObjString::createStr(string(ptr)));
 }
 
 EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
@@ -90,6 +88,21 @@ EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, V
 }
 
 EXPORT Value strAdd(Value lhs, Value rhs, const char* fileName, const int line){
-    return 0;
+    if(!isString(lhs) || !isString(rhs)) tyErrDouble("Operands must be numbers or strings, got '{}' and '{}'.", fileName, line, lhs, rhs);
+    string temp = asString(lhs)->str + asString(rhs)->str;
+    return encodeObj(object::ObjString::createStr(temp));
 }
+
+EXPORT Value createArr(int arrSize){
+    return encodeObj(new object::ObjArray(arrSize));
+}
+
+EXPORT Value* getArrPtr(Value arr){
+    return asArray(arr)->values.data();
+}
+
+EXPORT char getGcFlagPtr(){
+    return 'a';
+}
+
 

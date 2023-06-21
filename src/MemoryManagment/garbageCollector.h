@@ -19,9 +19,7 @@ namespace object {
 #define ADDRESS_OF_RETURN_ADDRESS (__builtin_frame_address(0))
 #endif
 // NOINLINE is just in case
-extern "C" NOINLINE uintptr_t* getStackPointer(){
-    return (uintptr_t*)(ADDRESS_OF_RETURN_ADDRESS);
-}
+NOINLINE uintptr_t* getStackPointer();
 
 
 
