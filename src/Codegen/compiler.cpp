@@ -129,7 +129,43 @@ void Compiler::visitSetExpr(AST::SetExpr* expr) {
 }
 
 void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
+    auto condtmp = visitASTNode(expr->condition.get());
+    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
 
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+
+
+    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
+    llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(*ctx, "condexpr.then", func);
+    llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(*ctx, "condexpr.else");
+    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "condexpr.merge");
+
+    builder.CreateCondBr(cond, thenBB, elseBB);
+    //Emits code to conditionally execute mhs(thenBB) and rhs(elseBB)
+
+    builder.SetInsertPoint(thenBB);
+    llvm::Value* thentmp = visitASTNode(expr->mhs.get());
+    builder.CreateBr(mergeBB);
+    // In case we have a nested conditional thenBB could no longer be the block the builder is emitting to
+    thenBB = builder.GetInsertBlock();
+
+    func->insert(func->end(), elseBB);
+    builder.SetInsertPoint(elseBB);
+    llvm::Value* elsetmp = visitASTNode(expr->rhs.get());
+    // In case we have a nested conditional thenBB could no longer be the block the builder is emitting to
+    elseBB = builder.GetInsertBlock();
+
+    // Get the results
+    builder.CreateBr(mergeBB);
+    func->insert(func->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+    llvm::PHINode *PN = builder.CreatePHI(builder.getInt64Ty(), 2, "condexpr.res");
+
+    PN->addIncoming(thentmp, thenBB);
+    PN->addIncoming(elsetmp, elseBB);
+
+    // Value is already a int64
+    returnValue = PN;
 }
 
 void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
@@ -591,10 +627,10 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
         }
         case TokenType::TRUE:
         case TokenType::FALSE: {
-            returnValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), encodeBool(expr->token.type == TokenType::TRUE));
+            returnValue = builder.getInt64(encodeBool(expr->token.type == TokenType::TRUE));
             break;
         }
-        case TokenType::NIL: returnValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), encodeNil()); break;
+        case TokenType::NIL: returnValue = builder.getInt64(encodeNil()); break;
         case TokenType::STRING: {
             //this gets rid of quotes, ""Hello world""->"Hello world"
             string temp = expr->token.getLexeme();
