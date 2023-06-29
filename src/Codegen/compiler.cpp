@@ -129,7 +129,7 @@ void Compiler::visitSetExpr(AST::SetExpr* expr) {
 }
 
 void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
-    auto condtmp = visitASTNode(expr->condition.get());
+    auto condtmp = evalASTExpr(expr->condition);
     auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
@@ -144,15 +144,15 @@ void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
     //Emits code to conditionally execute mhs(thenBB) and rhs(elseBB)
 
     builder.SetInsertPoint(thenBB);
-    llvm::Value* thentmp = visitASTNode(expr->mhs.get());
+    llvm::Value* thentmp = evalASTExpr(expr->mhs);
     builder.CreateBr(mergeBB);
-    // In case we have a nested conditional thenBB could no longer be the block the builder is emitting to
+    // PHI nodes need up-to-date block info to know which block control is coming from
     thenBB = builder.GetInsertBlock();
 
     func->insert(func->end(), elseBB);
     builder.SetInsertPoint(elseBB);
-    llvm::Value* elsetmp = visitASTNode(expr->rhs.get());
-    // In case we have a nested conditional thenBB could no longer be the block the builder is emitting to
+    llvm::Value* elsetmp = evalASTExpr(expr->rhs);
+    // PHI nodes need up-to-date block info to know which block control is coming from
     elseBB = builder.GetInsertBlock();
 
     // Get the results
@@ -197,7 +197,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         return false;
     };
 
-    llvm::Value* lhs = visitASTNode(expr->left.get());
+    llvm::Value* lhs = evalASTExpr(expr->left);
     auto op = expr->op.type;
     if(op == TokenType::OR || op == TokenType::AND){
         auto castToBool = curModule->getFunction("isTruthy");
@@ -218,7 +218,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
 
         // If lhs is false(or in the case of 'and' operator true) eval rhs and then go into mergeBB
         builder.SetInsertPoint(evalRhsBB);
-        llvm::Value* rhs = builder.CreateCall(castToBool, visitASTNode(expr->right.get()));
+        llvm::Value* rhs = builder.CreateCall(castToBool, evalASTExpr(expr->right));
         builder.CreateBr(mergeBB);
         // In case we have a nested 'or' or 'and' lhsFalseBB could no longer be the block the builder is emitting to
         evalRhsBB = builder.GetInsertBlock();
@@ -238,7 +238,7 @@ void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
         return;
     }
 
-    llvm::Value* rhs = visitASTNode(expr->right.get());
+    llvm::Value* rhs = evalASTExpr(expr->right);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
 
     if(op == TokenType::PLUS){
@@ -461,7 +461,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 
     // Regular unary operations
     if (expr->isPrefix) {
-        llvm::Value* rhs = visitASTNode(expr->right.get());
+        llvm::Value* rhs = evalASTExpr(expr->right);
         llvm::Function *F = builder.GetInsertBlock()->getParent();
         // If rhs isn't of the correct type, go to error, otherwise proceed as normal
         llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
@@ -523,7 +523,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
 void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
     vector<llvm::Value*> vals;
     for(auto mem : expr->members){
-        vals.push_back(visitASTNode(mem.get()));
+        vals.push_back(evalASTExpr(mem));
     }
     auto arrNum = builder.getInt32(vals.size());
     auto arr = builder.CreateCall(curModule->getFunction("createArr"), arrNum, "array");
@@ -587,7 +587,7 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
         temp.erase(0, 1);
         temp.erase(temp.size() - 1, 1);
         args.push_back(builder.CreateCall(curModule->getFunction("createStr"), createConstStr(temp)));
-        args.push_back(visitASTNode(entry.expr.get()));
+        args.push_back(evalASTExpr(entry.expr));
     }
 
     returnValue = builder.CreateCall(curModule->getFunction("createHashMap"), args);
@@ -838,11 +838,9 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
     stmt->expr->accept(this);
-    emitByte(+OpCode::POP);
 }
 
 void Compiler::visitBlockStmt(AST::BlockStmt* stmt) {
-    beginScope();
     for (AST::ASTNodePtr node : stmt->statements) {
         try {
             node->accept(this);
@@ -850,47 +848,76 @@ void Compiler::visitBlockStmt(AST::BlockStmt* stmt) {
 
         }
     }
-    endScope();
 }
 
 void Compiler::visitIfStmt(AST::IfStmt* stmt) {
-    //compile condition and emit a jump over then branch if the condition is false
-    stmt->condition->accept(this);
-    int thenJump = emitJump(+OpCode::JUMP_IF_FALSE_POP);
+    auto condtmp = evalASTExpr(stmt->condition);
+    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
+
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+
+    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
+    llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(*ctx, "if.then", func);
+    llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(*ctx, "if.else");
+    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "if.merge");
+
+    builder.CreateCondBr(cond, thenBB, elseBB);
+
+
+    builder.SetInsertPoint(thenBB);
     stmt->thenBranch->accept(this);
-    //only compile if there is a else branch
-    if (stmt->elseBranch != nullptr) {
-        //prevents fallthrough to else branch
-        int elseJump = emitJump(+OpCode::JUMP);
-        patchJump(thenJump);
+    builder.CreateBr(mergeBB);
 
-        stmt->elseBranch->accept(this);
-        patchJump(elseJump);
-    }
-    else patchJump(thenJump);
+    func->insert(func->end(), elseBB);
+    builder.SetInsertPoint(elseBB);
+    if(stmt->elseBranch) stmt->elseBranch->accept(this);
 
+    builder.CreateBr(mergeBB);
+    func->insert(func->end(), mergeBB);
+    // Sets the builder up to emit code after the if stmt
+    builder.SetInsertPoint(mergeBB);
 }
 
+// Applies loop inversion
 void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
-    //loop inversion is applied to reduce the number of jumps if the condition is met
-    stmt->condition->accept(this);
-    int jump = emitJump(+OpCode::JUMP_IF_FALSE_POP);
-    //if the condition is true, compile the body and then the condition again and if its true we loop back to the start of the body
-    int loopStart = getChunk()->bytecode.size();
-    //loop body gets it's own scope because we only patch break and continue jumps which are declared in higher scope depths
-    //user might not use {} block when writing a loop, this ensures the body is always in it's own scope
-    current->scopeWithLoop.push_back(current->scopeDepth);
-    beginScope();
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+
+    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
+    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*ctx, "while.loop", func);
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(*ctx, "while.cond");
+    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
+
+    // Sets the destination blocks for both continue and break, works like a stack
+    continueJumpDest.push_back(condBB);
+    breakJumpDest.push_back(mergeBB);
+
+    auto condtmp = evalASTExpr(stmt->condition);
+    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
+
+    // If check before do-while
+    builder.CreateCondBr(cond, loopBB, mergeBB);
+
+    // Loop body
+    builder.SetInsertPoint(loopBB);
     stmt->body->accept(this);
-    endScope();
-    current->scopeWithLoop.pop_back();
-    //continue skips the rest of the body and evals the condition again
-    patchScopeJumps(ScopeJumpType::CONTINUE);
-    stmt->condition->accept(this);
-    emitLoop(loopStart);
-    //break out of the loop
-    patchJump(jump);
-    patchScopeJumps(ScopeJumpType::BREAK);
+    // Unconditional fallthrough to condition check
+    builder.CreateBr(condBB);
+
+    func->insert(func->end(), condBB);
+    builder.SetInsertPoint(condBB);
+    // Eval the condition again
+    condtmp = evalASTExpr(stmt->condition);
+    cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
+    // Conditional jump to beginning of body(if cond is true), or to the end of the loop
+    builder.CreateCondBr(cond, loopBB, mergeBB);
+
+    func->insert(func->end(), mergeBB);
+    // Sets the builder up to emit code after the while stmt
+    builder.SetInsertPoint(mergeBB);
+
+    // Pop destinations so that any break/continue for an outer loop works correctly
+    continueJumpDest.pop_back();
+    breakJumpDest.pop_back();
 }
 
 void Compiler::visitForStmt(AST::ForStmt* stmt) {
@@ -938,51 +965,13 @@ void Compiler::visitForStmt(AST::ForStmt* stmt) {
     endScope();
 }
 
+// Simple no-cond jump to whichever block is at the top of the stack
 void Compiler::visitBreakStmt(AST::BreakStmt* stmt) {
-    //the amount of variables to pop and the amount of code to jump is determined in patchScopeJumps()
-    //which is called at the end of loops or a switch
-    updateLine(stmt->token);
-    int toPop = 0;
-    //since the body of the loop is always in its own scope, and the scope before it is declared as having a loop,
-    //we pop locals until the first local that is in the same scope as the loop
-    //meaning it was declared outside of the loop body and shouldn't be popped
-    //break is a special case because it's used in both loops and switches, so we find either in the scope we're check, we bail
-    for (int i = current->localCount - 1; i >= 0; i--) {
-        Local& local = current->locals[i];
-        if (local.depth != -1 && (CHECK_SCOPE_FOR_LOOP || CHECK_SCOPE_FOR_SWITCH)) break;
-        toPop++;
-    }
-    if (toPop > UINT8_MAX) {
-        error(stmt->token, "To many variables to pop.");
-    }
-    emitByte(+ScopeJumpType::BREAK);
-    int breakJump = getChunk()->bytecode.size();
-    emitBytes((current->scopeDepth >> 8) & 0xff, current->scopeDepth & 0xff);
-    emitByte(toPop);
-    current->scopeJumps.push_back(breakJump);
+    builder.CreateBr(breakJumpDest.back());
 }
-
+// Simple no-cond jump to whichever block is at the top of the stack
 void Compiler::visitContinueStmt(AST::ContinueStmt* stmt) {
-    //the amount of variables to pop and the amount of code to jump is determined in patchScopeJumps()
-    //which is called at the end of loops
-    updateLine(stmt->token);
-    int toPop = 0;
-    //since the body of the loop is always in its own scope, and the scope before it is declared as having a loop,
-    //we pop locals until the first local that is in the same scope as the loop
-    //meaning it was declared outside of the loop body and shouldn't be popped
-    for (int i = current->localCount - 1; i >= 0; i--) {
-        Local& local = current->locals[i];
-        if (local.depth != -1 && CHECK_SCOPE_FOR_LOOP) break;
-        toPop++;
-    }
-    if (toPop > UINT8_MAX) {
-        error(stmt->token, "To many variables to pop.");
-    }
-    emitByte(+ScopeJumpType::CONTINUE);
-    int continueJump = getChunk()->bytecode.size();
-    emitBytes((current->scopeDepth >> 8) & 0xff, current->scopeDepth & 0xff);
-    emitByte(toPop);
-    current->scopeJumps.push_back(continueJump);
+    builder.CreateBr(continueJumpDest.back());
 }
 
 void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
@@ -1091,32 +1080,15 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
 }
 
 void Compiler::visitCaseStmt(AST::CaseStmt* stmt) {
-    //compile every statement in the case
+    // Compile every statement in the case
     for (AST::ASTNodePtr caseStmt : stmt->stmts) {
         caseStmt->accept(this);
     }
 }
 
+// Simple no-cond jump to the next basic block in the current switch
 void Compiler::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
-    //the amount of variables to pop and the amount of code to jump is determined in patchScopeJumps()
-    //which is called at the start of each case statement(excluding the first)
-    updateLine(stmt->token);
-    int toPop = 0;
-    //advance can only be used inside a case of a switch statement, and when jumping, jumps to the next case
-    //case body is compiled in its own scope, so advance is always in a scope higher than it's switch statement
-    for (int i = current->localCount - 1; i >= 0; i--) {
-        Local& local = current->locals[i];
-        if (local.depth != -1 && CHECK_SCOPE_FOR_SWITCH) break;
-        toPop++;
-    }
-    if (toPop > UINT8_MAX) {
-        error(stmt->token, "To many variables to pop.");
-    }
-    emitByte(+ScopeJumpType::ADVANCE);
-    int advanceJump = getChunk()->bytecode.size();
-    emitBytes((current->scopeDepth >> 8) & 0xff, current->scopeDepth & 0xff);
-    emitByte(toPop);
-    current->scopeJumps.push_back(advanceJump);
+    builder.CreateBr(advanceJumpDest.back());
 }
 
 void Compiler::visitReturnStmt(AST::ReturnStmt* stmt) {
@@ -1133,8 +1105,8 @@ void Compiler::visitReturnStmt(AST::ReturnStmt* stmt) {
         emitReturn();
         return;
     }
-    stmt->expr->accept(this);
-    emitByte(+OpCode::RETURN);
+    auto rettmp = evalASTExpr(stmt->expr);
+    builder.CreateRet(rettmp);
 }
 
 #pragma region helpers
@@ -1177,10 +1149,12 @@ void Compiler::emitConstant(Value value) {
 }
 
 void Compiler::emitReturn() {
+    llvm::Value* rettmp;
     //in a constructor, the first local variable refers to the new instance of a class('this')
+    // TODO: create ret val for constructors
     if (current->type == FuncType::TYPE_CONSTRUCTOR) emitBytes(+OpCode::GET_LOCAL, 0);
-    else emitByte(+OpCode::NIL);
-    emitByte(+OpCode::RETURN);
+    else rettmp = builder.getInt64(encodeNil());
+    builder.CreateRet(rettmp);
 }
 
 int Compiler::emitJump(byte jumpType) {
@@ -1793,7 +1767,7 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
     return -1;
 }
 
-llvm::Value* Compiler::visitASTNode(AST::ASTNode *node) {
+llvm::Value* Compiler::evalASTExpr(std::shared_ptr<AST::ASTNode> node) {
     node->accept(this);
     return returnValue;
 }

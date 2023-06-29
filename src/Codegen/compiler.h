@@ -151,8 +151,12 @@ namespace compileCore {
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
 
         ankerl::unordered_dense::map<string, llvm::Constant*> stringConstants;
+        vector<llvm::BasicBlock*> continueJumpDest;
+        // Both loops and switch statement push to this stack
+        vector<llvm::BasicBlock*> breakJumpDest;
+        vector<llvm::BasicBlock*> advanceJumpDest;
 
-        llvm::Value* visitASTNode(AST::ASTNode* node);
+        llvm::Value* evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         void retVal(llvm::Value* val);
         void createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode);
         void createTyErr(string err, llvm::Value* val);
