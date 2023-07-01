@@ -28,7 +28,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["ObjFunc"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32)}, "ObjFunc");
     auto tmpFuncPtr = llvm::PointerType::getUnqual(types["ObjFunc"]);
     //Pointer to pointer
-    auto tmpUpvalArr = llvm::PointerType::getUnqual(llvm::PointerType::getUnqual(types["ObjUpval"]));
+    auto tmpUpvalArr = llvm::PointerType::getUnqual(llvm::PointerType::getUnqual(types["ObjUpvalue"]));
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], tmpFuncPtr, tmpUpvalArr, TYPE(Int32)}, "ObjClosure");
 }
 
@@ -49,6 +49,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("createUpvalue", false, llvm::PointerType::getUnqual(types["ObjUpvalue"]));
     CREATE_FUNC("getUpvalue", false, llvm::PointerType::getUnqual(types["ObjUpvalue"]), TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("addGCRoot", false, TYPE(Void), llvm::PointerType::getUnqual(TYPE(Int64)));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }

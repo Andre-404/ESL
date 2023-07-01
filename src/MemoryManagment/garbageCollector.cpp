@@ -154,6 +154,12 @@ namespace memory {
                 end++;
             }
         }
+        // Mark all globals
+        for(int i = 0; i < globalRoots.size(); i++) {
+            if(isObj(*globalRoots[i])) {
+                markObj(decodeObj(*globalRoots[i]));
+            }
+        }
 	}
 
 	void GarbageCollector::sweep() {
@@ -254,6 +260,9 @@ namespace memory {
 
     bool GarbageCollector::isValidPtr(object::Obj* ptr){
         return objects.contains(ptr);
+    }
+    void GarbageCollector::addGlobalRoot(Value* ptr){
+        globalRoots.push_back(ptr);
     }
 }
 

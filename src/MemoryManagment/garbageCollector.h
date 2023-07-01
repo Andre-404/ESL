@@ -56,6 +56,7 @@ namespace memory {
         void suspendMe();
         // Checks if the provided ptr is a live object allocated by the gc
         bool isValidPtr(object::Obj* ptr);
+        void addGlobalRoot(Value* ptr);
 
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
         std::atomic<int64_t> threadsSuspended;
@@ -73,6 +74,7 @@ namespace memory {
 		uInt64 heapSizeLimit;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> objects;
+        vector<Value*> globalRoots;
 
 		vector<object::Obj*> markStack;
         // Start and end of stack pointer for every thread that's currently running

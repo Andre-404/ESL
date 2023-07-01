@@ -67,13 +67,13 @@ void Compiler::compile(){
         sourceFiles.push_back(unit->file);
         for (const auto decl : unit->topDeclarations) {
             string varName = unit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-            // TODO: add this pointer to the gc
             curModule->getOrInsertGlobal(varName, builder.getInt64Ty());
             llvm::GlobalVariable* gvar = curModule->getNamedGlobal(varName);
             gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
             gvar->setAlignment(llvm::Align::Of<Value>());
             gvar->setInitializer(builder.getInt64(encodeNil()));
             globals.insert_or_assign(varName, Globalvar(decl->getType(), gvar));
+            builder.CreateCall(curModule->getFunction("addGCRoot"), gvar);
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
             // Doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
@@ -1138,7 +1138,6 @@ llvm::Value* Compiler::readVar(Token name){
     if (argIndex != -1) {
         if(current->locals[argIndex].isUpval){
             llvm::Value* upvalPtr = current->locals[argIndex].val;
-            //TODO: load from upval
             auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
             return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadupval");
         }else{
@@ -1175,8 +1174,8 @@ void Compiler::storeToVar(Token name, llvm::Value* val){
     if (argIndex != -1) {
         if(current->locals[argIndex].isUpval){
             llvm::Value* upvalPtr = current->locals[argIndex].val;
-            //TODO: store to upval
             auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+
             builder.CreateStore(val, tmpEle);
             return;
         }else{
@@ -1186,8 +1185,8 @@ void Compiler::storeToVar(Token name, llvm::Value* val){
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         llvm::Value* upvalPtr = current->upvalues[argIndex].val;
-        //TODO: store to upval
         auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+
         builder.CreateStore(val, tmpEle);
         return;
     }

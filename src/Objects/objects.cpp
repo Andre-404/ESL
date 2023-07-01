@@ -30,7 +30,7 @@ size_t Obj::getSize(){
 string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(type){
         case +ObjType::STRING: return reinterpret_cast<ObjString*>(this)->str;
-        case +ObjType::FUNC: return "<" + reinterpret_cast<ObjFunc*>(this)->name + ">";;
+       // case +ObjType::FUNC: return "<" + reinterpret_cast<ObjFunc*>(this)->name + ">";;
         case +ObjType::ARRAY:{
             ObjArray* arr = reinterpret_cast<ObjArray*>(this);
             string str = "[";

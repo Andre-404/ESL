@@ -120,7 +120,7 @@ EXPORT Value createHashMap(int nFields, ...){
 }
 
 EXPORT Value createFunc(char* fn, int arity, char* name){
-    auto func = new object::ObjFunc(arity, reinterpret_cast<void*>(fn));
+    auto func = new object::ObjFunc(arity, fn);
     func->name = name;
     return encodeObj(func);
 }
@@ -144,4 +144,8 @@ EXPORT Value createClosure(Value fn, int upvalCount, ...){
     }
     va_end(ap);
     return encodeObj(closure);
+}
+
+EXPORT void addGCRoot(Value* ptr){
+    memory::gc->addGlobalRoot(ptr);
 }
