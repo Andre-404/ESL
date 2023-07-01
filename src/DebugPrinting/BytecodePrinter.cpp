@@ -281,11 +281,11 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		std::cout << std::endl;
 
 		object::ObjFunc* function = asFunction(chunk->constants[constant]);
-		for (int j = 0; j < function->upvalueCount; j++) {
+		/*for (int j = 0; j < function->upvalueCount; j++) {
 			int isLocal = chunk->bytecode[offset++];
 			int index = chunk->bytecode[offset++];
 			std::cout << fmt::format("{:0>4d}    |                     {} index: {}\n", offset - 2, isLocal ? "local" : "upvalue", index) << std::endl;
-		}
+		}*/
 		return offset;
 	}
 	case +OpCode::CLOSURE_LONG: {
@@ -297,11 +297,11 @@ int disassembleInstruction(Chunk* chunk, int offset, int constantsOffset) {
 		std::cout << std::endl;
 
 		object::ObjFunc* function = asFunction(chunk->constants[constant]);
-		for (int j = 0; j < function->upvalueCount; j++) {
+		/*for (int j = 0; j < function->upvalueCount; j++) {
 			int isLocal = chunk->bytecode[offset++];
 			int index = chunk->bytecode[offset++];
 			std::cout << fmt::format("{:0>4d}    |                     {} index: {}\n", offset - 2, isLocal ? "local" : "upvalue", index) << std::endl;
-		}
+		}*/
 		return offset;
 	}
 	case +OpCode::LAUNCH_ASYNC:

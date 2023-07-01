@@ -146,6 +146,8 @@ struct ESLModule {
     // Used for topsort once we have resolved all dependencies
     bool traversed;
 
+    int id;
+
     // AST of this file
     vector<std::shared_ptr<AST::ASTNode>> stmts;
     // Exported declarations
@@ -153,10 +155,13 @@ struct ESLModule {
     // Used by the compiler to look up if a global variable exists since globals are late bound
     vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
 
+    static int count;
+
     ESLModule(vector<Token> _tokens, File* _file) {
         tokens = _tokens;
         file = _file;
         resolvedDeps = false;
         traversed = false;
+        id = count++;
     };
 };

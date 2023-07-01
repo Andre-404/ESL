@@ -39,8 +39,8 @@ namespace object {
     };
 
 
-    // Pointer to a native C++ function
-    using Function = void*;
+    // Pointer to a compiled function
+    using Function = char*;
 
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
@@ -70,11 +70,10 @@ namespace object {
     class ObjFunc : public Obj {
     public:
         Function func;
-        string name;
+        char* name;
         // A function can have a maximum of 255 parameters
-        byte arity;
-        int upvalueCount;
-        ObjFunc();
+        int arity;
+        ObjFunc(int _arity, Function _func);
     };
 
     class ObjUpval : public Obj {
@@ -89,7 +88,7 @@ namespace object {
         ObjFunc* func;
         ObjUpval** upvals;
         int upvalCount;
-        ObjClosure(ObjFunc* _func);
+        ObjClosure(ObjFunc* _func, int upvalCount);
     };
 
     // Parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class

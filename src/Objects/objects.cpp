@@ -126,19 +126,19 @@ ObjString* ObjString::createStr(string str){
 #pragma endregion
 
 #pragma region ObjFunction
-ObjFunc::ObjFunc() {
-	arity = 0;
-	upvalueCount = 0;
+ObjFunc::ObjFunc(int _arity, Function _func) {
+	arity = _arity;
 	type = +ObjType::FUNC;
-	name = "";
+	name = nullptr;
+    func = _func;
     marked = false;
 }
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(ObjFunc* _func) {
+ObjClosure::ObjClosure(ObjFunc* _func, int upvalCount) {
 	func = _func;
-	upvals = new object::ObjUpval*[func->upvalueCount];
+	upvals = new object::ObjUpval*[upvalCount];
     marked = false;
 	type = +ObjType::CLOSURE;
 }

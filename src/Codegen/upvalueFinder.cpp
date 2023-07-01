@@ -10,10 +10,8 @@ using namespace object;
 using namespace valueHelpers;
 
 
+#pragma region Visitor
 CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing){
-    upvalues = std::array<Upvalue, 256>();
-    localCount = 0;
-    upvalCount = 0;
     scopeDepth = 0;
     enclosing = _enclosing;
 }
@@ -29,10 +27,14 @@ UpvalueFinder::UpvalueFinder(vector<ESLModule*>& _units) {
     delete current;
 }
 
+std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> UpvalueFinder::generateUpvalueMap(){
+    return upvalueMap;
+}
+
 void UpvalueFinder::visitAssignmentExpr(AST::AssignmentExpr* expr) {
-    // First check rhs, then the variable that is being assigned to
+    // First check rhs, then the variable that is being assigned to, this avoids use-before-define
     expr->value->accept(this);
-    namedVar(expr->name, true);
+    namedVar(expr->name);
 }
 
 void UpvalueFinder::visitSetExpr(AST::SetExpr* expr) {
@@ -107,18 +109,18 @@ void UpvalueFinder::visitStructLiteralExpr(AST::StructLiteral* expr) {
 }
 
 void UpvalueFinder::visitSuperExpr(AST::SuperExpr* expr) {
-    namedVar(Token(TokenType::IDENTIFIER, "this"), false);
+    namedVar(Token(TokenType::IDENTIFIER, "this"));
 }
 
 void UpvalueFinder::visitLiteralExpr(AST::LiteralExpr* expr) {
     switch (expr->token.type) {
         case TokenType::THIS: {
             //'this' gets implicitly defined by the compiler
-            namedVar(expr->token, false);
+            namedVar(expr->token);
             break;
         }
         case TokenType::IDENTIFIER: {
-            namedVar(expr->token, false);
+            namedVar(expr->token);
             break;
         }
     }
@@ -136,6 +138,7 @@ void UpvalueFinder::visitFuncLiteral(AST::FuncLiteral* expr) {
         stmt->accept(this);
     }
     auto temp = current->enclosing;
+    upvalueMap[expr] = current->upvalues;
     delete current;
     current = temp;
 }
@@ -211,9 +214,7 @@ void UpvalueFinder::visitIfStmt(AST::IfStmt* stmt) {
 
 void UpvalueFinder::visitWhileStmt(AST::WhileStmt* stmt) {
     stmt->condition->accept(this);
-    beginScope();
     stmt->body->accept(this);
-    endScope();
 }
 
 void UpvalueFinder::visitForStmt(AST::ForStmt* stmt) {
@@ -235,9 +236,7 @@ void UpvalueFinder::visitContinueStmt(AST::ContinueStmt* stmt) {}
 void UpvalueFinder::visitSwitchStmt(AST::SwitchStmt* stmt) {
     stmt->expr->accept(this);
     for (const std::shared_ptr<AST::CaseStmt>& _case : stmt->cases) {
-        beginScope();
         _case->accept(this);
-        endScope();
     }
 }
 
@@ -252,13 +251,12 @@ void UpvalueFinder::visitAdvanceStmt(AST::AdvanceStmt* stmt) {}
 void UpvalueFinder::visitReturnStmt(AST::ReturnStmt* stmt) {
     if (stmt->expr != nullptr) stmt->expr->accept(this);
 }
+#pragma endregion
 
 #pragma region helpers
 
-#pragma region Variables
-
 // If a local is found to be accessed by a closure, it's turned into a local upvalue
-void UpvalueFinder::namedVar(Token token, bool canAssign) {
+void UpvalueFinder::namedVar(Token token) {
     int arg = resolveLocal(token);
     if(arg == -1) resolveUpvalue(current, token);
 }
@@ -269,25 +267,23 @@ void UpvalueFinder::declareGlobalVar(AST::ASTVar& var) {
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
 void UpvalueFinder::declareLocalVar(AST::ASTVar& var) {
-    for (int i = current->localCount - 1; i >= 0; i--) {
+    for (int i = current->locals.size() - 1; i >= 0; i--) {
         Local* local = &current->locals[i];
         if (local->depth != -1 && local->depth < current->scopeDepth) {
             break;
         }
         string str = var.name.getLexeme();
         if (str.compare(local->var->name.getLexeme()) == 0) {
-
+            return;
         }
     }
     addLocal(var);
 }
 
 void UpvalueFinder::addLocal(AST::ASTVar& var) {
-    if (current->localCount == 256) {
-        return;
-    }
     var.type = AST::ASTVarType::LOCAL;
-    Local* local = &current->locals[current->localCount++];
+    current->locals.emplace_back();
+    Local* local = &current->locals.back();
     local->var = &var;
     local->depth = -1;
 }
@@ -297,15 +293,15 @@ void UpvalueFinder::beginScope() {
 }
 
 void UpvalueFinder::endScope() {
-    current->scopeDepth--;//first lower the scope, the check for every var that is deeper than the current scope
-    while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth) {
-        current->localCount--;
+    current->scopeDepth--;// First lower the scope, the check for every var that is deeper than the current scope
+    while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
+        current->locals.pop_back();
     }
 }
 
 int UpvalueFinder::resolveLocal(CurrentChunkInfo* func, Token name) {
-    //checks to see if there is a local variable with a provided name, if there is return the index of the stack slot of the var
-    for (int i = func->localCount - 1; i >= 0; i--) {
+    // Checks to see if there is a local variable with a provided name, if there is return the index of the stack slot of the var
+    for (int i = func->locals.size() - 1; i >= 0; i--) {
         Local* local = &func->locals[i];
         string str = name.getLexeme();
         if (str.compare(local->var->name.getLexeme()) == 0) {
@@ -325,31 +321,29 @@ int UpvalueFinder::resolveUpvalue(CurrentChunkInfo* func, Token name) {
 
     int local = resolveLocal(func->enclosing, name);
     if (local != -1) {
-        return addUpvalue(func, (uint8_t)local, true);
+        return addUpvalue(func, local, true, name.getLexeme());
     }
     int upvalue = resolveUpvalue(func->enclosing, name);
     if (upvalue != -1) {
-        return addUpvalue(func, (uint8_t)upvalue, false);
+        return addUpvalue(func, upvalue, false, name.getLexeme());
     }
 
     return -1;
 }
 
-int UpvalueFinder::addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal) {
-    int upvalueCount = func->upvalCount;
+int UpvalueFinder::addUpvalue(CurrentChunkInfo* func, int index, bool isLocal, string name) {
     // First check if this upvalue has already been captured
-    for (int i = 0; i < upvalueCount; i++) {
+    for (int i = 0; i < func->upvalues.size(); i++) {
         Upvalue* upval = &func->upvalues[i];
         if (upval->index == index && upval->isLocal == isLocal) {
             return i;
         }
     }
-    if (upvalueCount == 256) return -1;
-    func->upvalues[upvalueCount].isLocal = isLocal;
-    func->upvalues[upvalueCount].index = index;
+    // Record the upvalue in this function, this could be an upvalue that directly used by this function,
+    // or this function could be acting as the middle man to bring an upvalue from an enclosing function to a child inside it
+    func->upvalues.emplace_back(index, isLocal, name);
+    // If the recorded value is a local in the enclosing function, mark it as an upvalue
     if(isLocal) func->enclosing->locals[index].var->type = AST::ASTVarType::LOCAL_UPVALUE;
-    return func->upvalCount++;
+    return func->upvalues.size() - 1;
 }
-
-#pragma endregion
 #pragma endregion

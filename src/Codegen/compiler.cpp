@@ -18,45 +18,25 @@
 
 using namespace compileCore;
 using namespace object;
-//using namespace valueHelpers;
 
-
-#ifdef COMPILER_USE_LONG_INSTRUCTION
-#define SHORT_CONSTANT_LIMIT 0
-#else
-#define SHORT_CONSTANT_LIMIT UINT8_MAX
-#endif
-
-//only checks the closest loop/switch, since any break, continue or advance is going to break out of that loop/switch
-#define CHECK_SCOPE_FOR_LOOP (current->scopeWithLoop.size() > 0 && local.depth <= current->scopeWithLoop.back())
-#define CHECK_SCOPE_FOR_SWITCH (current->scopeWithSwitch.size() > 0 && local.depth <= current->scopeWithSwitch.back())
-
-CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type) : enclosing(_enclosing), type(_type) {
-    upvalues = std::array<Upvalue, UPVAL_MAX>();
+CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, llvm::Function* _func) {
     hasReturnStmt = false;
     hasCapturedLocals = false;
-    localCount = 0;
-    scopeDepth = 0;
+    enclosing = _enclosing;
+    type = _type;
     line = 0;
-    // If a constructor or a method is being compiled, it implicitly declares "this" as the first slot
-    if (!(type == FuncType::TYPE_CONSTRUCTOR || type == FuncType::TYPE_METHOD)) {
-        // First slot is claimed for function name
-        Local* local = &locals[localCount++];
-        local->depth = 0;
-        local->name = "";
-    }
-    chunk = Chunk();
+    func = _func;
 }
-
 
 
 Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     upvalueFinder::UpvalueFinder f(_units);
-    current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT);
+    upvalueMap = f.generateUpvalueMap();
+
     currentClass = nullptr;
     curUnitIndex = 0;
-    curGlobalIndex = 0;
     units = _units;
+    BBTerminated = false;
 
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
     llvm::InitializeNativeTarget();
@@ -67,17 +47,18 @@ Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
     curModule->setDataLayout(JIT->getDataLayout());
     curModule->setTargetTriple(targetTriple);
 
-    llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder);
+    llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
 
     compile();
     llvmHelpers::runModule(curModule, JIT, ctx, true);
+
 }
 
 void Compiler::compile(){
-    // Create a new basic block to start insertion into.
-    llvm::FunctionType *FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
-    llvm::Function *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "anon", curModule.get());
-    llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
+    llvm::FunctionType* FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
+    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "mainFn", curModule.get());
+    current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, tmpfn);
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", current->func);
     builder.SetInsertPoint(BB);
     curModule->getOrInsertGlobal("gcFlag", builder.getInt8PtrTy());
 
@@ -85,11 +66,17 @@ void Compiler::compile(){
         curUnit = unit;
         sourceFiles.push_back(unit->file);
         for (const auto decl : unit->topDeclarations) {
-            globals.emplace_back(decl->getName().getLexeme(), encodeNil());
-            definedGlobals.push_back(false);
+            string varName = unit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
+            // TODO: add this pointer to the gc
+            curModule->getOrInsertGlobal(varName, builder.getInt64Ty());
+            llvm::GlobalVariable* gvar = curModule->getNamedGlobal(varName);
+            gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
+            gvar->setAlignment(llvm::Align::Of<Value>());
+            gvar->setInitializer(builder.getInt64(encodeNil()));
+            globals.insert_or_assign(varName, Globalvar(decl->getType(), gvar));
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
-            //doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
+            // Doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
             try {
                 unit->stmts[i]->accept(this);
             }
@@ -97,16 +84,14 @@ void Compiler::compile(){
                 // Do nothing, only used for unwinding the stack
             }
         }
-        curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    for (ESLModule* unit : units) delete unit;
 
-    //Temporary
-    builder.CreateCall(curModule->getFunction("print"), returnValue);
+    // Ends the main function
     builder.CreateRetVoid();
-    llvm::verifyFunction(*F);
+    llvm::verifyFunction(*current->func);
     curModule->print(llvm::errs(), nullptr);
+    for (ESLModule* unit : units) delete unit;
 }
 
 static Token probeToken(AST::ASTNodePtr ptr){
@@ -121,7 +106,9 @@ static bool isLiteralThis(AST::ASTNodePtr ptr){
 }
 
 void Compiler::visitAssignmentExpr(AST::AssignmentExpr* expr) {
-
+    llvm::Value* rhs = evalASTExpr(expr->value);
+    storeToVar(expr->name, rhs);
+    returnValue = rhs;
 }
 
 void Compiler::visitSetExpr(AST::SetExpr* expr) {
@@ -134,8 +121,6 @@ void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
 
-
-    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
     llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(*ctx, "condexpr.then", func);
     llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(*ctx, "condexpr.else");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "condexpr.merge");
@@ -389,7 +374,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
     updateLine(expr->op);
     //incrementing and decrementing a variable or an object field is optimized using INCREMENT opcode
     //the value from a variable is fetched, incremented/decremented and put into back into the variable in a single dispatch iteration
-    if (expr->op.type == TokenType::INCREMENT || expr->op.type == TokenType::DECREMENT) {
+    /*if (expr->op.type == TokenType::INCREMENT || expr->op.type == TokenType::DECREMENT) {
         int arg = -1;
         //type definition and arg size
         //0: local(8bit index), 1: local upvalue(8bit index), 2: upvalue(8bit index), 3: global(8bit constant), 4: global(16bit constant)
@@ -457,7 +442,7 @@ void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
         if (arg != -1) arg > SHORT_CONSTANT_LIMIT ? emit16Bit(arg) : emitByte(arg);
 
         return;
-    }
+    }*/
 
     // Regular unary operations
     if (expr->isPrefix) {
@@ -537,29 +522,31 @@ void Compiler::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
 
 void Compiler::visitCallExpr(AST::CallExpr* expr) {
     // Invoking is field access + call, when the compiler recognizes this pattern it optimizes
-    if (invoke(expr)) return;
+    /*if (invoke(expr)) return;
     //todo: tail recursion optimization
     expr->callee->accept(this);
     for (AST::ASTNodePtr arg : expr->args) {
         arg->accept(this);
     }
-    emitBytes(+OpCode::CALL, expr->args.size());
+    emitBytes(+OpCode::CALL, expr->args.size());*/
+    auto arg = evalASTExpr(expr->args[0]);
+    builder.CreateCall(curModule->getFunction("print"), arg);
 }
 
 void Compiler::visitNewExpr(AST::NewExpr* expr){
     // Parser guarantees that expr->call->callee is either a literal or a module access
-    auto klass = getClassFromExpr(expr->call->callee);
+    /*auto klass = getClassFromExpr(expr->call->callee);
 
     emitConstant(encodeObj(klass));
 
     for (AST::ASTNodePtr arg : expr->call->args) {
         arg->accept(this);
     }
-    emitBytes(+OpCode::CALL, expr->call->args.size());
+    emitBytes(+OpCode::CALL, expr->call->args.size());*/
 }
 
 void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
-    updateLine(expr->accessor);
+    /*updateLine(expr->accessor);
     //array[index] or object["propertyAsString"]
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         expr->callee->accept(this);
@@ -573,7 +560,7 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     uint16_t name = identifierConstant(probeToken(expr->field));
     if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
     else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, name);
-    return;
+    return;*/
 }
 
 void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
@@ -596,7 +583,7 @@ void Compiler::visitStructLiteralExpr(AST::StructLiteral* expr) {
 static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::unordered_dense::map<object::ObjString*, Obj*>& map);
 
 void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
-    int name = identifierConstant(expr->methodName);
+    /*int name = identifierConstant(expr->methodName);
     if (currentClass == nullptr) {
         error(expr->methodName, "Can't use 'super' outside of a class.");
     }
@@ -612,7 +599,7 @@ void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
     namedVar(syntheticToken("this"), false);
     emitConstant(encodeObj(currentClass->klass->superclass));
     if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
-    else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
+    else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);*/
 }
 
 void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
@@ -641,31 +628,41 @@ void Compiler::visitLiteralExpr(AST::LiteralExpr* expr) {
             returnValue = builder.CreateCall(curModule->getFunction("createStr"), str);
             break;
         }
-
+        /*
         case TokenType::THIS: {
             if (currentClass == nullptr) error(expr->token, "Can't use keyword 'this' outside of a class.");
             //'this' get implicitly defined by the compiler
             namedVar(expr->token, false);
             break;
-        }
+        }*/
         case TokenType::IDENTIFIER: {
-            namedVar(expr->token, false);
+            returnValue = readVar(expr->token);
             break;
         }
     }
 }
 
 void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
-    //creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-    //is stored in parserCurrent->enclosing
-    current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
-    //no need for a endScope, since returning from the function discards the entire callstack
+    // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
+    // is stored in parserCurrent->enclosing
+    auto upvalsToCapture = upvalueMap.at(expr);
+    createNewFunc(expr->arity + (upvalsToCapture.size() > 0 ? 1 : 0), "Anonymous function", FuncType::TYPE_FUNC);
+    // Essentially pushes all upvalues to the machine stack, the pointer to ObjUpval is stored in the vector 'upvalues'
+    for(int i = 0; i < upvalsToCapture.size(); i++){
+        auto& upval = upvalsToCapture[i];
+        auto tmp = builder.CreateCall(curModule->getFunction("getUpvalue"), {current->func->getArg(0), builder.getInt32(i)});
+        current->upvalues.emplace_back(upval.name, tmp);
+    }
+
+    // Mo need for a endScope, since returning from the function discards the entire callstack
     beginScope();
-    //we define the args as locals, when the function is called, the args will be sitting on the stack in order
-    //we just assign those positions to each arg
+    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
+    // We just assign those positions to each arg
+    // If a closure is passed(as the first arg), skip over it
+    int argIndex = upvalsToCapture.size() > 0 ? 1 : 0;
     for (AST::ASTVar& var : expr->args) {
         declareLocalVar(var);
-        defineLocalVar();
+        defineLocalVar(current->func->getArg(argIndex++));
     }
     for(auto stmt : expr->body->statements){
         try {
@@ -674,37 +671,29 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
 
         }
     }
-    current->func->arity = expr->args.size();
-    current->func->name = "Anonymous function";
-    //have to do this here since endFuncDecl() deletes the compilerInfo
-    std::array<Upvalue, UPVAL_MAX> upvals = current->upvalues;
-    ObjFunc* func = endFuncDecl();
-
-    //if there are no upvalues captured, compile the function enclosed in a closure and we're done
-    if (func->upvalueCount == 0) {
-        emitConstant(encodeObj(new ObjClosure(func)));
+    llvm::Value* func = endFuncDecl(expr->args.size(), "Anonymous function");
+    // If this lambda doesn't use any upvalues bail early and don't convert it to a closure
+    if(upvalsToCapture.size() == 0) {
+        returnValue = func;
         return;
     }
+    vector<llvm::Value*> closureConstructorArgs = {func, builder.getInt32(upvalsToCapture.size())};
 
-    uint16_t constant = makeConstant(encodeObj(func));
-    if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CLOSURE, constant);
-    else emitByteAnd16Bit(+OpCode::CLOSURE_LONG, constant);
-    //if this function does capture any upvalues, we emit the code for getting them,
-    //when we execute "OP_CLOSURE" we will check to see how many upvalues the function captures by going directly to the func->upvalueCount
-    for (int i = 0; i < func->upvalueCount; i++) {
-        emitByte(upvals[i].isLocal ? 1 : 0);
-        emitByte(upvals[i].index);
+    // Upvalues are gathered after calling endFuncDecl because it returns to the enclosing function
+    for(int i = 0; i < upvalsToCapture.size(); i++){
+        auto& upval = upvalsToCapture[i];
+        if(upval.isLocal) {
+            closureConstructorArgs.push_back(current->locals[upval.index].val);
+        }else{
+            closureConstructorArgs.push_back(current->upvalues[upval.index].val);
+        }
     }
+    // Create the closure and stuff the upvalues in it
+    returnValue = builder.CreateCall(curModule->getFunction("createClosure"), closureConstructorArgs);
 }
 
 void Compiler::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
-    uint16_t arg = resolveModuleVariable(expr->moduleName, expr->ident);
-
-    if (arg > SHORT_CONSTANT_LIMIT) {
-        emitByteAnd16Bit(+OpCode::GET_GLOBAL_LONG, arg);
-        return;
-    }
-    emitBytes(+OpCode::GET_GLOBAL, arg);
+    returnValue = resolveModuleVariable(expr->moduleName, expr->ident);
 }
 
 // This shouldn't ever be visited as every macro should be expanded before compilation
@@ -713,55 +702,52 @@ void Compiler::visitMacroExpr(AST::MacroExpr* expr) {
 }
 
 void Compiler::visitAsyncExpr(AST::AsyncExpr* expr) {
-    updateLine(expr->token);
+   /*updateLine(expr->token);
     expr->callee->accept(this);
     for (AST::ASTNodePtr arg : expr->args) {
         arg->accept(this);
     }
-    emitBytes(+OpCode::LAUNCH_ASYNC, expr->args.size());
+    emitBytes(+OpCode::LAUNCH_ASYNC, expr->args.size());*/
 }
 
 void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
-    updateLine(expr->token);
+    /*updateLine(expr->token);
     expr->expr->accept(this);
-    emitByte(+OpCode::AWAIT);
+    emitByte(+OpCode::AWAIT);*/
 }
 
 void Compiler::visitVarDecl(AST::VarDecl* decl) {
-    uint16_t global;
+    string global;
     if(decl->var.type == AST::ASTVarType::GLOBAL){
         global = declareGlobalVar(decl->var.name);
     }else declareLocalVar(decl->var);
+
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
-    AST::ASTNodePtr expr = decl->value;
-    if (expr == nullptr) {
-        emitByte(+OpCode::NIL);
+    llvm::Value* initializer = builder.getInt64(encodeNil());
+    if (decl->value != nullptr) {
+        initializer = evalASTExpr(decl->value);
     }
-    else {
-        expr->accept(this);
-    }
+
     if(decl->var.type == AST::ASTVarType::GLOBAL){
-        defineGlobalVar(global);
-        if(global <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_GLOBAL, global);
-        else emitByteAnd16Bit(+OpCode::SET_GLOBAL_LONG, global);
-        emitByte(+OpCode::POP);
-    }else defineLocalVar();
+        defineGlobalVar(global, initializer);
+    }else defineLocalVar(initializer);
 }
 
 void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
-    uint16_t index = declareGlobalVar(decl->getName());
+    string name = declareGlobalVar(decl->getName());
     // Defining the function here to allow for recursion
-    defineGlobalVar(index);
-    //creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
+    defineGlobalVar(name, builder.getInt64(encodeNil()));
+    // Creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
     //is stored in parserCurrent->enclosing
-    current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC);
-    //no need for a endScope, since returning from the function discards the entire callstack
+    createNewFunc(decl->arity, decl->getName().getLexeme(), FuncType::TYPE_FUNC);
+    // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
-    //we define the args as locals, when the function is called, the args will be sitting on the stack in order
-    //we just assign those positions to each arg
+    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
+    // we just assign those positions to each arg
+    int i = 0;
     for (AST::ASTVar& var : decl->args) {
         declareLocalVar(var);
-        defineLocalVar();
+        defineLocalVar(current->func->getArg(i++));
     }
     for(auto stmt : decl->body->statements){
         try {
@@ -770,23 +756,13 @@ void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
 
         }
     }
-    current->func->arity = decl->args.size();
-    current->func->name = decl->getName().getLexeme();
-    //have to do this here since endFuncDecl() deletes the compilerInfo
-    std::array<Upvalue, UPVAL_MAX> upvals = current->upvalues;
-
-    ObjFunc* func = endFuncDecl();
-
-    //Not possible but just in case
-    if(func->upvalueCount != 0){
-        error(decl->getName(), "Global function with upvalues detected, aborting...");
-    }
-    // Assigning at compile time to save on bytecode
-    globals[index].val = encodeObj(new ObjClosure(func));
+    llvm::Value* func = endFuncDecl(decl->args.size(), decl->getName().getLexeme());
+    // Store directly to global var since name is the full symbol
+    builder.CreateStore(func, globals.at(name).val);
 }
 
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
-    Token className = decl->getName();
+    /*Token className = decl->getName();
     uInt16 index = declareGlobalVar(className);
     auto klass = new object::ObjClass(className.getLexeme(), nullptr);
 
@@ -833,7 +809,7 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
         //At this point the name is guaranteed to exist as a string, so createStr just returns the already created string
         klass->methods[ObjString::createStr((_method.isPublic ? "" : "!") + _method.method->getName().getLexeme())] = method(_method.method.get(), className);
     }
-    currentClass = nullptr;
+    currentClass = nullptr;*/
 }
 
 void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
@@ -841,6 +817,7 @@ void Compiler::visitExprStmt(AST::ExprStmt* stmt) {
 }
 
 void Compiler::visitBlockStmt(AST::BlockStmt* stmt) {
+    beginScope();
     for (AST::ASTNodePtr node : stmt->statements) {
         try {
             node->accept(this);
@@ -848,6 +825,7 @@ void Compiler::visitBlockStmt(AST::BlockStmt* stmt) {
 
         }
     }
+    endScope();
 }
 
 void Compiler::visitIfStmt(AST::IfStmt* stmt) {
@@ -856,7 +834,6 @@ void Compiler::visitIfStmt(AST::IfStmt* stmt) {
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
 
-    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
     llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(*ctx, "if.then", func);
     llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(*ctx, "if.else");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "if.merge");
@@ -866,13 +843,13 @@ void Compiler::visitIfStmt(AST::IfStmt* stmt) {
 
     builder.SetInsertPoint(thenBB);
     stmt->thenBranch->accept(this);
-    builder.CreateBr(mergeBB);
+    endControlFlowBB(mergeBB);
 
     func->insert(func->end(), elseBB);
     builder.SetInsertPoint(elseBB);
     if(stmt->elseBranch) stmt->elseBranch->accept(this);
+    endControlFlowBB(mergeBB);
 
-    builder.CreateBr(mergeBB);
     func->insert(func->end(), mergeBB);
     // Sets the builder up to emit code after the if stmt
     builder.SetInsertPoint(mergeBB);
@@ -882,7 +859,9 @@ void Compiler::visitIfStmt(AST::IfStmt* stmt) {
 void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
     llvm::Function* func = builder.GetInsertBlock()->getParent();
 
-    llvm::BasicBlock* originalBB = builder.GetInsertBlock();
+    auto condtmp = evalASTExpr(stmt->condition);
+    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
+
     llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*ctx, "while.loop", func);
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(*ctx, "while.cond");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
@@ -891,8 +870,6 @@ void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
     continueJumpDest.push_back(condBB);
     breakJumpDest.push_back(mergeBB);
 
-    auto condtmp = evalASTExpr(stmt->condition);
-    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
 
     // If check before do-while
     builder.CreateCondBr(cond, loopBB, mergeBB);
@@ -900,21 +877,28 @@ void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
     // Loop body
     builder.SetInsertPoint(loopBB);
     stmt->body->accept(this);
-    // Unconditional fallthrough to condition check
-    builder.CreateBr(condBB);
+    // If the current BB ends with a break/continue/advance/return, don't emit the final break since this basic block is already terminated
+    if(BBTerminated) {
+        // Reset flag since the break/continue/advance/return statement has been handled
+        BBTerminated = false;
+    }
+    else {
+        // Unconditional fallthrough to condition block
+        builder.CreateBr(condBB);
 
-    func->insert(func->end(), condBB);
-    builder.SetInsertPoint(condBB);
-    // Eval the condition again
-    condtmp = evalASTExpr(stmt->condition);
-    cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
-    // Conditional jump to beginning of body(if cond is true), or to the end of the loop
-    builder.CreateCondBr(cond, loopBB, mergeBB);
+        // Only compile the condition if the loop bb hasn't been terminated, no point in compiling it if it has no predecessors
+        func->insert(func->end(), condBB);
+        builder.SetInsertPoint(condBB);
+        // Eval the condition again
+        condtmp = evalASTExpr(stmt->condition);
+        cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
+        // Conditional jump to beginning of body(if cond is true), or to the end of the loop
+        builder.CreateCondBr(cond, loopBB, mergeBB);
+    }
 
     func->insert(func->end(), mergeBB);
     // Sets the builder up to emit code after the while stmt
     builder.SetInsertPoint(mergeBB);
-
     // Pop destinations so that any break/continue for an outer loop works correctly
     continueJumpDest.pop_back();
     breakJumpDest.pop_back();
@@ -922,7 +906,7 @@ void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
 
 void Compiler::visitForStmt(AST::ForStmt* stmt) {
     //we wrap this in a scope so if there is a var declaration in the initialization it's scoped to the loop
-    beginScope();
+   /* beginScope();
     if (stmt->init != nullptr) stmt->init->accept(this);
     //if check to see if the condition is true the first time
     int exitJump = -1;
@@ -962,20 +946,22 @@ void Compiler::visitForStmt(AST::ForStmt* stmt) {
     }
     if (exitJump != -1) patchJump(exitJump);
     patchScopeJumps(ScopeJumpType::BREAK);
-    endScope();
+    endScope();*/
 }
 
-// Simple no-cond jump to whichever block is at the top of the stack
+// Simple no-cond jump to whichever block is at the top of the breakJumpDest stack
 void Compiler::visitBreakStmt(AST::BreakStmt* stmt) {
     builder.CreateBr(breakJumpDest.back());
+    BBTerminated = true;
 }
-// Simple no-cond jump to whichever block is at the top of the stack
+// Simple no-cond jump to whichever block is at the top of the continueJumpDest stack
 void Compiler::visitContinueStmt(AST::ContinueStmt* stmt) {
     builder.CreateBr(continueJumpDest.back());
+    BBTerminated = true;
 }
 
 void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
-    current->scopeWithSwitch.push_back(current->scopeDepth);
+    /*current->scopeWithSwitch.push_back(current->scopeDepth);
     //compile the expression in parentheses
     stmt->expr->accept(this);
     vector<uint16_t> constants;
@@ -1076,7 +1062,7 @@ void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
         patchJump(jmp);
     }
     current->scopeWithSwitch.pop_back();
-    patchScopeJumps(ScopeJumpType::BREAK);
+    patchScopeJumps(ScopeJumpType::BREAK);*/
 }
 
 void Compiler::visitCaseStmt(AST::CaseStmt* stmt) {
@@ -1089,6 +1075,7 @@ void Compiler::visitCaseStmt(AST::CaseStmt* stmt) {
 // Simple no-cond jump to the next basic block in the current switch
 void Compiler::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     builder.CreateBr(advanceJumpDest.back());
+    BBTerminated = true;
 }
 
 void Compiler::visitReturnStmt(AST::ReturnStmt* stmt) {
@@ -1107,225 +1094,158 @@ void Compiler::visitReturnStmt(AST::ReturnStmt* stmt) {
     }
     auto rettmp = evalASTExpr(stmt->expr);
     builder.CreateRet(rettmp);
+    // Ret is considered a basic block terminator
+    BBTerminated = true;
 }
 
 #pragma region helpers
 
-#pragma region Emitting bytes
-
-void Compiler::emitByte(byte byte) {
-    //line is incremented whenever we find a statement/expression that contains tokens
-    getChunk()->writeData(byte, current->line, sourceFiles.size() - 1);
-}
-
-void Compiler::emitBytes(byte byte1, byte byte2) {
-    emitByte(byte1);
-    emitByte(byte2);
-}
-
-void Compiler::emit16Bit(uInt16 number) {
-    //Big endian
-    emitBytes((number >> 8) & 0xff, number & 0xff);
-}
-
-void Compiler::emitByteAnd16Bit(byte byte, uInt16 num) {
-    emitByte(byte);
-    emit16Bit(num);
-}
-
-uint16_t Compiler::makeConstant(Value value) {
-    uInt constant = getChunk()->addConstant(value);
-    if (constant > UINT16_MAX) {
-        error("Too many constants in one chunk.");
-    }
-    return constant;
-}
-
-void Compiler::emitConstant(Value value) {
-    // Shorthand for adding a constant to the chunk and emitting it
-    uint16_t constant = makeConstant(value);
-    if (constant <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::CONSTANT, constant);
-    else emitByteAnd16Bit(+OpCode::CONSTANT_LONG, constant);
-}
-
 void Compiler::emitReturn() {
     llvm::Value* rettmp;
-    //in a constructor, the first local variable refers to the new instance of a class('this')
-    // TODO: create ret val for constructors
-    if (current->type == FuncType::TYPE_CONSTRUCTOR) emitBytes(+OpCode::GET_LOCAL, 0);
+    // In a constructor, the first local variable refers to the new instance of a class('this')
+    if (current->type == FuncType::TYPE_CONSTRUCTOR) {
+        // First spot in the locals slot is occupied by 'this' instance
+        rettmp = builder.CreateCall(curModule->getFunction("encodeObj"), current->locals[0].val);
+    }
     else rettmp = builder.getInt64(encodeNil());
     builder.CreateRet(rettmp);
 }
 
-int Compiler::emitJump(byte jumpType) {
-    emitByte(jumpType);
-    emitBytes(0xff, 0xff);
-    return getChunk()->bytecode.size() - 2;
-}
-
-void Compiler::patchJump(int offset) {
-    // -2 to adjust for the bytecode for the jump offset itself.
-    int jump = getChunk()->bytecode.size() - offset - 2;
-    //fix for future: insert 2 more bytes into the array, but make sure to do the same in lines array
-    if (jump > UINT16_MAX) {
-        error("Too much code to jump over.");
+void Compiler::endControlFlowBB(llvm::BasicBlock* dest){
+    // If the current BB ends with a break/continue/advance/return, don't emit the final break since this basic block is already terminated
+    if(BBTerminated) {
+        // Reset flag since the break/continue/advance/return statement has been handled
+        BBTerminated = false;
     }
-    getChunk()->bytecode[offset] = (jump >> 8) & 0xff;
-    getChunk()->bytecode[offset + 1] = jump & 0xff;
-}
-
-void Compiler::emitLoop(int start) {
-    emitByte(+OpCode::LOOP_IF_TRUE);
-
-    int offset = getChunk()->bytecode.size() - start + 2;
-    if (offset > UINT16_MAX) error("Loop body too large.");
-
-    emit16Bit(offset);
-}
-
-void Compiler::patchScopeJumps(ScopeJumpType type) {
-    int curCode = getChunk()->bytecode.size();
-    //most recent jumps are going to be on top
-    for (int i = current->scopeJumps.size() - 1; i >= 0; i--) {
-        uint32_t jumpPatchPos = current->scopeJumps[i];
-        byte jumpType = getChunk()->bytecode[jumpPatchPos - 1];
-        uint32_t jumpDepth = (getChunk()->bytecode[jumpPatchPos] << 8) | getChunk()->bytecode[jumpPatchPos + 1];
-        uint32_t toPop = getChunk()->bytecode[jumpPatchPos + 2];
-        //break and advance statements which are in a strictly deeper scope get patched, on the other hand
-        //continue statements which are in parserCurrent or a deeper scope get patched
-        if (jumpDepth > current->scopeDepth && +type == jumpType) {
-            int jumpLength = curCode - jumpPatchPos - 3;
-            if (jumpLength > UINT16_MAX) error("Too much code to jump over.");
-            if (toPop > UINT8_MAX) error("Too many variables to pop.");
-
-            getChunk()->bytecode[jumpPatchPos - 1] = +OpCode::JUMP_POPN;
-            //variables declared by the time we hit the break whose depth is lower or equal to this break stmt
-            getChunk()->bytecode[jumpPatchPos] = toPop;
-            //amount to jump
-            getChunk()->bytecode[jumpPatchPos + 1] = (jumpLength >> 8) & 0xff;
-            getChunk()->bytecode[jumpPatchPos + 2] = jumpLength & 0xff;
-
-            current->scopeJumps.erase(current->scopeJumps.begin() + i);
-        }
-            //any jump after the one that has a depth lower than the parserCurrent one will also have a lower depth, thus we bail
-        else if (jumpDepth < current->scopeDepth) break;
+    else {
+        // Unconditional fallthrough to destination block
+        builder.CreateBr(dest);
     }
 }
-
-#pragma endregion
 
 #pragma region Variables
 
-//creates a string constant from a token
-uint16_t Compiler::identifierConstant(Token name) {
-    updateLine(name);
-    string temp = name.getLexeme();
-    return makeConstant(encodeObj(ObjString::createStr(temp)));
-}
-
-// If this is a local var, mark it as ready and then bail out, otherwise emit code to add the variable to the global table
-void Compiler::defineGlobalVar(uInt16 index) {
-    definedGlobals[index] = true;
+void Compiler::defineGlobalVar(string global, llvm::Value* val) {
+    Globalvar& gvar = globals.at(global);
+    gvar.isDefined = true;
+    builder.CreateStore(val, gvar.val);
 }
 
 // Gets/sets a variable, respects the scoping rules(locals->upvalues->class fields(if inside a method)->globals)
-void Compiler::namedVar(Token token, bool canAssign) {
-    updateLine(token);
-    byte getOp;
-    byte setOp;
-    int arg = resolveLocal(token);
-    if (arg != -1) {
-        getOp = +OpCode::GET_LOCAL;
-        setOp = +OpCode::SET_LOCAL;
-        if(current->locals[arg].isLocalUpvalue){
-            getOp = +OpCode::GET_LOCAL_UPVALUE;
-            setOp = +OpCode::SET_LOCAL_UPVALUE;
+llvm::Value* Compiler::readVar(Token name){
+    updateLine(name);
+    int argIndex = resolveLocal(name);
+    if (argIndex != -1) {
+        if(current->locals[argIndex].isUpval){
+            llvm::Value* upvalPtr = current->locals[argIndex].val;
+            //TODO: load from upval
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+            return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadupval");
+        }else{
+            return builder.CreateLoad(builder.getInt64Ty(), current->locals[argIndex].val, "loadvar");
         }
     }
-    else if ((arg = resolveUpvalue(current, token)) != -1) {
-        getOp = +OpCode::GET_UPVALUE;
-        setOp = +OpCode::SET_UPVALUE;
+    else if ((argIndex = resolveUpvalue(name)) != -1) {
+        llvm::Value* upvalPtr = current->upvalues[argIndex].val;
+        auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+        return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadupval");
     }
-    else if((arg = resolveClassField(token, canAssign)) != -1){
-        if(current->type == FuncType::TYPE_FUNC){
-            error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
-        }
-        getOp = +OpCode::GET_PROPERTY_EFFICIENT;
-        setOp = +OpCode::SET_PROPERTY_EFFICIENT;
-        emitByteAnd16Bit((canAssign ? setOp : getOp), arg);
-        return;
-    }
-    else if((arg = resolveGlobal(token, canAssign)) != -1 && arg != -2){
-        // All global variables are stored in an array, resolveGlobal gets index into the array
-        getOp = +OpCode::GET_GLOBAL;
-        setOp = +OpCode::SET_GLOBAL;
-        // Classes cannot be accessed with variable get/set, only way they can be accessed is when inheriting,
-        // within the 'instanceof' operator and within the 'new' operator
-        if(isClass(globals[arg].val)) error(token, "Cannot access or mutate classes.");
 
-        if (arg > SHORT_CONSTANT_LIMIT) {
-            getOp = +OpCode::GET_GLOBAL_LONG;
-            setOp = +OpCode::SET_GLOBAL_LONG;
-            emitByteAnd16Bit((canAssign ? setOp : getOp), arg);
+    llvm::Value* value = nullptr;
+    if((value = resolveClassField(name, false))){
+        if(current->type == FuncType::TYPE_FUNC){
+            error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
+        }
+
+
+    }
+    else if((value = resolveGlobal(name, false))){
+        return builder.CreateLoad(builder.getInt64Ty(), value, "loadgvar");
+    }
+    string nativeName = name.getLexeme();
+    auto it = nativeFunctions.find(nativeName);
+    if(it != nativeFunctions.end()) return it->second;
+
+    error(name, fmt::format("'{}' doesn't match any declared variable name or native function name.", nativeName));
+    return nullptr;
+}
+
+void Compiler::storeToVar(Token name, llvm::Value* val){
+    int argIndex = resolveLocal(name);
+    if (argIndex != -1) {
+        if(current->locals[argIndex].isUpval){
+            llvm::Value* upvalPtr = current->locals[argIndex].val;
+            //TODO: store to upval
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+            builder.CreateStore(val, tmpEle);
+            return;
+        }else{
+            builder.CreateStore(val, current->locals[argIndex].val);
             return;
         }
     }
-    else{
-        string name = token.getLexeme();
-        auto it = nativeFuncNames.find(name);
-        if(it == nativeFuncNames.end()){
-            if(arg == -1) error(token, fmt::format("'{}' doesn't match any declared variable name or native function name.", name));
-            else if(arg == -2) error(token, fmt::format("Trying to access variable '{}' before it's initialized.", name));
-        }
-
-        emitByteAnd16Bit(+OpCode::GET_NATIVE, it->second);
+    else if ((argIndex = resolveUpvalue(name)) != -1) {
+        llvm::Value* upvalPtr = current->upvalues[argIndex].val;
+        //TODO: store to upval
+        auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], upvalPtr, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+        builder.CreateStore(val, tmpEle);
         return;
     }
-    emitBytes(canAssign ? setOp : getOp, arg);
+    // Intentionally shadows
+    llvm::Value* arg = nullptr;
+    if((arg = resolveClassField(name, true))){
+        if(current->type == FuncType::TYPE_FUNC){
+            error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
+        }
+
+
+    }
+    else if((arg = resolveGlobal(name, true))){
+        builder.CreateStore(val, arg);
+    }
+    else{
+        // No need to check for natives since they can't be assigned to
+        error(name, fmt::format("'{}' doesn't match any declared variable name or native function name.", name.getLexeme()));
+    }
 }
 
-// If 'name' is a global variable it's index in the globals array is returned
-// Otherwise, if 'name' is a local variable it's passed to declareVar()
-uint16_t Compiler::declareGlobalVar(Token name) {
+// Globals are already created at the start of compiling each module, just return the full name
+string Compiler::declareGlobalVar(Token name) {
     updateLine(name);
-    // Searches for the index of the global variable in the current file
-    // (globals.size() - curGlobalIndex = globals declared in current file)
-    int index = curGlobalIndex;
-    for (int i = curGlobalIndex; i < globals.size(); i++) {
-        if (name.getLexeme() == globals[i].name) return i;
-    }
-    // Should never be hit, but here just in case
-    error(name, "Couldn't find variable.");
-    return 0;
+    string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + name.getLexeme();
+    return fullSymbol;
 }
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
 void Compiler::declareLocalVar(AST::ASTVar& var) {
     updateLine(var.name);
-    for (int i = current->localCount - 1; i >= 0; i--) {
-        Local* local = &current->locals[i];
-        if (local->depth != -1 && local->depth < current->scopeDepth) {
+
+    for(int i = current->locals.size() - 1; i >= 0; i--){
+        Local& local = current->locals[i];
+        if (local.depth != -1 && local.depth < current->scopeDepth) {
             break;
         }
         string str = var.name.getLexeme();
-        if (str.compare(local->name) == 0) {
+        if (str.compare(local.name) == 0) {
             error(var.name, "Already a variable with this name in this scope.");
         }
     }
     addLocal(var);
 }
 
-// If a variable is declared as "
+// If this variable is an upvalue that's in this scope, mark it as such
 void Compiler::addLocal(AST::ASTVar var) {
     updateLine(var.name);
-    if (current->localCount == LOCAL_MAX) {
-        error(var.name, "Too many local variables in function.");
-        return;
+    current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::LOCAL_UPVALUE);
+    Local& local = current->locals.back();
+    // Alloca at the beginning of the function to make use of mem2reg pass
+    llvm::IRBuilder<> tempBuilder(&current->func->getEntryBlock(), current->func->getEntryBlock().begin());
+    if(!local.isUpval) {
+        local.val = tempBuilder.CreateAlloca(builder.getInt64Ty(), nullptr, var.name.getLexeme());
+    }else {
+        // Allocates an ObjUpval on the heap and returns pointer
+        local.val = tempBuilder.CreateCall(curModule->getFunction("createUpvalue"), std::nullopt, var.name.getLexeme());
     }
-    Local* local = &current->locals[current->localCount++];
-    local->name = var.name.getLexeme();
-    local->depth = -1;
-    local->isLocalUpvalue = var.type == AST::ASTVarType::LOCAL_UPVALUE;
 }
 
 void Compiler::beginScope() {
@@ -1333,30 +1253,23 @@ void Compiler::beginScope() {
 }
 
 void Compiler::endScope() {
-    //Pop every variable that was declared in this scope
-    current->scopeDepth--;//first lower the scope, the check for every var that is deeper than the parserCurrent scope
-    int toPop = 0;
-    while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth) {
-        toPop++;
-        current->localCount--;
-    }
-    if (toPop > 0) {
-        if (toPop == 1) {
-            emitByte(+OpCode::POP);
-            return;
-        }
-        emitBytes(+OpCode::POPN, toPop);
+    // Pop every variable that was declared in this scope
+    current->scopeDepth--;// First lower the scope, the check for every var that is deeper than the parserCurrent scope
+    // Pop from the stack
+    while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
+        current->locals.pop_back();
     }
 }
 
-int Compiler::resolveLocal(CurrentChunkInfo* func, Token name) {
+// Returns index of local in current func chunk info
+int Compiler::resolveLocal(Token name) {
     //checks to see if there is a local variable with a provided name, if there is return the index of the stack slot of the var
     updateLine(name);
-    for (int i = func->localCount - 1; i >= 0; i--) {
-        Local* local = &func->locals[i];
+    for (int i  = current->locals.size() - 1; i >= 0; i--) {
+        Local& local = current->locals[i];
         string str = name.getLexeme();
-        if (str.compare(local->name) == 0) {
-            if (local->depth == -1) {
+        if (str.compare(local.name) == 0) {
+            if (local.depth == -1) {
                 error(name, "Can't read local variable in its own initializer.");
             }
             return i;
@@ -1366,49 +1279,24 @@ int Compiler::resolveLocal(CurrentChunkInfo* func, Token name) {
     return -1;
 }
 
-int Compiler::resolveLocal(Token name) {
-    return resolveLocal(current, name);
-}
-
-int Compiler::resolveUpvalue(CurrentChunkInfo* func, Token name) {
-    if (func->enclosing == nullptr) return -1;
-
-    int local = resolveLocal(func->enclosing, name);
-    if (local != -1) {
-        func->enclosing->hasCapturedLocals = true;
-        return addUpvalue(func, (uint8_t)local, true);
+// UpvalueFinder already computed all upvalues this function uses from an enclosing function and stored them in func->upvalues
+int Compiler::resolveUpvalue(Token name) {
+    string upvalName = name.getLexeme();
+    for(int i = 0; i < current->upvalues.size(); i++){
+        if(upvalName == current->upvalues[i].name) return i;
     }
-    int upvalue = resolveUpvalue(func->enclosing, name);
-    if (upvalue != -1) {
-        return addUpvalue(func, (uint8_t)upvalue, false);
-    }
-
     return -1;
 }
 
-int Compiler::addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal) {
-    int upvalueCount = func->func->upvalueCount;
-    //first check if this upvalue has already been captured
-    for (int i = 0; i < upvalueCount; i++) {
-        Upvalue* upval = &func->upvalues[i];
-        if (upval->index == index && upval->isLocal == isLocal) {
-            return i;
-        }
-    }
-    if (upvalueCount == UPVAL_MAX) {
-        error("Too many closure variables in function.");
-        return 0;
-    }
-    func->upvalues[upvalueCount].isLocal = isLocal;
-    func->upvalues[upvalueCount].index = index;
-    return func->func->upvalueCount++;
-}
-
 // Marks the local at the top of the stack as ready to use
-void Compiler::defineLocalVar() {
-    current->locals[current->localCount - 1].depth = current->scopeDepth;
-    if(current->locals[current->localCount - 1].isLocalUpvalue) {
-        emitBytes(+OpCode::CREATE_UPVALUE, current->localCount - 1);
+void Compiler::defineLocalVar(llvm::Value* val) {
+    current->locals.back().depth = current->scopeDepth;
+
+    if(current->locals.back().isUpval) {
+        auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjUpvalue"], current->locals.back().val, {builder.getInt32(0), builder.getInt32(0), builder.getInt32(1)}, "upvalAddr");
+        builder.CreateStore(val, tmpEle);
+    }else{
+        builder.CreateStore(val, current->locals.back().val);
     }
 }
 
@@ -1420,7 +1308,7 @@ Token Compiler::syntheticToken(string str) {
 
 #pragma region Classes and methods
 object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
-    updateLine(_method->getName());
+    /*updateLine(_method->getName());
     uint16_t name = identifierConstant(_method->getName());
     FuncType type = FuncType::TYPE_METHOD;
     // Constructors are treated separately, but are still methods
@@ -1445,11 +1333,12 @@ object::ObjClosure* Compiler::method(AST::FuncDecl* _method, Token className) {
     current->func->name = _method->getName().getLexeme();
     ObjFunc* func = endFuncDecl();
     if (func->upvalueCount != 0) error(_method->getName(), "Upvalues captured in method, aborting...");
-    return new ObjClosure(func);
+    return new ObjClosure(func);*/
+    return nullptr;
 }
 
 bool Compiler::invoke(AST::CallExpr* expr) {
-    if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
+    /*if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
         //currently we only optimizes field invoking(struct.field() or array[field]())
         auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
         if(call->accessor.type == TokenType::LEFT_BRACKET) return false;
@@ -1514,7 +1403,8 @@ bool Compiler::invoke(AST::CallExpr* expr) {
         return true;
     }
     // Class methods can be accessed without 'this' keyword inside of methods and called
-    return resolveImplicitObjectField(expr);
+    return resolveImplicitObjectField(expr);*/
+    return false;
 }
 
 // Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
@@ -1536,8 +1426,8 @@ static std::pair<bool, bool> classContainsMethod(string& publicField, ankerl::un
     return std::pair(false, false);
 }
 
-int Compiler::resolveClassField(Token name, bool canAssign){
-    if(!currentClass) return -1;
+llvm::Value* Compiler::resolveClassField(Token name, bool canAssign){
+    /*if(!currentClass) return -1;
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass->klass->fieldsInit);
     if(res.first){
@@ -1549,13 +1439,14 @@ int Compiler::resolveClassField(Token name, bool canAssign){
         if(canAssign) error(name, "Tried assigning to a method, which is forbidden.");
         return makeConstant(encodeObj(ObjString::createStr((res.second ? "" : "!") + fieldName)));
     }
-    return -1;
+    return -1;*/
+    return nullptr;
 }
 
 // Makes sure the correct prefix is used when accessing private fields
 // this.private_field -> this.!private_field
 bool Compiler::resolveThis(AST::SetExpr *expr) {
-    if(!isLiteralThis(expr->callee)) return false;
+    /*if(!isLiteralThis(expr->callee)) return false;
     Token name = probeToken(expr->field);
     int res = resolveClassField(name, true);
     if(res == -1) error(name, fmt::format("Field '{}' doesn't exist in class '{}'.", name.getLexeme(), currentClass->klass->name->str));
@@ -1563,24 +1454,24 @@ bool Compiler::resolveThis(AST::SetExpr *expr) {
     expr->value->accept(this);
     expr->callee->accept(this);
     if (res <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::SET_PROPERTY, res);
-    else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, res);
+    else emitByteAnd16Bit(+OpCode::SET_PROPERTY_LONG, res);*/
     return true;
 }
 bool Compiler::resolveThis(AST::FieldAccessExpr *expr) {
-    if(!isLiteralThis(expr->callee)) return false;
+    /*if(!isLiteralThis(expr->callee)) return false;
     Token name = probeToken(expr->field);
     int res = resolveClassField(name, false);
     if(res == -1) error(name, fmt::format("Field '{}' doesn't exist in class '{}'.", name.getLexeme(), currentClass->klass->name->str));
 
     expr->callee->accept(this);
     if (res <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, res);
-    else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, res);
+    else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, res);*/
     return true;
 }
-// Recognizes object_field() as an invoke operation
-// If object_field() is encountered inside a closure which is inside a method, throw an error since only this.object_field() is allowed in closures
+// Recognizes objectField() as an invoke operation
+// If objectField() is encountered inside a closure which is inside a method, throw an error since only this.objectField() is allowed in closures
 bool Compiler::resolveImplicitObjectField(AST::CallExpr *expr) {
-    if(expr->callee->type != AST::ASTType::LITERAL) return false;
+    /*if(expr->callee->type != AST::ASTType::LITERAL) return false;
     Token name = probeToken(expr->callee);
     int res = resolveClassField(name, false);
     if(res == -1) return false;
@@ -1600,38 +1491,49 @@ bool Compiler::resolveImplicitObjectField(AST::CallExpr *expr) {
         emitBytes(+OpCode::INVOKE, argCount);
         emitByte(res);
     }
-
+*/
     return true;
 }
 
 // Any call to getClassFromExpr assumes expr is either AST::LiteralExpr and AST::ModuleAccessExpr
-object::ObjClass* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
-    uint16_t classIndex = 0;
-    Token token;
+ClassChunkInfo* Compiler::getClassFromExpr(AST::ASTNodePtr expr){
     if (expr->type == AST::ASTType::LITERAL) {
-        Token superclass = probeToken(expr);
-        // Gets the index into globals in which the superclass is stored
-        int arg = resolveGlobal(superclass, false);
-        if(arg == -1) error(superclass, "Class doesn't exist.");
-        else if(arg == -2) {
-            error(superclass, fmt::format("Trying to access variable '{}' before it's initialized.", superclass.getLexeme()));
+        Token symbol = probeToken(expr);
+        // First check this module
+        string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + symbol.getLexeme();
+        auto it = globalClasses.find(fullSymbol);
+        if (it != globalClasses.end()) return it->second;
+        // Then check imported modules
+        for (Dependency& dep : curUnit->deps) {
+            fullSymbol = dep.module->file->name + std::to_string(dep.module->id) + symbol.getLexeme();
+            if (dep.alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
+                return globalClasses.at(fullSymbol);
+            }
         }
-        classIndex = arg;
-        token = superclass;
+        error(symbol, "Class doesn't exist.");
     }
     else {
         auto moduleExpr = std::static_pointer_cast<AST::ModuleAccessExpr>(expr);
-        classIndex = resolveModuleVariable(moduleExpr->moduleName, moduleExpr->ident);
-        token = moduleExpr->ident;
+
+        // First find the module with the correct alias
+        Dependency* depPtr = nullptr;
+        for (Dependency dep : curUnit->deps) {
+            if (dep.alias.equals(moduleExpr->moduleName)) {
+                depPtr = &dep;
+                break;
+            }
+        }
+        if (depPtr == nullptr) {
+            error(moduleExpr->moduleName, "Module alias doesn't exist.");
+        }
+
+        ESLModule* unit = depPtr->module;
+        string fullSymbol = unit->file->name + std::to_string(unit->id) + moduleExpr->ident.getLexeme();
+        if(globalClasses.contains(fullSymbol)) return globalClasses.at(fullSymbol);
+        error(moduleExpr->ident, "Class doesn't exist.");
     }
-    if(!isClass(globals[classIndex].val)) error(token, "Variable isn't a class.");
-    return asClass(globals[classIndex].val);
 }
 #pragma endregion
-
-Chunk* Compiler::getChunk() {
-    return &current->chunk;
-}
 
 void Compiler::error(const string& message) noexcept(false) {
     errorHandler::addSystemError("System compile error [line " + std::to_string(current->line) + "] in '" + curUnit->file->name + "': \n" + message + "\n");
@@ -1643,32 +1545,24 @@ void Compiler::error(Token token, const string& msg) noexcept(false) {
     throw CompilerException();
 }
 
-ObjFunc* Compiler::endFuncDecl() {
-    if (!current->hasReturnStmt) emitReturn();
-    // Get the parserCurrent function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
-    ObjFunc* func = current->func;
-    Chunk& chunk = current->chunk;
-
-    //Add the bytecode, lines and constants to the main code block
-    uInt64 bytecodeOffset = mainCodeBlock.bytecode.size();
-    mainCodeBlock.bytecode.insert(mainCodeBlock.bytecode.end(), chunk.bytecode.begin(), chunk.bytecode.end());
-    uInt64 constantsOffset = mainCodeBlock.constants.size();
-    mainCodeBlock.constants.insert(mainCodeBlock.constants.end(), chunk.constants.begin(), chunk.constants.end());
-    // For the last line of code
-    chunk.lines[chunk.lines.size() - 1].end = chunk.bytecode.size();
-    // Update lines to reflect the offset in the main code block
-    for (codeLine& line : chunk.lines) {
-        line.end += bytecodeOffset;
-        mainCodeBlock.lines.push_back(line);
+llvm::Value* Compiler::endFuncDecl(int arity, string name) {
+    if (!BBTerminated){
+        emitReturn();
+        BBTerminated = false;
     }
-#ifdef COMPILER_DEBUG
-    mainCodeBlock.disassemble(current->func->name.length() == 0 ? "script" : current->func->name, bytecodeOffset, constantsOffset);
-#endif
-
+    // Get the parserCurrent function we've just compiled, delete it's compiler info, and replace it with the enclosing functions compiler info
+    auto func = current->func;
+    #ifdef COMPILER_DEBUG
+    llvm::errs()<<"-------- Function disassembly for " + name + " --------\n";
+    func->print(llvm::errs());
+    #endif
     CurrentChunkInfo* temp = current->enclosing;
     delete current;
     current = temp;
-    return func;
+    // Set insertion point to the end of the enclosing function
+    builder.SetInsertPoint(&current->func->back());
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(func, builder.getInt8PtrTy());
+    return builder.CreateCall(curModule->getFunction("createFunc"), {typeErasedFn, builder.getInt32(arity), createConstStr(name) });
 }
 
 //a little helper for updating the lines emitted by the compiler(used for displaying runtime errors)
@@ -1676,67 +1570,61 @@ void Compiler::updateLine(Token token) {
     current->line = token.str.line;
 }
 
-// For every dependency that's imported without an alias, check if any of its exports match 'symbol', return -1 if not
-int Compiler::checkSymbol(Token symbol) {
-    string lexeme = symbol.getLexeme();
-    for (Dependency dep : curUnit->deps) {
-        auto& decls = dep.module->topDeclarations;
-        if (dep.alias.type == TokenType::NONE) {
-            int globalIndex = 0;
-            for (int i = 0; i < units.size(); i++) {
-                if (units[i] == dep.module) break;
-                globalIndex += units[i]->topDeclarations.size();
+// For every dependency that's imported without an alias, check if any of its exports match 'symbol', return nullptr if not
+llvm::Value* Compiler::checkSymbol(Token symbol) {
+    for (Dependency& dep : curUnit->deps) {
+        string fullSymbol = dep.module->file->name + std::to_string(dep.module->id) + "." + symbol.getLexeme();
+        if (dep.alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
+            Globalvar& gvar = globals.at(fullSymbol);
+            if(!gvar.isDefined){
+                error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
             }
-            for(int i = 0; i < decls.size(); i++){
-                if(!decls[i]->getName().equals(symbol)) continue;
-                return globalIndex + i;
-            }
+            else if(gvar.type == AST::ASTDeclType::CLASS) error(symbol, "Cannot read a class.");
+            return gvar.val;
         }
     }
-    return -1;
+    return nullptr;
 }
 
 // Checks if 'symbol' is declared in the current file, if not passes it to checkSymbol
-// -1 is returned only if no global variable 'symbol' exists, which is checked by checkSymbol
-// -2 if variable exists but isn't defined
-int Compiler::resolveGlobal(Token symbol, bool canAssign) {
-    bool inThisFile = false;
-    int index = curGlobalIndex;
-    std::shared_ptr<AST::ASTDecl> ptr = nullptr;
-    for (auto decl : curUnit->topDeclarations) {
-        if (symbol.equals(decl->getName())) {
-            // It's an error to read from a variable during its initialization
-            if(!definedGlobals[index]) return -2;
-            inThisFile = true;
-            ptr = decl;
-            break;
-        }
-        index++;
-    }
+// returns nullptr if variable doesn't exist
+llvm::Value* Compiler::resolveGlobal(Token symbol, bool canAssign) {
+    string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." +symbol.getLexeme();
+    auto it = globals.find(fullSymbol);
     if (canAssign) {
-        if (inThisFile){
-            if(ptr->type == AST::ASTType::FUNC) error(symbol, "Cannot assign to a function.");
-            else if(ptr->type == AST::ASTType::CLASS) error(symbol, "Cannot assign to a class.");
+        // Global is in this module
+        if (it != globals.end()){
+            Globalvar& var = it->second;
+            if(var.type == AST::ASTDeclType::FUNCTION) error(symbol, "Cannot assign to a function.");
+            else if(var.type == AST::ASTDeclType::CLASS) error(symbol, "Cannot assign to a class.");
 
-            return index;
+            if(!var.isDefined){
+                error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
+            }
+            return var.val;
         }
         error(symbol, "Cannot assign to a variable not declared in this module.");
     }
     else {
-        if (inThisFile) return index;
+        if (it != globals.end()) {
+            if(!it->second.isDefined){
+                error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
+            }else if(it->second.type == AST::ASTDeclType::CLASS) error(symbol, "Cannot read a class.");
+            return it->second.val;
+        }
         else {
             // Global variables defined in an imported file are guaranteed to be already defined
             return checkSymbol(symbol);
         }
     }
     // Never hit, checkSymbol returns -1 upon failure
-    return -1;
+    return nullptr;
 }
 
 // Checks if 'variable' exists in a module which was imported with the alias 'moduleAlias',
-// If it exists return the index of the 'variable' in globals array
-uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
-    //first find the module with the correct alias
+// If it exists return llvm::Value* which holds the pointer to the global
+llvm::Value* Compiler::resolveModuleVariable(Token moduleAlias, Token symbol) {
+    // First find the module with the correct alias
     Dependency* depPtr = nullptr;
     for (Dependency dep : curUnit->deps) {
         if (dep.alias.equals(moduleAlias)) {
@@ -1749,22 +1637,12 @@ uint32_t Compiler::resolveModuleVariable(Token moduleAlias, Token variable) {
     }
 
     ESLModule* unit = depPtr->module;
-    int index = 0;
-    for (auto& i : units) {
-        if (i != unit) {
-            index += i->topDeclarations.size();
-            continue;
-        }
-        // Checks every export of said module against 'variable'
-        for (auto decl : unit->exports) {
-            if (decl->getName().equals(variable)) return index;
-            index++;
-        }
-    }
+    string fullSymbol = unit->file->name + std::to_string(unit->id) + symbol.getLexeme();
+    if(globals.contains(fullSymbol)) return globals.at(fullSymbol).val;
 
-    error(variable, fmt::format("Module {} doesn't export this symbol.", depPtr->alias.getLexeme()));
+    error(symbol, fmt::format("Module '{}' with alias '{}' doesn't export this symbol.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
     // Never hit
-    return -1;
+    return nullptr;
 }
 
 llvm::Value* Compiler::evalASTExpr(std::shared_ptr<AST::ASTNode> node) {
@@ -1779,7 +1657,6 @@ void Compiler::retVal(llvm::Value* val){
 void Compiler::createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode){
     llvm::Constant* str = createConstStr(fmtErr);
     auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
-    auto arrType = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*ctx), args.size());
     auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), argNum, "allocArr");
     // Gets size(in bytes) of a pointer
     int ptrSize = curModule->getDataLayout().getTypeAllocSize(llvm::Type::getInt8PtrTy(*ctx));
@@ -1821,6 +1698,18 @@ void Compiler::createGcSafepoint(){
     auto cmp = builder.CreateCall(curModule->getFunction("gcSafepoint"));
     auto func = builder.CreateSelect(cmp, curModule->getFunction("stopThread"), curModule->getFunction("noop"));
     builder.CreateCall(llvm::FunctionType::get(builder.getVoidTy(), false), func);
+}
+
+void Compiler::createNewFunc(int argCount, string name, FuncType type){
+    // Create a function type with the appropriate number of arguments
+    vector<llvm::Type*> params;
+    for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
+
+    auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
+    current = new CurrentChunkInfo(current, type, tmp);
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", current->func);
+    builder.SetInsertPoint(BB);
 }
 #pragma endregion
 

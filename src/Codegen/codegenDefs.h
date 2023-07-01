@@ -47,17 +47,6 @@ namespace valueHelpers {
     string typeToStr(Value x);
 }
 
-struct Globalvar {
-	string name;
-	Value val;
-	bool isDefined;
-	Globalvar(string _name, Value _val) {
-		name = _name;
-		val = _val;
-		isDefined = false;
-	}
-};
-
 enum class OpCode {
 	// Helpers
 	POP,

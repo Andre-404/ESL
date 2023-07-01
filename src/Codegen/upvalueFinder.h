@@ -21,19 +21,21 @@ namespace upvalueFinder {
     };
 
     struct Upvalue {
-        uint8_t index = 0;
+        int index = 0;
         bool isLocal = false;
+        // Name of this variable
+        string name = "";
+
+        Upvalue(int _index, bool _isLocal, string _name) : index(_index), isLocal(_isLocal), name(_name) {}
     };
 
     struct CurrentChunkInfo {
         // For closures
         CurrentChunkInfo *enclosing;
         //locals
-        Local locals[256];
-        uInt localCount;
-        uInt upvalCount;
+        vector<Local> locals;
         uInt scopeDepth;
-        std::array<Upvalue, 256> upvalues;
+        vector<Upvalue> upvalues;
 
         CurrentChunkInfo(CurrentChunkInfo *_enclosing);
     };
@@ -44,6 +46,8 @@ namespace upvalueFinder {
         CurrentChunkInfo* current;
 
         UpvalueFinder(vector<ESLModule*>& units);
+
+        std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> generateUpvalueMap();
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -82,18 +86,18 @@ namespace upvalueFinder {
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
         #pragma endregion
     private:
-
+        std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> upvalueMap;
         #pragma region Helpers
         //variables
         void declareGlobalVar(AST::ASTVar& var);
-        void namedVar(Token name, bool canAssign);
+        void namedVar(Token name);
         //locals
         void declareLocalVar(AST::ASTVar& var);
         void addLocal(AST::ASTVar& name);
         int resolveLocal(Token name);
         int resolveLocal(CurrentChunkInfo* func, Token name);
         int resolveUpvalue(CurrentChunkInfo* func, Token name);
-        int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
+        int addUpvalue(CurrentChunkInfo* func, int index, bool isLocal, string name);
         void beginScope();
         void endScope();
         #pragma endregion

@@ -22,6 +22,8 @@ static void windowsSetTerminalProcessing(){
 };
 #endif
 
+int ESLModule::count = 0;
+
 int main(int argc, char* argv[]) {
     string path;
     string flag;

@@ -20,9 +20,20 @@
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, name, module.get())
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder);
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
-void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder){
+void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+    types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt8Ty(*ctx)}, "Obj");
+    types["ObjUpvalue"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjUpval");
+    types["ObjFunc"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32)}, "ObjFunc");
+    auto tmpFuncPtr = llvm::PointerType::getUnqual(types["ObjFunc"]);
+    //Pointer to pointer
+    auto tmpUpvalArr = llvm::PointerType::getUnqual(llvm::PointerType::getUnqual(types["ObjUpval"]));
+    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], tmpFuncPtr, tmpUpvalArr, TYPE(Int32)}, "ObjClosure");
+}
+
+void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+    createLLVMTypes(ctx, types);
     CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
     CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
@@ -34,8 +45,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("createFunc", false, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int8Ptr));
+    CREATE_FUNC("createUpvalue", false, llvm::PointerType::getUnqual(types["ObjUpvalue"]));
+    CREATE_FUNC("getUpvalue", false, llvm::PointerType::getUnqual(types["ObjUpvalue"]), TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int64), TYPE(Int32));
 
-    buildLLVMNativeFunctions(module, ctx, builder);
+    buildLLVMNativeFunctions(module, ctx, builder, types);
 }
 
 void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize){
@@ -61,24 +76,29 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
     // Create the pass manager.
-    // This one corresponds to a typical -O2 optimization pipeline.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    // This one corresponds to a typical -O3 optimization pipeline.
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     if(optimize) MPM.run(*module, MAM);
+    llvm::errs()<<"-------------- Optimized module --------------\n";
+    module->print(llvm::errs(), nullptr);
 
     auto RT = JIT->getMainJITDylib().createResourceTracker();
 
     auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
     llvm::ExitOnError()(JIT->addModule(std::move(TSM), RT));
 
-    llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("anon"));
+    llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("mainFn"));
     assert(ExprSymbol.getAddress() && "Function not found");
 
     void (*FP)() = ExprSymbol.getAddress().toPtr<void (*)()>();
+    double duration1 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     FP();
+    double duration2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::cout<<"Duration in ms: "<<duration2 - duration1<<"\n";
     llvm::ExitOnError()(RT->remove());
 }
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder){
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     auto createFunc = [&](string name, llvm::FunctionType *FT){
         llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module.get());
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);

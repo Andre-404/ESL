@@ -6,9 +6,11 @@
 #include "llvm/IR/IRBuilder.h"
 
 #include "JIT.h"
+#include "../Includes/unorderedDense.h"
+#include "../common.h"
 
 namespace llvmHelpers {
-    void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &context, llvm::IRBuilder<>& builder);
+    void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &context, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
     void runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize);
 

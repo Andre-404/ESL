@@ -119,3 +119,29 @@ EXPORT Value createHashMap(int nFields, ...){
     return encodeObj(map);
 }
 
+EXPORT Value createFunc(char* fn, int arity, char* name){
+    auto func = new object::ObjFunc(arity, reinterpret_cast<void*>(fn));
+    func->name = name;
+    return encodeObj(func);
+}
+
+EXPORT object::ObjUpval* createUpvalue(){
+    Value tmp = encodeNil();
+    return new object::ObjUpval(tmp);
+}
+
+EXPORT object::ObjUpval* getUpvalue(Value closure, int index){
+    object::ObjClosure* cl = asClosure(closure);
+    return cl->upvals[index];
+}
+
+EXPORT Value createClosure(Value fn, int upvalCount, ...){
+    object::ObjClosure* closure = new object::ObjClosure(asFunction(fn), upvalCount);
+    va_list ap;
+    va_start(ap, upvalCount);
+    for(int i=0; i<upvalCount; i++){
+        closure->upvals[i] = va_arg(ap, object::ObjUpval*);
+    }
+    va_end(ap);
+    return encodeObj(closure);
+}

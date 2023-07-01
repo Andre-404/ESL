@@ -77,7 +77,7 @@ namespace memory {
                 }
                 case +ObjType::CLOSURE:{
                     ObjClosure* cl = reinterpret_cast<ObjClosure*>(ptr);
-                    for(int i = 0; i < cl->func->upvalueCount; i++){
+                    for(int i = 0; i < cl->upvalCount; i++){
                         gc->markObj(cl->upvals[i]);
                     }
                     gc->markObj(cl->func);
@@ -148,6 +148,8 @@ namespace memory {
                     // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object
                     // Because of that before accessing the object first we check if 'object' really points to an allocated object
                     if (objects.contains(object)) markObj(object);
+                }else if(objects.contains(reinterpret_cast<Obj *>(end))){
+                    markObj(reinterpret_cast<Obj *>(end));
                 }
                 end++;
             }

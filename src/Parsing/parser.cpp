@@ -588,6 +588,11 @@ ASTNodePtr Parser::expression() {
 }
 
 #pragma region Statements and declarations
+// Helper for dead code elimination
+// Control flow terminators are: break, continue, advance and return
+static bool stmtIsTerminator(ASTNodePtr stmt){
+    return stmt->type == ASTType::BREAK || stmt->type == ASTType::CONTINUE || stmt->type == ASTType::ADVANCE || stmt->type == ASTType::RETURN;
+}
 //module level variables are put in a list to help with error reporting in compiler
 ASTNodePtr Parser::topLevelDeclaration() {
     //export is only allowed in global scope
@@ -760,14 +765,20 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
 
 shared_ptr<BlockStmt> Parser::blockStmt() {
     vector<ASTNodePtr> stmts;
+    int endSize = -1;
     //TokenType::LEFT_BRACE is already consumed
     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
             stmts.push_back(localDeclaration());
+            if(stmtIsTerminator(stmts.back())) {
+                endSize = stmts.size();
+            }
         }catch(ParserException& e){
             sync();
         }
     }
+    // Optimization: removes dead code if a control flow terminator has been detected before end of block
+    if(endSize != -1) stmts.resize(endSize);
     consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
     return make_shared<BlockStmt>(stmts);
 }
@@ -878,13 +889,19 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
     }
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
+    int endSize = -1;
     while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd() && peek().type != TokenType::RIGHT_BRACE) {
         try {
             stmts.push_back(localDeclaration());
+            if(stmtIsTerminator(stmts.back())) {
+                endSize = stmts.size();
+            }
         }catch(ParserException& e){
             sync();
         }
     }
+    //Optimization: removes dead code if a control flow terminator has been detected before end of block
+    if(endSize != -1) stmts.resize(endSize);
     return make_shared<CaseStmt>(matchConstants, stmts);
 }
 

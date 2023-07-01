@@ -3,6 +3,7 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
+#include "upvalueFinder.h"
 #include "JIT.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -29,74 +30,84 @@ namespace compileCore {
 	};
 
 	struct Local {
-		string name = "";
-		int depth = -1;
-		bool isLocalUpvalue = false;//whether this local variable has been captured as an upvalue
+		string name;
+		int depth;
+        llvm::Value* val;// Value that this local holds
+        // Whether this local variable has been captured as an upvalue and should be accessed through ObjUpval
+        bool isUpval;
+
+        Local(string _name, int _depth, bool _isUpval) : name(_name), depth(_depth), isUpval(_isUpval) {}
+        Local(){
+            name = "";
+            depth = -1;
+            val = nullptr;
+            isUpval = false;
+        }
 	};
 
+    // Represents an Upvalue held in ObjClosure, at function entry all
 	struct Upvalue {
-		uint8_t index = 0;
-		bool isLocal = false;
+		string name = "";
+        llvm::Value* val = nullptr;
+
+        Upvalue(string _name, llvm::Value* _val) : name(_name), val(_val) {}
 	};
-	enum class ScopeJumpType {
-		BREAK,
-		CONTINUE,
-		ADVANCE
-	};
-	//conversion from enum to 1 byte number
-	inline constexpr unsigned operator+ (ScopeJumpType const val) { return static_cast<byte>(val); }
 
 
-	//information about the parserCurrent code chunk we're compiling, contains a reference to the enclosing code chunk which created this one
+	// Information about the parserCurrent code chunk we're compiling, contains a reference to the enclosing code chunk which created this one
 	struct CurrentChunkInfo {
-		//for closures
+		// For closures
 		CurrentChunkInfo* enclosing;
-		//function whose information is contained within this chunk info
-		object::ObjFunc* func;
-		Chunk chunk;
-		FuncType type;
+        llvm::Function* func;
+        FuncType type;
 		bool hasReturnStmt;
 
 		int line;
-		//information about unpatched 'continue' and 'break' statements
-		vector<uInt> scopeJumps;
-		//locals
-		Local locals[LOCAL_MAX];
-		uInt localCount;
-		uInt scopeDepth;
-		vector<int> scopeWithLoop;
-		vector<int> scopeWithSwitch;
-		std::array<Upvalue, UPVAL_MAX> upvalues;
+        int scopeDepth;
+		// Stack can grow an arbitrary amount
+        vector<Local> locals;
+        vector<Upvalue> upvalues;
 		bool hasCapturedLocals;
-		CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type);
+		CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, llvm::Function* _func);
 	};
 
 	struct ClassChunkInfo {
     // For statics
-    object::ObjClass* klass;
-    ClassChunkInfo(object::ObjClass* _klass) : klass(_klass) {};
+    ankerl::unordered_dense::set<string> fields;
+    ClassChunkInfo* parent;
+    ClassChunkInfo(ClassChunkInfo* _parent) : parent(_parent) {};
 	};
 
 	struct CompilerException {
 
 	};
 
-	class Compiler : public AST::Visitor {
+    struct Globalvar {
+        llvm::Value* val;
+        bool isDefined;
+        // If type is FUNC or CLASS then it cannot be assigned to
+        AST::ASTDeclType type;
+
+        Globalvar(AST::ASTDeclType _type, llvm::Value* _val) {
+            val = _val;
+            isDefined = false;
+            type = _type;
+        }
+    };
+
+
+    class Compiler : public AST::Visitor {
 	public:
 		// Compiler only ever emits the code for a single function, top level code is considered a function
 		CurrentChunkInfo* current;
 		std::unique_ptr<ClassChunkInfo> currentClass;
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
-		// Passed to the VM
-		vector<Globalvar> globals;
-		Chunk mainCodeBlock;
-        object::ObjFunc* mainBlockFunc;
 
 		Compiler(vector<ESLModule*>& units);
         void compile();
 		Chunk* getChunk();
-		object::ObjFunc* endFuncDecl();
+        llvm::Value* endFuncDecl(int arity, string name);
 
 		#pragma region Visitor pattern
 		void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -137,12 +148,12 @@ namespace compileCore {
 	private:
 		ESLModule* curUnit;
 		int curUnitIndex;
-		int curGlobalIndex;
 		vector<ESLModule*> units;
-        // Every slot corresponds to a global variable in globals at the same index, used by compiler to detect if
-        // a undefined global variable is being used
-        vector<bool> definedGlobals;
-        ankerl::unordered_dense::map<string, uInt> nativeFuncNames;
+        std::unordered_map<AST::FuncLiteral*, vector<upvalueFinder::Upvalue>> upvalueMap;
+        ankerl::unordered_dense::map<string, Globalvar> globals;
+        ankerl::unordered_dense::map<string, ClassChunkInfo*> globalClasses;
+        ankerl::unordered_dense::map<string, llvm::Value*> nativeFunctions;
+
 
         std::unique_ptr<llvm::LLVMContext> ctx;
         llvm::IRBuilder<> builder;
@@ -151,10 +162,14 @@ namespace compileCore {
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
 
         ankerl::unordered_dense::map<string, llvm::Constant*> stringConstants;
+        ankerl::unordered_dense::map<string, llvm::Type*> namedTypes;
         vector<llvm::BasicBlock*> continueJumpDest;
-        // Both loops and switch statement push to this stack
+        // Both loops and switch statement push to breakJump stack
         vector<llvm::BasicBlock*> breakJumpDest;
         vector<llvm::BasicBlock*> advanceJumpDest;
+        // Flag to know if a break/continue/advance jump was performed in this basic block,
+        // if this is true don't emit the final unconditional break in if/for/while/switch constructs
+        bool BBTerminated;
 
         llvm::Value* evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         void retVal(llvm::Value* val);
@@ -166,46 +181,32 @@ namespace compileCore {
         void createGcSafepoint();
 
         #pragma region Helpers
-        // Emitters
-        void emitByte(byte byte);
-        void emitBytes(byte byte1, byte byte2);
-        void emit16Bit(uInt16 number);
-        void emitByteAnd16Bit(byte byte, uInt16 num);
-        void emitConstant(Value value);
         void emitReturn();
-        // Control flow
-        int emitJump(byte jumpType);
-        void patchJump(int offset);
-        void emitLoop(int start);
+        // Helper that's used in if/for/while/switch to terminate a basic block
+        // checks BBTerminated to see if the final br instruction is needed
+        void endControlFlowBB(llvm::BasicBlock* dest);
 
-        void patchScopeJumps(ScopeJumpType type);
+        string declareGlobalVar(Token name);
+        void defineGlobalVar(string name, llvm::Value* val);
 
-        uInt16 makeConstant(Value value);
-        // Variables
-        uInt16 identifierConstant(Token name);
-
-        uint16_t declareGlobalVar(Token name);
-        void defineGlobalVar(uInt16 name);
-
-        void namedVar(Token name, bool canAssign);
+        llvm::Value* readVar(Token name);
+        void storeToVar(Token name, llvm::Value* val);
         // Locals
         void declareLocalVar(AST::ASTVar& name);
-        void defineLocalVar();
+        void defineLocalVar(llvm::Value* val);
 
         void addLocal(AST::ASTVar name);
         int resolveLocal(Token name);
-        int resolveLocal(CurrentChunkInfo* func, Token name);
 
-        int resolveUpvalue(CurrentChunkInfo* func, Token name);
-        int addUpvalue(CurrentChunkInfo* func, byte index, bool isLocal);
+        int resolveUpvalue(Token name);
 
         void beginScope();
         void endScope();
         // Classes and methods
         object::ObjClosure* method(AST::FuncDecl* _method, Token className);
         bool invoke(AST::CallExpr* expr);
-        int resolveClassField(Token name, bool canAssign);
-        object::ObjClass* getClassFromExpr(AST::ASTNodePtr expr);
+        llvm::Value* resolveClassField(Token name, bool canAssign);
+        ClassChunkInfo* getClassFromExpr(AST::ASTNodePtr expr);
         // Resolve public/private fields when this.object_field in encountered
         bool resolveThis(AST::FieldAccessExpr* expr);
         bool resolveThis(AST::SetExpr* expr);
@@ -216,11 +217,13 @@ namespace compileCore {
         void error(Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
         // Checks all imports to see if the symbol 'token' is imported
-        int checkSymbol(Token token);
+        llvm::Value* checkSymbol(Token token);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
-        int resolveGlobal(Token token, bool canAssign);
+        llvm::Value* resolveGlobal(Token token, bool canAssign);
         // Given a token for module alias and a token for variable name, returns correct symbol to use
-        uInt resolveModuleVariable(Token moduleAlias, Token variable);
+        llvm::Value* resolveModuleVariable(Token moduleAlias, Token variable);
+
+        void createNewFunc(int argCount, string name, FuncType type);
         #pragma endregion
 	};
 }
