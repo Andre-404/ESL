@@ -33,7 +33,7 @@ static ValueType getType(Value x){
 }
 
 inline Value encodeNumber(double x){ return *reinterpret_cast<Value*>(&x); }
-inline Value encodeBool(bool x){ return (x) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE; }
+inline Value encodeBool(bool x){ return MASK_QNAN | (MASK_SIGNATURE_TRUE*x); }
 inline Value encodeObj(object::Obj* x){ return MASK_SIGNATURE_OBJ | reinterpret_cast<Value>(x); }
 inline Value encodeNil(){ return MASK_SIGNATURE_NIL; }
 

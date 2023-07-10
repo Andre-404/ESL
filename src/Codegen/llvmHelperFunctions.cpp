@@ -10,6 +10,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Scalar/PlaceSafepoints.h"
 
 #include <unordered_set>
 #include <iostream>
@@ -19,6 +20,7 @@
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, name, module.get())
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
+#define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
 void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
@@ -26,10 +28,9 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt8Ty(*ctx)}, "Obj");
     types["ObjUpvalue"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjUpval");
     types["ObjFunc"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32)}, "ObjFunc");
-    auto tmpFuncPtr = llvm::PointerType::getUnqual(types["ObjFunc"]);
     //Pointer to pointer
-    auto tmpUpvalArr = llvm::PointerType::getUnqual(llvm::PointerType::getUnqual(types["ObjUpvalue"]));
-    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], tmpFuncPtr, tmpUpvalArr, TYPE(Int32)}, "ObjClosure");
+    auto tmpUpvalArr = PTR_TY(PTR_TY(types["ObjUpvalue"]));
+    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], PTR_TY(types["ObjFunc"]), tmpUpvalArr, TYPE(Int32)}, "ObjClosure");
 }
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
@@ -62,7 +63,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     llvm::FunctionAnalysisManager FAM;
     llvm::CGSCCAnalysisManager CGAM;
     llvm::ModuleAnalysisManager MAM;
-
+    llvm::PlaceSafepointsPass SafepointPass;
     // Create the new pass manager builder.
     // Take a look at the PassBuilder constructor parameters for more
     // customization, e.g. specifying a TargetMachine or various debugging
@@ -75,11 +76,14 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.registerFunctionAnalyses(FAM);
     PB.registerLoopAnalyses(LAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-
     // Create the pass manager.
     // This one corresponds to a typical -O3 optimization pipeline.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     if(optimize) MPM.run(*module, MAM);
+    for(auto& it : module->functions()){
+        SafepointPass.run(it, FAM);
+    }
+
     llvm::errs()<<"-------------- Optimized module --------------\n";
     module->print(llvm::errs(), nullptr);
 
@@ -88,7 +92,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
     llvm::ExitOnError()(JIT->addModule(std::move(TSM), RT));
 
-    llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("mainFn"));
+    llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
     assert(ExprSymbol.getAddress() && "Function not found");
 
     void (*FP)() = ExprSymbol.getAddress().toPtr<void (*)()>();
@@ -110,9 +114,11 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     // No encode/decodeObj right now, need to think of how to represent objects in llvm IR
     [&]{
         llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(TYPE(Int64), TYPE(Int1), false));
-        // x ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE
-        auto tmp = builder.CreateSelect(f->getArg(0), builder.getInt64(MASK_SIGNATURE_TRUE), builder.getInt64(MASK_SIGNATURE_FALSE));
-        builder.CreateRet(tmp);
+        // MASK_QNAN | (MASK_TYPE_TRUE*<i64>x)
+        auto bitcastArg = builder.CreateZExt(f->getArg(0), builder.getInt64Ty());
+        auto mul = builder.CreateMul(builder.getInt64(MASK_TYPE_TRUE), bitcastArg, "tmp", true, true);
+        auto ret = builder.CreateOr(builder.getInt64(MASK_QNAN), mul);
+        builder.CreateRet(ret);
         llvm::verifyFunction(*f);
     }();
     [&]{
@@ -177,5 +183,44 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Used to avoid IR level when creating a gc safepoint
         builder.CreateRetVoid();
         llvm::verifyFunction(*f);
+    }();
+    [&]{
+        llvm::Function* f = createFunc("encodeObj",llvm::FunctionType::get(TYPE(Int64), PTR_TY(types["Obj"]),false));
+        // MASK_SIGNATURE_OBJ | (Int64)x
+        auto cast = builder.CreatePtrToInt(f->getArg(0), builder.getInt64Ty());
+        auto const1 = builder.getInt64(MASK_SIGNATURE_OBJ);
+        builder.CreateRet(builder.CreateOr(const1, cast));
+        llvm::verifyFunction(*f);
+    }();
+    [&]{
+        llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(PTR_TY(types["Obj"]), TYPE(Int64),false));
+        // (Obj*)(x & MASK_PAYLOAD_OBJ)
+        auto const1 = builder.getInt64(MASK_PAYLOAD_OBJ);
+        builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(f->getArg(0), const1), PTR_TY(types["Obj"])));
+        llvm::verifyFunction(*f);
+    }();
+    // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
+    [&]{
+        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "gc.safepoint_poll", module.get());
+        llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
+        builder.SetInsertPoint(BB);
+        llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+
+        // Atomically load the value, volatile because LLVM would otherwise optimize this away
+        auto load = builder.CreateLoad(builder.getInt8Ty(), module->getNamedGlobal("gcFlag"), true);
+        load->setAtomic(llvm::AtomicOrdering::Monotonic);
+        auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
+
+        // Run gc if flag is true
+        builder.CreateCondBr(cond, runGCBB, mergeBB);
+        builder.SetInsertPoint(runGCBB);
+        builder.CreateCall(module->getFunction("stopThread"));
+        builder.CreateRetVoid();
+
+        F->insert(F->end(), mergeBB);
+        builder.SetInsertPoint(mergeBB);
+        builder.CreateRetVoid();
+        llvm::verifyFunction(*F);
     }();
 }

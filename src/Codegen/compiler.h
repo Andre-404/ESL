@@ -3,7 +3,7 @@
 #include "../Objects/objects.h"
 #include "../Parsing/ASTDefs.h"
 #include "../Parsing/parser.h"
-#include "upvalueFinder.h"
+#include "Passes/variableFinder.h"
 #include "JIT.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -149,7 +149,7 @@ namespace compileCore {
 		ESLModule* curUnit;
 		int curUnitIndex;
 		vector<ESLModule*> units;
-        std::unordered_map<AST::FuncLiteral*, vector<upvalueFinder::Upvalue>> upvalueMap;
+        std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalueMap;
         ankerl::unordered_dense::map<string, Globalvar> globals;
         ankerl::unordered_dense::map<string, ClassChunkInfo*> globalClasses;
         ankerl::unordered_dense::map<string, llvm::Value*> nativeFunctions;

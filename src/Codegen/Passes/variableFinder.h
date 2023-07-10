@@ -1,20 +1,13 @@
 #pragma once
 
 #include <array>
-#include "../Parsing/ASTDefs.h"
+#include "../../Parsing/ASTDefs.h"
+#include <unordered_set>
 // Identifies types of variable declarations(and function arguments)
-// Variable declarations can be: global, local, local upvalue
-// Function arguments can be: local, local upvalue
-//
-// If a variable is of type "local upvalue" after it's defined OP_CREATE_UPVALUE is called,
-// and that stack slot is replaced with a ObjUpvalue which contains the value
-// To mutate/access a local upvalue OP_GET_LOCAL_UPVALUE and OP_SET_LOCAL_UPVALUE are emitted by the compiler
-//
-// This AST pass doesn't emit any errors and in namedVar only locals and upvalues are looked at, it ignores globals and natives
-// Lets the compiler worry about semantic correctness of the variable declarations, this pass only cares if some local var is accessed
-// by a closure, in which case it must be turned into an upvaulue
+// Variable declarations can be: global, local, upvalue
+// Function arguments can be: local, upvalue
 
-namespace upvalueFinder {
+namespace variableFinder {
     struct Local {
         AST::ASTVar* var = nullptr;
         int depth = -1;
@@ -41,11 +34,12 @@ namespace upvalueFinder {
     };
 
 
-    class UpvalueFinder : public AST::Visitor {
+    class VariableTypeFinder : public AST::Visitor {
     public:
         CurrentChunkInfo* current;
+        bool hadError;
 
-        UpvalueFinder(vector<ESLModule*>& units);
+        VariableTypeFinder(vector<ESLModule*>& units);
 
         std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> generateUpvalueMap();
 
@@ -87,6 +81,7 @@ namespace upvalueFinder {
         #pragma endregion
     private:
         std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> upvalueMap;
+
         #pragma region Helpers
         //variables
         void declareGlobalVar(AST::ASTVar& var);

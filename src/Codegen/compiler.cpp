@@ -1,7 +1,7 @@
 #include "compiler.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "upvalueFinder.h"
+#include "Passes/variableFinder.h"
 #include "../Runtime/thread.h"
 #include "../Runtime/nativeFunctions.h"
 #include "llvmHelperFunctions.h"
@@ -30,7 +30,7 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type,
 
 
 Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
-    upvalueFinder::UpvalueFinder f(_units);
+    variableFinder::VariableTypeFinder f(_units);
     upvalueMap = f.generateUpvalueMap();
 
     currentClass = nullptr;
@@ -47,6 +47,10 @@ Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
     curModule->setDataLayout(JIT->getDataLayout());
     curModule->setTargetTriple(targetTriple);
 
+    curModule->getOrInsertGlobal("gcFlag", builder.getInt8Ty());
+    llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
+    gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
+    gvar->setInitializer(builder.getInt8(0));
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
 
     compile();
@@ -56,12 +60,12 @@ Compiler::Compiler(vector<ESLModule*>& _units) : ctx(std::make_unique<llvm::LLVM
 
 void Compiler::compile(){
     llvm::FunctionType* FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
-    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "mainFn", curModule.get());
+    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "func.main", curModule.get());
+    tmpfn->setGC("statepoint-example");
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, tmpfn);
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", current->func);
     builder.SetInsertPoint(BB);
-    curModule->getOrInsertGlobal("gcFlag", builder.getInt8PtrTy());
-
+    builder.CreateStore(builder.getInt8(0), curModule->getNamedGlobal("gcFlag"));
     for (ESLModule* unit : units) {
         curUnit = unit;
         sourceFiles.push_back(unit->file);
@@ -76,7 +80,7 @@ void Compiler::compile(){
             builder.CreateCall(curModule->getFunction("addGCRoot"), gvar);
         }
         for (int i = 0; i < unit->stmts.size(); i++) {
-            // Doing this here so that even if a error is detected, we go on and possibly catch other(valid) errors
+            // Doing this here so that even if an error is detected, we go on and possibly catch other(valid) errors
             try {
                 unit->stmts[i]->accept(this);
             }
@@ -156,7 +160,6 @@ void Compiler::visitConditionalExpr(AST::ConditionalExpr* expr) {
 void Compiler::visitRangeExpr(AST::RangeExpr *expr) {
 
 }
-
 
 void Compiler::visitBinaryExpr(AST::BinaryExpr* expr) {
     updateLine(expr->op);
@@ -529,8 +532,19 @@ void Compiler::visitCallExpr(AST::CallExpr* expr) {
         arg->accept(this);
     }
     emitBytes(+OpCode::CALL, expr->args.size());*/
-    auto arg = evalASTExpr(expr->args[0]);
-    builder.CreateCall(curModule->getFunction("print"), arg);
+    auto callee = evalASTExpr(expr->callee);
+    vector<llvm::Value*> args;
+    for (AST::ASTNodePtr arg : expr->args) {
+        args.push_back(evalASTExpr(arg));
+    }
+    auto objFnTy = llvm::PointerType::getUnqual(namedTypes["ObjFunc"]);
+    auto tmp = builder.CreateCall(curModule->getFunction("decodeObj"), callee);
+    auto objFnPtr = builder.CreatePointerCast(tmp, objFnTy);
+    auto fnPtrPtr = builder.CreateInBoundsGEP(namedTypes["ObjFunc"], objFnPtr, {builder.getInt32(0), builder.getInt32(1)});
+    auto fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrPtr);
+    auto fnTy = llvm::FunctionType::get(builder.getInt64Ty(), vector<llvm::Type*>(expr->args.size(), builder.getInt64Ty()), false);
+    returnValue = builder.CreateCall(fnTy, fnPtr, args);
+    builder.CreateCall(curModule->getFunction("print"), args);
 }
 
 void Compiler::visitNewExpr(AST::NewExpr* expr){
@@ -555,7 +569,7 @@ void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
         return;
     }
 
-    if(resolveThis(expr)) return;
+    if(tryResolveThis(expr)) return;
     expr->callee->accept(this);
     uint16_t name = identifierConstant(probeToken(expr->field));
     if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
@@ -654,7 +668,7 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
         current->upvalues.emplace_back(upval.name, tmp);
     }
 
-    // Mo need for a endScope, since returning from the function discards the entire callstack
+    // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
@@ -1235,7 +1249,7 @@ void Compiler::declareLocalVar(AST::ASTVar& var) {
 // If this variable is an upvalue that's in this scope, mark it as such
 void Compiler::addLocal(AST::ASTVar var) {
     updateLine(var.name);
-    current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::LOCAL_UPVALUE);
+    current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::UPVALUE);
     Local& local = current->locals.back();
     // Alloca at the beginning of the function to make use of mem2reg pass
     llvm::IRBuilder<> tempBuilder(&current->func->getEntryBlock(), current->func->getEntryBlock().begin());
@@ -1278,7 +1292,7 @@ int Compiler::resolveLocal(Token name) {
     return -1;
 }
 
-// UpvalueFinder already computed all upvalues this function uses from an enclosing function and stored them in func->upvalues
+// VariableTypeFinder already computed all upvalues this function uses from an enclosing function and stored them in func->upvalues
 int Compiler::resolveUpvalue(Token name) {
     string upvalName = name.getLexeme();
     for(int i = 0; i < current->upvalues.size(); i++){
@@ -1704,8 +1718,8 @@ void Compiler::createNewFunc(int argCount, string name, FuncType type){
     vector<llvm::Type*> params;
     for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
-
     auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
+    tmp->setGC("statepoint-example");
     current = new CurrentChunkInfo(current, type, tmp);
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", current->func);
     builder.SetInsertPoint(BB);

@@ -123,7 +123,14 @@ Token Scanner::scanToken() {
         case ',': return makeToken(TokenType::COMMA);
         case '.': return makeToken(match('.') ? (match('=') ? TokenType::DOUBLE_DOT_EQUAL : TokenType::DOUBLE_DOT) : TokenType::DOT);
         case '$': return makeToken(TokenType::DOLLAR);
-        case '-': return makeToken(match('=') ? TokenType::MINUS_EQUAL : match('-') ? TokenType::DECREMENT : TokenType::MINUS);
+        case '-': {
+            // Negative literal numbers are constants
+            if(isdigit(peek())) {
+                advance();
+                return number();
+            }
+            return makeToken(match('=') ? TokenType::MINUS_EQUAL : match('-') ? TokenType::DECREMENT : TokenType::MINUS);
+        }
         case '+': return makeToken(match('=') ? TokenType::PLUS_EQUAL : match('+') ? TokenType::INCREMENT : TokenType::PLUS);
         case '/': return makeToken(match('=') ? TokenType::SLASH_EQUAL : TokenType::SLASH);
         case '*': return makeToken(match('=') ? TokenType::STAR_EQUAL : TokenType::STAR);

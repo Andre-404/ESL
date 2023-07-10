@@ -138,7 +138,7 @@ namespace AST {
 
     enum class ASTVarType{
         LOCAL,
-        LOCAL_UPVALUE,
+        UPVALUE,
         GLOBAL,
         NONE
     };
@@ -387,7 +387,7 @@ namespace AST {
 	class FuncLiteral : public ASTNode {
 	public:
 		vector<ASTVar> args;
-        int8_t arity;
+        int arity;
 		shared_ptr<BlockStmt> body;
 
 		FuncLiteral(vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
@@ -553,12 +553,10 @@ namespace AST {
 
 	class BreakStmt : public ASTNode {
 	public:
-		Token token;
-
-		BreakStmt(Token _token) {
-			token = _token;
-			type = ASTType::BREAK;
-		}
+        // Parser created breaks will never be part of an error, don't need token for error reporting
+        BreakStmt() {
+            type = ASTType::BREAK;
+        }
 		void accept(Visitor* vis) {
 			vis->visitBreakStmt(this);
 		}
@@ -566,10 +564,7 @@ namespace AST {
 
 	class ContinueStmt : public ASTNode {
 	public:
-		Token token;
-
-		ContinueStmt(Token _token) {
-			token = _token;
+		ContinueStmt() {
 			type = ASTType::CONTINUE;
 		}
 		void accept(Visitor* vis) {
@@ -612,10 +607,7 @@ namespace AST {
 
 	class AdvanceStmt : public ASTNode {
 	public:
-		Token token;
-
-		AdvanceStmt(Token _token) {
-			token = _token;
+		AdvanceStmt() {
 			type = ASTType::ADVANCE;
 		}
 		void accept(Visitor* vis) {
@@ -626,7 +618,7 @@ namespace AST {
 	class FuncDecl : public ASTDecl {
 	public:
 		vector<ASTVar> args;
-        int8_t arity;
+        int arity;
 		shared_ptr<BlockStmt> body;
 		Token name;
 
@@ -662,9 +654,10 @@ namespace AST {
 
     struct ClassMethod{
         bool isPublic;
+        bool overrides;
         shared_ptr<FuncDecl> method;
 
-        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method) : isPublic(_isPublic), method(_method) {}
+        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method, bool _overrides = false) : isPublic(_isPublic), method(_method), overrides(_overrides) {}
     };
 
     struct ClassField{

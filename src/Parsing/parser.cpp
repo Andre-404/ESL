@@ -837,13 +837,13 @@ shared_ptr<ForStmt> Parser::forStmt() {
 shared_ptr<BreakStmt> Parser::breakStmt() {
     if (loopDepth == 0 && switchDepth == 0) throw error(previous(), "Cannot use 'break' outside of loops or switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after break.");
-    return make_shared<BreakStmt>(previous());
+    return make_shared<BreakStmt>();
 }
 
 shared_ptr<ContinueStmt> Parser::continueStmt() {
     if (loopDepth == 0) throw error(previous(), "Cannot use 'continue' outside of loops.");
     consume(TokenType::SEMICOLON, "Expect ';' after continue.");
-    return make_shared<ContinueStmt>(previous());
+    return make_shared<ContinueStmt>();
 }
 
 shared_ptr<SwitchStmt> Parser::switchStmt() {
@@ -858,10 +858,12 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     switchDepth++;
     vector<shared_ptr<CaseStmt>> cases;
     bool hasDefault = false;
+    // Every constant in a switch has to be unique, caseStmt checks for that using this vector
+    vector<Token> allSwitchConstants;
 
     while (!check(TokenType::RIGHT_BRACE) && match({ TokenType::CASE, TokenType::DEFAULT })) {
-        Token prev = previous();//to see if it's a default statement
-        shared_ptr<CaseStmt> curCase = caseStmt();
+        Token prev = previous();// To see if it's a default statement
+        shared_ptr<CaseStmt> curCase = caseStmt(allSwitchConstants);
         curCase->caseType = prev;
         if (prev.type == TokenType::DEFAULT) {
             //don't throw, it isn't a breaking error
@@ -875,12 +877,20 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     return make_shared<SwitchStmt>(expr, cases, hasDefault);
 }
 
-shared_ptr<CaseStmt> Parser::caseStmt() {
+shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
     vector<Token> matchConstants;
     //default cases don't have a match expression
     if (previous().type != TokenType::DEFAULT) {
         while (match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE })) {
-            matchConstants.push_back(previous());
+            Token newConstant = previous();
+            // Check for constant uniqueness
+            for(auto& t : constants){
+                if(newConstant.type == t.type && newConstant.getLexeme() == t.getLexeme()){
+                    error(newConstant, "Duplicate case value.");
+                    error(t, "Value already in a case here.");
+                }
+            }
+            matchConstants.push_back(newConstant);
             if (!match(TokenType::BITWISE_OR)) break;
         }
         if (!match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE }) && peek().type != TokenType::COLON) {
@@ -900,6 +910,8 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
             sync();
         }
     }
+    // Implicit break at the end of a case, gets erased if there is a control flow terminator in this block
+    stmts.push_back(make_shared<BreakStmt>());
     //Optimization: removes dead code if a control flow terminator has been detected before end of block
     if(endSize != -1) stmts.resize(endSize);
     return make_shared<CaseStmt>(matchConstants, stmts);
@@ -908,7 +920,7 @@ shared_ptr<CaseStmt> Parser::caseStmt() {
 shared_ptr<AdvanceStmt> Parser::advanceStmt() {
     if (switchDepth == 0) throw error(previous(), "Cannot use 'advance' outside of switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
-    return make_shared<AdvanceStmt>(previous());
+    return make_shared<AdvanceStmt>();
 }
 
 shared_ptr<ReturnStmt> Parser::returnStmt() {

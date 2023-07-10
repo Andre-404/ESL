@@ -89,6 +89,7 @@ namespace object {
         ObjUpval** upvals;
         int upvalCount;
         ObjClosure(ObjFunc* _func, int upvalCount);
+        ~ObjClosure();
     };
 
     // Parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class

@@ -6,6 +6,8 @@
 #include "Codegen/compiler.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
 #include "MemoryManagment/garbageCollector.h"
+#include "Codegen/Passes/variableFinder.h"
+#include "Codegen/Passes/ASTToTypedAST.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -64,14 +66,13 @@ int main(int argc, char* argv[]) {
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) exit(64);
 
-        compileCore::Compiler compiler(modules);
+        variableFinder::VariableTypeFinder finder(modules);
+        passes::typedASTParser::ASTTransformer transformer(modules, finder.generateUpvalueMap());
 
-        errorHandler::showCompileErrors();
+        /*compileCore::Compiler compiler(modules);
+
+        errorHandler::showCompileErrors();*/
         if (errorHandler::hasErrors()) exit(64);
-
-        //auto vm = new runtime::VM(&compiler);
-
-        //vm->execute();
     }else if(flag == "-validate-file"){
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);

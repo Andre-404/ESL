@@ -94,7 +94,7 @@ string valueHelpers::typeToStr(Value x) {
             Obj* ptr = decodeObj(x);
             switch (ptr->type) {
                 case +ObjType::ARRAY: return "<array>";
-                case +ObjType::BOUND_METHOD: return "<method>";
+                case +ObjType::BOUND_METHOD: return "<bound method>";
                 case +ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
                 case +ObjType::CLOSURE: return "<function>";
                 case +ObjType::FUNC: return "<function>";

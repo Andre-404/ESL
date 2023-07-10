@@ -133,7 +133,7 @@ namespace AST {
         shared_ptr<BreakStmt> breakStmt();
         shared_ptr<ContinueStmt> continueStmt();
         shared_ptr<SwitchStmt> switchStmt();
-		shared_ptr<CaseStmt> caseStmt();
+		shared_ptr<CaseStmt> caseStmt(vector<Token> constants);
         shared_ptr<AdvanceStmt> advanceStmt();
         shared_ptr<ReturnStmt> returnStmt();
 

@@ -136,11 +136,16 @@ ObjFunc::ObjFunc(int _arity, Function _func) {
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(ObjFunc* _func, int upvalCount) {
+ObjClosure::ObjClosure(ObjFunc* _func, int _upvalCount) {
 	func = _func;
-	upvals = new object::ObjUpval*[upvalCount];
+    upvalCount = _upvalCount;
+    upvals = new object::ObjUpval*[upvalCount];
     marked = false;
 	type = +ObjType::CLOSURE;
+}
+
+ObjClosure::~ObjClosure(){
+    delete upvals;
 }
 #pragma endregion
 

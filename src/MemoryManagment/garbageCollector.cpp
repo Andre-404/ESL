@@ -186,6 +186,7 @@ namespace memory {
                     case +object::ObjType::INSTANCE: delete reinterpret_cast<object::ObjInstance*>(obj); break;
                     case +object::ObjType::MUTEX: delete reinterpret_cast<object::ObjMutex*>(obj); break;
                     case +object::ObjType::FUNC: delete reinterpret_cast<object::ObjFunc*>(obj); break;
+                    case +object::ObjType::CLOSURE: delete reinterpret_cast<object::ObjClosure*>(obj); break;
                     default: delete obj; break;
                 }
                 it = objects.erase(it);
