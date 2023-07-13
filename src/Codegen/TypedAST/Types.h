@@ -54,12 +54,12 @@ namespace types{
     };
 
     // Defers obtaining the actual type(fn return, future return, instance field type) until type collapsing
-    // After collapsing store all possible types into collapsedTypes
+    // After collapsing store all possible types into collapsedReturnTypes
     class CallReturnDeferred : public Type{
     public:
         tyPtr calleeType;
         bool collapsed;
-        std::unordered_set<tyPtr> collapsedTypes;
+        std::unordered_set<tyPtr> collapsedReturnTypes;
 
         CallReturnDeferred(tyPtr _calleeType){
             calleeType = _calleeType;
@@ -109,6 +109,7 @@ namespace types{
     public:
         int argCount;
         std::shared_ptr<TypeUnion> retType; //Possible return types
+        vector<tyPtr> paramTypes;
         bool isClosure;
 
         FunctionType(int _argCount, std::shared_ptr<TypeUnion> _retType, bool _isClosure){
@@ -175,5 +176,5 @@ namespace types{
 
     void inheritClass(std::shared_ptr<ClassType> child, std::shared_ptr<ClassType> parent);
 
-    vector<tyPtr> collapse(tyPtr toCollapse);
+    vector<tyPtr> collapse(tyPtr toCollapse, std::unordered_set<tyPtr>& inProgress);
 }

@@ -89,8 +89,8 @@ namespace typedASTParser{
         vector<File*> sourceFiles;
         bool hadError;
 
-        ASTTransformer(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
-        typedAST::Function endFuncDecl(int arity, string name);
+        ASTTransformer();
+        std::pair<typedAST::Function, vector<File*>> run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;

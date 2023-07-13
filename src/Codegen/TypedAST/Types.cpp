@@ -15,7 +15,3 @@ tyPtr types::getBasicType(TypeFlag type){
 void types::typeInflow(std::shared_ptr<TypeUnion> lhs, tyPtr rhs){
     lhs->types.insert(rhs);
 }
-
-vector<tyPtr> types::collapse(tyPtr toCollapse){
-
-}
