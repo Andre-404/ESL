@@ -3,10 +3,10 @@
 #include "../../Includes/unorderedDense.h"
 
 namespace passes {
-    namespace TypeCollapser {
-        class TypeCollapser : public typedAST::TypedASTVisitor {
+    namespace TypeUnification {
+        class TypeUnificator : public typedAST::TypedASTVisitor {
         public:
-            TypeCollapser();
+            TypeUnificator();
             bool hadError;
             void run(typedAST::Function program, vector<File *> srcFiles);
 
@@ -43,19 +43,15 @@ namespace passes {
             void visitInstSet(typedAST::InstSet *expr);
             #pragma endregion
         private:
-            ankerl::unordered_dense::set<types::tyPtr> collapsedTypes;
             //Types that are in the progress of being collapsed
             ankerl::unordered_dense::set<types::tyPtr> inProgress;
             ankerl::unordered_dense::set<types::TypeFlag> opaqueTypes;
+            ankerl::unordered_dense::map<types::tyPtr, vector<types::tyPtr>> collapsedTypes;
 
-            void collapseType(types::tyPtr toCollapse);
-
-            // Collapses all types that aren't considered opaque
-            std::unordered_set<types::tyPtr> shallowCollapse(types::tyPtr toCollapse);
+            vector<types::tyPtr>collapseType(types::tyPtr toCollapse);
 
             void collapseFunctionTy(std::shared_ptr<types::FunctionType> fnTy);
             void collapseClassTy(std::shared_ptr<types::ClassType> classTy);
-            void collapseFutureTy(std::shared_ptr<types::FutureType> futureTy);
             void collapseUnionTy(std::shared_ptr<types::TypeUnion> typeUnion);
             void collapseDeferredCall(std::shared_ptr<types::CallReturnDeferred> deferredCall);
             void collapseDeferredInstGet(std::shared_ptr<types::InstanceGetDeferred> deferredInstGet);

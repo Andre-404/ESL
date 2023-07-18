@@ -75,7 +75,10 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
 void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         auto collection = evalASTExpr(expr->callee);
-        returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, evalASTExpr(expr->field));
+        auto field = evalASTExpr(expr->field);
+        // TODO:: actually do type inference for collections
+        auto ty = getBasicType(types::TypeFlag::ANY);
+        returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, field, ty);
         return;
     }
     auto resolved = tryResolveThis(expr);
@@ -85,19 +88,24 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     }
     // Guaranteed to be a literal
     string field = probeToken(expr->field).getLexeme();
-    returnedExpr = std::make_shared<typedAST::InstGet>(evalASTExpr(expr->callee), field);
+    auto inst = evalASTExpr(expr->callee);
+    auto ty = addType(std::make_shared<types::InstanceGetDeferred>(inst->exprType, field));
+    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field, ty);
 }
 
 void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
     auto cond = evalASTExpr(expr->condition);
     auto thenBranch = evalASTExpr(expr->mhs);
     auto elseBranch = evalASTExpr(expr->rhs);
-    returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch);
+    auto unionTy = std::make_shared<types::TypeUnion>();
+    types::typeInflow(unionTy, thenBranch->exprType);
+    types::typeInflow(unionTy, elseBranch->exprType);
+    returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch, addType(unionTy));
 }
 void ASTTransformer::visitRangeExpr(AST::RangeExpr* expr) {
     auto lhs = evalASTExpr(expr->start);
     auto rhs = evalASTExpr(expr->end);
-    returnedExpr = std::make_shared<typedAST::RangeExpr>(lhs, rhs, expr->endInclusive);
+    returnedExpr = std::make_shared<typedAST::RangeExpr>(lhs, rhs, expr->endInclusive, getBasicType(types::TypeFlag::RANGE));
 }
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto lhs = evalASTExpr(expr->left);
@@ -128,7 +136,14 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::BITSHIFT_LEFT: op = typedAST::ArithmeticOp::BITSHIFT_L; break;
                 case TokenType::BITSHIFT_RIGHT: op = typedAST::ArithmeticOp::BITSHIFT_R; break;
             }
-            returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op);
+            types::tyVarIdx exprType = getBasicType(types::TypeFlag::NUMBER);
+            if(op == typedAST::ArithmeticOp::ADD){
+                auto tyUnion = std::make_shared<types::TypeUnion>();
+                types::typeInflow(tyUnion, lhs->exprType);
+                types::typeInflow(tyUnion, rhs->exprType);
+                exprType = addType(tyUnion);
+            }
+            returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op, exprType);
             return;
         }
         case TokenType::BANG_EQUAL:
@@ -152,7 +167,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::OR: op = typedAST::ComparisonOp::OR; break;
                 case TokenType::INSTANCEOF: op = typedAST::ComparisonOp::INSTANCEOF; break;
             }
-            returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op);
+            returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, getBasicType(types::TypeFlag::BOOL));
             return;
         }
     }
@@ -160,28 +175,36 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
 void ASTTransformer::visitUnaryExpr(AST::UnaryExpr* expr) {
     auto rhs = evalASTExpr(expr->right);
     typedAST::UnaryOp op;
+    types::tyVarIdx ty = getBasicType(types::TypeFlag::NUMBER);
     switch(expr->op.type){
         case TokenType::TILDA: op = typedAST::UnaryOp::BIN_NEG; break;
-        case TokenType::BANG: op = typedAST::UnaryOp::NEG; break;
+        case TokenType::BANG: {
+            op = typedAST::UnaryOp::NEG;
+            ty = getBasicType(types::TypeFlag::BOOL);
+            break;
+        }
         case TokenType::MINUS: op = typedAST::UnaryOp::FNEG; break;
         case TokenType::INCREMENT: op = expr->isPrefix ? typedAST::UnaryOp::INC_PRE : typedAST::UnaryOp::INC_POST; break;
         case TokenType::DECREMENT: op = expr->isPrefix ? typedAST::UnaryOp::DEC_PRE : typedAST::UnaryOp::DEC_POST; break;
     }
-    returnedExpr = std::make_shared<typedAST::UnaryExpr>(rhs, op);
+    returnedExpr = std::make_shared<typedAST::UnaryExpr>(rhs, op, ty);
 }
 
 void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
     auto callee = evalASTExpr(expr->callee);
     vector<typedAST::exprPtr> args;
+    vector<types::tyVarIdx> argTypes;
     for(auto arg : expr->args){
         args.push_back(evalASTExpr(arg));
+        argTypes.push_back(args.back()->exprType);
     }
     auto tryInvoke = tryConvertToInvoke(callee, args);
     if(tryInvoke) {
         returnedExpr = tryInvoke;
         return;
     }
-    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args);
+    auto ty = std::make_shared<types::CallReturnDeferred>(callee->exprType, argTypes);
+    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, addType(ty));
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto callee = getClassFromExpr(expr->call->callee);
@@ -191,21 +214,25 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     }
     // getClassFromExpr will throw an error if it doesn't find a class,
     // so callee.valPtr is guaranteed to be a constrained to a types::ClassType
-    std::shared_ptr<types::ClassType> ty = std::reinterpret_pointer_cast<types::ClassType>(callee.valPtr->constrainedValueType);
-    returnedExpr = std::make_shared<typedAST::NewExpr>(std::make_shared<typedAST::VarRead>(callee.valPtr), args, ty);
+    auto instTy = addType(std::make_shared<types::InstanceType>(callee.valPtr->possibleTypes));
+    returnedExpr = std::make_shared<typedAST::NewExpr>(std::make_shared<typedAST::VarRead>(callee.valPtr), args, instTy);
 }
 
 void ASTTransformer::visitAsyncExpr(AST::AsyncExpr* expr) {
     auto callee = evalASTExpr(expr->callee);
     vector<typedAST::exprPtr> args;
+    vector<types::tyVarIdx> argTypes;
     for(auto arg : expr->args){
         args.push_back(evalASTExpr(arg));
+        argTypes.push_back(args.back()->exprType);
     }
-    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args);
+    auto futTy = std::make_shared<types::FutureType>(callee->exprType, argTypes);
+    returnedExpr = std::make_shared<typedAST::AsyncExpr>(callee, args, addType(futTy));
 }
 void ASTTransformer::visitAwaitExpr(AST::AwaitExpr* expr) {
     auto val = evalASTExpr(expr->expr);
-    returnedExpr = std::make_shared<typedAST::AwaitExpr>(val);
+    auto furAwaitTy = std::make_shared<types::FutureAwaitDeferred>(val->exprType);
+    returnedExpr = std::make_shared<typedAST::AwaitExpr>(val, addType(furAwaitTy));
 }
 
 void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
@@ -213,7 +240,8 @@ void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
     for(auto field : expr->members){
         fields.push_back(evalASTExpr(field));
     }
-    returnedExpr = std::make_shared<typedAST::ArrayExpr>(fields);
+    auto arrTy = std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY));
+    returnedExpr = std::make_shared<typedAST::ArrayExpr>(fields, addType(arrTy));
 }
 void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
     vector<std::pair<string, typedAST::exprPtr>> fields;
@@ -224,40 +252,48 @@ void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
         temp.erase(temp.size() - 1, 1);
         fields.push_back(std::make_pair(temp, evalASTExpr(field.expr)));
     }
-    returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields);
+    auto hashmapTy = std::make_shared<types::HashMapType>(getBasicType(types::TypeFlag::ANY));
+    returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields, addType(hashmapTy));
 }
 void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
+    types::tyVarIdx ty;
+    std::variant<double, bool, void*, string> variant;
     switch(expr->token.type){
         case TokenType::STRING:{
             string temp = expr->token.getLexeme();
             temp.erase(0, 1);
             temp.erase(temp.size() - 1, 1);
-            returnedExpr = std::make_shared<typedAST::LiteralExpr>(temp);
+            variant = temp;
+            ty = getBasicType(types::TypeFlag::STRING);
             break;
         }
         case TokenType::NUMBER:{
-            returnedExpr = std::make_shared<typedAST::LiteralExpr>(std::stod(expr->token.getLexeme()));
+            variant = std::stod(expr->token.getLexeme());
+            ty = getBasicType(types::TypeFlag::NUMBER);
             break;
         }
         case TokenType::TRUE:
         case TokenType::FALSE:{
-            returnedExpr = std::make_shared<typedAST::LiteralExpr>(expr->token.type == TokenType::TRUE);
+            variant = expr->token.type == TokenType::TRUE;
+            ty = getBasicType(types::TypeFlag::BOOL);
             break;
         }
         case TokenType::NIL:{
-            returnedExpr = std::make_shared<typedAST::LiteralExpr>();
+            variant = nullptr;
+            ty = getBasicType(types::TypeFlag::NIL);
             break;
         }
         case TokenType::IDENTIFIER:{
             returnedExpr = readVar(expr->token);
-            break;
+            return;
         }
         case TokenType::THIS:{
             if (currentClass == nullptr) error(expr->token, "Can't use keyword 'this' outside of a class.");
             returnedExpr = readVar(expr->token);
-            break;
+            return;
         }
     }
+    returnedExpr = std::make_shared<typedAST::LiteralExpr>(variant, ty);
 }
 
 static std::pair<bool, bool> classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass);
@@ -274,20 +310,24 @@ void ASTTransformer::visitSuperExpr(AST::SuperExpr* expr) {
     if(!res.first){
         error(expr->methodName, "Method doesn't exist.");
     }
-    // Private fields are prefixed with a "prev."
-    if(res.second) methodName = "prev." + methodName;
+    // Private fields are prefixed with a "priv."
+    if(res.second) methodName = "priv." + methodName;
     auto inst = readVar(syntheticToken("this"));
     varPtr ptrToClass = globals.at(currentClass->parent->mangledName).valPtr;
-    auto loadClass = std::make_shared<typedAST::VarRead>(ptrToClass);
-    returnedExpr = std::make_shared<typedAST::InstSuperGet>(inst, methodName, loadClass, currentClass->parent->classType);
+    returnedExpr = std::make_shared<typedAST::InstSuperGet>(inst, methodName, ptrToClass, currentClass->parent->classTypeIdx);
 }
 
 static int anonFuncCounter = 0;
 void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     auto upvalMap = upvalueMap.at(expr);
-    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(expr->arity, std::make_shared<types::TypeUnion>(), false);
+
+    auto unionTy = std::make_shared<types::TypeUnion>();
+    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(expr->arity, addType(unionTy), false);
+
     current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC, "anonfunc." + std::to_string(anonFuncCounter++));
-    current->func.fnType = fnTy;
+    current->func.fnTy = addType(fnTy);
+    current->retTy = unionTy;
+
     // Upvalues are gathered from the enclosing function
     for(int i = 0; i < upvalMap.size(); i++){
         auto& upval = upvalMap[i];
@@ -299,18 +339,11 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
         else varToCapturePtr = current->enclosing->upvalues[upval.index].ptr;
 
         // Kinda hacky, but it makes sure to propagate possible types of upvalues when type inferring
-        if(varToCapturePtr->typeConstrained) {
-            upvalPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE, true, varToCapturePtr->constrainedValueType);
-        }
-        else{
-            upvalPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE);
-            upvalPtr->possibleTypes = varToCapturePtr->possibleTypes;
-        }
-
+        upvalPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE, varToCapturePtr->possibleTypes, varToCapturePtr->typeConstrained);
         // Sets upvalue in CurrentChunkInfo, used when resolving upvalues in readVar and storeToVar
         current->upvalues.emplace_back(upval.name, upvalPtr);
         // Sets up the (enclosing var -> upvalue) pairs
-        current->func.upvals.emplace_back(varToCapturePtr, upvalPtr);
+        current->upvalPtrs.emplace_back(varToCapturePtr, upvalPtr);
     }
 
     // No need for a endScope, since returning from the function discards the entire callstack
@@ -320,13 +353,13 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
         defineLocalVar();
         auto ptr = current->func.args.back();
         // Set the type of the argument
-        ptr->constrainedValueType = types::getBasicType(types::TypeFlag::ANY);
+        ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
         ptr->typeConstrained = true;
-        ptr->possibleTypes = nullptr;
     }
     current->func.block = parseStmtsToBlock(expr->body->statements);
+    auto upvals = current->upvalPtrs;
     auto func = endFuncDecl();
-    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func);
+    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, upvals);
 }
 // Checks if 'symbol' exists in a module which was imported with the alias 'moduleAlias',
 // If it exists return varPtr which holds the pointer to the global
@@ -373,7 +406,7 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
     }else var = declareLocalVar(decl->var);
 
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
-    typedAST::exprPtr initializer = std::make_shared<typedAST::LiteralExpr>();
+    typedAST::exprPtr initializer = std::make_shared<typedAST::LiteralExpr>(nullptr, getBasicType(types::TypeFlag::NIL));
     if (decl->value != nullptr) {
         initializer = evalASTExpr(decl->value);
     }
@@ -382,20 +415,25 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
         defineGlobalVar(fullGlobalSymbol);
     }else defineLocalVar();
 
-    auto varInit = std::make_shared<typedAST::VarStore>(var, initializer);
-    types::typeInflow(var->possibleTypes, initializer->exprType);
+    auto toStore = storeToVar(decl->var.name, initializer);
 
-    nodesToReturn = {var, varInit};
+    nodesToReturn = {var, toStore};
 }
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
-    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(decl->arity, std::make_shared<types::TypeUnion>(), false);
     updateLine(decl->getName());
+    auto retTy = std::make_shared<types::TypeUnion>();
+    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(decl->arity, addType(retTy), false);
+    auto fnTyIdx = addType(fnTy);
+
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, fnTy);
+    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, fnTyIdx);
     // Defining the function here to allow for recursion
     defineGlobalVar(fullGlobalSymbol);
+
     current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC, "func." + fullGlobalSymbol);
-    current->func.fnType = fnTy;
+    current->func.fnTy = fnTyIdx;
+    current->retTy = retTy;
+
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
     for (AST::ASTVar& var : decl->args) {
@@ -403,9 +441,8 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
         defineLocalVar();
         auto ptr = current->func.args.back();
         // Set the type of the argument
-        ptr->constrainedValueType = types::getBasicType(types::TypeFlag::ANY);
+        ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
         ptr->typeConstrained = true;
-        ptr->possibleTypes = nullptr;
     }
     current->func.block = parseStmtsToBlock(decl->body->statements);
     auto func = endFuncDecl();
@@ -413,12 +450,15 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
+    auto classTyIdx = addType(classTy);
     updateLine(decl->getName());
+
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-    varPtr var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::CLASS, classTy);
+    varPtr var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::CLASS, classTyIdx);
     // Defining the function here to allows for creating a new instance of a class inside its own methods
     defineGlobalVar(fullGlobalSymbol);
-    currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy);
+
+    currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
 
     if (decl->inheritedClass) {
@@ -429,10 +469,9 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         try { // try block because getClassInfoFromExpr can throw
             auto superclass = getClassInfoFromExpr(decl->inheritedClass);
             currentClass->parent = superclass;
-            //Copies methods from superclass
-            currentClass->methods = superclass->methods;
             // Make the class type aware of the inheritance(copies methods and fields)
-            currentClass->classType->inherit(superclass->classType);
+            currentClass->inherit(superclass);
+            currentClass->classTy->inherit(superclass->classTy);
         }catch(TransformerException& e){
 
         }
@@ -446,7 +485,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         try{
             if(isMethod && !methodOverrides && (classTy->methods.contains(pubNameStr) || classTy->methods.contains("priv." + pubNameStr))){
                 error(publicName, "Duplicate symbol found. Methods that override need to be explicitly marked with 'override'.");
-            }else if(isMethod && methodOverrides && !(classTy->methods.contains(pubNameStr) || classTy->methods.contains("priv." + pubNameStr))){
+            }
+            else if(isMethod && methodOverrides && !(classTy->methods.contains(pubNameStr) || classTy->methods.contains("priv." + pubNameStr))){
                 // If this method has been marked as override but there isn't a parent method to override, throw an error
                 error(publicName, "Method marked as 'override' but there is no parent method with matching name.");
             }
@@ -460,39 +500,58 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     for(auto field : decl->fields){
         // First check if this is a duplicate symbol
         duplicateSymbolLambda(field.field, false);
-        int idx = classTy->fields.size();
+
         string str = field.field.getLexeme();
         str = (field.isPublic ? str : ("priv." + str));
-        classTy->fields.insert_or_assign(str, std::make_pair(types::getBasicType(types::TypeFlag::ANY), idx));
+        // Can't override symbols
+        int idx = currentClass->fields.size();
+
+        currentClass->fields.insert_or_assign(str, idx);
+        classTy->fields.insert_or_assign(str, getBasicType(types::TypeFlag::ANY));
     }
+    vector<std::shared_ptr<types::TypeUnion>> methodRetTy;
     for(auto method : decl->methods){
         // First check if this is a duplicate symbol
         duplicateSymbolLambda(method.method->getName(), true, method.overrides);
-        int idx = classTy->methods.size();
+
         string str = method.method->getName().getLexeme();
         str = (method.isPublic ? str : ("priv." + str));
-        // Creates new type for each function(even if it's an override)
-        auto methodTy = std::make_shared<types::FunctionType>(method.method->arity, std::make_shared<types::TypeUnion>(), false);
 
-        // Even if this is a duplicate not marked for override(error is reported) still treat it as an override for better code errors later
-        if(classTy->methods.contains(str)) {
-            idx = classTy->methods.at(str).second;
-            classTy->methods[str] = std::make_pair(methodTy, idx);
-        }else classTy->methods.insert_or_assign(str, std::make_pair(methodTy, idx));
+        // Creates new type for each function(even if it's an override)
+        auto unionTy = std::make_shared<types::TypeUnion>();
+        auto methodTy = std::make_shared<types::FunctionType>(method.method->arity, addType(unionTy), false);
+        auto tyIdx = addType(methodTy);
+        methodRetTy.push_back(unionTy);
+
+        // TODO: check if method overlaps some prev defined field
+        classTy->methods.insert_or_assign(str, tyIdx);
     }
     // After type forward decl, compile methods
+    int i = 0;
     for(auto method : decl->methods){
         string str = method.method->getName().getLexeme();
         str = (method.isPublic ? str : ("priv." + str));
-        auto methodTy = currentClass->classType->methods.at(str).first;
-        currentClass->methods.insert_or_assign(str, createMethod(method.method.get(), decl->getName().getLexeme(), methodTy));
+        // Get the index of the linearized field
+        int idx = classTy->methods.size();
+        if(currentClass->methods.contains(str)){
+            idx = currentClass->methods[str].second;
+        }
+
+        // Transform the method
+        auto retTy = methodRetTy[i];
+        auto methodTy = currentClass->classTy->methods.at(str);
+        auto transformedMethod = createMethod(method.method.get(), decl->getName().getLexeme(), methodTy, retTy);
+
+        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, idx));
+        i++;
     }
     // Only pass pointer to where the class is stored if this class inherits
     varPtr paren = nullptr;
     if(currentClass->parent){
         paren = globals.at(currentClass->parent->mangledName).valPtr;
     }
-    nodesToReturn = {std::make_shared<typedAST::ClassDecl>(currentClass->methods, classTy, paren)};
+    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTypeIdx, paren);
+    nodesToReturn = {};
     currentClass = nullptr;
 }
 
@@ -599,7 +658,7 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
         case 2: constantsType = typedAST::SwitchConstantsType::ALL_STRING; break;
         case 3: constantsType = typedAST::SwitchConstantsType::MIXED; break;
     }
-    nodesToReturn = {std::make_shared<typedAST::SwitchStmt>(constants, caseBlocks, constantsType, defaultBlockIdx)};
+    nodesToReturn = {std::make_shared<typedAST::SwitchStmt>(cond, constants, caseBlocks, constantsType, defaultBlockIdx)};
 }
 void ASTTransformer::visitCaseStmt(AST::CaseStmt* _case) {
     //Nothing, everything is handled in visitSwitchStmt
@@ -617,8 +676,8 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
     }
     typedAST::exprPtr expr = nullptr;
     if(stmt->expr) expr = evalASTExpr(stmt->expr);
-    else expr = std::make_shared<typedAST::LiteralExpr>();
-    types::typeInflow(current->func.fnType->retType, expr->exprType);
+    else expr = std::make_shared<typedAST::LiteralExpr>(nullptr, getBasicType(types::TypeFlag::NIL));
+    types::typeInflow(current->retTy, expr->exprType);
     nodesToReturn = {std::make_shared<typedAST::ReturnStmt>(expr)};
 }
 #pragma endregion
@@ -674,7 +733,7 @@ varPtr ASTTransformer::resolveGlobal(Token symbol, bool canAssign){
     return nullptr;
 }
 
-varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, types::tyPtr contraintType){
+varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx contraintType){
     typedAST::VarType varty;
     switch(type){
         case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL;
@@ -683,9 +742,9 @@ varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, type
     }
     varPtr var;
     if(contraintType) {
-        var = std::make_shared<typedAST::VarDecl>(varty, true, contraintType);
+        var = std::make_shared<typedAST::VarDecl>(varty, contraintType, true);
     }else{
-        var = std::make_shared<typedAST::VarDecl>(varty);
+        var = std::make_shared<typedAST::VarDecl>(varty, addType(std::make_shared<types::TypeUnion>()));
     }
     globals.insert_or_assign(name, Globalvar(var));
     return var;
@@ -718,10 +777,11 @@ varPtr ASTTransformer::addLocal(AST::ASTVar var){
     updateLine(var.name);
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::UPVALUE);
     Local& local = current->locals.back();
+    auto varTy = addType(std::make_shared<types::TypeUnion>());
     if(!local.isUpval) {
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy);
     }else{
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE, varTy);
     }
     return local.ptr;
 }
@@ -783,16 +843,20 @@ typedAST::exprPtr ASTTransformer::readVar(Token name){
 }
 // Can't store to natives so that check is skipped
 typedAST::exprPtr ASTTransformer::storeToVar(Token name, typedAST::exprPtr toStore){
+    // If valPtr isn't type constrained possibleTypes is a TypeUnion
+    // TODO: something with constrained tys
     updateLine(name);
     int argIndex = resolveLocal(name);
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
-        types::typeInflow(valPtr->possibleTypes, toStore->exprType);
+        auto possibleTys = std::reinterpret_pointer_cast<types::TypeUnion>(typeEnv[valPtr->possibleTypes].first);
+        types::typeInflow(possibleTys, toStore->exprType);
         return std::make_shared<typedAST::VarStore>(valPtr, toStore);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         varPtr upvalPtr = current->upvalues[argIndex].ptr;
-        types::typeInflow(upvalPtr->possibleTypes, toStore->exprType);
+        auto possibleTys = std::reinterpret_pointer_cast<types::TypeUnion>(typeEnv[upvalPtr->possibleTypes].first);
+        types::typeInflow(possibleTys, toStore->exprType);
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore);
     }
     std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore);
@@ -804,7 +868,8 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, typedAST::exprPtr toSto
     }
     varPtr globalPtr = resolveGlobal(name, true);
     if(globalPtr){
-        types::typeInflow(globalPtr->possibleTypes, toStore->exprType);
+        auto possibleTys = std::reinterpret_pointer_cast<types::TypeUnion>(typeEnv[globalPtr->possibleTypes].first);
+        types::typeInflow(possibleTys, toStore->exprType);
         return std::make_shared<typedAST::VarStore>(globalPtr, toStore);
     }
     auto it = nativesTypes.find(name.getLexeme());
@@ -841,8 +906,8 @@ typedAST::Function ASTTransformer::endFuncDecl(){
             auto _this = readVar(syntheticToken("this"));
             ret = std::make_shared<typedAST::ReturnStmt>(_this);
         }
-        else ret = std::make_shared<typedAST::ReturnStmt>(std::make_shared<typedAST::LiteralExpr>());
-        types::typeInflow(current->func.fnType->retType, ret->expr->exprType);
+        else ret = std::make_shared<typedAST::ReturnStmt>(std::make_shared<typedAST::LiteralExpr>(nullptr, getBasicType(types::TypeFlag::NIL)));
+        types::typeInflow(current->retTy, ret->expr->exprType);
         current->func.block.stmts.push_back(ret);
         current->func.block.terminates = true;
     }
@@ -863,14 +928,14 @@ typedAST::Function ASTTransformer::endFuncDecl(){
 
 // Classes and methods
 // Class name is for recognizing constructor
-typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy){
+typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, std::shared_ptr<types::TypeUnion> retTy){
     updateLine(_method->getName());
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + _method->getName().getLexeme();
     FuncType type = FuncType::TYPE_METHOD;
     // Constructors are treated separately, but are still methods
     if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
     current = new CurrentChunkInfo(current, type, "method." + className + "." + fullGlobalSymbol);
-    current->func.fnType = fnTy;
+    current->func.fnTy = fnTy;
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
     for (AST::ASTVar& var : _method->args) {
@@ -879,25 +944,32 @@ typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string c
         auto ptr = current->func.args.back();
         // 'this' is of a known type so annotate it to enable optimizations
         if(var.name.getLexeme() == "this"){
-            ptr->constrainedValueType = std::make_shared<types::InstanceType>(currentClass->classType);
+            ptr->possibleTypes = addType(std::make_shared<types::InstanceType>(currentClass->classTypeIdx));
         }else{
             // Set the type of the other arguments
-            ptr->constrainedValueType = types::getBasicType(types::TypeFlag::ANY);
+            ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
         }
         ptr->typeConstrained = true;
-        ptr->possibleTypes = nullptr;
+        // All args are considered already collapsed since they can't be complex
+        typeEnv[ptr->possibleTypes].second = true;
     }
     current->func.block = parseStmtsToBlock(_method->body->statements);
     auto func = endFuncDecl();
     return func;
 }
 std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args){
+    vector<types::tyVarIdx> argTys;
+    for(auto arg : args){
+        argTys.push_back(arg->exprType);
+    }
     if(callee->type == typedAST::NodeType::INST_GET){
         std::shared_ptr<typedAST::InstGet> casted = std::reinterpret_pointer_cast<typedAST::InstGet>(callee);
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args);
+        auto invokeTy = addType(std::make_shared<types::CallReturnDeferred>(casted->exprType, argTys));
+        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy);
     }else if(callee->type == typedAST::NodeType::INST_SUPER_GET){
         std::shared_ptr<typedAST::InstSuperGet> casted = std::reinterpret_pointer_cast<typedAST::InstSuperGet>(callee);
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->method, args, casted->klass, casted->classTy);
+        auto invokeTy = addType(std::make_shared<types::CallReturnDeferred>(casted->exprType, argTys));
+        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->method, args, invokeTy, casted->klass);
     }
     return nullptr;
 }
@@ -906,7 +978,7 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
 // First bool in pair is if the search was succesful, second is if the field found was public or private
 static std::pair<bool, bool> classContainsField(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
-    for(auto it : klass->classType->fields){
+    for(auto it : klass->fields){
         if(publicField == it.first) return std::pair(true, true);
         else if(privateField == it.first) return std::pair(true, false);
     }
@@ -914,7 +986,7 @@ static std::pair<bool, bool> classContainsField(string publicField, std::shared_
 }
 static std::pair<bool, bool> classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
-    for(auto it : klass->classType->methods){
+    for(auto it : klass->methods){
         if(publicField == it.first) return std::pair(true, true);
         else if(privateField == it.first) return std::pair(true, false);
     }
@@ -927,13 +999,17 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     auto res = classContainsField(fieldName, currentClass);
     if(res.first){
         auto readThis = readVar(syntheticToken("this"));
-        return std::make_shared<typedAST::InstGet>(readThis, (res.second ? "" : "priv.") + fieldName);
+        fieldName = (res.second ? "" : "priv.") + fieldName;
+        auto instGetTy = std::make_shared<types::InstanceGetDeferred>(readThis->exprType, fieldName);
+        return std::make_shared<typedAST::InstGet>(readThis, fieldName, addType(instGetTy));
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(res.first){
         auto readThis = readVar(syntheticToken("this"));
-        return std::make_shared<typedAST::InstGet>(readThis, (res.second ? "" : "priv.") + fieldName);
+        fieldName = (res.second ? "" : "priv.") + fieldName;
+        auto instGetTy = std::make_shared<types::InstanceGetDeferred>(readThis->exprType, fieldName);
+        return std::make_shared<typedAST::InstGet>(readThis, fieldName, addType(instGetTy));
     }
     return nullptr;
 }
@@ -1011,13 +1087,17 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     auto res = classContainsField(fieldName, currentClass);
     if(res.first){
         auto readThis = readVar(syntheticToken("this"));
-        return std::make_shared<typedAST::InstGet>(readThis, (res.second ? "" : "priv.") + fieldName);
+        fieldName = (res.second ? "" : "priv.") + fieldName;
+        auto instGetTy = std::make_shared<types::InstanceGetDeferred>(readThis->exprType, fieldName);
+        return std::make_shared<typedAST::InstGet>(readThis, fieldName, addType(instGetTy));
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(res.first){
         auto readThis = readVar(syntheticToken("this"));
-        return std::make_shared<typedAST::InstGet>(readThis, (res.second ? "" : "priv.") + fieldName);
+        fieldName = (res.second ? "" : "priv.") + fieldName;
+        auto instGetTy = std::make_shared<types::InstanceGetDeferred>(readThis->exprType, fieldName);
+        return std::make_shared<typedAST::InstGet>(readThis, fieldName, addType(instGetTy));
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
     // Never hit
@@ -1119,5 +1199,10 @@ vector<typedAST::nodePtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNo
     // Sanity check
     nodesToReturn.clear();
     return tmp;
+}
+
+types::tyVarIdx ASTTransformer::addType(types::tyPtr ty){
+    typeEnv.emplace_back(ty, false);
+    return typeEnv.size() - 1;
 }
 #pragma endregion

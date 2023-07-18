@@ -494,7 +494,7 @@ void runtime::Thread::executeBytecode() {
                     }
                     case 2: {
                         byte slot = READ_BYTE();
-                        Value &num = frame->closure->upvals[slot]->val;
+                        Value &num = frame->closure->upvalPtrs[slot]->val;
                         INCREMENT(num);
                     }
                     case 3: {
@@ -734,12 +734,12 @@ void runtime::Thread::executeBytecode() {
 
             case +OpCode::GET_UPVALUE:{
                 uint8_t slot = READ_BYTE();
-                push(frame->closure->upvals[slot]->val);
+                push(frame->closure->upvalPtrs[slot]->val);
                 DISPATCH();
             }
             case +OpCode::SET_UPVALUE:{
                 uint8_t slot = READ_BYTE();
-                frame->closure->upvals[slot]->val = peek(0);
+                frame->closure->upvalPtrs[slot]->val = peek(0);
                 DISPATCH();
             }
             #pragma endregion
@@ -863,13 +863,13 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::CLOSURE: [[fallthrough]];
             case +OpCode::CLOSURE_LONG:{
                 auto *closure = new object::ObjClosure(asFunction(*(ip - 1) == +OpCode::CLOSURE ? READ_CONSTANT() : READ_CONSTANT_LONG()));
-                for (auto &upval: closure->upvals) {
+                for (auto &upval: closure->upvalPtrs) {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
                     if (isLocal) {
                         upval = asUpvalue(slotStart[index]);
                     } else {
-                        upval = frame->closure->upvals[index];
+                        upval = frame->closure->upvalPtrs[index];
                     }
                 }
                 push(encodeObj(closure));

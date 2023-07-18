@@ -28,6 +28,7 @@ namespace typedASTParser{
             depth = -1;
             ptr = nullptr;
             isUpval = false;
+            types = nullptr;
         }
     };
 
@@ -36,7 +37,9 @@ namespace typedASTParser{
         string name = "";
         varPtr ptr = nullptr;
 
-        Upvalue(string _name, std::shared_ptr<typedAST::VarDecl> _val) : name(_name), ptr(_val) {}
+        Upvalue(string _name, std::shared_ptr<typedAST::VarDecl> _val) : name(_name), ptr(_val) {
+            types = nullptr;
+        }
     };
 
 
@@ -45,7 +48,11 @@ namespace typedASTParser{
         // For closures
         CurrentChunkInfo* enclosing;
         typedAST::Function func;
+        std::shared_ptr<types::TypeUnion> retTy;
         FuncType type;
+        // First ptr is pointer to the VarDecl from an outer function to store to the closure,
+        // second is to the VarDecl used inside this function
+        vector<std::pair<std::shared_ptr<typedAST::VarDecl>, std::shared_ptr<typedAST::VarDecl>>> upvalPtrs;
 
         int line;
         int scopeDepth;
@@ -56,16 +63,27 @@ namespace typedASTParser{
     };
 
     struct ClassChunkInfo {
-        std::unordered_map<string, typedAST::Function> methods;
-        std::shared_ptr<types::ClassType> classType;
+        // Privates are prefixed with "priv."
+        // Int is index of that field/method after linearization
+        // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
+        std::unordered_map<string, int> fields;
+        std::unordered_map<string, std::pair<typedAST::Function, int>> methods;
+        types::tyVarIdx classTypeIdx;
+        std::shared_ptr<types::ClassType> classTy;
         string mangledName;
 
         std::shared_ptr<ClassChunkInfo> parent;
 
-        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classType, std::shared_ptr<ClassChunkInfo> _parent = nullptr){
+        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classType, std::shared_ptr<ClassChunkInfo> _parent = nullptr){
             mangledName = _name;
-            classType = _classType;
+            classTypeIdx = _classType;
             parent = _parent;
+            classTy = _classTy;
+        }
+
+        void inherit(std::shared_ptr<ClassChunkInfo> _parent){
+            methods = _parent->methods;
+            fields = _parent->fields;
         }
     };
 
@@ -139,7 +157,9 @@ namespace typedASTParser{
         std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalueMap;
         ankerl::unordered_dense::map<string, Globalvar> globals;
         ankerl::unordered_dense::map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
-        ankerl::unordered_dense::map<string, types::tyPtr> nativesTypes;
+        ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
+        // Bool is to know if a type is collapsed
+        vector<std::pair<types::tyPtr, bool>> typeEnv;
 
         vector<typedAST::nodePtr> nodesToReturn;
         typedAST::exprPtr returnedExpr;
@@ -150,7 +170,7 @@ namespace typedASTParser{
         varPtr checkSymbol(Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
         varPtr resolveGlobal(Token symbol, bool canAssign);
-        varPtr declareGlobalVar(string name, AST::ASTDeclType type, types::tyPtr typeConstraint = nullptr);
+        varPtr declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx typeConstraint = nullptr);
         void defineGlobalVar(string name);
 
         varPtr declareLocalVar(AST::ASTVar& name);
@@ -169,7 +189,7 @@ namespace typedASTParser{
         // Functions
         typedAST::Function endFuncDecl();
         // Classes and methods
-        typedAST::Function createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy);
+        typedAST::Function createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, std::shared_ptr<types::TypeUnion> retTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args);
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(Token name);
@@ -188,6 +208,8 @@ namespace typedASTParser{
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
+        types::tyVarIdx addType(types::tyPtr ty);
+        types::tyVarIdx getBasicType(types::TypeFlag ty);
         #pragma endregion
     };
 

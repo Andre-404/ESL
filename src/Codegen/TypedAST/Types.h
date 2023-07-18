@@ -40,15 +40,14 @@ namespace types{
             type = _ty;
         }
     };
+    using tyVarIdx = int;
     using tyPtr = std::shared_ptr<Type>;
 
     // Union of multiple types, used to represent types of variables, return values from functions, etc.
     class TypeUnion : public Type{
     public:
-        std::unordered_set<tyPtr> types;
-        bool collapsed;
+        std::unordered_set<tyVarIdx> types;
         TypeUnion(){
-            collapsed = false;
             type = TypeFlag::UNION;
         }
     };
@@ -57,49 +56,42 @@ namespace types{
     // After collapsing store all possible types into collapsedReturnTypes
     class CallReturnDeferred : public Type{
     public:
-        tyPtr calleeType;
-        bool collapsed;
-        std::unordered_set<tyPtr> collapsedReturnTypes;
+        tyVarIdx calleeType;
+        vector<tyVarIdx> argTypes;
 
-        CallReturnDeferred(tyPtr _calleeType){
+        CallReturnDeferred(tyVarIdx _calleeType, vector<tyVarIdx> _args){
             calleeType = _calleeType;
-            collapsed = false;
+            argTypes = _args;
             type = TypeFlag::CALL_RETURN_DEFER;
         }
     };
 
     class FutureAwaitDeferred : public Type{
     public:
-        tyPtr exprType;
-        bool collapsed;
-        std::unordered_set<tyPtr> collapsedTypes;
+        tyVarIdx exprType;
 
-        FutureAwaitDeferred(tyPtr _exprType){
+        FutureAwaitDeferred(tyVarIdx _exprType){
             exprType = _exprType;
-            collapsed = false;
             type = TypeFlag::FUT_AWAIT_DEFER;
         }
     };
 
     class InstanceGetDeferred : public Type{
     public:
-        tyPtr instance;
+        tyVarIdx instance;
         string field;
-        bool collapsed;
-        std::unordered_set<tyPtr> collapsedTypes;
 
-        InstanceGetDeferred(tyPtr _inst, string _field){
+        InstanceGetDeferred(tyVarIdx _inst, string _field){
             instance = _inst;
             field = _field;
-            collapsed = false;
             type = TypeFlag::INSTANCE_GET_DEFER;
         }
     };
 
     class ArrayType : public Type{
     public:
-        tyPtr itemType;
-        ArrayType(tyPtr _itemType){
+        tyVarIdx itemType;
+        ArrayType(tyVarIdx _itemType){
             itemType = _itemType;
             type = TypeFlag::ARRAY;
         }
@@ -108,11 +100,11 @@ namespace types{
     class FunctionType : public Type{
     public:
         int argCount;
-        std::shared_ptr<TypeUnion> retType; //Possible return types
-        vector<tyPtr> paramTypes;
+        tyVarIdx retType; //Possible return types
+        vector<tyVarIdx> paramTypes;
         bool isClosure;
 
-        FunctionType(int _argCount, std::shared_ptr<TypeUnion> _retType, bool _isClosure){
+        FunctionType(int _argCount, tyVarIdx _retType, bool _isClosure){
             argCount = _argCount;
             retType = _retType;
             isClosure = _isClosure;
@@ -122,8 +114,8 @@ namespace types{
 
     class HashMapType : public Type{
     public:
-        tyPtr itemType;
-        HashMapType(tyPtr _itemType){
+        tyVarIdx itemType;
+        HashMapType(tyVarIdx _itemType){
             itemType = _itemType;
             type = TypeFlag::HASHMAP;
         }
@@ -133,8 +125,8 @@ namespace types{
 
     class InstanceType : public Type{
     public:
-        std::shared_ptr<ClassType> klass;
-        InstanceType(std::shared_ptr<ClassType> _klass){
+        tyVarIdx klass;
+        InstanceType(tyVarIdx _klass){
             klass = _klass;
             type = TypeFlag::INSTANCE;
         }
@@ -143,10 +135,8 @@ namespace types{
     class ClassType : public Type{
     public:
         // Privates are prefixed with "priv."
-        // In the pair first value is type of field/method, second is index of that field/method after linearization
-        // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
-        std::unordered_map<string, std::pair<tyPtr, int>> fields;
-        std::unordered_map<string, std::pair<std::shared_ptr<FunctionType>, int>> methods;
+        std::unordered_map<string, tyVarIdx> fields;
+        std::unordered_map<string, tyVarIdx> methods;
 
         // Fields and methods get filled up from the outside
         ClassType(){
@@ -161,10 +151,12 @@ namespace types{
 
     class FutureType : public Type{
     public:
-        std::shared_ptr<CallReturnDeferred> heldTypes;//Possible held types
+        tyVarIdx calleeType;
+        vector<tyVarIdx> argTypes;
 
-        FutureType(std::shared_ptr<CallReturnDeferred> _heldTypes){
-            heldTypes = _heldTypes;
+        FutureType(tyVarIdx _calleeType, vector<tyVarIdx> _args){
+            calleeType = _calleeType;
+            argTypes = _args;
             type = TypeFlag::FUTURE;
         }
     };
@@ -172,9 +164,5 @@ namespace types{
     tyPtr getBasicType(TypeFlag type);
 
     // Adds rhs to lhs if rhs is not already in lhs
-    void typeInflow(std::shared_ptr<TypeUnion> lhs, tyPtr rhs);
-
-    void inheritClass(std::shared_ptr<ClassType> child, std::shared_ptr<ClassType> parent);
-
-    vector<tyPtr> collapse(tyPtr toCollapse, std::unordered_set<tyPtr>& inProgress);
+    void typeInflow(std::shared_ptr<TypeUnion> lhs, tyVarIdx rhs);
 }

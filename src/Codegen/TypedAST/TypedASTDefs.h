@@ -163,7 +163,7 @@ namespace typedAST{
 
     class TypedASTExpr : public TypedASTNode{
     public:
-        types::tyPtr exprType;
+        types::tyVarIdx exprType;
 
         virtual ~TypedASTExpr() {};
         virtual void accept(TypedASTVisitor* vis) = 0;
@@ -184,16 +184,11 @@ namespace typedAST{
         VarType varType;
         // Constrained by the type given in constructor
         bool typeConstrained;
-        types::tyPtr constrainedValueType;
-        std::shared_ptr<types::TypeUnion> possibleTypes;
-        VarDecl(VarType _varType, bool _typeConstrained = false, types::tyPtr _valueType = nullptr){
+        types::tyVarIdx possibleTypes;
+        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes, bool _typeConstrained = false){
             varType = _varType;
             typeConstrained = _typeConstrained;
-            if(typeConstrained){
-                constrainedValueType = _valueType;
-            }else{
-                possibleTypes = std::make_shared<types::TypeUnion>();
-            }
+            possibleTypes = _possibleTypes;
             type = NodeType::VAR_DECL;
         }
         ~VarDecl() {};
@@ -209,8 +204,7 @@ namespace typedAST{
         shared_ptr<VarDecl> varPtr;
         VarRead(shared_ptr<VarDecl> _varPtr){
             varPtr = _varPtr;
-            if(varPtr->typeConstrained) exprType = varPtr->constrainedValueType;
-            else exprType = varPtr->possibleTypes;
+            exprType = varPtr->possibleTypes;
             type = NodeType::VAR_READ;
         }
         ~VarRead() {};
@@ -242,8 +236,7 @@ namespace typedAST{
     class VarReadNative : public TypedASTExpr{
     public:
         string nativeName;
-        types::tyPtr heldType;
-        VarReadNative(string name, types::tyPtr _heldType){
+        VarReadNative(string name, types::tyVarIdx _heldType){
             nativeName = name;
             exprType = _heldType;
             type = NodeType::VAR_NATIVE_READ;
@@ -275,11 +268,11 @@ namespace typedAST{
         ArithmeticOp opType;
         exprPtr lhs;
         exprPtr rhs;
-        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op){
+        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op, types::tyVarIdx _exprTy){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
-            exprType = types::getBasicType(types::TypeFlag::NUMBER);
+            exprType = _exprTy;
             type = NodeType::ARITHEMTIC;
         }
         ~ArithmeticExpr() {};
@@ -307,11 +300,11 @@ namespace typedAST{
         ComparisonOp opType;
         exprPtr lhs;
         exprPtr rhs;
-        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op){
+        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op, types::tyVarIdx _exprTy){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
-            exprType = types::getBasicType(types::TypeFlag::BOOL);
+            exprType = _exprTy;
             type = NodeType::COMPARISON;
         }
         ~ComparisonExpr() {};
@@ -336,13 +329,11 @@ namespace typedAST{
     public:
         UnaryOp opType;
         exprPtr rhs;
-        UnaryExpr(exprPtr _rhs, UnaryOp _op){
+        UnaryExpr(exprPtr _rhs, UnaryOp _op, types::tyVarIdx _exprTy){
             rhs = _rhs;
             opType = _op;
             type = NodeType::UNARY;
-            if(opType == UnaryOp::NEG){
-                exprType = types::getBasicType(types::TypeFlag::BOOL);
-            }else exprType = types::getBasicType(types::TypeFlag::NUMBER);
+            exprType = _exprTy;
         }
         ~UnaryExpr() {};
         void accept(TypedASTVisitor* vis) override{
@@ -357,26 +348,9 @@ namespace typedAST{
     public:
         // int is used to signal a nil value
         std::variant<double, bool, void*, string> val;
-        LiteralExpr(double num){
-            val = num;
-            exprType = types::getBasicType(types::TypeFlag::NUMBER);
-            type = NodeType::LITERAL;
-        }
-
-        LiteralExpr(bool bl){
-            val = bl;
-            exprType = types::getBasicType(types::TypeFlag::BOOL);
-            type = NodeType::LITERAL;
-        }
-
-        LiteralExpr(string str){
-            val = str;
-            exprType = types::getBasicType(types::TypeFlag::STRING);
-            type = NodeType::LITERAL;
-        }
-        LiteralExpr(){
-            val = nullptr;
-            exprType = types::getBasicType(types::TypeFlag::NIL);
+        LiteralExpr(std::variant<double, bool, void*, string> variant, types::tyVarIdx _exprTy){
+            val = variant;
+            exprType = _exprTy;
             type = NodeType::LITERAL;
         }
         ~LiteralExpr() {};
@@ -392,9 +366,9 @@ namespace typedAST{
     public:
         // Fields sorted in the order they appear in, important to eval them in that order
         vector<std::pair<string, exprPtr>> fields;
-        HashmapExpr(vector<std::pair<string, exprPtr>> _fields){
+        HashmapExpr(vector<std::pair<string, exprPtr>> _fields, types::tyVarIdx _exprTy){
             fields = _fields;
-            exprType = make_shared<types::HashMapType>(types::getBasicType(types::TypeFlag::ANY));
+            exprType = _exprTy;
             type = NodeType::HASHMAP;
         }
         ~HashmapExpr() {};
@@ -408,9 +382,9 @@ namespace typedAST{
     class ArrayExpr : public TypedASTExpr{
     public:
         vector<exprPtr> fields;
-        ArrayExpr(vector<exprPtr> _fields){
+        ArrayExpr(vector<exprPtr> _fields, types::tyVarIdx _exprTy){
             fields = _fields;
-            exprType = make_shared<types::ArrayType>(types::getBasicType(types::TypeFlag::ANY));
+            exprType = _exprTy;
             type = NodeType::ARRAY;
         }
         ~ArrayExpr() {};
@@ -426,10 +400,10 @@ namespace typedAST{
     public:
         exprPtr collection;
         exprPtr field;
-        CollectionGet(exprPtr _collection, exprPtr _field){
+        CollectionGet(exprPtr _collection, exprPtr _field, types::tyVarIdx _exprTy){
             collection = _collection;
             field = _field;
-            exprType = types::getBasicType(types::TypeFlag::ANY);
+            exprType = _exprTy;
             type = NodeType::COLLECTION_GET;
         }
         ~CollectionGet() {};
@@ -466,14 +440,14 @@ namespace typedAST{
         exprPtr cond;
         exprPtr thenExpr;
         exprPtr elseExpr;
-        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr){
+        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr, types::tyVarIdx _exprTy){
             cond = _cond;
             thenExpr = _thenExpr;
             elseExpr = _elseExpr;
             auto tmp = std::make_shared<types::TypeUnion>();
             types::typeInflow(tmp, thenExpr->exprType);
             types::typeInflow(tmp, elseExpr->exprType);
-            exprType = tmp;
+            exprType = _exprTy;
             type = NodeType::CONDITIONAL;
         }
         ~ConditionalExpr() {};
@@ -490,10 +464,10 @@ namespace typedAST{
         exprPtr callee;
         vector<exprPtr> args;
 
-        CallExpr(exprPtr _callee, vector<exprPtr> _args){
+        CallExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _callDeferred){
             callee = _callee;
             args = _args;
-            exprType = std::make_shared<types::CallReturnDeferred>(_callee->exprType);
+            exprType = _callDeferred;
             type = NodeType::CALL;
         }
         ~CallExpr() {};
@@ -509,18 +483,18 @@ namespace typedAST{
         exprPtr inst;
         vector<exprPtr> args;
         string field;
-        shared_ptr<types::ClassType> classTy;
-        exprPtr klass;
+        types::tyVarIdx classTy;
+        // Pointer to a variable which holds the class
+        std::shared_ptr<typedAST::VarDecl> klass;
 
-        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, exprPtr _klass = nullptr, shared_ptr<types::ClassType> _classTy = nullptr){
+        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, types::tyVarIdx _exprTy, std::shared_ptr<typedAST::VarDecl> _klass = nullptr){
             inst = _inst;
             field = _field;
             args = _args;
             // Used for super invokes
             klass = _klass;
-            classTy = _classTy;
             // TODO: actually do type inference on this
-            exprType = types::getBasicType(types::TypeFlag::ANY);
+            exprType = _exprTy;
             type = NodeType::INVOKE;
         }
         ~InvokeExpr() {};
@@ -536,10 +510,10 @@ namespace typedAST{
         exprPtr callee;
         vector<exprPtr> args;
 
-        NewExpr(exprPtr _callee, vector<exprPtr> _args, shared_ptr<types::ClassType> ty){
+        NewExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _instType){
             callee = _callee;
             args = _args;
-            exprType = std::make_shared<types::InstanceType>(ty);
+            exprType = _instType;
             type = NodeType::NEW;
         }
         ~NewExpr() {};
@@ -556,11 +530,11 @@ namespace typedAST{
         exprPtr callee;
         vector<exprPtr> args;
 
-        AsyncExpr(exprPtr _callee, vector<exprPtr> _args){
+        AsyncExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _futTy){
             callee = _callee;
             args = _args;
             // Future expr that holds the possible return types of the called function
-            exprType = std::make_shared<types::FutureType>(std::make_shared<types::CallReturnDeferred>(_callee->exprType));
+            exprType = _futTy;
             type = NodeType::ASYNC;
         }
         ~AsyncExpr() {};
@@ -575,10 +549,10 @@ namespace typedAST{
     public:
         exprPtr expr;
 
-        AwaitExpr(exprPtr _expr){
+        AwaitExpr(exprPtr _expr, types::tyVarIdx _futAwaitTy){
             expr = _expr;
             // Future expr that holds the possible return types of the called function
-            exprType = std::make_shared<types::FutureAwaitDeferred>(expr->exprType);
+            exprType = _futAwaitTy;
             type = NodeType::AWAIT;
         }
         ~AwaitExpr() {};
@@ -600,26 +574,29 @@ namespace typedAST{
     };
     struct Function{
         Block block;
-        std::shared_ptr<types::FunctionType> fnType;
         vector<shared_ptr<VarDecl>> args;
-        // Only used by CreateClosureExpr and for methods
-        // First ptr is pointer to the VarDecl from an outer function to store to the closure,
-        // second is to the VarDecl used inside this function
-        vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
+        types::tyVarIdx fnTy;
         string name;
         Function(){
             name = "";
-            fnType = nullptr;
+            fnTy = -1;
+        }
+        Function(types::tyVarIdx _fnTy){
+            name = "";
+            fnTy = _fnTy;
         }
     };
 
     class CreateClosureExpr : public TypedASTExpr{
     public:
         Function fn;
+        // First ptr is pointer to the VarDecl from an outer function to store to the closure,
+        // second is to the VarDecl used inside this function
+        vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
 
-        CreateClosureExpr(Function& _fn){
+        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals){
             fn = _fn;
-            exprType = fn.fnType;
+            exprType = fn.fnTy;
             type = NodeType::CLOSURE;
         }
         ~CreateClosureExpr() {};
@@ -670,11 +647,11 @@ namespace typedAST{
         exprPtr rhs;
         bool isEndInclusive;
 
-        RangeExpr(exprPtr _lhs, exprPtr _rhs, bool _isEndInclusive){
+        RangeExpr(exprPtr _lhs, exprPtr _rhs, bool _isEndInclusive, types::tyVarIdx _ty){
             lhs = _lhs;
             rhs = _rhs;
             isEndInclusive = _isEndInclusive;
-            exprType = types::getBasicType(types::TypeFlag::RANGE);
+            exprType = _ty;
             type = NodeType::RANGE;
         }
         ~RangeExpr() {};
@@ -758,6 +735,7 @@ namespace typedAST{
     };
     class SwitchStmt : public TypedASTNode{
     public:
+        exprPtr cond;
         // Each constant has a literal and the index of the case it leads to
         // For the default case ptr is null
         vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
@@ -765,7 +743,8 @@ namespace typedAST{
         vector<Block> cases;
         SwitchConstantsType constantsType;
 
-        SwitchStmt(vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants, vector<Block> _cases, SwitchConstantsType _ty, int _defaultCaseBlockNum){
+        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants, vector<Block> _cases, SwitchConstantsType _ty, int _defaultCaseBlockNum){
+            cond = _cond;
             constants = _constants;
             cases = _cases;
             constantsType = _ty;
@@ -783,12 +762,15 @@ namespace typedAST{
 
     class ClassDecl : public TypedASTNode{
     public:
-        std::unordered_map<string, Function> methods;
-        shared_ptr<types::ClassType> classType;
+        // Privates are prefixed with "priv."
+        // Int is index of that field/method after linearization
+        // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
+        std::unordered_map<string, int> fields;
+        std::unordered_map<string, std::pair<Function, int>> methods;
+        types::tyVarIdx classType;
         shared_ptr<VarDecl> parentClass;
 
-        ClassDecl(std::unordered_map<string, Function> _methods, shared_ptr<types::ClassType> ty, shared_ptr<VarDecl> _parentClass){
-            methods = _methods;
+        ClassDecl(types::tyVarIdx ty, shared_ptr<VarDecl> _parentClass = nullptr){
             classType = ty;
             parentClass = _parentClass;
             type = NodeType::CLASS_DECL;
@@ -800,16 +782,20 @@ namespace typedAST{
         llvm::Value* codegen(TypedASTCodegen* vis) override{
             return vis->visitClassDecl(this);
         }
+        void inherit(std::shared_ptr<ClassDecl> parent){
+            methods = parent->methods;
+            fields = parent->fields;
+        }
     };
     class InstGet : public TypedASTExpr{
     public:
         exprPtr instance;
         string field;
 
-        InstGet(exprPtr _instance, string _field){
+        InstGet(exprPtr _instance, string _field, types::tyVarIdx _instGetTy){
             instance = _instance;
             field = _field;
-            exprType = std::make_shared<types::InstanceGetDeferred>(instance->exprType, field);
+            exprType = _instGetTy;
             type = NodeType::INST_GET;
         }
         ~InstGet() {};
@@ -823,17 +809,16 @@ namespace typedAST{
     class InstSuperGet : public TypedASTExpr{
     public:
         exprPtr instance;
-        exprPtr klass;
+        // Pointer to a variable which holds the class
+        std::shared_ptr<typedAST::VarDecl> klass;
         string method;
-        shared_ptr<types::ClassType> classTy;
 
-        InstSuperGet(exprPtr _instance, string _method, exprPtr _klass, shared_ptr<types::ClassType> ty){
+        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx _ty){
             instance = _instance;
             method = _method;
             klass = _klass;
-            classTy = ty;
             // ASTToTypedAST checks if ty contains method
-            exprType = ty->methods.at(method).first;
+            exprType = _ty;
             type = NodeType::INST_SUPER_GET;
         }
         ~InstSuperGet() {};
