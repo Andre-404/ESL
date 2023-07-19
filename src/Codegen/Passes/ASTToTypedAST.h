@@ -28,7 +28,6 @@ namespace typedASTParser{
             depth = -1;
             ptr = nullptr;
             isUpval = false;
-            types = nullptr;
         }
     };
 
@@ -37,9 +36,7 @@ namespace typedASTParser{
         string name = "";
         varPtr ptr = nullptr;
 
-        Upvalue(string _name, std::shared_ptr<typedAST::VarDecl> _val) : name(_name), ptr(_val) {
-            types = nullptr;
-        }
+        Upvalue(string _name, std::shared_ptr<typedAST::VarDecl> _val) : name(_name), ptr(_val) {}
     };
 
 
@@ -48,7 +45,7 @@ namespace typedASTParser{
         // For closures
         CurrentChunkInfo* enclosing;
         typedAST::Function func;
-        std::shared_ptr<types::TypeUnion> retTy;
+        types::tyVarIdx retTy;
         FuncType type;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
@@ -158,8 +155,8 @@ namespace typedASTParser{
         ankerl::unordered_dense::map<string, Globalvar> globals;
         ankerl::unordered_dense::map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
         ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
-        // Bool is to know if a type is collapsed
-        vector<std::pair<types::tyPtr, bool>> typeEnv;
+        // Empty constraint set means type is collapsed
+        vector<std::pair<types::tyPtr, vector<std::shared_ptr<types::TypeConstraint>>>> typeEnv;
 
         vector<typedAST::nodePtr> nodesToReturn;
         typedAST::exprPtr returnedExpr;
@@ -170,7 +167,7 @@ namespace typedASTParser{
         varPtr checkSymbol(Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
         varPtr resolveGlobal(Token symbol, bool canAssign);
-        varPtr declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx typeConstraint = nullptr);
+        varPtr declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx typeConstraint = -1);
         void defineGlobalVar(string name);
 
         varPtr declareLocalVar(AST::ASTVar& name);
@@ -188,17 +185,28 @@ namespace typedASTParser{
         void endScope();
         // Functions
         typedAST::Function endFuncDecl();
+
         // Classes and methods
-        typedAST::Function createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, std::shared_ptr<types::TypeUnion> retTy);
+        typedAST::Function createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, types::tyVarIdx retTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args);
+
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(Token name);
         std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(Token name, typedAST::exprPtr toStore);
         Globalvar& getClassFromExpr(AST::ASTNodePtr expr);
         std::shared_ptr<ClassChunkInfo> getClassInfoFromExpr(AST::ASTNodePtr expr);
+
         // Resolve public/private fields when this.field in encountered in code
         std::shared_ptr<typedAST::InstGet> tryResolveThis(AST::FieldAccessExpr* expr);
         std::shared_ptr<typedAST::InstSet> tryResolveThis(AST::SetExpr* expr);
+
+        // Type stuff
+        types::tyVarIdx addType(types::tyPtr ty);
+        types::tyVarIdx createEmptyTy();
+        void addTypeConstraint(types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint);
+        types::tyVarIdx getBasicType(types::TypeFlag ty);
+        void addBasicTypes();
+
         // Misc
         Token syntheticToken(string str);
         void updateLine(Token token);
@@ -208,8 +216,6 @@ namespace typedASTParser{
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
-        types::tyVarIdx addType(types::tyPtr ty);
-        types::tyVarIdx getBasicType(types::TypeFlag ty);
         #pragma endregion
     };
 

@@ -21,13 +21,14 @@ namespace types{
         HASHMAP,
         INSTANCE,
         CLASS,
-        FUTURE,
-        // Union of many types
-        UNION,
-        // Temporaries that get collapsed into a vector of types
-        CALL_RETURN_DEFER,
-        FUT_AWAIT_DEFER,
-        INSTANCE_GET_DEFER
+        FUTURE
+    };
+
+    enum class TypeConstraintFlag{
+        ADD_TY,
+        GET_RETURN_TY,
+        GET_AWAIT_TY,
+        INST_GET_FIELD_TY
     };
 
     class Type{
@@ -43,48 +44,49 @@ namespace types{
     using tyVarIdx = int;
     using tyPtr = std::shared_ptr<Type>;
 
-    // Union of multiple types, used to represent types of variables, return values from functions, etc.
-    class TypeUnion : public Type{
+    class TypeConstraint{
     public:
-        std::unordered_set<tyVarIdx> types;
-        TypeUnion(){
-            type = TypeFlag::UNION;
+        TypeConstraintFlag type;
+    };
+
+    class AddTyConstraint : public TypeConstraint{
+    public:
+        tyVarIdx toAdd;
+        AddTyConstraint(tyVarIdx _toAdd){
+            toAdd = _toAdd;
+            type = TypeConstraintFlag::ADD_TY;
         }
     };
 
-    // Defers obtaining the actual type(fn return, future return, instance field type) until type collapsing
-    // After collapsing store all possible types into collapsedReturnTypes
-    class CallReturnDeferred : public Type{
+    class GetCallResTyConstraint : public TypeConstraint{
     public:
         tyVarIdx calleeType;
-        vector<tyVarIdx> argTypes;
 
-        CallReturnDeferred(tyVarIdx _calleeType, vector<tyVarIdx> _args){
+        GetCallResTyConstraint(tyVarIdx _calleeType){
             calleeType = _calleeType;
-            argTypes = _args;
-            type = TypeFlag::CALL_RETURN_DEFER;
+            type = TypeConstraintFlag::GET_RETURN_TY;
         }
     };
 
-    class FutureAwaitDeferred : public Type{
+    class GetAwaitTyConstraint : public TypeConstraint{
     public:
-        tyVarIdx exprType;
+        tyVarIdx potentialFuture;
 
-        FutureAwaitDeferred(tyVarIdx _exprType){
-            exprType = _exprType;
-            type = TypeFlag::FUT_AWAIT_DEFER;
+        GetAwaitTyConstraint(tyVarIdx _potentialFuture){
+            potentialFuture = _potentialFuture;
+            type = TypeConstraintFlag::GET_AWAIT_TY;
         }
     };
 
-    class InstanceGetDeferred : public Type{
+    class InstGetFieldTyConstraint : public TypeConstraint{
     public:
-        tyVarIdx instance;
+        tyVarIdx potentialInst;
         string field;
 
-        InstanceGetDeferred(tyVarIdx _inst, string _field){
-            instance = _inst;
+        InstGetFieldTyConstraint(tyVarIdx _potentialInst, string _field){
+            potentialInst = _potentialInst;
             field = _field;
-            type = TypeFlag::INSTANCE_GET_DEFER;
+            type = TypeConstraintFlag::INST_GET_FIELD_TY;
         }
     };
 
@@ -152,17 +154,13 @@ namespace types{
     class FutureType : public Type{
     public:
         tyVarIdx calleeType;
-        vector<tyVarIdx> argTypes;
 
-        FutureType(tyVarIdx _calleeType, vector<tyVarIdx> _args){
+        FutureType(tyVarIdx _calleeType){
             calleeType = _calleeType;
-            argTypes = _args;
             type = TypeFlag::FUTURE;
         }
     };
 
     tyPtr getBasicType(TypeFlag type);
 
-    // Adds rhs to lhs if rhs is not already in lhs
-    void typeInflow(std::shared_ptr<TypeUnion> lhs, tyVarIdx rhs);
 }

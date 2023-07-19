@@ -444,9 +444,6 @@ namespace typedAST{
             cond = _cond;
             thenExpr = _thenExpr;
             elseExpr = _elseExpr;
-            auto tmp = std::make_shared<types::TypeUnion>();
-            types::typeInflow(tmp, thenExpr->exprType);
-            types::typeInflow(tmp, elseExpr->exprType);
             exprType = _exprTy;
             type = NodeType::CONDITIONAL;
         }
@@ -813,12 +810,12 @@ namespace typedAST{
         std::shared_ptr<typedAST::VarDecl> klass;
         string method;
 
-        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx _ty){
+        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx methodTy){
             instance = _instance;
             method = _method;
             klass = _klass;
-            // ASTToTypedAST checks if ty contains method
-            exprType = _ty;
+            // ASTToTypedAST checks if class ty contains method
+            exprType = methodTy;
             type = NodeType::INST_SUPER_GET;
         }
         ~InstSuperGet() {};
