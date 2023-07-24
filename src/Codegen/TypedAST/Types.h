@@ -58,21 +58,21 @@ namespace types{
         }
     };
 
-    class GetCallResTyConstraint : public TypeConstraint{
+    class CallResTyConstraint : public TypeConstraint{
     public:
         tyVarIdx calleeType;
 
-        GetCallResTyConstraint(tyVarIdx _calleeType){
+        CallResTyConstraint(tyVarIdx _calleeType){
             calleeType = _calleeType;
             type = TypeConstraintFlag::GET_RETURN_TY;
         }
     };
 
-    class GetAwaitTyConstraint : public TypeConstraint{
+    class AwaitTyConstraint : public TypeConstraint{
     public:
         tyVarIdx potentialFuture;
 
-        GetAwaitTyConstraint(tyVarIdx _potentialFuture){
+        AwaitTyConstraint(tyVarIdx _potentialFuture){
             potentialFuture = _potentialFuture;
             type = TypeConstraintFlag::GET_AWAIT_TY;
         }

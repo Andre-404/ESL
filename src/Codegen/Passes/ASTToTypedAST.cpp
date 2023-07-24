@@ -206,7 +206,7 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
         return;
     }
     auto ty = createEmptyTy();
-    addTypeConstraint(ty, std::make_shared<types::GetCallResTyConstraint>(callee->exprType));
+    addTypeConstraint(ty, std::make_shared<types::CallResTyConstraint>(callee->exprType));
     returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, ty);
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
@@ -235,7 +235,7 @@ void ASTTransformer::visitAsyncExpr(AST::AsyncExpr* expr) {
 void ASTTransformer::visitAwaitExpr(AST::AwaitExpr* expr) {
     auto val = evalASTExpr(expr->expr);
     auto furAwaitTy = createEmptyTy();
-    addTypeConstraint(furAwaitTy, std::make_shared<types::GetAwaitTyConstraint>(val->exprType));
+    addTypeConstraint(furAwaitTy, std::make_shared<types::AwaitTyConstraint>(val->exprType));
     returnedExpr = std::make_shared<typedAST::AwaitExpr>(val, furAwaitTy);
 }
 
@@ -964,12 +964,12 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
     if(callee->type == typedAST::NodeType::INST_GET){
         std::shared_ptr<typedAST::InstGet> casted = std::reinterpret_pointer_cast<typedAST::InstGet>(callee);
         auto invokeTy = createEmptyTy();
-        addTypeConstraint(invokeTy, std::make_shared<types::GetCallResTyConstraint>(casted->exprType));
+        addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
         return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy);
     }else if(callee->type == typedAST::NodeType::INST_SUPER_GET){
         std::shared_ptr<typedAST::InstSuperGet> casted = std::reinterpret_pointer_cast<typedAST::InstSuperGet>(callee);
         auto invokeTy = createEmptyTy();
-        addTypeConstraint(invokeTy, std::make_shared<types::GetCallResTyConstraint>(casted->exprType));
+        addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
         return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->method, args, invokeTy, casted->klass);
     }
     return nullptr;
