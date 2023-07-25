@@ -11,7 +11,3 @@ tyPtr types::getBasicType(TypeFlag type){
     basicTypes.insert_or_assign(type, typtr);
     return typtr;
 }
-
-void types::typeInflow(std::shared_ptr<TypeUnion> lhs, tyPtr rhs){
-    lhs->types.insert(rhs);
-}

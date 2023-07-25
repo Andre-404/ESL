@@ -127,8 +127,8 @@ namespace types{
 
     class InstanceType : public Type{
     public:
-        tyVarIdx klass;
-        InstanceType(tyVarIdx _klass){
+        std::shared_ptr<ClassType> klass;
+        InstanceType(std::shared_ptr<ClassType> _klass){
             klass = _klass;
             type = TypeFlag::INSTANCE;
         }

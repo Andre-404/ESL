@@ -26,13 +26,17 @@ namespace passes {
 
             vector<types::tyPtr> collapseType(types::tyVarIdx idx, pair<types::tyPtr, vector<constraint>>& ty);
 
-            vector<types::tyPtr> resolveConstraints(vector<constraint> tyConstraints);
+            vector<types::tyPtr> resolveConstraints(vector<constraint> tyConstraints, constraintSet& processed);
 
-            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AddTyConstraint> addConstraint, constraintSet& processed);
-            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint, constraintSet& processed);
-            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint, constraintSet& processed);
-            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint, constraintSet& processed);
+            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AddTyConstraint> addConstraint);
+            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint);
+            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint);
+            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint);
 
+            // Helpers
+            vector<types::tyPtr> getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint, vector<types::tyPtr> possibleFutureTypes);
+
+            pair<vector<types::tyPtr>, vector<constraint>> getPossibleRetTysFromFuncs(vector<types::tyPtr> possibleFuncTypes);
             void error(Token token, string msg);
         };
     }

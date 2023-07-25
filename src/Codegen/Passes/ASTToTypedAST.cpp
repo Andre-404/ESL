@@ -210,14 +210,15 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
     returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, ty);
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
-    auto callee = getClassFromExpr(expr->call->callee);
+    auto klass = getClassInfoFromExpr(expr->call->callee);
+    auto callee = globals.at(klass->mangledName);
     vector<typedAST::exprPtr> args;
     for(auto arg : expr->call->args){
         args.push_back(evalASTExpr(arg));
     }
     // getClassFromExpr will throw an error if it doesn't find a class,
     // so callee.valPtr is guaranteed to be a constrained to a types::ClassType
-    auto instTy = addType(std::make_shared<types::InstanceType>(callee.valPtr->possibleTypes));
+    auto instTy = addType(std::make_shared<types::InstanceType>(klass->classTy));
     returnedExpr = std::make_shared<typedAST::NewExpr>(std::make_shared<typedAST::VarRead>(callee.valPtr), args, instTy);
 }
 
@@ -945,7 +946,7 @@ typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string c
         auto ptr = current->func.args.back();
         // 'this' is of a known type so annotate it to enable optimizations
         if(var.name.getLexeme() == "this"){
-            ptr->possibleTypes = addType(std::make_shared<types::InstanceType>(currentClass->classTypeIdx));
+            ptr->possibleTypes = addType(std::make_shared<types::InstanceType>(currentClass->classTy));
         }else{
             // Set the type of the other arguments
             ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
