@@ -722,7 +722,17 @@ shared_ptr<ClassDecl> Parser::classDecl() {
                 checkName(decl->name);
                 // Implicitly declare "this"
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
-                methods.emplace_back(isPublic, decl);
+                methods.emplace_back(isPublic, decl, false);
+            }else if (match(TokenType::OVERRIDE)) {
+                // "override" keyword must be followed by a method
+                if(!match(TokenType::FN)){
+                    error(peek(), "'override' must be followed by a method definition.");
+                }
+                auto decl = funcDecl();
+                checkName(decl->name);
+                // Implicitly declare "this"
+                decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
+                methods.emplace_back(isPublic, decl, true);
             } else {
                 throw error(peek(), "Expected let or fn keywords.");
             }

@@ -657,7 +657,7 @@ namespace AST {
         bool overrides;
         shared_ptr<FuncDecl> method;
 
-        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method, bool _overrides = false) : isPublic(_isPublic), method(_method), overrides(_overrides) {}
+        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method, bool _overrides) : isPublic(_isPublic), method(_method), overrides(_overrides) {}
     };
 
     struct ClassField{

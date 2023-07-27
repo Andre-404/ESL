@@ -572,13 +572,13 @@ namespace typedAST{
     struct Function{
         Block block;
         vector<shared_ptr<VarDecl>> args;
-        types::tyVarIdx fnTy;
+        shared_ptr<types::FunctionType> fnTy;
         string name;
         Function(){
             name = "";
-            fnTy = -1;
+            fnTy = nullptr;
         }
-        Function(types::tyVarIdx _fnTy){
+        Function(shared_ptr<types::FunctionType> _fnTy){
             name = "";
             fnTy = _fnTy;
         }
@@ -591,9 +591,9 @@ namespace typedAST{
         // second is to the VarDecl used inside this function
         vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
 
-        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals){
+        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty){
             fn = _fn;
-            exprType = fn.fnTy;
+            exprType = ty;
             type = NodeType::CLOSURE;
         }
         ~CreateClosureExpr() {};
@@ -764,10 +764,10 @@ namespace typedAST{
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
         std::unordered_map<string, std::pair<Function, int>> methods;
-        types::tyVarIdx classType;
+        std::shared_ptr<types::ClassType> classType;
         shared_ptr<VarDecl> parentClass;
 
-        ClassDecl(types::tyVarIdx ty, shared_ptr<VarDecl> _parentClass = nullptr){
+        ClassDecl(std::shared_ptr<types::ClassType> ty, shared_ptr<VarDecl> _parentClass = nullptr){
             classType = ty;
             parentClass = _parentClass;
             type = NodeType::CLASS_DECL;

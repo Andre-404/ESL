@@ -2,16 +2,10 @@
 #include "../../Parsing/ASTProbe.h"
 #include "../../Includes/fmt/format.h"
 #include "../../ErrorHandling/errorHandler.h"
+#include "TypeUnification.h"
 
 using namespace passes;
 using namespace typedASTParser;
-
-CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName) {
-    enclosing = _enclosing;
-    type = _type;
-    line = 0;
-    func.name = funcName;
-}
 
 ASTTransformer::ASTTransformer() {
     curUnitIndex = 0;
@@ -46,13 +40,18 @@ std::pair<typedAST::Function, vector<File*>> ASTTransformer::run(vector<ESLModul
     return std::make_pair(fn, sourceFiles);
 }
 
+vector<vector<types::tyPtr>> ASTTransformer::getTypeEnv(){
+    typeUnification::TypeUnificator unificator;
+    return unificator.run(typeEnv);
+}
+
+#pragma region Visitor
 static Token probeToken(AST::ASTNodePtr ptr){
     AST::ASTProbe p;
     ptr->accept(&p);
     return p.getProbedToken();
 }
 
-#pragma region Visitor
 void ASTTransformer::visitAssignmentExpr(AST::AssignmentExpr* expr){
     auto rhs = evalASTExpr(expr->value);
     returnedExpr = storeToVar(expr->name, rhs);
@@ -99,6 +98,7 @@ void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
     auto cond = evalASTExpr(expr->condition);
     auto thenBranch = evalASTExpr(expr->mhs);
     auto elseBranch = evalASTExpr(expr->rhs);
+
     auto ty = createEmptyTy();
     addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(thenBranch->exprType));
     addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(elseBranch->exprType));
@@ -138,6 +138,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::BITSHIFT_LEFT: op = typedAST::ArithmeticOp::BITSHIFT_L; break;
                 case TokenType::BITSHIFT_RIGHT: op = typedAST::ArithmeticOp::BITSHIFT_R; break;
             }
+            // TODO: a bit hacky? addition can only result in a number or a string
             types::tyVarIdx exprType = getBasicType(types::TypeFlag::NUMBER);
             if(op == typedAST::ArithmeticOp::ADD){
                 auto ty = createEmptyTy();
@@ -301,7 +302,7 @@ void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
     returnedExpr = std::make_shared<typedAST::LiteralExpr>(variant, ty);
 }
 
-static std::pair<bool, bool> classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass);
+static string classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass);
 
 void ASTTransformer::visitSuperExpr(AST::SuperExpr* expr) {
     if (!currentClass) {
@@ -310,28 +311,23 @@ void ASTTransformer::visitSuperExpr(AST::SuperExpr* expr) {
     else if (!currentClass->parent) {
         error(expr->methodName, "Can't use 'super' in a class with no superclass.");
     }
+
     string methodName = expr->methodName.getLexeme();
     auto res = classContainsMethod(methodName, currentClass->parent);
-    if(!res.first){
+    if(res.empty()){
         error(expr->methodName, "Method doesn't exist.");
     }
-    // Private fields are prefixed with a "priv."
-    if(res.second) methodName = "priv." + methodName;
+
     auto inst = readVar(syntheticToken("this"));
     varPtr ptrToClass = globals.at(currentClass->parent->mangledName).valPtr;
-    returnedExpr = std::make_shared<typedAST::InstSuperGet>(inst, methodName, ptrToClass, currentClass->parent->classTypeIdx);
+    returnedExpr = std::make_shared<typedAST::InstSuperGet>(inst, res, ptrToClass, currentClass->parent->classTypeIdx);
 }
 
 static int anonFuncCounter = 0;
 void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     auto upvalMap = upvalueMap.at(expr);
 
-    auto retTy = createEmptyTy();
-    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(expr->arity, retTy, false);
-
-    current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC, "anonfunc." + std::to_string(anonFuncCounter++));
-    current->func.fnTy = addType(fnTy);
-    current->retTy = retTy;
+    auto ty = createNewFunc("anonfunc." + std::to_string(anonFuncCounter++), expr->arity, FuncType::TYPE_FUNC, upvalMap.size() > 0);
 
     // Upvalues are gathered from the enclosing function
     for(int i = 0; i < upvalMap.size(); i++){
@@ -353,18 +349,12 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
 
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
-    for (AST::ASTVar& var : expr->args) {
-        current->func.args.push_back(declareLocalVar(var));
-        defineLocalVar();
-        auto ptr = current->func.args.back();
-        // Set the type of the argument
-        ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
-        ptr->typeConstrained = true;
-    }
+
+    declareFuncArgs(expr->args);
     current->func.block = parseStmtsToBlock(expr->body->statements);
     auto upvals = current->upvalPtrs;
     auto func = endFuncDecl();
-    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, upvals);
+    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, upvals, ty);
 }
 // Checks if 'symbol' exists in a module which was imported with the alias 'moduleAlias',
 // If it exists return varPtr which holds the pointer to the global
@@ -424,31 +414,20 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
     nodesToReturn = {var, toStore};
 }
+
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     updateLine(decl->getName());
-    auto retTy = createEmptyTy();
-    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(decl->arity, retTy, false);
-    auto fnTyIdx = addType(fnTy);
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, fnTyIdx);
+    auto ty = createNewFunc("func." + fullGlobalSymbol, decl->arity, FuncType::TYPE_FUNC, false);
+
+    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, ty);
     // Defining the function here to allow for recursion
     defineGlobalVar(fullGlobalSymbol);
 
-    current = new CurrentChunkInfo(current, FuncType::TYPE_FUNC, "func." + fullGlobalSymbol);
-    current->func.fnTy = fnTyIdx;
-    current->retTy = retTy;
-
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
-    for (AST::ASTVar& var : decl->args) {
-        current->func.args.push_back(declareLocalVar(var));
-        defineLocalVar();
-        auto ptr = current->func.args.back();
-        // Set the type of the argument
-        ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
-        ptr->typeConstrained = true;
-    }
+    declareFuncArgs(decl->args);
     current->func.block = parseStmtsToBlock(decl->body->statements);
     auto func = endFuncDecl();
     nodesToReturn = {std::make_shared<typedAST::FuncDecl>(func)};
@@ -473,7 +452,6 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         //undefined behavior (eg. class a : a)
         try { // try block because getClassInfoFromExpr can throw
             auto superclass = getClassInfoFromExpr(decl->inheritedClass);
-            currentClass->parent = superclass;
             // Make the class type aware of the inheritance(copies methods and fields)
             currentClass->inherit(superclass);
             currentClass->classTy->inherit(superclass->classTy);
@@ -484,27 +462,9 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     // Before compiling any code make the class type aware of its own fields and methods
     // Think of this as a sort of forward declaration
 
-    // Since every method(not marked as override) and field must be unique, error if a duplicate name is found(regardless of visibility)
-    auto duplicateSymbolLambda = [&](Token publicName, bool isMethod, bool methodOverrides = false){
-        string pubNameStr = publicName.getLexeme();
-        try{
-            if(isMethod && !methodOverrides && (classTy->methods.contains(pubNameStr) || classTy->methods.contains("priv." + pubNameStr))){
-                error(publicName, "Duplicate symbol found. Methods that override need to be explicitly marked with 'override'.");
-            }
-            else if(isMethod && methodOverrides && !(classTy->methods.contains(pubNameStr) || classTy->methods.contains("priv." + pubNameStr))){
-                // If this method has been marked as override but there isn't a parent method to override, throw an error
-                error(publicName, "Method marked as 'override' but there is no parent method with matching name.");
-            }
-            if(classTy->fields.contains(pubNameStr) || classTy->fields.contains("priv." + pubNameStr)){
-                error(publicName, "Duplicate symbol found. Fields are inherited from parents.");
-            }
-        }catch(TransformerException& e){
-
-        }
-    };
     for(auto field : decl->fields){
         // First check if this is a duplicate symbol
-        duplicateSymbolLambda(field.field, false);
+        detectDuplicateSymbol(field.field, false ,false);
 
         string str = field.field.getLexeme();
         str = (field.isPublic ? str : ("priv." + str));
@@ -514,48 +474,35 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         currentClass->fields.insert_or_assign(str, idx);
         classTy->fields.insert_or_assign(str, getBasicType(types::TypeFlag::ANY));
     }
+
     vector<types::tyVarIdx> returnTys;
+    vector<std::shared_ptr<types::FunctionType>> methodTys;
     for(auto method : decl->methods){
         // First check if this is a duplicate symbol
-        duplicateSymbolLambda(method.method->getName(), true, method.overrides);
+        detectDuplicateSymbol(method.method->getName(), true ,method.overrides);
 
         string str = method.method->getName().getLexeme();
         str = (method.isPublic ? str : ("priv." + str));
 
-        // Creates new type for each function(even if it's an override)
+        // Creates new type for each method(if it's an override then just override the field in classTy)
         auto retTy = createEmptyTy();
         auto methodTy = std::make_shared<types::FunctionType>(method.method->arity, retTy, false);
         auto tyIdx = addType(methodTy);
         returnTys.push_back(retTy);
+        methodTys.push_back(methodTy);
 
-        // TODO: check if method overlaps some prev defined field
         classTy->methods.insert_or_assign(str, tyIdx);
     }
-    // After type forward decl, compile methods
-    int i = 0;
-    for(auto method : decl->methods){
-        string str = method.method->getName().getLexeme();
-        str = (method.isPublic ? str : ("priv." + str));
-        // Get the index of the linearized field
-        int idx = classTy->methods.size();
-        if(currentClass->methods.contains(str)){
-            idx = currentClass->methods[str].second;
-        }
 
-        // Transform the method
-        auto retTy = returnTys[i];
-        auto methodTy = currentClass->classTy->methods.at(str);
-        auto transformedMethod = createMethod(method.method.get(), decl->getName().getLexeme(), methodTy, retTy);
+    // Process the methods after forward declaring the fields
+    processMethods(decl->getName().getLexeme(), decl->methods, methodTys, returnTys);
 
-        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, idx));
-        i++;
-    }
     // Only pass pointer to where the class is stored if this class inherits
     varPtr paren = nullptr;
     if(currentClass->parent){
         paren = globals.at(currentClass->parent->mangledName).valPtr;
     }
-    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTypeIdx, paren);
+    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, paren);
     nodesToReturn = {};
     currentClass = nullptr;
 }
@@ -571,7 +518,7 @@ void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
         try{
             nodesToInsert = evalASTStmt(temp);
         }catch(TransformerException e){
-            //
+            // To stop unwinding
         }
         nodes.insert(nodes.end(), nodesToInsert.begin(), nodesToInsert.end());
     }
@@ -596,13 +543,15 @@ void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     beginScope();
     vector<typedAST::nodePtr> init;
     typedAST::exprPtr cond = nullptr;
+    typedAST::exprPtr inc = nullptr;
     // Order of eval is important for types
     // Init can be a single statement(expr statement) or a var decl + var store
     if(stmt->init) init = evalASTStmt(stmt->init);
     if(stmt->condition) cond = evalASTExpr(stmt->condition);
 
     typedAST::Block loopBody = parseStmtToBlock(stmt->body);
-    typedAST::exprPtr inc = evalASTExpr(stmt->increment);
+    if(stmt->condition) inc = evalASTExpr(stmt->increment);
+    endScope();
     // Init isn't treated as part of the while loop, but as statement(s) by itself(exprStmt or var decl + var store)
     nodesToReturn.insert(nodesToReturn.end(), init.begin(), init.end());
     // AfterLoopExpr is special field that won't be part of the loop body, but in a basic block by itself
@@ -615,6 +564,32 @@ void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::CONTINUE)};
 }
 
+static vector<std::variant<double, void*, bool, string>> getCaseConstants(vector<Token> constants, uint8_t& flag){
+    vector<std::variant<double, void*, bool, string>> converted;
+    for (auto literal: constants) {
+        if(literal.type == TokenType::STRING){
+            string temp = literal.getLexeme();
+            temp.erase(0, 1);
+            temp.erase(temp.size() - 1, 1);
+            converted.emplace_back(temp);
+            flag |= 2;
+        }else if(literal.type == TokenType::NUMBER) {
+            double num = std::stod(literal.getLexeme());
+            if(trunc(num) != num) flag |= 1;
+            converted.emplace_back(num);
+        }
+        else if(literal.type == TokenType::NIL) {
+            converted.emplace_back(nullptr);
+            flag |= 3;
+        }
+        else {
+            converted.emplace_back(literal.type == TokenType::TRUE);
+            flag |= 3;
+        }
+    }
+    return converted;
+}
+
 void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     auto cond = evalASTExpr(stmt->expr);
     vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
@@ -624,7 +599,7 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     int i = 0;
     // Bitflag for case constant types
     // 0: all ints, 1: all nums, 2: all strings, 3: mixed
-    uint8_t flag;
+    uint8_t flag = 0;
     for(auto _case : stmt->cases){
         if(_case->caseType.type == TokenType::DEFAULT){
             defaultBlockIdx = i;
@@ -632,26 +607,9 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
             i++;
             continue;
         }
-        for (auto literal: _case->constants) {
-            if(literal.type == TokenType::STRING){
-                string temp = literal.getLexeme();
-                temp.erase(0, 1);
-                temp.erase(temp.size() - 1, 1);
-                constants.emplace_back(temp, i);
-                flag |= 2;
-            }else if(literal.type == TokenType::NUMBER) {
-                double num = std::stod(literal.getLexeme());
-                if(trunc(num) != num) flag |= 1;
-                constants.emplace_back(num, i);
-            }
-            else if(literal.type == TokenType::NIL) {
-                constants.emplace_back(nullptr, i);
-                flag |= 3;
-            }
-            else {
-                constants.emplace_back(literal.type == TokenType::TRUE, i);
-                flag |= 3;
-            }
+        auto convertedLiterals = getCaseConstants(_case->constants, flag);
+        for(auto literal : convertedLiterals){
+            constants.emplace_back(literal, i);
         }
         caseBlocks.push_back(parseStmtsToBlock(_case->stmts));
         i++;
@@ -741,12 +699,12 @@ varPtr ASTTransformer::resolveGlobal(Token symbol, bool canAssign){
 varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx contraintType){
     typedAST::VarType varty;
     switch(type){
-        case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL;
-        case AST::ASTDeclType::FUNCTION: varty = typedAST::VarType::GLOBAL_FUNC;
-        case AST::ASTDeclType::CLASS: varty = typedAST::VarType::GLOBAL_CLASS;
+        case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL; break;
+        case AST::ASTDeclType::FUNCTION: varty = typedAST::VarType::GLOBAL_FUNC; break;
+        case AST::ASTDeclType::CLASS: varty = typedAST::VarType::GLOBAL_CLASS; break;
     }
     varPtr var;
-    if(contraintType) {
+    if(contraintType != -1) {
         var = std::make_shared<typedAST::VarDecl>(varty, contraintType, true);
     }else{
         var = std::make_shared<typedAST::VarDecl>(varty, createEmptyTy());
@@ -846,10 +804,9 @@ typedAST::exprPtr ASTTransformer::readVar(Token name){
     error(name, fmt::format("'{}' doesn't match any declared variable name or native function name.", nativeName));
     return nullptr;
 }
-// Can't store to natives so that check is skipped
+
 typedAST::exprPtr ASTTransformer::storeToVar(Token name, typedAST::exprPtr toStore){
-    // If valPtr isn't type constrained possibleTypes is a TypeUnion
-    // TODO: something with constrained tys
+    // TODO: If storing to a constrained types, don't add any constraints
     updateLine(name);
     int argIndex = resolveLocal(name);
     if (argIndex != -1) {
@@ -927,24 +884,13 @@ typedAST::Function ASTTransformer::endFuncDecl(){
     }
     return func;
 }
-
-// Classes and methods
-// Class name is for recognizing constructor
-typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, types::tyVarIdx retTy){
-    updateLine(_method->getName());
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + _method->getName().getLexeme();
-    FuncType type = FuncType::TYPE_METHOD;
-    // Constructors are treated separately, but are still methods
-    if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
-    current = new CurrentChunkInfo(current, type, "method." + className + "." + fullGlobalSymbol);
-    current->func.fnTy = fnTy;
-    // No need for a endScope, since returning from the function discards the entire callstack
-    beginScope();
-    for (AST::ASTVar& var : _method->args) {
+void ASTTransformer::declareFuncArgs(vector<AST::ASTVar> args){
+    for (AST::ASTVar& var : args) {
         current->func.args.push_back(declareLocalVar(var));
         defineLocalVar();
         auto ptr = current->func.args.back();
-        // 'this' is of a known type so annotate it to enable optimizations
+        // 'this' is of a known type so annotate it to enable optimizations,
+        // currentClass is not null because 'this' can only appear as an argument in methods
         if(var.name.getLexeme() == "this"){
             ptr->possibleTypes = addType(std::make_shared<types::InstanceType>(currentClass->classTy));
         }else{
@@ -953,8 +899,35 @@ typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string c
         }
         ptr->typeConstrained = true;
     }
+}
+types::tyVarIdx ASTTransformer::createNewFunc(string name, int arity, FuncType fnKind, bool isClosure){
+    auto retTy = createEmptyTy();
+    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(arity, retTy, isClosure);
+    auto idx = addType(fnTy);
+    current = new CurrentChunkInfo(current, fnKind, name);
+    current->func.fnTy = fnTy;
+    current->retTy = retTy;
+    return idx;
+}
+
+// Classes and methods
+// Class name is for recognizing constructor
+typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy){
+    updateLine(_method->getName());
+    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + _method->getName().getLexeme();
+    FuncType type = FuncType::TYPE_METHOD;
+    // Constructors are treated separately, but are still methods
+    if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
+    current = new CurrentChunkInfo(current, type, "method." + className + "." + fullGlobalSymbol);
+    current->func.fnTy = fnTy;
+    current->retTy = retTy;
+    // No need for a endScope, since returning from the function discards the entire callstack
+    beginScope();
+
+    declareFuncArgs(_method->args);
     current->func.block = parseStmtsToBlock(_method->body->statements);
     auto func = endFuncDecl();
+
     return func;
 }
 std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args){
@@ -975,60 +948,101 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
     }
     return nullptr;
 }
+void ASTTransformer::processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys){
+    int i = 0;
+    for(auto method : methods){
+        string str = method.method->getName().getLexeme();
+        str = (method.isPublic ? str : ("priv." + str));
+        // Get the index of the linearized field
+        int idx = currentClass->classTy->methods.size();
+        if(currentClass->methods.contains(str)){
+            idx = currentClass->methods[str].second;
+        }
+
+        // Transform the method
+        auto retTy = retTys[i];
+        auto transformedMethod = createMethod(method.method.get(), className, methodTys[i], retTy);
+
+        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, idx));
+        i++;
+    }
+}
+
+void ASTTransformer::detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides){
+    string pubName = publicName.getLexeme();
+    string privName = "priv." + pubName;
+    // Immediately catch the thrown error since this isn't an error that would require unwinding
+    try{
+        if(isMethod && !methodOverrides && (currentClass->methods.contains(pubName) || currentClass->methods.contains(privName))){
+            error(publicName, "Duplicate symbol found. Methods that override need to be explicitly marked with 'override'.");
+        }
+
+        if(isMethod && methodOverrides && !(currentClass->methods.contains(pubName) || currentClass->methods.contains(privName))){
+            // If this method has been marked as override but there isn't a parent method to override, throw an error
+            error(publicName, "Method marked as 'override' but there is no parent method with matching name.");
+        }
+
+        if(currentClass->fields.contains(privName) || currentClass->fields.contains(privName)){
+            error(publicName, "Duplicate symbol found. Fields are inherited from parents.");
+        }
+    }catch(TransformerException& e){
+
+    }
+}
 // Resolve implicit object field access
 // Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
 // First bool in pair is if the search was succesful, second is if the field found was public or private
-static std::pair<bool, bool> classContainsField(string publicField, std::shared_ptr<ClassChunkInfo> klass){
+static string classContainsField(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
     for(auto it : klass->fields){
-        if(publicField == it.first) return std::pair(true, true);
-        else if(privateField == it.first) return std::pair(true, false);
+        if(publicField == it.first) return publicField;
+        else if(privateField == it.first) return privateField;
     }
-    return std::pair(false, false);
+    return "";
 }
-static std::pair<bool, bool> classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass){
+static string classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
     for(auto it : klass->methods){
-        if(publicField == it.first) return std::pair(true, true);
-        else if(privateField == it.first) return std::pair(true, false);
+        if(publicField == it.first) return publicField;
+        else if(privateField == it.first) return privateField;
     }
-    return std::pair(false, false);
+    return "";
 }
 
 std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token name){
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass);
-    if(res.first){
+    // If this class containes fieldName, transform fieldname -> this.fieldName
+    if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        fieldName = (res.second ? "" : "priv.") + fieldName;
 
         auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, fieldName));
-        return std::make_shared<typedAST::InstGet>(readThis, fieldName, instGetTy);
+        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
+        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy);
     }
 
     res = classContainsMethod(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        fieldName = (res.second ? "" : "priv.") + fieldName;
 
         auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, fieldName));
-        return std::make_shared<typedAST::InstGet>(readThis, fieldName, instGetTy);
+        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
+        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy);
     }
     return nullptr;
 }
 std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(Token name, typedAST::exprPtr toStore){
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
+    // If this class containes fieldName, transform fieldname -> this.fieldName
     auto res = classContainsField(fieldName, currentClass);
-    if(res.first){
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), (res.second ? "" : "priv.") + fieldName, toStore);
+    if(!res.empty()){
+        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore);
     }
 
     res = classContainsMethod(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         error(name, "Tried assigning to a method, which is forbidden.");
     }
     return nullptr;
@@ -1091,23 +1105,21 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     Token name = probeToken(expr->field);
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        fieldName = (res.second ? "" : "priv.") + fieldName;
 
         auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, fieldName));
-        return std::make_shared<typedAST::InstGet>(readThis, fieldName, instGetTy);
+        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
+        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy);
     }
 
     res = classContainsMethod(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        fieldName = (res.second ? "" : "priv.") + fieldName;
 
         auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, fieldName));
-        return std::make_shared<typedAST::InstGet>(readThis, fieldName, instGetTy);
+        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
+        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy);
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
     // Never hit
@@ -1119,13 +1131,13 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     Token name = probeToken(expr->field);
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         auto toStore = evalASTExpr(expr->value);
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), (res.second ? "" : "priv.") + fieldName, toStore);
+        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore);
     }
 
     res = classContainsMethod(fieldName, currentClass);
-    if(res.first){
+    if(!res.empty()){
         error(name, "Tried assigning to a method, which is forbidden.");
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
@@ -1215,7 +1227,6 @@ types::tyVarIdx ASTTransformer::addType(types::tyPtr ty){
     typeEnv.emplace_back(ty, false);
     return typeEnv.size() - 1;
 }
-
 types::tyVarIdx ASTTransformer::createEmptyTy(){
     return addType(nullptr);
 }
@@ -1225,7 +1236,6 @@ void ASTTransformer::addTypeConstraint(types::tyVarIdx ty, std::shared_ptr<types
 types::tyVarIdx ASTTransformer::getBasicType(types::TypeFlag ty){
     return static_cast<int>(ty);
 }
-
 void ASTTransformer::addBasicTypes(){
     addType(types::getBasicType(types::TypeFlag::NIL));
     addType(types::getBasicType(types::TypeFlag::BOOL));
@@ -1235,5 +1245,13 @@ void ASTTransformer::addBasicTypes(){
     addType(types::getBasicType(types::TypeFlag::RANGE));
     addType(types::getBasicType(types::TypeFlag::FILE));
     addType(types::getBasicType(types::TypeFlag::ANY));
+}
+
+CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName) {
+    enclosing = _enclosing;
+    type = _type;
+    line = 0;
+    func.name = funcName;
+    retTy = -1;
 }
 #pragma endregion

@@ -71,16 +71,17 @@ namespace typedASTParser{
 
         std::shared_ptr<ClassChunkInfo> parent;
 
-        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classType, std::shared_ptr<ClassChunkInfo> _parent = nullptr){
+        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classType){
             mangledName = _name;
             classTypeIdx = _classType;
-            parent = _parent;
+            parent = nullptr;
             classTy = _classTy;
         }
 
         void inherit(std::shared_ptr<ClassChunkInfo> _parent){
             methods = _parent->methods;
             fields = _parent->fields;
+            parent = _parent;
         }
     };
 
@@ -106,6 +107,7 @@ namespace typedASTParser{
 
         ASTTransformer();
         std::pair<typedAST::Function, vector<File*>> run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
+        vector<vector<types::tyPtr>> getTypeEnv();
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -153,7 +155,7 @@ namespace typedASTParser{
         vector<ESLModule*> units;
         std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalueMap;
         ankerl::unordered_dense::map<string, Globalvar> globals;
-        ankerl::unordered_dense::map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
+        unordered_map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
         ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
         // Empty constraint set means type is collapsed
         vector<std::pair<types::tyPtr, vector<std::shared_ptr<types::TypeConstraint>>>> typeEnv;
@@ -185,10 +187,14 @@ namespace typedASTParser{
         void endScope();
         // Functions
         typedAST::Function endFuncDecl();
+        void declareFuncArgs(vector<AST::ASTVar> args);
+        types::tyVarIdx createNewFunc(string name, int arity, FuncType fnKind, bool isClosure);
 
         // Classes and methods
-        typedAST::Function createMethod(AST::FuncDecl* _method, string className, types::tyVarIdx fnTy, types::tyVarIdx retTy);
+        typedAST::Function createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args);
+        void detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides);
+        void processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys);
 
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(Token name);

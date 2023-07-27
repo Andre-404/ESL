@@ -2,19 +2,20 @@
 
 
 using namespace typedAST;
-using namespace passes::TypeUnification;
+using namespace passes::typeUnification;
 TypeUnificator::TypeUnificator() {
     hadError = false;
 }
 
-void TypeUnificator::run(tyEnv env){
+vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv env){
     typeEnv = env;
+    collapsedTypes.resize(typeEnv.size());
     initalPass();
     for(types::tyVarIdx idx = 0; idx < typeEnv.size(); idx++){
         auto ty = typeEnv[idx];
         collapsedTypes[idx] = collapseType(idx, ty);
     }
-
+    return collapsedTypes;
 }
 #pragma region Helpers
 // All collapsed types are put into the collapsedTypes env
@@ -31,6 +32,7 @@ void TypeUnificator::initalPass(){
         }
     }
 }
+
 vector<types::tyPtr> TypeUnificator::collapseType(types::tyVarIdx idx, std::pair<types::tyPtr, vector<constraint>>& ty){
     // This type is already collapsed, return held types
     if(ty.second.empty()) return collapsedTypes[idx];
@@ -47,7 +49,7 @@ vector<types::tyPtr> TypeUnificator::collapseType(types::tyVarIdx idx, std::pair
 }
 
 vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint> tyConstraints, constraintSet& processed){
-    vector<types::tyPtr> heldTys;
+    std::unordered_set<types::tyPtr> heldTys;
     while(!tyConstraints.empty()){
         auto c = tyConstraints.back();
         tyConstraints.pop_back();
@@ -76,13 +78,15 @@ vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint> tyCon
                 break;
             }
         }
-
-        heldTys.insert(heldTys.end(), constraintRes.first.begin(), constraintRes.first.end());
+        for(auto ty : constraintRes.first){
+            heldTys.insert(ty);
+        }
         for(auto newC : constraintRes.second){
             if(processed.contains(newC)) continue;
             tyConstraints.push_back(newC);
         }
     }
+    return vector<types::tyPtr>(heldTys.begin(), heldTys.end());
 }
 
 pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::AddTyConstraint> addConstraint){
@@ -94,7 +98,7 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint
         auto t = {ty.first};
         return std::make_pair(t, ty.second);
     }
-    // Return all constraints, ty.first is null so it can be ignored
+    // Return all constraints, ty.first is null, so it can be ignored
     return std::make_pair(vector<types::tyPtr>(), ty.second);
 }
 
@@ -114,11 +118,12 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint
     // After getting all the possible types of the callee get the return types of every type that is a function
     return getPossibleRetTysFromFuncs(possibleCalleeTypes);
 }
+
 pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint){
     auto instTy = typeEnv[instGetConstraint->potentialInst];
     vector<types::tyPtr> possibleInstTypes;
 
-    // Gets the possible instance types, then filter which of these are instances
+    // Gets the possible types of instTy, then filter which of those are instances
     // Can safely ignore possible type being e.g. an int because that will cause a runtime error
     if(instTy.second.empty()) possibleInstTypes = collapsedTypes[instGetConstraint->potentialInst];
     else{

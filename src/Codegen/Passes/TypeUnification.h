@@ -3,7 +3,7 @@
 #include "../../Includes/unorderedDense.h"
 
 namespace passes {
-    namespace TypeUnification {
+    namespace typeUnification {
         using std::shared_ptr;
         using std::pair;
 
@@ -16,7 +16,7 @@ namespace passes {
         public:
             TypeUnificator();
             bool hadError;
-            void run(tyEnv typeEnv);
+            vector<vector<types::tyPtr>> run(tyEnv typeEnv);
         private:
             vector<vector<types::tyPtr>> collapsedTypes;
             tyEnv typeEnv;

@@ -67,8 +67,9 @@ int main(int argc, char* argv[]) {
         if (errorHandler::hasErrors()) exit(64);
 
         variableFinder::VariableTypeFinder finder(modules);
-        passes::typedASTParser::ASTTransformer transformer();
-        transformer.run(modules, finder.generateUpvalueMap());
+        passes::typedASTParser::ASTTransformer transformer;
+        auto res = transformer.run(modules, finder.generateUpvalueMap());
+        auto env = transformer.getTypeEnv();
 
         /*compileCore::Compiler compiler(modules);
 
