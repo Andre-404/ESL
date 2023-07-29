@@ -1,7 +1,7 @@
 #pragma once
 #include "codegenDefs.h"
 #include "../Objects/objects.h"
-#include "../Parsing/ASTDefs.h"
+#include "../AST/ASTDefs.h"
 #include "../Parsing/parser.h"
 #include "Passes/variableFinder.h"
 #include "JIT.h"
@@ -106,7 +106,6 @@ namespace compileCore {
 
 		Compiler(vector<ESLModule*>& units);
         void compile();
-		Chunk* getChunk();
         llvm::Value* endFuncDecl(int arity, string name);
 
 		#pragma region Visitor pattern

@@ -1,6 +1,6 @@
 #pragma once
-#include "../../Parsing/ASTDefs.h"
-#include "../TypedAST/TypedASTDefs.h"
+#include "../../AST/ASTDefs.h"
+#include "../../TypedAST/TypedASTDefs.h"
 #include "variableFinder.h"
 #include "../../Includes/unorderedDense.h"
 

@@ -1,7 +1,7 @@
 #pragma once
 #include "../common.h"
-#include "ASTDefs.h"
-#include "ASTProbe.h"
+#include "../AST/ASTDefs.h"
+#include "../AST/ASTProbe.h"
 #include "MacroExpander.h"
 #include <initializer_list>
 #include <map>

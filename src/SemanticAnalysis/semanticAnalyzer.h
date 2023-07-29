@@ -1,6 +1,6 @@
 #include <array>
 #include "../common.h"
-#include "../Parsing/ASTDefs.h"
+#include "../AST/ASTDefs.h"
 #include "../Parsing/parser.h"
 
 

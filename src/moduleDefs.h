@@ -74,12 +74,12 @@ struct Span {
         // If this Span is located on the last line of the file, then the line ends at the end of the file.
         int end = (line + 1 >= sourceFile->lines.size()) ? sourceFile->sourceFile.size() : sourceFile->lines[line + 1];
 
-        string line = sourceFile->sourceFile.substr(start, end - start);
+        string ln = sourceFile->sourceFile.substr(start, end - start);
 
         // Remove the '\n' at the end of the line.
-        if (line.back() == '\n') line.pop_back();
+        if (ln.back() == '\n') ln.pop_back();
 
-        return line;
+        return ln;
     }
 };
 

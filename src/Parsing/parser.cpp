@@ -1,6 +1,5 @@
 #include "parser.h"
 #include "../ErrorHandling/errorHandler.h"
-#include "../DebugPrinting/ASTPrinter.h"
 #include "../Includes/fmt/format.h"
 #include "../SemanticAnalysis/semanticAnalyzer.h"
 

@@ -1,5 +1,5 @@
 #include "ASTToTypedAST.h"
-#include "../../Parsing/ASTProbe.h"
+#include "../../AST/ASTProbe.h"
 #include "../../Includes/fmt/format.h"
 #include "../../ErrorHandling/errorHandler.h"
 #include "TypeUnification.h"

@@ -1,9 +1,8 @@
 #pragma once
-#include "ASTDefs.h"
+#include "../AST/ASTDefs.h"
 #include "../moduleDefs.h"
 #include "parser.h"
 #include "../Includes/fmt/format.h"
-#include "../DebugPrinting/ASTPrinter.h"
 #include <map>
 #include <queue>
 #include <iterator>

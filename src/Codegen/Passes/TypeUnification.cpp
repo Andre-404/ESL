@@ -223,8 +223,4 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::getPossibleRetTys
     return toReturn;
 }
 
-void TypeUnificator::error(Token token, string msg){
-
-}
-
 #pragma endregion

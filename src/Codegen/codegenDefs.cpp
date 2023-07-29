@@ -1,6 +1,5 @@
 #include "codegenDefs.h"
 #include "../ErrorHandling/errorHandler.h"
-#include "../DebugPrinting/BytecodePrinter.h"
 #include "../Includes/fmt/format.h"
 #include "../Codegen/valueHelpersInline.cpp"
 #include <iostream>
@@ -8,52 +7,6 @@
 
 using namespace object;
 using namespace valueHelpers;
-using std::get;
-
-Chunk::Chunk() {}
-
-void Chunk::writeData(uint8_t opCode, uInt line, byte fileIndex) {
-	bytecode.push_back(opCode);
-	if (lines.size() == 0) {
-		lines.push_back(codeLine(line, fileIndex));
-		return;
-	}
-	if (lines[lines.size() - 1].line == line) return;
-	//if we're on a new line, mark the end of the bytecode for this line
-	//when looking up the line of code for a particular OP we check if it's position in 'code' is less than .end of a line
-	lines[lines.size() - 1].end = bytecode.size() - 1;
-	lines.emplace_back(line, fileIndex);
-}
-
-codeLine Chunk::getLine(uInt offset) {
-	for (int i = 0; i < lines.size(); i++) {
-		codeLine& line = lines[i];
-		if (offset < line.end) return line;
-	}
-	errorHandler::addSystemError(fmt::format("Couldn't show line for bytecode at position: {}", offset));
-    return codeLine();
-}
-
-void Chunk::disassemble(string name, int startingOffset, int constantsOffset) {
-	std::cout << "=======" << name << "=======\n";
-	//prints every instruction in chunk
-	for (uInt offset = startingOffset; offset < bytecode.size();) {
-		offset = disassembleInstruction(this, offset, constantsOffset);
-	}
-}
-
-//adds the constant to the array and returns it's index, which is used in conjuction with OP_CONSTANT
-//first checks if this value already exists, this helps keep the constants array small
-//returns index of the constant
-// TODO: Adding constants is O(n)?? Make it O(1) with a hash set
-uInt Chunk::addConstant(Value val) {
-	for (uInt i = 0; i < constants.size(); i++) {
-		if (constants[i] == val) return i;
-	}
-	uInt size = constants.size();
-	constants.push_back(val);
-	return size;
-}
 
 string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(getType(x)){

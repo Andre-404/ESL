@@ -1,5 +1,5 @@
 #include "ASTToTypedAST.h"
-#include "../TypedAST/Types.h"
+#include "../../TypedAST/Types.h"
 #include "../../Includes/unorderedDense.h"
 
 namespace passes {
@@ -37,7 +37,6 @@ namespace passes {
             vector<types::tyPtr> getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint, vector<types::tyPtr> possibleFutureTypes);
 
             pair<vector<types::tyPtr>, vector<constraint>> getPossibleRetTysFromFuncs(vector<types::tyPtr> possibleFuncTypes);
-            void error(Token token, string msg);
         };
     }
 }
