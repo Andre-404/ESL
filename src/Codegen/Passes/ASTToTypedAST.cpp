@@ -2,7 +2,7 @@
 #include "../../AST/ASTProbe.h"
 #include "../../Includes/fmt/format.h"
 #include "../../ErrorHandling/errorHandler.h"
-#include "TypeUnification.h"
+#include "typeUnification.h"
 
 using namespace passes;
 using namespace typedASTParser;
@@ -347,7 +347,7 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
         current->upvalPtrs.emplace_back(varToCapturePtr, upvalPtr);
     }
 
-    // No need for a endScope, since returning from the function discards the entire callstack
+    // endScope is in endFuncDecl
     beginScope();
 
     declareFuncArgs(expr->args);
@@ -843,6 +843,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, typedAST::exprPtr toSto
 
 void ASTTransformer::beginScope(){
     current->scopeDepth++;
+    current->func.block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(true));
 }
 // Pop every variable that was declared in this scope
 void ASTTransformer::endScope(){
@@ -852,10 +853,12 @@ void ASTTransformer::endScope(){
     while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
         current->locals.pop_back();
     }
+    current->func.block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(false));
 }
 
 // Functions
 typedAST::Function ASTTransformer::endFuncDecl(){
+    endScope();
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
     if(!current->func.block.terminates){

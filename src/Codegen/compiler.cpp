@@ -4,7 +4,7 @@
 #include "Passes/variableFinder.h"
 #include "../Runtime/thread.h"
 #include "../Runtime/nativeFunctions.h"
-#include "llvmHelperFunctions.h"
+#include "LLVMHelperFunctions.h"
 #include "LLVMNativeFunctions.h"
 
 #include "llvm/Passes/PassBuilder.h"

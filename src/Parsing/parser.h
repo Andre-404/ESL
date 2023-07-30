@@ -2,7 +2,7 @@
 #include "../common.h"
 #include "../AST/ASTDefs.h"
 #include "../AST/ASTProbe.h"
-#include "MacroExpander.h"
+#include "macroExpander.h"
 #include <initializer_list>
 #include <map>
 #include <unordered_map>

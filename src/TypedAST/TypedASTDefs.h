@@ -50,7 +50,10 @@ namespace typedAST{
         CLASS_DECL,
         INST_SET,
         INST_GET,
-        INST_SUPER_GET
+        INST_SUPER_GET,
+
+        // Misc
+        BLOCK
     };
     class VarDecl;
     class VarRead;
@@ -82,6 +85,7 @@ namespace typedAST{
     class InstGet;
     class InstSet;
     class InstSuperGet;
+    class ScopeBlock;
 
     class TypedASTVisitor{
     public:
@@ -115,6 +119,7 @@ namespace typedAST{
         virtual void visitInstGet(InstGet* expr) = 0;
         virtual void visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual void visitInstSet(InstSet* expr) = 0;
+        virtual void visitScopeBlock(ScopeBlock* expr) = 0;
     };
 
     class TypedASTCodegen{
@@ -138,9 +143,9 @@ namespace typedAST{
         virtual llvm::Value* visitAsyncExpr(AsyncExpr* expr) = 0;
         virtual llvm::Value* visitAwaitExpr(AwaitExpr* expr) = 0;
         virtual llvm::Value* visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
+        virtual llvm::Value* visitRangeExpr(RangeExpr* expr) = 0;
         virtual llvm::Value* visitFuncDecl(FuncDecl* expr) = 0;
         virtual llvm::Value* visitReturnStmt(ReturnStmt* expr) = 0;
-        virtual llvm::Value* visitRangeExpr(RangeExpr* expr) = 0;
         virtual llvm::Value* visitUncondJump(UncondJump* expr) = 0;
         virtual llvm::Value* visitIfStmt(IfStmt* expr) = 0;
         virtual llvm::Value* visitWhileStmt(WhileStmt* expr) = 0;
@@ -149,6 +154,7 @@ namespace typedAST{
         virtual llvm::Value* visitInstGet(InstGet* expr) = 0;
         virtual llvm::Value* visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual llvm::Value* visitInstSet(InstSet* expr) = 0;
+        virtual llvm::Value* visitScopeBlock(ScopeBlock* expr) = 0;
     };
 
     class TypedASTNode {
@@ -847,5 +853,23 @@ namespace typedAST{
             return vis->visitInstSet(this);
         }
 
+    };
+
+    // Misc
+    class ScopeBlock : public TypedASTNode{
+    public:
+        // Start or end of scope
+        bool startScope;
+        ScopeBlock(bool _startScope){
+            startScope = _startScope;
+            type = NodeType::BLOCK;
+        }
+        ~ScopeBlock() {}
+        void accept(TypedASTVisitor* vis) override{
+            vis->visitScopeBlock(this);
+        }
+        llvm::Value* codegen(TypedASTCodegen* vis) override{
+            return vis->visitScopeBlock(this);
+        }
     };
 }
