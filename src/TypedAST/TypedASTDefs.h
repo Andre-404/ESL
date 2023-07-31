@@ -3,6 +3,10 @@
 #include <variant>
 #include <utility>
 
+// Introduces types for all expressions to the AST
+// Lowers some operations to make codegen easier(eg. for loops are transformed into while loops)
+// Creates connections between variables reads/stores and variable declarations
+
 namespace llvm{
     class Value;
 }
@@ -20,6 +24,7 @@ namespace typedAST{
         UNARY,
 
         LITERAL,
+        RANGE,
 
         ARRAY,
         HASHMAP,
@@ -38,8 +43,6 @@ namespace typedAST{
         CLOSURE, // All local functions fall under this
         FUNC_DECL,
         RETURN,
-
-        RANGE,
 
         UNCOND_JMP,
 
@@ -74,9 +77,9 @@ namespace typedAST{
     class AsyncExpr;
     class AwaitExpr;
     class CreateClosureExpr;
+    class RangeExpr;
     class FuncDecl;
     class ReturnStmt;
-    class RangeExpr;
     class UncondJump;
     class IfStmt;
     class WhileStmt;
@@ -108,9 +111,9 @@ namespace typedAST{
         virtual void visitAsyncExpr(AsyncExpr* expr) = 0;
         virtual void visitAwaitExpr(AwaitExpr* expr) = 0;
         virtual void visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
+        virtual void visitRangeExpr(RangeExpr* expr) = 0;
         virtual void visitFuncDecl(FuncDecl* expr) = 0;
         virtual void visitReturnStmt(ReturnStmt* expr) = 0;
-        virtual void visitRangeExpr(RangeExpr* expr) = 0;
         virtual void visitUncondJump(UncondJump* expr) = 0;
         virtual void visitIfStmt(IfStmt* expr) = 0;
         virtual void visitWhileStmt(WhileStmt* expr) = 0;
