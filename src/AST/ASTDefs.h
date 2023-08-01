@@ -160,10 +160,12 @@ namespace AST {
 	class AssignmentExpr : public ASTNode {
 	public:
 		Token name;
+        Token op;
 		ASTNodePtr value;
 
-		AssignmentExpr(Token _name, ASTNodePtr _value) {
+		AssignmentExpr(Token _name, Token _op, ASTNodePtr _value) {
 			name = _name;
+            op = _op;
 			value = _value;
 			type = ASTType::ASSIGNMENT;
 		}
@@ -178,12 +180,14 @@ namespace AST {
 		ASTNodePtr callee;
 		ASTNodePtr field;
 		Token accessor;
+        Token op;
 		ASTNodePtr value;
 
-		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, ASTNodePtr _val) {
+		SetExpr(ASTNodePtr _callee, ASTNodePtr _field, Token _accessor, Token _op, ASTNodePtr _val) {
 			callee = _callee;
 			field = _field;
 			accessor = _accessor;
+            op = _op;
 			value = _val;
 			type = ASTType::SET;
 		}
@@ -197,11 +201,15 @@ namespace AST {
 		ASTNodePtr condition;
 		ASTNodePtr mhs;
 		ASTNodePtr rhs;
+        Token questionmark;
+        Token colon;
 
-		ConditionalExpr(ASTNodePtr _condition, ASTNodePtr _thenBranch, ASTNodePtr _elseBranch) {
+		ConditionalExpr(ASTNodePtr _condition, ASTNodePtr _thenBranch, ASTNodePtr _elseBranch, Token _questionmark, Token _colon) {
 			condition = _condition;
             mhs = _thenBranch;
             rhs = _elseBranch;
+            questionmark = _questionmark;
+            colon = _colon;
 			type = ASTType::CONDITIONAL;
 		}
 		void accept(Visitor* vis) override {
@@ -246,9 +254,13 @@ namespace AST {
 	class ArrayLiteralExpr : public ASTNode {
 	public:
 		vector<ASTNodePtr> members;
+        Token bracket1;
+        Token bracket2;
 
-		ArrayLiteralExpr(vector<ASTNodePtr>& _members) {
+		ArrayLiteralExpr(vector<ASTNodePtr>& _members,Token _bracket1, Token _bracket2) {
 			members = _members;
+            bracket1 = _bracket1;
+            bracket2 = _bracket2;
 			type = ASTType::ARRAY_LITERAL;
 		}
 		void accept(Visitor* vis) override {
@@ -260,10 +272,14 @@ namespace AST {
 	public:
 		ASTNodePtr callee;
 		vector<ASTNodePtr> args;
+        Token paren1;
+        Token paren2;
 
-		CallExpr(ASTNodePtr _callee, vector<ASTNodePtr>& _args) {
+		CallExpr(ASTNodePtr _callee, vector<ASTNodePtr>& _args, Token _paren1, Token _paren2) {
 			callee = _callee;
 			args = _args;
+            paren1 = _paren1;
+            paren2 = _paren2;
 			type = ASTType::CALL;
 		}
 		void accept(Visitor* vis) override {
@@ -274,11 +290,11 @@ namespace AST {
     class NewExpr : public ASTNode{
     public:
         shared_ptr<CallExpr> call;
-        Token token;
+        Token keyword;
 
-        NewExpr(shared_ptr<CallExpr> _call, Token _token) {
+        NewExpr(shared_ptr<CallExpr> _call, Token _keyword) {
             call = _call;
-            token = _token;
+            keyword = _keyword;
             type = ASTType::NEW;
         }
         void accept(Visitor* vis) override {
@@ -306,10 +322,14 @@ namespace AST {
 
 	class SuperExpr : public ASTNode {
 	public:
+        Token keyword;
+        Token accessor;
 		Token methodName;
 
-		SuperExpr(Token _methodName) {
+		SuperExpr(Token _keyword, Token _accessor, Token _methodName) {
 			methodName = _methodName;
+            keyword = _keyword;
+            accessor = _accessor;
 			type = ASTType::SUPER;
 		}
 		void accept(Visitor* vis) override {
@@ -321,13 +341,17 @@ namespace AST {
 	public:
 		ASTNodePtr callee;
 		vector<ASTNodePtr> args;
-		Token token;
+		Token keyword;
+        Token paren1;
+        Token paren2;
 
-		AsyncExpr(Token _token, ASTNodePtr _callee, vector<ASTNodePtr>& _args) {
+		AsyncExpr(Token _keyword, ASTNodePtr _callee, vector<ASTNodePtr>& _args, Token _paren1, Token _paren2) {
 			callee = _callee;
 			args = _args;
 			type = ASTType::ASYNC;
-			token = _token;
+            keyword = _keyword;
+            paren1 = _paren1;
+            paren2 = _paren2;
 		}
 		void accept(Visitor* vis) override {
 			vis->visitAsyncExpr(this);
@@ -337,12 +361,12 @@ namespace AST {
 	class AwaitExpr : public ASTNode {
 	public:
 		ASTNodePtr expr;
-		Token token;
+		Token keyword;
 
-		AwaitExpr(Token _token, ASTNodePtr _expr) {
+		AwaitExpr(Token _keyword, ASTNodePtr _expr) {
 			expr = _expr;
 			type = ASTType::AWAIT;
-			token = _token;
+            keyword = _keyword;
 		}
 		void accept(Visitor* vis) override {
 			vis->visitAwaitExpr(this);
@@ -365,8 +389,10 @@ namespace AST {
 	struct StructEntry {
 		ASTNodePtr expr;
 		Token name;
-		StructEntry(Token _name, ASTNodePtr _expr) {
+        Token colon;
+		StructEntry(Token _name, Token _colon, ASTNodePtr _expr) {
             name = _name;
+            colon = _colon;
             expr = _expr;
         };
 	};
@@ -374,9 +400,13 @@ namespace AST {
 	class StructLiteral : public ASTNode {
 	public:
 		vector<StructEntry> fields;
+        Token brace1;
+        Token brace2;
 
-		StructLiteral(vector<StructEntry> _fields) {
+		StructLiteral(vector<StructEntry> _fields, Token _brace1, Token _brace2) {
 			fields = _fields;
+            brace1 = _brace1;
+            brace2 = _brace2;
 			type = ASTType::STRUCT;
 		}
 		void accept(Visitor* vis) {
@@ -389,11 +419,13 @@ namespace AST {
 		vector<ASTVar> args;
         int arity;
 		shared_ptr<BlockStmt> body;
+        Token keyword;
 
-		FuncLiteral(vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
+		FuncLiteral(vector<ASTVar> _args, shared_ptr<BlockStmt> _body, Token _keyword) {
 			args = _args;
 			arity = _args.size();
 			body = _body;
+            keyword = _keyword;
 			type = ASTType::FUNC_LITERAL;
 		}
 		void accept(Visitor* vis) {
@@ -435,13 +467,13 @@ namespace AST {
 
     class RangeExpr : public ASTNode{
     public:
-        Token token;
+        Token op;
         ASTNodePtr start;
         ASTNodePtr end;
         bool endInclusive;
 
-        RangeExpr(Token _token, ASTNodePtr _start, ASTNodePtr _end, bool _endInclusive) {
-            token = _token;
+        RangeExpr(Token _op, ASTNodePtr _start, ASTNodePtr _end, bool _endInclusive) {
+            op = _op;
             start = _start;
             end = _end;
             endInclusive = _endInclusive;
@@ -473,11 +505,13 @@ namespace AST {
 	class VarDecl : public ASTDecl {
 	public:
 		ASTNodePtr value;
+        Token op;
         ASTVar var;
 
-		VarDecl(Token _name, ASTNodePtr _value) {
+		VarDecl(Token _name, ASTNodePtr _value, Token _op) {
 			var.name = _name;
 			value = _value;
+            op = _op;
 			type = ASTType::VAR;
 		}
 		void accept(Visitor* vis) {
@@ -505,11 +539,13 @@ namespace AST {
 		ASTNodePtr thenBranch;
 		ASTNodePtr elseBranch;
 		ASTNodePtr condition;
+        Token keyword;
 
-		IfStmt(ASTNodePtr _then, ASTNodePtr _else, ASTNodePtr _condition) {
+		IfStmt(ASTNodePtr _then, ASTNodePtr _else, ASTNodePtr _condition, Token _keyword) {
 			condition = _condition;
 			thenBranch = _then;
 			elseBranch = _else;
+            keyword = _keyword;
 			type = ASTType::IF;
 		}
 		void accept(Visitor* vis) {
@@ -521,10 +557,12 @@ namespace AST {
 	public:
 		ASTNodePtr body;
 		ASTNodePtr condition;
+        Token keyword;
 
-		WhileStmt(ASTNodePtr _body, ASTNodePtr _condition) {
+		WhileStmt(ASTNodePtr _body, ASTNodePtr _condition, Token _keyword) {
 			body = _body;
 			condition = _condition;
+            keyword = _keyword;
 			type = ASTType::WHILE;
 		}
 		void accept(Visitor* vis) {
@@ -538,12 +576,14 @@ namespace AST {
 		ASTNodePtr init;
 		ASTNodePtr condition;
 		ASTNodePtr increment;
+        Token keyword;
 
-		ForStmt(ASTNodePtr _init, ASTNodePtr _condition, ASTNodePtr _increment, ASTNodePtr _body) {
+		ForStmt(ASTNodePtr _init, ASTNodePtr _condition, ASTNodePtr _increment, ASTNodePtr _body, Token _keyword) {
 			init = _init;
 			condition = _condition;
 			increment = _increment;
 			body = _body;
+            keyword = _keyword;
 			type = ASTType::FOR;
 		}
 		void accept(Visitor* vis) {
@@ -553,8 +593,10 @@ namespace AST {
 
 	class BreakStmt : public ASTNode {
 	public:
-        // Parser created breaks will never be part of an error, don't need token for error reporting
-        BreakStmt() {
+        Token keyword;
+
+        BreakStmt(Token _keyword) {
+            keyword = _keyword;
             type = ASTType::BREAK;
         }
 		void accept(Visitor* vis) {
@@ -564,7 +606,10 @@ namespace AST {
 
 	class ContinueStmt : public ASTNode {
 	public:
-		ContinueStmt() {
+        Token keyword;
+
+		ContinueStmt(Token _keyword) {
+            keyword = _keyword;
 			type = ASTType::CONTINUE;
 		}
 		void accept(Visitor* vis) {
@@ -607,7 +652,9 @@ namespace AST {
 
 	class AdvanceStmt : public ASTNode {
 	public:
-		AdvanceStmt() {
+        Token keyword;
+		AdvanceStmt(Token _keyword) {
+            keyword = _keyword;
 			type = ASTType::ADVANCE;
 		}
 		void accept(Visitor* vis) {
@@ -621,12 +668,14 @@ namespace AST {
         int arity;
 		shared_ptr<BlockStmt> body;
 		Token name;
+        Token keyword;
 
-		FuncDecl(Token _name, vector<ASTVar> _args, shared_ptr<BlockStmt> _body) {
+		FuncDecl(Token _name, vector<ASTVar> _args, shared_ptr<BlockStmt> _body, Token _keyword) {
 			name = _name;
 			args = _args;
 			arity = _args.size();
 			body = _body;
+            keyword = _keyword;
 			type = ASTType::FUNC;
 		}
 		void accept(Visitor* vis) {
@@ -639,7 +688,7 @@ namespace AST {
 	class ReturnStmt : public ASTNode {
 	public:
 		ASTNodePtr expr;
-		//for error reporting
+		// For error reporting
 		Token keyword;
 
 		ReturnStmt(ASTNodePtr _expr, Token _keyword) {

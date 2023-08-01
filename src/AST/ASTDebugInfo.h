@@ -35,7 +35,6 @@ namespace AST {
 
     struct ArrayLiteralDebugInfo{
         Token bracket1;
-        vector<Token> commas;
         Token bracket2;
     };
 
@@ -104,17 +103,13 @@ namespace AST {
 
     struct FuncLiteralDebugInfo{
         Token keyword;
-        Token paren1;
         vector<Token> params;
-        Token paren2;
     };
 
     struct FuncDeclDebugInfo{
         Token keyword;
         Token name;
-        Token paren1;
         vector<Token> params;
-        Token paren2;
     };
 
     struct ReturnStmtDebugInfo{
@@ -127,20 +122,14 @@ namespace AST {
 
     struct IfStmtDebugInfo{
         Token keyword;
-        Token paren1;
-        Token paren2;
     };
 
     struct WhileStmtDebugInfo{
         Token keyword;
-        Token paren1;
-        Token paren2;
     };
 
     struct SwitchStmtDebugInfo{
         Token keyword;
-        Token paren1;
-        Token paren2;
         vector<Token> cases;
     };
 
@@ -156,9 +145,7 @@ namespace AST {
         Token overrides; // Optional
         Token keyword;
         Token name;
-        Token paren1;
         vector<Token> params;
-        Token paren2;
     };
 
     struct InstSetDebugInfo{

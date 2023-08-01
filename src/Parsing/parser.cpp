@@ -34,7 +34,7 @@ namespace AST {
                 ASTNodePtr expr = parser->expression();
                 if (expr->type != ASTType::CALL) throw parser->error(token, "Expected a call after 'async'.");
                 auto call = std::static_pointer_cast<CallExpr>(expr);
-                return make_shared<AsyncExpr>(token, call->callee, call->args);
+                return make_shared<AsyncExpr>(token, call->callee, call->args, call->paren1, call->paren2);
             }
             default: {
                 ASTNodePtr expr = parser->expression(parser->prefixPrecLevel(token.type));
@@ -47,9 +47,9 @@ namespace AST {
         switch (token.type) {
             // Super is always followed by a .
             case TokenType::SUPER: {
-                parser->consume(TokenType::DOT, "Expected '.' after super.");
+                auto accessor = parser->consume(TokenType::DOT, "Expected '.' after super.");
                 Token ident = parser->consume(TokenType::IDENTIFIER, "Expect superclass method name.");
-                return make_shared<SuperExpr>(ident);
+                return make_shared<SuperExpr>(token, accessor, ident);
             }
             case TokenType::LEFT_PAREN: {
                 // Grouping can contain an expr of any precedence
@@ -65,8 +65,8 @@ namespace AST {
                         members.push_back(parser->expression());
                     } while (parser->match(TokenType::COMMA));
                 }
-                parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' at the end of an array literal.");
-                return make_shared<ArrayLiteralExpr>(members);
+                auto rbracket = parser->consume(TokenType::RIGHT_BRACKET, "Expect ']' at the end of an array literal.");
+                return make_shared<ArrayLiteralExpr>(members, token, rbracket);
             }
                 // Struct literal
             case TokenType::LEFT_BRACE: {
@@ -75,13 +75,13 @@ namespace AST {
                     // A struct literal looks like this: {var1 : expr1, var2 : expr2}
                     do {
                         Token identifier = parser->consume(TokenType::STRING, "Expected a string identifier.");
-                        parser->consume(TokenType::COLON, "Expected a ':' after string identifier");
+                        auto colon = parser->consume(TokenType::COLON, "Expected a ':' after string identifier");
                         ASTNodePtr expr = parser->expression();
-                        entries.emplace_back(identifier, expr);
+                        entries.emplace_back(identifier, colon, expr);
                     } while (parser->match(TokenType::COMMA));
                 }
-                parser->consume(TokenType::RIGHT_BRACE, "Expect '}' after struct literal.");
-                return make_shared<StructLiteral>(entries);
+                auto brace2 = parser->consume(TokenType::RIGHT_BRACE, "Expect '}' after struct literal.");
+                return make_shared<StructLiteral>(entries, token, brace2);
             }
                 // Function literal
             case TokenType::FN: {
@@ -109,7 +109,7 @@ namespace AST {
 
                 parser->loopDepth = tempLoopDepth;
                 parser->switchDepth = tempSwitchDepth;
-                return make_shared<FuncLiteral>(args, body);
+                return make_shared<FuncLiteral>(args, body, token);
             }
             case TokenType::NEW:{
                 // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
@@ -182,21 +182,21 @@ namespace AST {
             left->accept(parser->probe);
             Token temp = parser->probe->getProbedToken();
             if (temp.type != TokenType::IDENTIFIER) throw parser->error(token, "Left side is not assignable");
-            return make_shared<AssignmentExpr>(temp, rhs);
+            return make_shared<AssignmentExpr>(temp, token, rhs);
         }
         // Set expr, e.g. a.b = 3;
         auto fieldAccess = std::static_pointer_cast<FieldAccessExpr>(left);
-        return make_shared<SetExpr>(fieldAccess->callee, fieldAccess->field, fieldAccess->accessor, rhs);
+        return make_shared<SetExpr>(fieldAccess->callee, fieldAccess->field, fieldAccess->accessor, token, rhs);
     }
 
     //?: operator
     ASTNodePtr parseConditional(Parser* parser, ASTNodePtr left, Token token){
         ASTNodePtr mhs = parser->expression();
-        parser->consume(TokenType::COLON, "Expected ':' after then branch.");
+        auto colon = parser->consume(TokenType::COLON, "Expected ':' after then branch.");
         //Makes conditional right to left associative
         // a ? b : c ? d : e gets parsed as a ? b : (c ? d : e)
         ASTNodePtr rhs = parser->expression(+Precedence::CONDITIONAL - 1);
-        return make_shared<ConditionalExpr>(left, mhs, rhs);
+        return make_shared<ConditionalExpr>(left, mhs, rhs, token, colon);
     }
 
     // Binary ops, module access(::) and macro invocation(!)
@@ -289,8 +289,8 @@ namespace AST {
                 args.push_back(parser->expression());
             } while (parser->match(TokenType::COMMA));
         }
-        parser->consume(TokenType::RIGHT_PAREN, "Expect ')' after call expression.");
-        return make_shared<CallExpr>(left, args);
+        auto paren2 = parser->consume(TokenType::RIGHT_PAREN, "Expect ')' after call expression.");
+        return make_shared<CallExpr>(left, args, token, paren2);
     }
 
     ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, Token token){
@@ -406,9 +406,6 @@ Parser::Parser() {
 }
 
 void Parser::parse(vector<ESLModule*>& modules) {
-#ifdef AST_DEBUG
-    ASTPrinter* astPrinter = new ASTPrinter;
-#endif
     // Modules are already sorted using topsort
     for (ESLModule* unit : modules) {
         parsedUnit = unit;
@@ -626,11 +623,13 @@ shared_ptr<VarDecl> Parser::varDecl() {
     Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
     ASTNodePtr expr = nullptr;
     //if no initializer is present the variable is initialized to null
+    Token op;
     if (match(TokenType::EQUAL)) {
+        op = previous();
         expr = expression();
     }
     consume(TokenType::SEMICOLON, "Expected a ';' after variable declaration.");
-    return make_shared<VarDecl>(name, expr);
+    return make_shared<VarDecl>(name, expr, op);
 }
 
 shared_ptr<FuncDecl> Parser::funcDecl() {
@@ -640,7 +639,7 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
     int tempSwitchDepth = switchDepth;
     loopDepth = 0;
     switchDepth = 0;
-
+    Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a function name.");
     consume(TokenType::LEFT_PAREN, "Expect '(' after function name.");
     vector<ASTVar> args;
@@ -660,7 +659,7 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
 
     loopDepth = tempLoopDepth;
     switchDepth = tempSwitchDepth;
-    return make_shared<FuncDecl>(name, args, body);
+    return make_shared<FuncDecl>(name, args, body, keyword);
 }
 
 shared_ptr<ClassDecl> Parser::classDecl() {
@@ -793,6 +792,7 @@ shared_ptr<BlockStmt> Parser::blockStmt() {
 }
 
 shared_ptr<IfStmt> Parser::ifStmt() {
+    Token keyword = previous();
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'.");
     ASTNodePtr condition = expression();
     consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
@@ -803,10 +803,11 @@ shared_ptr<IfStmt> Parser::ifStmt() {
     if (match(TokenType::ELSE)) {
         elseBranch = statement();
     }
-    return make_shared<IfStmt>(thenBranch, elseBranch, condition);
+    return make_shared<IfStmt>(thenBranch, elseBranch, condition, keyword);
 }
 
 shared_ptr<WhileStmt> Parser::whileStmt() {
+    Token keyword = previous();
     //loopDepth is used to see if a 'continue' or 'break' statement is allowed within the body
     loopDepth++;
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
@@ -814,10 +815,11 @@ shared_ptr<WhileStmt> Parser::whileStmt() {
     consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
     ASTNodePtr body = statement();
     loopDepth--;
-    return make_shared<WhileStmt>(body, condition);
+    return make_shared<WhileStmt>(body, condition, keyword);
 }
 
 shared_ptr<ForStmt> Parser::forStmt() {
+    Token keyword = previous();
     loopDepth++;
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.");
     //initializer can either be: empty, a new variable declaration, or any expression
@@ -840,19 +842,21 @@ shared_ptr<ForStmt> Parser::forStmt() {
     //disallows declarations unless they're in a block
     ASTNodePtr body = statement();
     loopDepth--;
-    return make_shared<ForStmt>(init, condition, increment, body);
+    return make_shared<ForStmt>(init, condition, increment, body, keyword);
 }
 
 shared_ptr<BreakStmt> Parser::breakStmt() {
-    if (loopDepth == 0 && switchDepth == 0) throw error(previous(), "Cannot use 'break' outside of loops or switch statements.");
+    Token keyword = previous();
+    if (loopDepth == 0 && switchDepth == 0) throw error(keyword, "Cannot use 'break' outside of loops or switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after break.");
-    return make_shared<BreakStmt>();
+    return make_shared<BreakStmt>(keyword);
 }
 
 shared_ptr<ContinueStmt> Parser::continueStmt() {
-    if (loopDepth == 0) throw error(previous(), "Cannot use 'continue' outside of loops.");
+    Token keyword = previous();
+    if (loopDepth == 0) throw error(keyword, "Cannot use 'continue' outside of loops.");
     consume(TokenType::SEMICOLON, "Expect ';' after continue.");
-    return make_shared<ContinueStmt>();
+    return make_shared<ContinueStmt>(keyword);
 }
 
 shared_ptr<SwitchStmt> Parser::switchStmt() {
@@ -920,16 +924,17 @@ shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
         }
     }
     // Implicit break at the end of a case, gets erased if there is a control flow terminator in this block
-    stmts.push_back(make_shared<BreakStmt>());
+    stmts.push_back(make_shared<BreakStmt>(Token()));
     //Optimization: removes dead code if a control flow terminator has been detected before end of block
     if(endSize != -1) stmts.resize(endSize);
     return make_shared<CaseStmt>(matchConstants, stmts);
 }
 
 shared_ptr<AdvanceStmt> Parser::advanceStmt() {
-    if (switchDepth == 0) throw error(previous(), "Cannot use 'advance' outside of switch statements.");
+    Token keyword = previous();
+    if (switchDepth == 0) throw error(keyword, "Cannot use 'advance' outside of switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
-    return make_shared<AdvanceStmt>();
+    return make_shared<AdvanceStmt>(keyword);
 }
 
 shared_ptr<ReturnStmt> Parser::returnStmt() {
