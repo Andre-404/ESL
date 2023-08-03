@@ -917,11 +917,11 @@ types::tyVarIdx ASTTransformer::createNewFunc(string name, int arity, FuncType f
 // Class name is for recognizing constructor
 typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy){
     updateLine(_method->getName());
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + _method->getName().getLexeme();
+    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + className;
     FuncType type = FuncType::TYPE_METHOD;
     // Constructors are treated separately, but are still methods
     if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
-    current = new CurrentChunkInfo(current, type, "method." + className + "." + fullGlobalSymbol);
+    current = new CurrentChunkInfo(current, type,  fullGlobalSymbol + ".method." + _method->getName().getLexeme());
     current->func.fnTy = fnTy;
     current->retTy = retTy;
     // No need for a endScope, since returning from the function discards the entire callstack

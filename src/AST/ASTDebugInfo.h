@@ -50,14 +50,14 @@ namespace AST {
         Token brace2;
     };
 
-    struct SetExprDebugInfo {
+    struct CollectionSetDebugInfo {
         Token field;
         Token accessor1;
         Token accessor2;
         Token op;
     };
 
-    struct FieldAccessDebugInfo{
+    struct CollectionAccessDebugInfo{
         Token field;
         Token accessor1;
         Token accessor2;

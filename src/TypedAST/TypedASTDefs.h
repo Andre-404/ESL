@@ -1,5 +1,6 @@
 #pragma once
 #include "Types.h"
+#include "../AST/ASTDebugInfo.h"
 #include <variant>
 #include <utility>
 
@@ -194,9 +195,12 @@ namespace typedAST{
         // Constrained by the type given in constructor
         bool typeConstrained;
         types::tyVarIdx possibleTypes;
-        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes, bool _typeConstrained = false){
+        AST::VarDeclDebugInfo dbgInfo;
+
+        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes, AST::VarDeclDebugInfo _dbgInfo, bool _typeConstrained = false){
             varType = _varType;
             typeConstrained = _typeConstrained;
+            dbgInfo = _dbgInfo;
             possibleTypes = _possibleTypes;
             type = NodeType::VAR_DECL;
         }
@@ -211,8 +215,11 @@ namespace typedAST{
     class VarRead : public TypedASTExpr{
     public:
         shared_ptr<VarDecl> varPtr;
-        VarRead(shared_ptr<VarDecl> _varPtr){
+        AST::VarReadDebugInfo dbgInfo;
+
+        VarRead(shared_ptr<VarDecl> _varPtr, AST::VarReadDebugInfo _dbgInfo){
             varPtr = _varPtr;
+            dbgInfo = _dbgInfo;
             exprType = varPtr->possibleTypes;
             type = NodeType::VAR_READ;
         }
@@ -228,10 +235,13 @@ namespace typedAST{
     public:
         shared_ptr<VarDecl> varPtr;
         exprPtr toStore;
-        VarStore(shared_ptr<VarDecl> _varPtr, exprPtr _toStore){
+        AST::VarStoreDebugInfo dbgInfo;
+
+        VarStore(shared_ptr<VarDecl> _varPtr, exprPtr _toStore, AST::VarStoreDebugInfo _dbgInfo){
             varPtr = _varPtr;
             toStore = _toStore;
             exprType = _toStore->exprType;
+            dbgInfo = _dbgInfo;
             type = NodeType::VAR_STORE;
         }
         ~VarStore() {};
@@ -245,9 +255,12 @@ namespace typedAST{
     class VarReadNative : public TypedASTExpr{
     public:
         string nativeName;
-        VarReadNative(string name, types::tyVarIdx _heldType){
+        AST::VarReadDebugInfo dbgInfo;
+
+        VarReadNative(string name, types::tyVarIdx _heldType, AST::VarReadDebugInfo _dbgInfo){
             nativeName = name;
             exprType = _heldType;
+            dbgInfo = _dbgInfo;
             type = NodeType::VAR_NATIVE_READ;
         }
         ~VarReadNative() {};
@@ -277,11 +290,14 @@ namespace typedAST{
         ArithmeticOp opType;
         exprPtr lhs;
         exprPtr rhs;
-        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op, types::tyVarIdx _exprTy){
+        AST::BinaryExprDebugInfo dbgInfo;
+
+        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::ARITHEMTIC;
         }
         ~ArithmeticExpr() {};
@@ -309,11 +325,14 @@ namespace typedAST{
         ComparisonOp opType;
         exprPtr lhs;
         exprPtr rhs;
-        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op, types::tyVarIdx _exprTy){
+        AST::BinaryExprDebugInfo dbgInfo;
+
+        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::COMPARISON;
         }
         ~ComparisonExpr() {};
@@ -338,9 +357,12 @@ namespace typedAST{
     public:
         UnaryOp opType;
         exprPtr rhs;
-        UnaryExpr(exprPtr _rhs, UnaryOp _op, types::tyVarIdx _exprTy){
+        AST::UnaryExprDebugInfo dbgInfo;
+
+        UnaryExpr(exprPtr _rhs, UnaryOp _op, types::tyVarIdx _exprTy, AST::UnaryExprDebugInfo _dbgInfo){
             rhs = _rhs;
             opType = _op;
+            dbgInfo = _dbgInfo;
             type = NodeType::UNARY;
             exprType = _exprTy;
         }
@@ -357,9 +379,12 @@ namespace typedAST{
     public:
         // int is used to signal a nil value
         std::variant<double, bool, void*, string> val;
-        LiteralExpr(std::variant<double, bool, void*, string> variant, types::tyVarIdx _exprTy){
+        AST::LiteralDebugInfo dbgInfo;
+
+        LiteralExpr(std::variant<double, bool, void*, string> variant, types::tyVarIdx _exprTy, AST::LiteralDebugInfo _dbgInfo){
             val = variant;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::LITERAL;
         }
         ~LiteralExpr() {};
@@ -375,9 +400,12 @@ namespace typedAST{
     public:
         // Fields sorted in the order they appear in, important to eval them in that order
         vector<std::pair<string, exprPtr>> fields;
-        HashmapExpr(vector<std::pair<string, exprPtr>> _fields, types::tyVarIdx _exprTy){
+        AST::StructLiteralDebugInfo dbgInfo;
+
+        HashmapExpr(vector<std::pair<string, exprPtr>> _fields, types::tyVarIdx _exprTy, AST::StructLiteralDebugInfo _dbgInfo){
             fields = _fields;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::HASHMAP;
         }
         ~HashmapExpr() {};
@@ -391,9 +419,12 @@ namespace typedAST{
     class ArrayExpr : public TypedASTExpr{
     public:
         vector<exprPtr> fields;
-        ArrayExpr(vector<exprPtr> _fields, types::tyVarIdx _exprTy){
+        AST::ArrayLiteralDebugInfo dbgInfo;
+
+        ArrayExpr(vector<exprPtr> _fields, types::tyVarIdx _exprTy, AST::ArrayLiteralDebugInfo _dbgInfo){
             fields = _fields;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::ARRAY;
         }
         ~ArrayExpr() {};
@@ -409,10 +440,13 @@ namespace typedAST{
     public:
         exprPtr collection;
         exprPtr field;
-        CollectionGet(exprPtr _collection, exprPtr _field, types::tyVarIdx _exprTy){
+        AST::CollectionAccessDebugInfo dbgInfo;
+
+        CollectionGet(exprPtr _collection, exprPtr _field, types::tyVarIdx _exprTy, AST::CollectionAccessDebugInfo _dbgInfo){
             collection = _collection;
             field = _field;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::COLLECTION_GET;
         }
         ~CollectionGet() {};
@@ -428,10 +462,13 @@ namespace typedAST{
         exprPtr collection;
         exprPtr field;
         exprPtr toStore;
-        CollectionSet(exprPtr _collection, exprPtr _field, exprPtr _toStore){
+        AST::CollectionSetDebugInfo dbgInfo;
+
+        CollectionSet(exprPtr _collection, exprPtr _field, exprPtr _toStore, AST::CollectionSetDebugInfo _dbgInfo){
             collection = _collection;
             field = _field;
             toStore = _toStore;
+            dbgInfo = _dbgInfo;
             exprType = toStore->exprType;
             type = NodeType::COLLECTION_SET;
         }
@@ -449,11 +486,14 @@ namespace typedAST{
         exprPtr cond;
         exprPtr thenExpr;
         exprPtr elseExpr;
-        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr, types::tyVarIdx _exprTy){
+        AST::ConditionalExprDebugInfo dbgInfo;
+
+        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr, types::tyVarIdx _exprTy, AST::ConditionalExprDebugInfo _dbgInfo){
             cond = _cond;
             thenExpr = _thenExpr;
             elseExpr = _elseExpr;
             exprType = _exprTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::CONDITIONAL;
         }
         ~ConditionalExpr() {};
@@ -469,11 +509,13 @@ namespace typedAST{
     public:
         exprPtr callee;
         vector<exprPtr> args;
+        AST::CallExprDebugInfo dbgInfo;
 
-        CallExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _callDeferred){
+        CallExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _callDeferred, AST::CallExprDebugInfo _dbgInfo){
             callee = _callee;
             args = _args;
             exprType = _callDeferred;
+            dbgInfo = _dbgInfo;
             type = NodeType::CALL;
         }
         ~CallExpr() {};
@@ -492,11 +534,14 @@ namespace typedAST{
         types::tyVarIdx classTy;
         // Pointer to a variable which holds the class
         std::shared_ptr<typedAST::VarDecl> klass;
+        AST::InvokeExprDebugInfo dbgInfo;
 
-        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, types::tyVarIdx _exprTy, std::shared_ptr<typedAST::VarDecl> _klass = nullptr){
+        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, types::tyVarIdx _exprTy,
+                   AST::InvokeExprDebugInfo _dbgInfo, std::shared_ptr<typedAST::VarDecl> _klass = nullptr){
             inst = _inst;
             field = _field;
             args = _args;
+            dbgInfo = _dbgInfo;
             // Used for super invokes
             klass = _klass;
             // TODO: actually do type inference on this
@@ -515,11 +560,13 @@ namespace typedAST{
     public:
         exprPtr callee;
         vector<exprPtr> args;
+        AST::NewExprDebugInfo dbgInfo;
 
-        NewExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _instType){
+        NewExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _instType, AST::NewExprDebugInfo _dbgInfo){
             callee = _callee;
             args = _args;
             exprType = _instType;
+            dbgInfo = _dbgInfo;
             type = NodeType::NEW;
         }
         ~NewExpr() {};
@@ -535,12 +582,14 @@ namespace typedAST{
     public:
         exprPtr callee;
         vector<exprPtr> args;
+        AST::AsyncExprDebugInfo dbgInfo;
 
-        AsyncExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _futTy){
+        AsyncExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _futTy, AST::AsyncExprDebugInfo _dbgInfo){
             callee = _callee;
             args = _args;
             // Future expr that holds the possible return types of the called function
             exprType = _futTy;
+            dbgInfo = _dbgInfo;
             type = NodeType::ASYNC;
         }
         ~AsyncExpr() {};
@@ -554,9 +603,11 @@ namespace typedAST{
     class AwaitExpr : public TypedASTExpr{
     public:
         exprPtr expr;
+        AST::AwaitExprDebugInfo dbgInfo;
 
-        AwaitExpr(exprPtr _expr, types::tyVarIdx _futAwaitTy){
+        AwaitExpr(exprPtr _expr, types::tyVarIdx _futAwaitTy, AST::AwaitExprDebugInfo _dbgInfo){
             expr = _expr;
+            dbgInfo = _dbgInfo;
             // Future expr that holds the possible return types of the called function
             exprType = _futAwaitTy;
             type = NodeType::AWAIT;
@@ -583,6 +634,7 @@ namespace typedAST{
         vector<shared_ptr<VarDecl>> args;
         shared_ptr<types::FunctionType> fnTy;
         string name;
+
         Function(){
             name = "";
             fnTy = nullptr;
@@ -599,10 +651,12 @@ namespace typedAST{
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
         vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
+        AST::FuncLiteralDebugInfo dbgInfo;
 
-        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty){
+        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty, AST::FuncLiteralDebugInfo _dbgInfo){
             fn = _fn;
             exprType = ty;
+            dbgInfo = _dbgInfo;
             type = NodeType::CLOSURE;
         }
         ~CreateClosureExpr() {};
@@ -616,9 +670,11 @@ namespace typedAST{
     class FuncDecl : public TypedASTNode{
     public:
         Function fn;
+        AST::FuncDeclDebugInfo dbgInfo;
 
-        FuncDecl(Function& _fn){
+        FuncDecl(Function& _fn, AST::FuncDeclDebugInfo _dbgInfo){
             fn = _fn;
+            dbgInfo = _dbgInfo;
             type = NodeType::FUNC_DECL;
         }
         ~FuncDecl() {};
@@ -633,9 +689,11 @@ namespace typedAST{
     class ReturnStmt : public TypedASTNode{
     public:
         exprPtr expr;
+        AST::ReturnStmtDebugInfo dbgInfo;
 
-        ReturnStmt(exprPtr _expr){
+        ReturnStmt(exprPtr _expr, AST::ReturnStmtDebugInfo _dbgInfo){
             expr = _expr;
+            dbgInfo = _dbgInfo;
             type = NodeType::RETURN;
         }
         ~ReturnStmt() {};
@@ -652,11 +710,13 @@ namespace typedAST{
         exprPtr lhs;
         exprPtr rhs;
         bool isEndInclusive;
+        AST::RangeExprDebugInfo dbgInfo;
 
-        RangeExpr(exprPtr _lhs, exprPtr _rhs, bool _isEndInclusive, types::tyVarIdx _ty){
+        RangeExpr(exprPtr _lhs, exprPtr _rhs, bool _isEndInclusive, types::tyVarIdx _ty, AST::RangeExprDebugInfo _dbgInfo){
             lhs = _lhs;
             rhs = _rhs;
             isEndInclusive = _isEndInclusive;
+            dbgInfo = _dbgInfo;
             exprType = _ty;
             type = NodeType::RANGE;
         }
@@ -677,9 +737,11 @@ namespace typedAST{
     class UncondJump : public TypedASTNode{
     public:
         JumpType jmpType;
+        AST::UncondJmpDebugInfo dbgInfo;
 
-        UncondJump(JumpType _jmpType){
+        UncondJump(JumpType _jmpType, AST::UncondJmpDebugInfo _dbgInfo){
             jmpType = _jmpType;
+            dbgInfo = _dbgInfo;
             type = NodeType::UNCOND_JMP;
         }
         ~UncondJump() {};
@@ -696,11 +758,13 @@ namespace typedAST{
         exprPtr cond;
         Block thenBlock;
         Block elseBlock;
+        AST::IfStmtDebugInfo dbgInfo;
 
-        IfStmt(exprPtr _cond, Block _thenBlock, Block _elseBlock){
+        IfStmt(exprPtr _cond, Block _thenBlock, Block _elseBlock, AST::IfStmtDebugInfo _dbgInfo){
             cond = _cond;
             thenBlock = _thenBlock;
             elseBlock = _elseBlock;
+            dbgInfo = _dbgInfo;
             type = NodeType::IF;
         }
         ~IfStmt() {};
@@ -717,10 +781,12 @@ namespace typedAST{
         Block loopBody;
         // Used to implement for loop
         exprPtr afterLoopExpr;
+        AST::WhileStmtDebugInfo dbgInfo;
 
-        WhileStmt(exprPtr _cond, Block _loopBody, exprPtr _afterLoopExpr = nullptr){
+        WhileStmt(exprPtr _cond, Block _loopBody, AST::WhileStmtDebugInfo _dbgInfo, exprPtr _afterLoopExpr = nullptr){
             cond = _cond;
             loopBody = _loopBody;
+            dbgInfo = _dbgInfo;
             afterLoopExpr = _afterLoopExpr;
             type = NodeType::WHILE;
         }
@@ -748,13 +814,16 @@ namespace typedAST{
         int defaultCaseBlockNum;
         vector<Block> cases;
         SwitchConstantsType constantsType;
+        AST::SwitchStmtDebugInfo dbgInfo;
 
-        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants, vector<Block> _cases, SwitchConstantsType _ty, int _defaultCaseBlockNum){
+        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants,
+                   vector<Block> _cases, SwitchConstantsType _ty, int _defaultCaseBlockNum, AST::SwitchStmtDebugInfo _dbgInfo){
             cond = _cond;
             constants = _constants;
             cases = _cases;
             constantsType = _ty;
             defaultCaseBlockNum = _defaultCaseBlockNum;
+            dbgInfo = _dbgInfo;
             type = NodeType::SWITCH;
         }
         ~SwitchStmt() {};
@@ -776,8 +845,12 @@ namespace typedAST{
         std::shared_ptr<types::ClassType> classType;
         shared_ptr<VarDecl> parentClass;
 
-        ClassDecl(std::shared_ptr<types::ClassType> ty, shared_ptr<VarDecl> _parentClass = nullptr){
+        AST::ClassDeclDebugInfo dbgInfo;
+        std::unordered_map<string, AST::MethodDebugInfo> methodDbgInfo;
+
+        ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, shared_ptr<VarDecl> _parentClass = nullptr){
             classType = ty;
+            dbgInfo = _dbgInfo;
             parentClass = _parentClass;
             type = NodeType::CLASS_DECL;
         }
@@ -797,10 +870,12 @@ namespace typedAST{
     public:
         exprPtr instance;
         string field;
+        AST::InstGetDebugInfo dbgInfo;
 
-        InstGet(exprPtr _instance, string _field, types::tyVarIdx _instGetTy){
+        InstGet(exprPtr _instance, string _field, types::tyVarIdx _instGetTy, AST::InstGetDebugInfo _dbgInfo){
             instance = _instance;
             field = _field;
+            dbgInfo = _dbgInfo;
             exprType = _instGetTy;
             type = NodeType::INST_GET;
         }
@@ -818,11 +893,13 @@ namespace typedAST{
         // Pointer to a variable which holds the class
         std::shared_ptr<typedAST::VarDecl> klass;
         string method;
+        AST::SuperExprDebugInfo dbgInfo;
 
-        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx methodTy){
+        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx methodTy, AST::SuperExprDebugInfo _dbgInfo){
             instance = _instance;
             method = _method;
             klass = _klass;
+            dbgInfo = _dbgInfo;
             // ASTToTypedAST checks if class ty contains method
             exprType = methodTy;
             type = NodeType::INST_SUPER_GET;
@@ -840,11 +917,13 @@ namespace typedAST{
         exprPtr instance;
         string field;
         exprPtr toStore;
+        AST::InstSetDebugInfo dbgInfo;
 
-        InstSet(exprPtr _instance, string _field, exprPtr _toStore){
+        InstSet(exprPtr _instance, string _field, exprPtr _toStore, AST::InstSetDebugInfo _dbgInfo){
             instance = _instance;
             field = _field;
             toStore = _toStore;
+            dbgInfo = _dbgInfo;
             exprType = toStore->exprType;
             type = NodeType::INST_SET;
         }
