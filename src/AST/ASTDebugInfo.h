@@ -54,17 +54,16 @@ namespace AST {
         ArrayLiteralDebugInfo(const Token &bracket1, const Token &bracket2) : bracket1(bracket1), bracket2(bracket2) {}
     };
 
-    struct StructField{
+    struct StructDbgInfoField{
         Token str;
         Token colon;
-        Token comma;
 
-        StructField(const Token &str, const Token &colon, const Token &comma) : str(str), colon(colon), comma(comma) {}
+        StructDbgInfoField(const Token &str, const Token &colon) : str(str), colon(colon) {}
     };
 
     struct StructLiteralDebugInfo{
         Token brace1;
-        vector<StructField> fields;
+        vector<StructDbgInfoField> fields;
         Token brace2;
 
         StructLiteralDebugInfo(const Token &brace1, const vector<StructField> &fields, const Token &brace2)
@@ -178,7 +177,7 @@ namespace AST {
         Token keyword;
         vector<Token> cases;
 
-        explicit SwitchStmtDebugInfo(const Token &keyword) : keyword(keyword) {}
+        explicit SwitchStmtDebugInfo(const Token &keyword, const vector<Token> &cases) : keyword(keyword), cases(cases) {}
     };
 
     struct ClassDeclDebugInfo{

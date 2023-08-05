@@ -622,11 +622,13 @@ namespace AST {
 		ASTNodePtr expr;
 		vector<shared_ptr<CaseStmt>> cases;
 		bool hasDefault;
+        Token keyword;
 
-		SwitchStmt(ASTNodePtr _expr, vector<shared_ptr<CaseStmt>> _cases, bool _hasDefault) {
+		SwitchStmt(ASTNodePtr _expr, vector<shared_ptr<CaseStmt>> _cases, bool _hasDefault, Token _keyword) {
 			expr = _expr;
 			cases = _cases;
 			hasDefault = _hasDefault;
+            keyword = _keyword;
 			type = ASTType::SWITCH;
 		}
 		void accept(Visitor* vis) {

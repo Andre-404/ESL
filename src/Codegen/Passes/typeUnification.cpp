@@ -14,6 +14,10 @@ vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv env){
     for(types::tyVarIdx idx = 0; idx < typeEnv.size(); idx++){
         auto ty = typeEnv[idx];
         collapsedTypes[idx] = collapseType(idx, ty);
+        if(collapsedTypes[idx].empty()){
+            // TODO: error when type set is empty
+            exit(64);
+        }
     }
     return collapsedTypes;
 }
@@ -42,7 +46,7 @@ vector<types::tyPtr> TypeUnificator::collapseType(types::tyVarIdx idx, std::pair
     if(ty.first) heldTys.push_back(ty.first);
     constraintSet processed;
     auto tmp = resolveConstraints(ty.second, processed);
-    // Collapsed types don't have any constraints
+    // After collapsing this type shouldn't have any constraints
     ty.second.clear();
     heldTys.insert(heldTys.end(), tmp.begin(), tmp.end());
     return heldTys;

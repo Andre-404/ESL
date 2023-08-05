@@ -181,7 +181,7 @@ namespace typedASTParser{
         int resolveUpvalue(Token name);
 
         typedAST::exprPtr readVar(Token name);
-        typedAST::exprPtr storeToVar(Token name, typedAST::exprPtr toStore);
+        typedAST::exprPtr storeToVar(Token name, Token op, typedAST::exprPtr toStore);
 
         void beginScope();
         void endScope();
