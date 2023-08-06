@@ -192,13 +192,13 @@ namespace typedASTParser{
 
         // Classes and methods
         typedAST::Function createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy);
-        std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args);
+        std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2);
         void detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides);
         void processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys);
 
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(Token name);
-        std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(Token name, typedAST::exprPtr toStore);
+        std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(Token name, typedAST::exprPtr toStore, Token op);
         Globalvar& getClassFromExpr(AST::ASTNodePtr expr);
         std::shared_ptr<ClassChunkInfo> getClassInfoFromExpr(AST::ASTNodePtr expr);
 

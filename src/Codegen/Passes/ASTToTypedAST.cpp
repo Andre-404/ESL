@@ -214,7 +214,7 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
         argTypes.push_back(args.back()->exprType);
     }
 
-    auto tryInvoke = tryConvertToInvoke(callee, args);
+    auto tryInvoke = tryConvertToInvoke(callee, args, expr->paren1, expr->paren2);
     if(tryInvoke) {
         returnedExpr = tryInvoke;
         return;
@@ -381,12 +381,9 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
         if(upval.isLocal) varToCapturePtr = current->enclosing->locals[upval.index].ptr;
         else varToCapturePtr = current->enclosing->upvalues[upval.index].ptr;
 
-        // Upvalues don't have any declarations in the text of the program, they don't have debug info attached to them
-        auto dbg = AST::VarDeclDebugInfo(Token(), Token());
-
         // Kinda hacky, but it makes sure to propagate possible types of upvalues when type inferring
         upvalPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE,
-                                                       varToCapturePtr->possibleTypes, dbg, varToCapturePtr->typeConstrained);
+                                                       varToCapturePtr->possibleTypes, varToCapturePtr->typeConstrained);
         // Sets upvalue in CurrentChunkInfo, used when resolving upvalues in readVar and storeToVar
         current->upvalues.emplace_back(upval.name, upvalPtr);
         // Sets up the (enclosing var -> upvalue) pairs
@@ -451,6 +448,8 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
     if(decl->var.type == AST::ASTVarType::GLOBAL){
         var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::VAR);
     }else var = declareLocalVar(decl->var);
+
+    var->dbgInfo =  AST::VarDeclDebugInfo(decl->keyword, decl->getName());
 
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 
@@ -531,6 +530,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         // Can't override symbols
         int idx = currentClass->fields.size();
 
+        // New field is inserted at the end of the fields array
         currentClass->fields.insert_or_assign(str, idx);
         classTy->fields.insert_or_assign(str, getBasicType(types::TypeFlag::ANY));
     }
@@ -903,7 +903,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
         addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
-    std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore);
+    std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, Token());
     if(implicitClassField){
         if(current->type == FuncType::TYPE_FUNC){
             error(name, fmt::format("Cannot access object fields within a closure without 'this', use this.{}", name.getLexeme()));
@@ -1022,7 +1022,7 @@ typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string c
 
     return func;
 }
-std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args){
+std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2){
     vector<types::tyVarIdx> argTys;
     for(auto arg : args){
         argTys.push_back(arg->exprType);
@@ -1031,12 +1031,14 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
         std::shared_ptr<typedAST::InstGet> casted = std::reinterpret_pointer_cast<typedAST::InstGet>(callee);
         auto invokeTy = createEmptyTy();
         addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy);
+        auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.field, paren1, paren2);
+        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy, dbg);
     }else if(callee->type == typedAST::NodeType::INST_SUPER_GET){
         std::shared_ptr<typedAST::InstSuperGet> casted = std::reinterpret_pointer_cast<typedAST::InstSuperGet>(callee);
         auto invokeTy = createEmptyTy();
         addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->method, args, invokeTy, casted->klass);
+        auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.method, paren1, paren2);
+        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->method, args, invokeTy, dbg, casted->klass);
     }
     return nullptr;
 }
@@ -1046,16 +1048,17 @@ void ASTTransformer::processMethods(string className, vector<AST::ClassMethod> m
         string str = method.method->getName().getLexeme();
         str = (method.isPublic ? str : ("priv." + str));
         // Get the index of the linearized field
-        int idx = currentClass->classTy->methods.size();
+        int fieldIndex = currentClass->classTy->methods.size();
         if(currentClass->methods.contains(str)){
-            idx = currentClass->methods[str].second;
+            fieldIndex = currentClass->methods[str].second;
         }
 
         // Transform the method
         auto retTy = retTys[i];
         auto transformedMethod = createMethod(method.method.get(), className, methodTys[i], retTy);
 
-        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, idx));
+        // If this is a override of a method, it gets the index that the overriden function had
+        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, fieldIndex));
         i++;
     }
 }
@@ -1126,13 +1129,15 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     }
     return nullptr;
 }
-std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(Token name, typedAST::exprPtr toStore){
+std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(Token name, typedAST::exprPtr toStore, Token op) {
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
+    // Accessor doesn't exist in the source code so it doesn't have any debug info
+    auto dbg = AST::InstSetDebugInfo(name, Token(), op);
     // If this class containes fieldName, transform fieldname -> this.fieldName
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore);
+        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1228,7 +1233,8 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
         auto toStore = evalASTExpr(expr->value);
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore);
+        auto dbg = AST::InstSetDebugInfo(name, expr->accessor, expr->op);
+        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1264,7 +1270,7 @@ typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr> stmts)
         try {
             stmtVec = evalASTStmt(stmt);
         }catch(TransformerException e){
-            //
+            // Nothing
         }
         // Dead code elimination
         // If a terminator instruction is detected in this block, don't eval anything below it

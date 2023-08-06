@@ -506,12 +506,14 @@ namespace AST {
 	public:
 		ASTNodePtr value;
         Token op;
+        Token keyword;
         ASTVar var;
 
-		VarDecl(Token _name, ASTNodePtr _value, Token _op) {
+		VarDecl(Token _name, ASTNodePtr _value, Token _keyword, Token _op) {
 			var.name = _name;
 			value = _value;
             op = _op;
+            keyword = _keyword;
 			type = ASTType::VAR;
 		}
 		void accept(Visitor* vis) {

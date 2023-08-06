@@ -620,6 +620,7 @@ ASTNodePtr Parser::localDeclaration() {
 }
 
 shared_ptr<VarDecl> Parser::varDecl() {
+    Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
     ASTNodePtr expr = nullptr;
     //if no initializer is present the variable is initialized to null
@@ -629,7 +630,7 @@ shared_ptr<VarDecl> Parser::varDecl() {
         expr = expression();
     }
     consume(TokenType::SEMICOLON, "Expected a ';' after variable declaration.");
-    return make_shared<VarDecl>(name, expr, op);
+    return make_shared<VarDecl>(name, expr, keyword, op);
 }
 
 shared_ptr<FuncDecl> Parser::funcDecl() {
@@ -864,6 +865,7 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     //switch(<expression>){
     //case <expression>: <statements>
     //}
+    Token keyword = previous();
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'switch'.");
     ASTNodePtr expr = expression();
     consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
@@ -887,7 +889,7 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     }
     consume(TokenType::RIGHT_BRACE, "Expect '}' after switch body.");
     switchDepth--;
-    return make_shared<SwitchStmt>(expr, cases, hasDefault);
+    return make_shared<SwitchStmt>(expr, cases, hasDefault, keyword);
 }
 
 shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {

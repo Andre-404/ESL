@@ -8,6 +8,9 @@ namespace AST {
         Token varName;
 
         VarDeclDebugInfo(const Token &keyword, const Token &varName) : keyword(keyword), varName(varName) {}
+
+        // Default constructor just for it to stop complaining in TypedAST::VarDecl, the debug info is set after VarDecl's creation
+        VarDeclDebugInfo() {}
     };
 
     struct VarStoreDebugInfo {
@@ -102,10 +105,10 @@ namespace AST {
         Token accessor;
         Token method;
         Token paren1;
-        Token parent2;
+        Token paren2;
 
-        InvokeExprDebugInfo(const Token &accessor, const Token &method, const Token &paren1, const Token &parent2) :
-                            accessor(accessor), method(method), paren1(paren1), parent2(parent2) {}
+        InvokeExprDebugInfo(const Token &accessor, const Token &method, const Token &paren1, const Token &paren2) :
+                            accessor(accessor), method(method), paren1(paren1), paren2(paren2) {}
     };
 
     struct NewExprDebugInfo{
