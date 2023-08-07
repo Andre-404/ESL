@@ -168,6 +168,7 @@ namespace AST {
                 right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, "%"), right);
                 break;
             }
+            default: break; // Never hit
         }
         return right;
     }
@@ -422,16 +423,11 @@ void Parser::parse(vector<ESLModule*>& modules) {
                     continue;
                 }
                 unit->stmts.push_back(topLevelDeclaration());
-#ifdef AST_DEBUG
-                //prints statement
-				unit->stmts[unit->stmts.size() - 1]->accept(astPrinter);
-#endif
             }
             catch (ParserException& e) {
                 sync();
             }
         }
-
         expandMacros();
     }
     // 2 units being imported using the same alias is illegal
@@ -589,7 +585,7 @@ ASTNodePtr Parser::expression() {
 static bool stmtIsTerminator(ASTNodePtr stmt){
     return stmt->type == ASTType::BREAK || stmt->type == ASTType::CONTINUE || stmt->type == ASTType::ADVANCE || stmt->type == ASTType::RETURN;
 }
-//module level variables are put in a list to help with error reporting in compiler
+// Module level variables are put in a list to help with error reporting in compiler
 ASTNodePtr Parser::topLevelDeclaration() {
     //export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
@@ -623,7 +619,7 @@ shared_ptr<VarDecl> Parser::varDecl() {
     Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a variable identifier.");
     ASTNodePtr expr = nullptr;
-    //if no initializer is present the variable is initialized to null
+    // If no initializer is present the variable is initialized to null
     Token op;
     if (match(TokenType::EQUAL)) {
         op = previous();
@@ -634,8 +630,8 @@ shared_ptr<VarDecl> Parser::varDecl() {
 }
 
 shared_ptr<FuncDecl> Parser::funcDecl() {
-    //the depths are used for throwing errors for switch and loops stmts,
-    //and since a function can be declared inside a loop we need to account for that
+    // The depths are used for throwing errors for switch and loops stmts,
+    // and since a function can be declared inside a loop we need to account for that
     int tempLoopDepth = loopDepth;
     int tempSwitchDepth = switchDepth;
     loopDepth = 0;
@@ -664,16 +660,18 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
 }
 
 shared_ptr<ClassDecl> Parser::classDecl() {
+    Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
     ASTNodePtr inherited = nullptr;
     // Inheritance is optional
+    Token colon; // For debug purposes
     if (match(TokenType::COLON)) {
-        Token token = previous();
+        colon = previous();
         // Only accept identifiers and module access
         inherited = expression(+Precedence::PRIMARY - 1);
         if (!((inherited->type == ASTType::LITERAL && dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
               || inherited->type == ASTType::MODULE_ACCESS)) {
-            error(token, "Superclass can only be an identifier.");
+            error(colon, "Superclass can only be an identifier.");
         }
     }
 
@@ -721,8 +719,10 @@ shared_ptr<ClassDecl> Parser::classDecl() {
                 checkName(decl->name);
                 // Implicitly declare "this"
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
-                methods.emplace_back(isPublic, decl, false);
+                // If TokenType of override is NONE(the token is default constructed) then this function doesn't override
+                methods.emplace_back(isPublic, Token(), decl);
             }else if (match(TokenType::OVERRIDE)) {
+                Token override = previous();
                 // "override" keyword must be followed by a method
                 if(!match(TokenType::FN)){
                     error(peek(), "'override' must be followed by a method definition.");
@@ -731,7 +731,7 @@ shared_ptr<ClassDecl> Parser::classDecl() {
                 checkName(decl->name);
                 // Implicitly declare "this"
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
-                methods.emplace_back(isPublic, decl, true);
+                methods.emplace_back(isPublic, override, decl);
             } else {
                 throw error(peek(), "Expected let or fn keywords.");
             }
@@ -743,7 +743,7 @@ shared_ptr<ClassDecl> Parser::classDecl() {
         if(!isAtEnd()) advance();
     }
     consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
-    return make_shared<ClassDecl>(name, methods, fields, inherited);
+    return make_shared<ClassDecl>(name, keyword, colon, methods, fields, inherited);
 }
 
 ASTNodePtr Parser::statement() {

@@ -708,9 +708,11 @@ namespace AST {
     struct ClassMethod{
         bool isPublic;
         bool overrides;
+        Token override;
         shared_ptr<FuncDecl> method;
 
-        ClassMethod(bool _isPublic, shared_ptr<FuncDecl> _method, bool _overrides) : isPublic(_isPublic), method(_method), overrides(_overrides) {}
+        ClassMethod(bool _isPublic, Token _override, shared_ptr<FuncDecl> _method)
+        : isPublic(_isPublic), override(_override), method(_method), overrides(_override.type == TokenType::OVERRIDE) {}
     };
 
     struct ClassField{
@@ -723,17 +725,19 @@ namespace AST {
 	class ClassDecl : public ASTDecl {
 	public:
 		Token name;
+        Token keyword;
+        Token colon; // Optional
 		ASTNodePtr inheritedClass;
 		vector<ClassMethod> methods;
         vector<ClassField> fields;
 
-		ClassDecl(Token _name, vector<ClassMethod> _methods,
-                  vector<ClassField> _fields,
+		ClassDecl(Token _name, Token _keyword, Token _colon, vector<ClassMethod> _methods, vector<ClassField> _fields,
                   ASTNodePtr _inheritedClass) {
-
 			name = _name;
 			methods = _methods;
             fields = _fields;
+            keyword = _keyword;
+            colon = _colon;
 			inheritedClass = _inheritedClass;
 			type = ASTType::CLASS;
 		}

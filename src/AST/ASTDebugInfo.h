@@ -188,9 +188,8 @@ namespace AST {
         Token className;
         // Optional
         Token colon;
-        Token parent;
 
-        explicit ClassDeclDebugInfo(const Token &keyword) : keyword(keyword) {}
+        ClassDeclDebugInfo(const Token &keyword, const Token &className) : keyword(keyword), className(className) {}
     };
 
     struct MethodDebugInfo{
@@ -201,6 +200,8 @@ namespace AST {
 
         MethodDebugInfo(const Token &overrides, const Token &keyword, const Token &name, const vector<Token> &params)
                 : overrides(overrides), keyword(keyword), name(name), params(params) {}
+
+        MethodDebugInfo() {} // Default constructor to shut up errors
     };
 
     struct InstSetDebugInfo{

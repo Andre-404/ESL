@@ -16,7 +16,7 @@ ASTTransformer::ASTTransformer() {
     addBasicTypes();
 }
 
-std::pair<typedAST::Function, vector<File*>> ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> _upvalMap){
+std::pair<std::shared_ptr<typedAST::Function>, vector<File*>> ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> _upvalMap){
     units = _units;
     upvalueMap = _upvalMap;
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, "func.main");
@@ -27,7 +27,7 @@ std::pair<typedAST::Function, vector<File*>> ASTTransformer::run(vector<ESLModul
             // Doing this here so that even if an error is detected, we go on and possibly catch other(valid) errors
             try {
                 auto stmts = evalASTStmt(unit->stmts[i]);
-                current->func.block.stmts.insert(current->func.block.stmts.end(), stmts.begin(), stmts.end());
+                current->func->block.stmts.insert(current->func->block.stmts.end(), stmts.begin(), stmts.end());
             }
             catch (TransformerException e) {
                 // Do nothing, only used for unwinding the stack
@@ -60,6 +60,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         auto collection = evalASTExpr(expr->callee);
         auto toStore = evalASTExpr(expr->value);
+
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
         returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, evalASTExpr(expr->field), toStore, dbg);
         return;
@@ -122,6 +123,7 @@ void ASTTransformer::visitRangeExpr(AST::RangeExpr* expr) {
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto lhs = evalASTExpr(expr->left);
     auto rhs = evalASTExpr(expr->right);
+
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
     switch(expr->op.type){
         case TokenType::MINUS:
@@ -394,11 +396,11 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     beginScope();
 
     declareFuncArgs(expr->args);
-    current->func.block = parseStmtsToBlock(expr->body->statements);
+    current->func->block = parseStmtsToBlock(expr->body->statements);
     auto upvals = current->upvalPtrs;
     auto func = endFuncDecl();
     vector<Token> params;
-    std::for_each(expr->args.begin(), expr->args.end(), [&](auto arg){params.push_back(arg.name);});
+    for(auto arg : expr->args) params.push_back(arg.name);
 
     auto dbg = AST::FuncLiteralDebugInfo(expr->keyword, params);
 
@@ -482,19 +484,20 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
     declareFuncArgs(decl->args);
-    current->func.block = parseStmtsToBlock(decl->body->statements);
+    current->func->block = parseStmtsToBlock(decl->body->statements);
     auto func = endFuncDecl();
 
     vector<Token> params;
-    std::for_each(decl->args.begin(), decl->args.end(), [&](auto arg){params.push_back(arg.name);});
+    for(auto arg : decl->args) params.push_back(arg.name);
     auto dbg = AST::FuncDeclDebugInfo(decl->keyword, decl->name, params);
 
     nodesToReturn = {std::make_shared<typedAST::FuncDecl>(func, dbg)};
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
+    updateLine(decl->getName());
+
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
     auto classTyIdx = addType(classTy);
-    updateLine(decl->getName());
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
     varPtr var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::CLASS, classTyIdx);
@@ -563,8 +566,19 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         paren = globals.at(currentClass->parent->mangledName).valPtr;
     }
 
+    // Debug stuff
+    auto dbg = AST::ClassDeclDebugInfo(decl->keyword, decl->name);
+    std::unordered_map<string, AST::MethodDebugInfo> methodsDbg;
+    if(decl->inheritedClass) dbg.colon = decl->colon;
+    for(auto m : decl->methods) {
+        string str = m.method->getName().getLexeme();
+        str = (m.isPublic ? str : ("priv." + str));
+        vector<Token> params;
+        for(auto arg : m.method->args) params.push_back(arg.name);
+        methodsDbg.insert_or_assign(str, AST::MethodDebugInfo(m.override, m.method->keyword, m.method->name, params));
+    }
 
-    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, paren);
+    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, dbg, paren);
     nodesToReturn = {klass};
     currentClass = nullptr;
 }
@@ -893,6 +907,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
     updateLine(name);
     int argIndex = resolveLocal(name);
     auto dbg = AST::VarStoreDebugInfo(name, op);
+
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
         addTypeConstraint(valPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
@@ -903,6 +918,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
         addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
+
     std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, Token());
     if(implicitClassField){
         if(current->type == FuncType::TYPE_FUNC){
@@ -927,7 +943,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
 
 void ASTTransformer::beginScope(){
     current->scopeDepth++;
-    current->func.block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(true));
+    current->func->block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(true));
 }
 // Pop every variable that was declared in this scope
 void ASTTransformer::endScope(){
@@ -937,15 +953,15 @@ void ASTTransformer::endScope(){
     while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
         current->locals.pop_back();
     }
-    current->func.block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(false));
+    current->func->block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(false));
 }
 
 // Functions
-typedAST::Function ASTTransformer::endFuncDecl(){
+std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
     endScope();
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
-    if(!current->func.block.terminates){
+    if(!current->func->block.terminates){
         std::shared_ptr<typedAST::ReturnStmt> ret = nullptr;
         // Constructors return must return the instance
         if(current->type == FuncType::TYPE_CONSTRUCTOR){
@@ -959,18 +975,20 @@ typedAST::Function ASTTransformer::endFuncDecl(){
                     AST::ReturnStmtDebugInfo(Token()));
         }
         addTypeConstraint(current->retTy, std::make_shared<types::AddTyConstraint>(ret->expr->exprType));
-        current->func.block.stmts.push_back(ret);
-        current->func.block.terminates = true;
+        current->func->block.stmts.push_back(ret);
+        current->func->block.terminates = true;
     }
+
     auto func = current->func;
     CurrentChunkInfo* temp = current->enclosing;
     delete current;
     current = temp;
+
     // Dead code elimination
-    for(int i = func.block.stmts.size() - 1; i >= 0; i--){
-        auto stmt = func.block.stmts[i];
+    for(int i = func->block.stmts.size() - 1; i >= 0; i--){
+        auto stmt = func->block.stmts[i];
         if(stmt->type == typedAST::NodeType::RETURN || stmt->type == typedAST::NodeType::UNCOND_JMP){
-            func.block.stmts.resize(i + 1);
+            func->block.stmts.resize(i + 1);
             break;
         }
     }
@@ -978,9 +996,9 @@ typedAST::Function ASTTransformer::endFuncDecl(){
 }
 void ASTTransformer::declareFuncArgs(vector<AST::ASTVar> args){
     for (AST::ASTVar& var : args) {
-        current->func.args.push_back(declareLocalVar(var));
+        current->func->args.push_back(declareLocalVar(var));
         defineLocalVar();
-        auto ptr = current->func.args.back();
+        auto ptr = current->func->args.back();
         // 'this' is of a known type so annotate it to enable optimizations,
         // currentClass is not null because 'this' can only appear as an argument in methods
         if(var.name.getLexeme() == "this"){
@@ -997,30 +1015,32 @@ types::tyVarIdx ASTTransformer::createNewFunc(string name, int arity, FuncType f
     std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(arity, retTy, isClosure);
     auto idx = addType(fnTy);
     current = new CurrentChunkInfo(current, fnKind, name);
-    current->func.fnTy = fnTy;
+    current->func->fnTy = fnTy;
     current->retTy = retTy;
     return idx;
 }
 
 // Classes and methods
 // Class name is for recognizing constructor
-typedAST::Function ASTTransformer::createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy){
+typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, Token overrides, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy){
     updateLine(_method->getName());
+
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + className;
     FuncType type = FuncType::TYPE_METHOD;
     // Constructors are treated separately, but are still methods
     if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
     current = new CurrentChunkInfo(current, type,  fullGlobalSymbol + ".method." + _method->getName().getLexeme());
-    current->func.fnTy = fnTy;
+    current->func->fnTy = fnTy;
     current->retTy = retTy;
     // No need for a endScope, since returning from the function discards the entire callstack
     beginScope();
 
     declareFuncArgs(_method->args);
-    current->func.block = parseStmtsToBlock(_method->body->statements);
+    current->func->block = parseStmtsToBlock(_method->body->statements);
     auto func = endFuncDecl();
-
-    return func;
+    vector<Token> params;
+    for(auto arg : _method->args) params.push_back(arg.name);
+    return typedAST::ClassMethod(func, AST::MethodDebugInfo(overrides, _method->keyword, _method->name, params));
 }
 std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2){
     vector<types::tyVarIdx> argTys;
@@ -1055,7 +1075,7 @@ void ASTTransformer::processMethods(string className, vector<AST::ClassMethod> m
 
         // Transform the method
         auto retTy = retTys[i];
-        auto transformedMethod = createMethod(method.method.get(), className, methodTys[i], retTy);
+        auto transformedMethod = createMethod(method.method.get(), method.override, className, methodTys[i], retTy);
 
         // If this is a override of a method, it gets the index that the overriden function had
         currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, fieldIndex));
@@ -1352,7 +1372,8 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type,
     enclosing = _enclosing;
     type = _type;
     line = 0;
-    func.name = funcName;
+    func = std::make_shared<typedAST::Function>();
+    func->name = funcName;
     retTy = -1;
 }
 #pragma endregion

@@ -636,13 +636,13 @@ namespace typedAST{
 
     class CreateClosureExpr : public TypedASTExpr{
     public:
-        Function fn;
+        std::shared_ptr<Function> fn;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
         vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
         AST::FuncLiteralDebugInfo dbgInfo;
 
-        CreateClosureExpr(Function& _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty,
+        CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty,
                           AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fn = _fn;
             exprType = ty;
@@ -659,10 +659,10 @@ namespace typedAST{
     };
     class FuncDecl : public TypedASTNode{
     public:
-        Function fn;
+        std::shared_ptr<Function> fn;
         AST::FuncDeclDebugInfo dbgInfo;
 
-        FuncDecl(Function& _fn, AST::FuncDeclDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        FuncDecl(std::shared_ptr<Function> _fn, AST::FuncDeclDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fn = _fn;
             type = NodeType::FUNC_DECL;
         }
@@ -820,18 +820,30 @@ namespace typedAST{
         }
     };
 
+    struct ClassMethod {
+        std::shared_ptr<Function> code;
+        AST::MethodDebugInfo dbg;
+
+        ClassMethod(){
+            code = nullptr;
+        }
+        ClassMethod(std::shared_ptr<Function> _code, AST::MethodDebugInfo _dbg){
+            code = _code;
+            dbg = _dbg;
+        }
+    };
+
     class ClassDecl : public TypedASTNode{
     public:
         // Privates are prefixed with "priv."
         // Int is index of that field/method after linearization
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
-        std::unordered_map<string, std::pair<Function, int>> methods;
+        std::unordered_map<string, std::pair<ClassMethod, int>> methods;
         std::shared_ptr<types::ClassType> classType;
-        shared_ptr<VarDecl> parentClass;
+        shared_ptr<VarDecl> parentClass; // Used for chaining classes to implement 'instanceof' operator
 
         AST::ClassDeclDebugInfo dbgInfo;
-        std::unordered_map<string, AST::MethodDebugInfo> methodDbgInfo;
 
         ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, shared_ptr<VarDecl> _parentClass = nullptr)
         : dbgInfo(_dbgInfo){

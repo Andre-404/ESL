@@ -44,7 +44,7 @@ namespace typedASTParser{
     struct CurrentChunkInfo {
         // For closures
         CurrentChunkInfo* enclosing;
-        typedAST::Function func;
+        std::shared_ptr<typedAST::Function> func;
         types::tyVarIdx retTy;
         FuncType type;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
@@ -64,7 +64,7 @@ namespace typedASTParser{
         // Int is index of that field/method after linearization
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
-        std::unordered_map<string, std::pair<typedAST::Function, int>> methods;
+        std::unordered_map<string, std::pair<typedAST::ClassMethod, int>> methods;
         types::tyVarIdx classTypeIdx;
         std::shared_ptr<types::ClassType> classTy;
         string mangledName;
@@ -106,7 +106,7 @@ namespace typedASTParser{
         bool hadError;
 
         ASTTransformer();
-        std::pair<typedAST::Function, vector<File*>> run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
+        std::pair<std::shared_ptr<typedAST::Function>, vector<File*>> run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
         vector<vector<types::tyPtr>> getTypeEnv();
 
         #pragma region Visitor pattern
@@ -186,12 +186,12 @@ namespace typedASTParser{
         void beginScope();
         void endScope();
         // Functions
-        typedAST::Function endFuncDecl();
+        std::shared_ptr<typedAST::Function> endFuncDecl();
         void declareFuncArgs(vector<AST::ASTVar> args);
         types::tyVarIdx createNewFunc(string name, int arity, FuncType fnKind, bool isClosure);
 
         // Classes and methods
-        typedAST::Function createMethod(AST::FuncDecl* _method, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy);
+        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, Token overrides, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2);
         void detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides);
         void processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys);
