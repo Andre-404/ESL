@@ -85,6 +85,7 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
         returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, field, ty, dbg);
         return;
     }
+
     auto resolved = tryResolveThis(expr);
     if(resolved) {
         returnedExpr = resolved;
@@ -1053,6 +1054,7 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
         addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
         auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.field, paren1, paren2);
         return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy, dbg);
+
     }else if(callee->type == typedAST::NodeType::INST_SUPER_GET){
         std::shared_ptr<typedAST::InstSuperGet> casted = std::reinterpret_pointer_cast<typedAST::InstSuperGet>(callee);
         auto invokeTy = createEmptyTy();

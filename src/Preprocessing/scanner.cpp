@@ -38,7 +38,11 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"new", TokenType::NEW},
         {"in", TokenType::IN},
         {"as", TokenType::AS},
-        {"override", TokenType::OVERRIDE}
+        {"override", TokenType::OVERRIDE},
+        {"try", TokenType::TRY},
+        {"catch", TokenType::CATCH},
+        {"unreachable", TokenType::UNREACHABLE},
+        {"errdeffer", TokenType::ERRDEFFER}
 };
 
 using namespace preprocessing;
@@ -122,7 +126,15 @@ Token Scanner::scanToken() {
         case ']': return makeToken(TokenType::RIGHT_BRACKET);
         case ';': return makeToken(TokenType::SEMICOLON);
         case ',': return makeToken(TokenType::COMMA);
-        case '.': return makeToken(match('.') ? (match('=') ? TokenType::DOUBLE_DOT_EQUAL : TokenType::DOUBLE_DOT) : TokenType::DOT);
+        case '.': {
+            // Either .. or ..=
+            if(match('.')){
+                return makeToken((match('=') ? TokenType::DOUBLE_DOT_EQUAL : TokenType::DOUBLE_DOT));
+            }
+            // Either . or .?
+            return makeToken(match('?') ? TokenType::DOUBLE_QUESTIONMARK : TokenType::DOT);
+        }
+
         case '$': return makeToken(TokenType::DOLLAR);
         case '-': {
             // Negative literal numbers are constants
@@ -146,7 +158,7 @@ Token Scanner::scanToken() {
         case '>': return makeToken(match('=') ? TokenType::GREATER_EQUAL : match('>') ? TokenType::BITSHIFT_RIGHT : TokenType::GREATER);
         case '"': return string_();
         case ':': return makeToken(match(':') ? TokenType::DOUBLE_COLON : TokenType::COLON);
-        case '?': return makeToken(TokenType::QUESTIONMARK);
+        case '?': return makeToken(match('?') ? TokenType::DOUBLE_QUESTIONMARK : TokenType::QUESTIONMARK);
         case '\n':
             Token newLineToken = makeToken(TokenType::NEWLINE);
             curFile->lines.push_back(current);
