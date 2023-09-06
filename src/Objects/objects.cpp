@@ -15,7 +15,7 @@ size_t Obj::getSize(){
         case +ObjType::FUNC: return sizeof(ObjFunc);
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
-        case +ObjType::UPVALUE: return sizeof(ObjUpval);
+        case +ObjType::FREEVAR: return sizeof(ObjFreevar);
         case +ObjType::CLASS: return sizeof(ObjClass);
         case +ObjType::INSTANCE: return sizeof(ObjInstance);
         case +ObjType::BOUND_METHOD: return sizeof(ObjBoundMethod);
@@ -40,8 +40,8 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
             str.erase(str.size() - 1).append(" ]");
             return str;
         }
-        case +ObjType::CLOSURE: return "<" + reinterpret_cast<ObjClosure*>(this)->func->toString(stack) + ">";;
-        case +ObjType::UPVALUE: return "<upvalue>";
+        case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";;
+        case +ObjType::FREEVAR: return "<upvalue>";
         case +ObjType::CLASS: return "<class " + reinterpret_cast<ObjClass*>(this)->name->str + ">";
         case +ObjType::INSTANCE: return "<" + reinterpret_cast<ObjInstance*>(this)->klass->name->str + " instance>";
         case +ObjType::BOUND_METHOD: return "<bound method>";
@@ -126,20 +126,22 @@ ObjString* ObjString::createStr(string str){
 #pragma endregion
 
 #pragma region ObjFunction
-ObjFunc::ObjFunc(int _arity, Function _func) {
+ObjFunc::ObjFunc(Function _func, int _arity, char* _name) {
 	arity = _arity;
 	type = +ObjType::FUNC;
-	name = nullptr;
+	name = _name;
     func = _func;
     marked = false;
 }
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(ObjFunc* _func, int _upvalCount) {
+ObjClosure::ObjClosure(Function _func, int _arity, char* _name, int _upvalCount) {
 	func = _func;
+    arity = _arity;
+    name = _name;
     upvalCount = _upvalCount;
-    upvals = new object::ObjUpval*[upvalCount];
+    upvals = new object::ObjFreevar*[upvalCount];
     marked = false;
 	type = +ObjType::CLOSURE;
 }
@@ -150,10 +152,10 @@ ObjClosure::~ObjClosure(){
 #pragma endregion
 
 #pragma region ObjUpval
-ObjUpval::ObjUpval(Value& _val) {
+ObjFreevar::ObjFreevar(Value& _val) {
 	val = _val;
     marked = false;
-	type = +ObjType::UPVALUE;
+	type = +ObjType::FREEVAR;
 }
 #pragma endregion
 
@@ -235,19 +237,19 @@ void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
     Value val = encodeNil();
     // Very, very, VERY ugly way to do this, but I can't think of a better way
     switch(argc){
-        case 0: val = reinterpret_cast<Value(*)(Value)>(closure->func->func)(encodedFunc); break;
-        case 1: val = reinterpret_cast<Value(*)(Value, Value)>(closure->func->func)(encodedFunc, args[0]); break;
-        case 2: val = reinterpret_cast<Value(*)(Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1]); break;
-        case 3: val = reinterpret_cast<Value(*)(Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2]); break;
-        case 4: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3]); break;
-        case 5: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4]); break;
-        case 6: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5]); break;
-        case 7: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6]); break;
-        case 8: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]); break;
-        case 9: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]); break;
-        case 10: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]); break;
-        case 11: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]); break;
-        case 12: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]); break;
+        case 0: val = reinterpret_cast<Value(*)(Value)>(closure->func)(encodedFunc); break;
+        case 1: val = reinterpret_cast<Value(*)(Value, Value)>(closure->func)(encodedFunc, args[0]); break;
+        case 2: val = reinterpret_cast<Value(*)(Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1]); break;
+        case 3: val = reinterpret_cast<Value(*)(Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2]); break;
+        case 4: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3]); break;
+        case 5: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4]); break;
+        case 6: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5]); break;
+        case 7: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6]); break;
+        case 8: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]); break;
+        case 9: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]); break;
+        case 10: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]); break;
+        case 11: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]); break;
+        case 12: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]); break;
     }
     // If the future is deallocated, then the user doesn't care about the return value of this function
     if(memory::gc->isValidPtr(fut)){

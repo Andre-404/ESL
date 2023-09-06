@@ -1,7 +1,7 @@
 #pragma once
 #include "../../AST/ASTDefs.h"
 #include "../../TypedAST/TypedASTDefs.h"
-#include "variableFinder.h"
+#include "closureConverter.h"
 #include "../../Includes/unorderedDense.h"
 
 namespace passes{
@@ -19,7 +19,7 @@ namespace typedASTParser{
         string name;
         int depth;
         varPtr ptr; // Value that this local holds, in IR pointer to an alloca
-        // Whether this local variable has been captured as an upvalue and should be accessed through ObjUpval
+        // Whether this local variable has been captured as an upvalue and should be accessed through ObjFreevar
         bool isUpval;
 
         Local(string _name, int _depth, bool _isUpval) : name(_name), depth(_depth), isUpval(_isUpval) {}
@@ -31,7 +31,8 @@ namespace typedASTParser{
         }
     };
 
-    // Represents an Upvalue held in ObjClosure, at function entry all
+    // Represents an Upvalue held in ObjClosure, at function entry all freevars are loaded from an object to the stack
+    // "ptr" represents the value loaded to the stack
     struct Upvalue {
         string name = "";
         varPtr ptr = nullptr;
@@ -49,13 +50,13 @@ namespace typedASTParser{
         FuncType type;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
-        vector<std::pair<std::shared_ptr<typedAST::VarDecl>, std::shared_ptr<typedAST::VarDecl>>> upvalPtrs;
+        vector<std::pair<std::shared_ptr<typedAST::VarDecl>, std::shared_ptr<typedAST::VarDecl>>> freevarPtrs;
 
         int line;
         int scopeDepth;
         // Stack can grow an arbitrary amount
         vector<Local> locals;
-        vector<Upvalue> upvalues;
+        vector<Upvalue> freevars;
         CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName);
     };
 
@@ -106,7 +107,9 @@ namespace typedASTParser{
         bool hadError;
 
         ASTTransformer();
-        std::pair<std::shared_ptr<typedAST::Function>, vector<File*>> run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalMap);
+        std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
+        run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
+
         vector<vector<types::tyPtr>> getTypeEnv();
 
         #pragma region Visitor pattern
@@ -146,6 +149,7 @@ namespace typedASTParser{
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
 #pragma endregion
     private:
+        bool transformedAST; // Whether the run function was called(used by getTypeEnv)
         // Compiler only ever emits the code for a single function, top level code is considered a function
         CurrentChunkInfo* current;
         std::shared_ptr<ClassChunkInfo> currentClass;
@@ -153,8 +157,10 @@ namespace typedASTParser{
         ESLModule* curUnit;
         int curUnitIndex;
         vector<ESLModule*> units;
-        std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> upvalueMap;
+
+        std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap;
         ankerl::unordered_dense::map<string, Globalvar> globals;
+
         unordered_map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
         ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
         // Empty constraint set means type is collapsed
@@ -183,8 +189,8 @@ namespace typedASTParser{
         typedAST::exprPtr readVar(Token name);
         typedAST::exprPtr storeToVar(Token name, Token op, typedAST::exprPtr toStore);
 
-        void beginScope();
-        void endScope();
+        std::shared_ptr<typedAST::ScopeEdge> beginScope();
+        std::shared_ptr<typedAST::ScopeEdge> endScope();
         // Functions
         std::shared_ptr<typedAST::Function> endFuncDecl();
         void declareFuncArgs(vector<AST::ASTVar> args);

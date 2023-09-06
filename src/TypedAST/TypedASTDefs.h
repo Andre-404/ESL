@@ -4,6 +4,7 @@
 #include <variant>
 #include <utility>
 
+
 // Introduces types for all expressions to the AST
 // Lowers some operations to make codegen easier(eg. for loops are transformed into while loops)
 // Creates connections between variables reads/stores and variable declarations
@@ -57,7 +58,7 @@ namespace typedAST{
         INST_SUPER_GET,
 
         // Misc
-        BLOCK
+        BLOCK_EDGE
     };
     class VarDecl;
     class VarRead;
@@ -89,7 +90,7 @@ namespace typedAST{
     class InstGet;
     class InstSet;
     class InstSuperGet;
-    class ScopeBlock;
+    class ScopeEdge;
 
     class TypedASTVisitor{
     public:
@@ -123,7 +124,7 @@ namespace typedAST{
         virtual void visitInstGet(InstGet* expr) = 0;
         virtual void visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual void visitInstSet(InstSet* expr) = 0;
-        virtual void visitScopeBlock(ScopeBlock* expr) = 0;
+        virtual void visitScopeBlock(ScopeEdge* expr) = 0;
     };
 
     class TypedASTCodegen{
@@ -158,7 +159,7 @@ namespace typedAST{
         virtual llvm::Value* visitInstGet(InstGet* expr) = 0;
         virtual llvm::Value* visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual llvm::Value* visitInstSet(InstSet* expr) = 0;
-        virtual llvm::Value* visitScopeBlock(ScopeBlock* expr) = 0;
+        virtual llvm::Value* visitScopeBlock(ScopeEdge* expr) = 0;
     };
 
     class TypedASTNode {
@@ -183,7 +184,7 @@ namespace typedAST{
 
     enum class VarType{
         LOCAL,
-        UPVALUE,
+        FREEVAR,
         GLOBAL,
         // To optimize calling functions/instantiating classes
         GLOBAL_FUNC,
@@ -196,9 +197,12 @@ namespace typedAST{
         bool typeConstrained;
         types::tyVarIdx possibleTypes;
         AST::VarDeclDebugInfo dbgInfo;
+        uInt64 uuid;
+        static inline uInt64 instanceCount = 0;
 
         VarDecl(VarType _varType, types::tyVarIdx _possibleTypes, bool _typeConstrained = false){
             varType = _varType;
+            uuid = instanceCount++;
             typeConstrained = _typeConstrained;
             possibleTypes = _possibleTypes;
             type = NodeType::VAR_DECL;
@@ -637,16 +641,16 @@ namespace typedAST{
     class CreateClosureExpr : public TypedASTExpr{
     public:
         std::shared_ptr<Function> fn;
-        // First ptr is pointer to the VarDecl from an outer function to store to the closure,
+        // First ptr is pointer to the VarDecl from an outer function to store to the closure(can be local/freevar),
         // second is to the VarDecl used inside this function
-        vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> upvals;
+        vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> freevars;
         AST::FuncLiteralDebugInfo dbgInfo;
 
-        CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _upvals, types::tyVarIdx ty,
+        CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _freevars, types::tyVarIdx ty,
                           AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fn = _fn;
             exprType = ty;
-            upvals = _upvals;
+            freevars = _freevars;
             type = NodeType::CLOSURE;
         }
         ~CreateClosureExpr() {};
@@ -933,15 +937,23 @@ namespace typedAST{
     };
 
     // Misc
-    class ScopeBlock : public TypedASTNode{
+    enum class ScopeEdgeType{
+        START,
+        END
+    };
+    // Used for better debug info and to know which variables to remove when exiting scope
+    class ScopeEdge : public TypedASTNode{
     public:
-        // Start or end of scope
-        bool startScope;
-        ScopeBlock(bool _startScope){
-            startScope = _startScope;
-            type = NodeType::BLOCK;
+        // Start or end edge of scope
+        ScopeEdgeType edgeType;
+        // Variables to pop from the variable map
+        std::unordered_set<shared_ptr<VarDecl>> toPop;
+        ScopeEdge(ScopeEdgeType _ty, std::unordered_set<shared_ptr<VarDecl>> _toPop){
+            edgeType = _ty;
+            toPop = _toPop;
+            type = NodeType::BLOCK_EDGE;
         }
-        ~ScopeBlock() {}
+        ~ScopeEdge() {}
         void accept(TypedASTVisitor* vis) override{
             vis->visitScopeBlock(this);
         }

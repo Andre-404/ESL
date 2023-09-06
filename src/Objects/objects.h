@@ -13,7 +13,7 @@ namespace object {
         FUNC,
         ARRAY,
         CLOSURE,
-        UPVALUE,
+        FREEVAR,
         CLASS,
         INSTANCE,
         BOUND_METHOD,
@@ -69,26 +69,29 @@ namespace object {
 
     class ObjFunc : public Obj {
     public:
+        // A function can have a maximum of 255 parameters
+        byte arity;
         Function func;
         char* name;
-        // A function can have a maximum of 255 parameters
-        int arity;
-        ObjFunc(int _arity, Function _func);
+        ObjFunc(Function _func, int _arity, char* _name);
     };
 
-    class ObjUpval : public Obj {
+    class ObjFreevar : public Obj {
     public:
         Value val;
-        ObjUpval(Value& _value);
+        ObjFreevar(Value& _value);
     };
 
-    // Multiple closures with different upvalues can point to the same function
+    // Multiple closures with different freevars can point to the same function
     class ObjClosure : public Obj {
     public:
-        ObjFunc* func;
-        ObjUpval** upvals;
-        int upvalCount;
-        ObjClosure(ObjFunc* _func, int upvalCount);
+        // A function can have a maximum of 255 parameters and 255 upvalues
+        byte arity;
+        byte upvalCount;
+        Function func;
+        char* name;
+        ObjFreevar** upvals;
+        ObjClosure(Function _func, int _arity, char* _name, int _upvalCount);
         ~ObjClosure();
     };
 

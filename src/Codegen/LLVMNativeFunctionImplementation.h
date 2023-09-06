@@ -1,7 +1,6 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include "valueHelpersInline.cpp"
-#include "../Includes/fmt/format.h"
 #include <csetjmp>
 #include <stdarg.h>
 // Functions which the compiler calls, seperate from the native functions provided by the language as part of runtime library
@@ -88,7 +87,13 @@ EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, V
     exit(64);
 }
 
-EXPORT Value strAdd(Value lhs, Value rhs, const char* fileName, const int line){
+// Both values are known to be strings
+EXPORT Value strAdd(Value lhs, Value rhs){
+    string temp = asString(lhs)->str + asString(rhs)->str;
+    return encodeObj(object::ObjString::createStr(temp));
+}
+
+EXPORT Value strTryAdd(Value lhs, Value rhs, const char* fileName, const int line){
     if(!isString(lhs) || !isString(rhs)) tyErrDouble("Operands must be numbers or strings, got '{}' and '{}'.", fileName, line, lhs, rhs);
     string temp = asString(lhs)->str + asString(rhs)->str;
     return encodeObj(object::ObjString::createStr(temp));
@@ -120,27 +125,26 @@ EXPORT Value createHashMap(int nFields, ...){
 }
 
 EXPORT Value createFunc(char* fn, int arity, char* name){
-    auto func = new object::ObjFunc(arity, fn);
-    func->name = name;
+    auto func = new object::ObjFunc(fn, arity, name);
     return encodeObj(func);
 }
 
-EXPORT object::ObjUpval* createUpvalue(){
+EXPORT object::ObjFreevar* createFreevar(){
     Value tmp = encodeNil();
-    return new object::ObjUpval(tmp);
+    return new object::ObjFreevar(tmp);
 }
 
-EXPORT object::ObjUpval* getUpvalue(Value closure, int index){
+EXPORT object::ObjFreevar* getFreevar(Value closure, int index){
     object::ObjClosure* cl = asClosure(closure);
     return cl->upvals[index];
 }
 
-EXPORT Value createClosure(Value fn, int upvalCount, ...){
-    object::ObjClosure* closure = new object::ObjClosure(asFunction(fn), upvalCount);
+EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...){
+    object::ObjClosure* closure = new object::ObjClosure(fn, arity, name, upvalCount);
     va_list ap;
     va_start(ap, upvalCount);
     for(int i=0; i<upvalCount; i++){
-        closure->upvals[i] = va_arg(ap, object::ObjUpval*);
+        closure->upvals[i] = va_arg(ap, object::ObjFreevar*);
     }
     va_end(ap);
     return encodeObj(closure);

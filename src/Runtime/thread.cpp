@@ -148,7 +148,7 @@ void runtime::Thread::callMethod(object::Method method, int8_t argCount) {
     return native->func(this, argCount);
 }
 
-static object::ObjUpval* captureUpvalue(Value* local) {
+static object::ObjFreevar* captureUpvalue(Value* local) {
     return asUpvalue(*local);
 }
 
@@ -494,7 +494,7 @@ void runtime::Thread::executeBytecode() {
                     }
                     case 2: {
                         byte slot = READ_BYTE();
-                        Value &num = frame->closure->upvalPtrs[slot]->val;
+                        Value &num = frame->closure->freevarPtrs[slot]->val;
                         INCREMENT(num);
                     }
                     case 3: {
@@ -718,7 +718,7 @@ void runtime::Thread::executeBytecode() {
 
             case +OpCode::CREATE_UPVALUE: {
                 uint8_t slot = READ_BYTE();
-                auto* upval = new object::ObjUpval(slotStart[slot]);
+                auto* upval = new object::ObjFreevar(slotStart[slot]);
                 slotStart[slot] = encodeObj(upval);
                 DISPATCH();
             }
@@ -734,12 +734,12 @@ void runtime::Thread::executeBytecode() {
 
             case +OpCode::GET_UPVALUE:{
                 uint8_t slot = READ_BYTE();
-                push(frame->closure->upvalPtrs[slot]->val);
+                push(frame->closure->freevarPtrs[slot]->val);
                 DISPATCH();
             }
             case +OpCode::SET_UPVALUE:{
                 uint8_t slot = READ_BYTE();
-                frame->closure->upvalPtrs[slot]->val = peek(0);
+                frame->closure->freevarPtrs[slot]->val = peek(0);
                 DISPATCH();
             }
             #pragma endregion
@@ -863,13 +863,13 @@ void runtime::Thread::executeBytecode() {
             case +OpCode::CLOSURE: [[fallthrough]];
             case +OpCode::CLOSURE_LONG:{
                 auto *closure = new object::ObjClosure(asFunction(*(ip - 1) == +OpCode::CLOSURE ? READ_CONSTANT() : READ_CONSTANT_LONG()));
-                for (auto &upval: closure->upvalPtrs) {
+                for (auto &upval: closure->freevarPtrs) {
                     uint8_t isLocal = READ_BYTE();
                     uint8_t index = READ_BYTE();
                     if (isLocal) {
                         upval = asUpvalue(slotStart[index]);
                     } else {
-                        upval = frame->closure->upvalPtrs[index];
+                        upval = frame->closure->freevarPtrs[index];
                     }
                 }
                 push(encodeObj(closure));

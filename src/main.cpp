@@ -6,7 +6,7 @@
 #include "Codegen/compiler.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
 #include "MemoryManagment/garbageCollector.h"
-#include "Codegen/Passes/variableFinder.h"
+#include "Codegen/Passes/closureConverter.h"
 #include "Codegen/Passes/ASTToTypedAST.h"
 #include <chrono>
 
@@ -66,15 +66,17 @@ int main(int argc, char* argv[]) {
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) exit(64);
 
-        variableFinder::VariableTypeFinder finder(modules);
+        closureConversion::ClosureConverter finder(modules);
         passes::typedASTParser::ASTTransformer transformer;
-        auto res = transformer.run(modules, finder.generateUpvalueMap());
+        auto res = transformer.run(modules, finder.generateFreevarMap());
         auto env = transformer.getTypeEnv();
 
-        /*compileCore::Compiler compiler(modules);
+        compileCore::Compiler compiler(res.first, res.second, env);
 
-        errorHandler::showCompileErrors();*/
-        if (errorHandler::hasErrors()) exit(64);
+        errorHandler::showCompileErrors();
+        if (errorHandler::hasErrors()) {
+            exit(64);
+        }
     }else if(flag == "-validate-file"){
         preprocessing::Preprocessor preprocessor;
         preprocessor.preprocessProject(path);

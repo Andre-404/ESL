@@ -15,8 +15,8 @@ vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv env){
         auto ty = typeEnv[idx];
         collapsedTypes[idx] = collapseType(idx, ty);
         if(collapsedTypes[idx].empty()){
-            // TODO: error when type set is empty
-            exit(64);
+            // TODO: do something when set is empty(maybe a separate pass?)
+            std::cout<<"Empty set at index: " << idx << "\n";
         }
     }
     return collapsedTypes;

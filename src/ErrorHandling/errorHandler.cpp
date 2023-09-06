@@ -97,7 +97,7 @@ namespace errorHandler {
 	}
 
 	bool hasErrors() {
-		return !compileErrors.empty();
+		return !(compileErrors.size() == 0);
 	}
 
     vector<string> convertCompilerErrorsToJson(){

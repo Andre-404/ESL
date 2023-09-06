@@ -7,19 +7,19 @@
 // Variable declarations can be: global, local, upvalue
 // Function arguments can be: local, upvalue
 
-namespace variableFinder {
+namespace closureConversion{
     struct Local {
         AST::ASTVar* var = nullptr;
         int depth = -1;
     };
 
-    struct Upvalue {
+    struct FreeVariable {
         int index = 0;
-        bool isLocal = false;
+        bool isLocal;
         // Name of this variable
         string name = "";
 
-        Upvalue(int _index, bool _isLocal, string _name) : index(_index), isLocal(_isLocal), name(_name) {}
+        FreeVariable(int _index, bool _isLocal, string _name) : index(_index), isLocal(_isLocal), name(_name) {}
     };
 
     struct CurrentChunkInfo {
@@ -28,20 +28,19 @@ namespace variableFinder {
         //locals
         vector<Local> locals;
         uInt scopeDepth;
-        vector<Upvalue> upvalues;
+        vector<FreeVariable> freeVars;
 
         CurrentChunkInfo(CurrentChunkInfo *_enclosing);
     };
 
-
-    class VariableTypeFinder : public AST::Visitor {
+    class ClosureConverter : public AST::Visitor {
     public:
         CurrentChunkInfo* current;
         bool hadError;
 
-        VariableTypeFinder(vector<ESLModule*>& units);
+        ClosureConverter(vector<ESLModule*>& units);
 
-        std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> generateUpvalueMap();
+        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> generateFreevarMap();
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -80,19 +79,19 @@ namespace variableFinder {
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
         #pragma endregion
     private:
-        std::unordered_map<AST::FuncLiteral*, vector<Upvalue>> upvalueMap;
+        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> freevarMap;
 
         #pragma region Helpers
-        //variables
+        // Variables
         void declareGlobalVar(AST::ASTVar& var);
         void namedVar(Token name);
-        //locals
+        // Locals
         void declareLocalVar(AST::ASTVar& var);
         void addLocal(AST::ASTVar& name);
         int resolveLocal(Token name);
         int resolveLocal(CurrentChunkInfo* func, Token name);
-        int resolveUpvalue(CurrentChunkInfo* func, Token name);
-        int addUpvalue(CurrentChunkInfo* func, int index, bool isLocal, string name);
+        int resolveFreeVar(CurrentChunkInfo* func, Token name);
+        int addFreeVar(CurrentChunkInfo* func, int index, bool isLocal, string name);
         void beginScope();
         void endScope();
         #pragma endregion

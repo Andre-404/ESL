@@ -69,7 +69,7 @@ namespace AST {
         vector<StructDbgInfoField> fields;
         Token brace2;
 
-        StructLiteralDebugInfo(const Token &brace1, const vector<StructField> &fields, const Token &brace2)
+        StructLiteralDebugInfo(const Token &brace1, const vector<StructDbgInfoField> &fields, const Token &brace2)
         : brace1(brace1), fields(fields), brace2(brace2) {}
     };
 

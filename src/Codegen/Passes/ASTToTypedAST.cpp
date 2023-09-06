@@ -13,12 +13,14 @@ ASTTransformer::ASTTransformer() {
     current = nullptr;
     currentClass = nullptr;
     returnedExpr = nullptr;
+    transformedAST = false;
     addBasicTypes();
 }
 
-std::pair<std::shared_ptr<typedAST::Function>, vector<File*>> ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLiteral*, vector<variableFinder::Upvalue>> _upvalMap){
+std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
+ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> _freevarMap){
     units = _units;
-    upvalueMap = _upvalMap;
+    freevarMap = _freevarMap;
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, "func.main");
     for (ESLModule* unit : units) {
         curUnit = unit;
@@ -37,10 +39,17 @@ std::pair<std::shared_ptr<typedAST::Function>, vector<File*>> ASTTransformer::ru
     }
     auto fn = current->func;
     delete current;
+    for(auto unit : units) delete unit;
+
+    transformedAST = true;
     return std::make_pair(fn, sourceFiles);
 }
 
 vector<vector<types::tyPtr>> ASTTransformer::getTypeEnv(){
+    if(!transformedAST){
+        std::cout<<"Tried to retrieve the type environment before running the transformer, exiting...\n";
+        exit(64);
+    }
     typeUnification::TypeUnificator unificator;
     return unificator.run(typeEnv);
 }
@@ -182,6 +191,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::LESS_EQUAL: op = typedAST::ComparisonOp::LESSEQ; break;
                 case TokenType::AND: op = typedAST::ComparisonOp::AND; break;
                 case TokenType::OR: op = typedAST::ComparisonOp::OR; break;
+                // TODO: this is dumb, we need to use getclassfromexpr for rhs
                 case TokenType::INSTANCEOF: op = typedAST::ComparisonOp::INSTANCEOF; break;
             }
             returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, getBasicType(types::TypeFlag::BOOL), dbg);
@@ -370,42 +380,43 @@ void ASTTransformer::visitSuperExpr(AST::SuperExpr* expr) {
 
 static int anonFuncCounter = 0;
 void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
-    auto upvalMap = upvalueMap.at(expr);
+    auto freevars = freevarMap.at(expr);
 
-    auto ty = createNewFunc("anonfunc." + std::to_string(anonFuncCounter++), expr->arity, FuncType::TYPE_FUNC, upvalMap.size() > 0);
+    auto ty = createNewFunc("anonfunc." + std::to_string(anonFuncCounter++), expr->arity, FuncType::TYPE_FUNC, freevars.size() > 0);
 
     // Upvalues are gathered from the enclosing function
-    for(int i = 0; i < upvalMap.size(); i++){
-        auto& upval = upvalMap[i];
+    for(int i = 0; i < freevars.size(); i++){
+        auto& freevar = freevars[i];
 
-        std::shared_ptr<typedAST::VarDecl> upvalPtr = nullptr;
+        std::shared_ptr<typedAST::VarDecl> freevarPtr = nullptr;
         std::shared_ptr<typedAST::VarDecl> varToCapturePtr = nullptr;
 
-        if(upval.isLocal) varToCapturePtr = current->enclosing->locals[upval.index].ptr;
-        else varToCapturePtr = current->enclosing->upvalues[upval.index].ptr;
+        if(freevar.isLocal) varToCapturePtr = current->enclosing->locals[freevar.index].ptr;
+        else varToCapturePtr = current->enclosing->freevars[freevar.index].ptr;
 
-        // Kinda hacky, but it makes sure to propagate possible types of upvalues when type inferring
-        upvalPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE,
+        // Kinda hacky, but it makes sure to propagate possible types of freevars when type inferring
+        freevarPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR,
                                                        varToCapturePtr->possibleTypes, varToCapturePtr->typeConstrained);
-        // Sets upvalue in CurrentChunkInfo, used when resolving upvalues in readVar and storeToVar
-        current->upvalues.emplace_back(upval.name, upvalPtr);
+        // Sets upvalue in CurrentChunkInfo, used when resolving freevars in readVar and storeToVar
+        current->freevars.emplace_back(freevar.name, freevarPtr);
         // Sets up the (enclosing var -> upvalue) pairs
-        current->upvalPtrs.emplace_back(varToCapturePtr, upvalPtr);
+        current->freevarPtrs.emplace_back(varToCapturePtr, freevarPtr);
     }
 
     // endScope is in endFuncDecl
-    beginScope();
+    auto scopeEdge = beginScope();
 
     declareFuncArgs(expr->args);
     current->func->block = parseStmtsToBlock(expr->body->statements);
-    auto upvals = current->upvalPtrs;
+    current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
+    auto fvars = current->freevarPtrs;
     auto func = endFuncDecl();
     vector<Token> params;
     for(auto arg : expr->args) params.push_back(arg.name);
 
     auto dbg = AST::FuncLiteralDebugInfo(expr->keyword, params);
 
-    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, upvals, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, fvars, ty, dbg);
 }
 // Checks if 'symbol' exists in a module which was imported with the alias 'moduleAlias',
 // If it exists return varPtr which holds the pointer to the global
@@ -483,9 +494,11 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     defineGlobalVar(fullGlobalSymbol);
 
     // No need for a endScope, since returning from the function discards the entire callstack
-    beginScope();
+    auto scopeEdge = beginScope();
     declareFuncArgs(decl->args);
     current->func->block = parseStmtsToBlock(decl->body->statements);
+    // Insert scope edge to the start of the function
+    current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
     auto func = endFuncDecl();
 
     vector<Token> params;
@@ -588,8 +601,7 @@ void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
     nodesToReturn= {evalASTExpr(stmt->expr)};
 }
 void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
-    beginScope();
-    vector<typedAST::nodePtr> nodes;
+    vector<typedAST::nodePtr> nodes = {beginScope()};
     for(auto temp : stmt->statements){
         vector<typedAST::nodePtr> nodesToInsert;
         try{
@@ -599,14 +611,17 @@ void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
         }
         nodes.insert(nodes.end(), nodesToInsert.begin(), nodesToInsert.end());
     }
-    endScope();
+    nodes.push_back(endScope());
     nodesToReturn.insert(nodesToReturn.end(), nodes.begin(), nodes.end());
 }
 
 void ASTTransformer::visitIfStmt(AST::IfStmt* stmt) {
     auto cond = evalASTExpr(stmt->condition);
     typedAST::Block thenBlock = parseStmtToBlock(stmt->thenBranch);
-    typedAST::Block elseBlock = parseStmtToBlock(stmt->elseBranch);
+    typedAST::Block elseBlock;
+    if(stmt->elseBranch){
+        elseBlock = parseStmtToBlock(stmt->elseBranch);
+    }
 
     auto dbg = AST::IfStmtDebugInfo(stmt->keyword);
 
@@ -622,7 +637,7 @@ void ASTTransformer::visitWhileStmt(AST::WhileStmt* stmt) {
 }
 void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     // Convert for to a while loop with "init" directly above it in a block
-    beginScope();
+    auto scopeEdge1 = beginScope();
     vector<typedAST::nodePtr> init;
     typedAST::exprPtr cond = nullptr;
     typedAST::exprPtr inc = nullptr;
@@ -632,15 +647,17 @@ void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     if(stmt->condition) cond = evalASTExpr(stmt->condition);
 
     typedAST::Block loopBody = parseStmtToBlock(stmt->body);
-    if(stmt->condition) inc = evalASTExpr(stmt->increment);
-    endScope();
+    if(stmt->increment) inc = evalASTExpr(stmt->increment);
+    auto scopeEdge2 = endScope();
     // Init isn't treated as part of the while loop, but as statement(s) by itself(exprStmt or var decl + var store)
+    nodesToReturn.insert(nodesToReturn.end(), scopeEdge1);
     nodesToReturn.insert(nodesToReturn.end(), init.begin(), init.end());
 
     auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
 
     // AfterLoopExpr is special field that won't be part of the loop body, but in a basic block by itself
     nodesToReturn.push_back(std::make_shared<typedAST::WhileStmt>(cond, loopBody, dbg, inc));
+    nodesToReturn.push_back(scopeEdge2);
 }
 void ASTTransformer::visitBreakStmt(AST::BreakStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
@@ -835,13 +852,13 @@ void ASTTransformer::defineLocalVar(){
 }
 varPtr ASTTransformer::addLocal(AST::ASTVar var){
     updateLine(var.name);
-    current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::UPVALUE);
+    current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
     auto varTy = createEmptyTy();
     if(!local.isUpval) {
         local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy);
     }else{
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::UPVALUE, varTy);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy);
     }
     return local.ptr;
 }
@@ -864,14 +881,14 @@ int ASTTransformer::resolveLocal(Token name){
 }
 int ASTTransformer::resolveUpvalue(Token name){
     string upvalName = name.getLexeme();
-    for(int i = 0; i < current->upvalues.size(); i++){
-        if(upvalName == current->upvalues[i].name) return i;
+    for(int i = 0; i < current->freevars.size(); i++){
+        if(upvalName == current->freevars[i].name) return i;
     }
     return -1;
 }
 
 // Order of checking:
-// locals->upvalues->implicit object fields->globals->natives
+// locals->freevars->implicit object fields->globals->natives
 typedAST::exprPtr ASTTransformer::readVar(Token name){
     updateLine(name);
     auto dbg = AST::VarReadDebugInfo(name);
@@ -881,7 +898,7 @@ typedAST::exprPtr ASTTransformer::readVar(Token name){
         return std::make_shared<typedAST::VarRead>(valPtr, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
-        varPtr upvalPtr = current->upvalues[argIndex].ptr;
+        varPtr upvalPtr = current->freevars[argIndex].ptr;
         return std::make_shared<typedAST::VarRead>(upvalPtr, dbg);
     }
     std::shared_ptr<typedAST::InstGet> implicitClassField = resolveClassFieldRead(name);
@@ -915,7 +932,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
         return std::make_shared<typedAST::VarStore>(valPtr, toStore, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
-        varPtr upvalPtr = current->upvalues[argIndex].ptr;
+        varPtr upvalPtr = current->freevars[argIndex].ptr;
         addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
@@ -942,24 +959,29 @@ typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exp
     return nullptr;
 }
 
-void ASTTransformer::beginScope(){
+std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::beginScope(){
     current->scopeDepth++;
-    current->func->block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(true));
+    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START,
+                                                 std::unordered_set<std::shared_ptr<typedAST::VarDecl>>());
 }
 // Pop every variable that was declared in this scope
-void ASTTransformer::endScope(){
+std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(){
     // First lower the scope, the check for every var that is deeper than the parserCurrent scope
     current->scopeDepth--;
+    // Store which variables to pop(store the VarDecl ptr)
+    std::unordered_set<std::shared_ptr<typedAST::VarDecl>> toPop;
     // Pop from the stack
     while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
+        toPop.insert(current->locals.back().ptr);
         current->locals.pop_back();
     }
-    current->func->block.stmts.push_back(std::make_shared<typedAST::ScopeBlock>(false));
+    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::END, toPop);
 }
 
 // Functions
 std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
-    endScope();
+    auto scopeEdge = endScope();
+    current->func->block.stmts.push_back(scopeEdge);
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
     if(!current->func->block.terminates){
@@ -1034,10 +1056,12 @@ typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, Token
     current->func->fnTy = fnTy;
     current->retTy = retTy;
     // No need for a endScope, since returning from the function discards the entire callstack
-    beginScope();
+    auto scopeEdge = beginScope();
 
     declareFuncArgs(_method->args);
     current->func->block = parseStmtsToBlock(_method->body->statements);
+    // Insert the scope edge to the start of the functions
+    current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
     auto func = endFuncDecl();
     vector<Token> params;
     for(auto arg : _method->args) params.push_back(arg.name);
@@ -1297,8 +1321,7 @@ typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr> stmts)
         // Dead code elimination
         // If a terminator instruction is detected in this block, don't eval anything below it
         for (int i = stmtVec.size() - 1; i >= 0; i--) {
-            if (stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP ||
-                stmtVec[i]->type == typedAST::NodeType::RETURN) {
+            if (stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP || stmtVec[i]->type == typedAST::NodeType::RETURN) {
                 stmtVec.resize(i + 1);
                 block.terminates = true;
                 block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
@@ -1357,7 +1380,7 @@ void ASTTransformer::addTypeConstraint(types::tyVarIdx ty, std::shared_ptr<types
     typeEnv[ty].second.push_back(constraint);
 }
 types::tyVarIdx ASTTransformer::getBasicType(types::TypeFlag ty){
-    return static_cast<int>(ty);
+    return static_cast<types::tyVarIdx>(ty);
 }
 void ASTTransformer::addBasicTypes(){
     addType(types::getBasicType(types::TypeFlag::NIL));

@@ -138,7 +138,7 @@ namespace AST {
 
     enum class ASTVarType{
         LOCAL,
-        UPVALUE,
+        FREEVAR,
         GLOBAL,
         NONE
     };

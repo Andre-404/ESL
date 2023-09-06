@@ -41,8 +41,7 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"override", TokenType::OVERRIDE},
         {"try", TokenType::TRY},
         {"catch", TokenType::CATCH},
-        {"unreachable", TokenType::UNREACHABLE},
-        {"errdeffer", TokenType::ERRDEFFER}
+        {"errdefer", TokenType::ERRDEFER}
 };
 
 using namespace preprocessing;
@@ -152,7 +151,13 @@ Token Scanner::scanToken() {
         case '^': return makeToken(match('=') ? TokenType::BITWISE_XOR_EQUAL : TokenType::BITWISE_XOR);
         case '%': return makeToken(match('=') ? TokenType::PERCENTAGE_EQUAL : TokenType::PERCENTAGE);
         case '~': return makeToken(TokenType::TILDA);
-        case '!': return makeToken(match('=') ? TokenType::BANG_EQUAL : TokenType::BANG);
+        case '!': {
+            TokenType t = TokenType::BANG;
+            if(match('!')) t = TokenType::DOUBLE_BANG;
+            else if(match('=')) t = TokenType::BANG_EQUAL;
+
+            return makeToken(t);
+        }
         case '=': return makeToken(match('=') ? TokenType::EQUAL_EQUAL : (match('>') ? TokenType::ARROW : TokenType::EQUAL));
         case '<': return makeToken(match('=') ? TokenType::LESS_EQUAL : match('<') ? TokenType::BITSHIFT_LEFT : TokenType::LESS);
         case '>': return makeToken(match('=') ? TokenType::GREATER_EQUAL : match('>') ? TokenType::BITSHIFT_RIGHT : TokenType::GREATER);

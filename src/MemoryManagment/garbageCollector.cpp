@@ -78,27 +78,26 @@ namespace memory {
                 case +ObjType::CLOSURE:{
                     ObjClosure* cl = reinterpret_cast<ObjClosure*>(ptr);
                     for(int i = 0; i < cl->upvalCount; i++){
-                        gc->markObj(cl->upvals[i]);
+                        markObj(cl->upvals[i]);
                     }
-                    gc->markObj(cl->func);
                     break;
                 }
-                case +ObjType::UPVALUE:{
-                    ObjUpval* upval = reinterpret_cast<ObjUpval*>(ptr);
+                case +ObjType::FREEVAR:{
+                    ObjFreevar* upval = reinterpret_cast<ObjFreevar*>(ptr);
                     valueHelpers::mark(upval->val);
                     break;
                 }
                 case +ObjType::CLASS: {
                     ObjClass* klass = reinterpret_cast<ObjClass*>(ptr);
                     for (auto & m : klass->methods) {
-                        gc->markObj(m.second);
+                        markObj(m.second);
                         m.first->marked = true;
                     }
                     for (auto & f : klass->fieldsInit) {
                         f.first->marked = true;
                     }
                     klass->name->marked = true;
-                    if(klass->superclass) gc->markObj(klass->superclass);
+                    if(klass->superclass) markObj(klass->superclass);
                     break;
                 }
                 case +ObjType::INSTANCE:{
@@ -107,13 +106,13 @@ namespace memory {
                         field.first->marked = true;
                         valueHelpers::mark(field.second);
                     }
-                    if(inst->klass) gc->markObj(inst->klass);
+                    if(inst->klass) markObj(inst->klass);
                     break;
                 }
                 case +ObjType::BOUND_METHOD:{
                     ObjBoundMethod* method = reinterpret_cast<ObjBoundMethod*>(ptr);
                     valueHelpers::mark(method->receiver);
-                    gc->markObj(method->method);
+                    markObj(method->method);
                     break;
                 }
                 case +ObjType::HASH_MAP:{
@@ -126,7 +125,7 @@ namespace memory {
                 }
                 case +ObjType::FUTURE: {
                     ObjFuture* fut = reinterpret_cast<ObjFuture*>(ptr);
-                    //when tracing all threads other than the main one are suspended, so there's no way for anything to write to val
+                    // When tracing all threads other than the main one are suspended, so there's no way for anything to write to val
                     valueHelpers::mark(fut->val);
                     break;
                 }
@@ -236,7 +235,7 @@ namespace memory {
         // Mark this thread as suspended
         threadsSuspended.fetch_add(1);
         // First lock the mutex so that we certainly enter the wait queue of the cv
-        std::unique_lock<std::mutex> lk(gc->pauseMtx);
+        std::unique_lock<std::mutex> lk(pauseMtx);
         // If this is the last running thread, run the GC, if not enter the wait queue
         if(threadsStack.size() == threadsSuspended){
             // Execute the gc cycle, we hold the lock to pauseMtx right now so no other thread can alter things

@@ -53,7 +53,7 @@ string valueHelpers::typeToStr(Value x) {
                 case +ObjType::FUNC: return "<function>";
                 case +ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";
                 case +ObjType::STRING: return "<string>";
-                case +ObjType::UPVALUE: return "<upvalue>";
+                case +ObjType::FREEVAR: return "<upvalue>";
                 case +ObjType::HASH_MAP: return "<hash map>";
                 case +ObjType::FILE: return "<file>";
                 case +ObjType::MUTEX: return "<mutex>";
