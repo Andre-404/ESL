@@ -84,14 +84,14 @@ namespace closureConversion{
         #pragma region Helpers
         // Variables
         void declareGlobalVar(AST::ASTVar& var);
-        void namedVar(Token name);
+        void namedVar(const Token name);
         // Locals
         void declareLocalVar(AST::ASTVar& var);
         void addLocal(AST::ASTVar& name);
-        int resolveLocal(Token name);
-        int resolveLocal(CurrentChunkInfo* func, Token name);
-        int resolveFreeVar(CurrentChunkInfo* func, Token name);
-        int addFreeVar(CurrentChunkInfo* func, int index, bool isLocal, string name);
+        int resolveLocal(const Token name);
+        int resolveLocal(CurrentChunkInfo* func, const Token name);
+        int resolveFreeVar(CurrentChunkInfo* func, const Token name);
+        int addFreeVar(CurrentChunkInfo* func, const int index, const bool isLocal, const string& name);
         void beginScope();
         void endScope();
         #pragma endregion

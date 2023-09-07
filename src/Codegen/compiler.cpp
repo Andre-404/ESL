@@ -1,11 +1,8 @@
 #include "compiler.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "Passes/closureConverter.h"
-#include "../Runtime/thread.h"
-#include "../Runtime/nativeFunctions.h"
 #include "LLVMHelperFunctions.h"
-#include "LLVMNativeFunctionImplementation.h"
+#include "valueHelpers.h"
 
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/TargetSelect.h"
@@ -17,9 +14,9 @@
 #include <iostream>
 
 using namespace compileCore;
-using namespace object;
 
-Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*> _srcFiles, vector<vector<types::tyPtr>> _tyEnv) : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
+Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<vector<types::tyPtr>>& _tyEnv)
+    : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
 
@@ -89,7 +86,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             llvm::GlobalVariable* gvar = curModule->getNamedGlobal(varName);
             gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
             gvar->setAlignment(llvm::Align::Of<Value>());
-            gvar->setInitializer(builder.getInt64(encodeNil()));
+            gvar->setInitializer(builder.getInt64(MASK_SIGNATURE_NIL));
             // Globals aren't on the stack, so they need to be marked for GC collection separately
             builder.CreateCall(curModule->getFunction("addGCRoot"), gvar);
 
@@ -310,8 +307,11 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
             auto tmp = llvm::ConstantFP::get(*ctx, llvm::APFloat(get<double>(expr->val)));
             return builder.CreateBitCast(tmp, builder.getInt64Ty());
         }
-        case 1: return builder.getInt64(encodeBool(get<bool>(expr->val)));
-        case 2: return builder.getInt64(encodeNil());;
+        case 1: {
+            uInt64 val = get<bool>(expr->val) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
+            return builder.getInt64(val);
+        }
+        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);;
         case 3: {
             auto str = createConstStr(get<string>(expr->val));
             return builder.CreateCall(curModule->getFunction("createStr"), str);
@@ -1149,20 +1149,20 @@ void Compiler::createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> arg
     builder.CreateLifetimeEnd(alloca, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), ptrSize * args.size()));
 }
 
-llvm::Constant* Compiler::createConstStr(string str){
+llvm::Constant* Compiler::createConstStr(const string& str){
     if(stringConstants.contains(str)) return stringConstants[str];
     auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
     stringConstants[str] = constant;
     return constant;
 }
 
-void Compiler::createTyErr(string err, llvm::Value* val, Token token){
+void Compiler::createTyErr(const string err, llvm::Value* const val, const Token token){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
     llvm::Constant* line = builder.getInt32(token.str.line);
     builder.CreateCall(curModule->getFunction("tyErrSingle"), {str, file, line, val});
 }
-void Compiler::createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs, Token token){
+void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
     llvm::Constant* line = builder.getInt32(token.str.line);
@@ -1173,13 +1173,7 @@ llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
 }
 
-void Compiler::createGcSafepoint(){
-    auto cmp = builder.CreateCall(curModule->getFunction("gcSafepoint"));
-    auto func = builder.CreateSelect(cmp, curModule->getFunction("stopThread"), curModule->getFunction("noop"));
-    builder.CreateCall(llvm::FunctionType::get(builder.getVoidTy(), false), func);
-}
-
-llvm::Function* Compiler::createNewFunc(int argCount, string name, std::shared_ptr<types::FunctionType> fnTy){
+llvm::Function* Compiler::createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy){
     // Create a function type with the appropriate number of arguments
     vector<llvm::Type*> params;
     for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
@@ -1193,7 +1187,7 @@ llvm::Function* Compiler::createNewFunc(int argCount, string name, std::shared_p
     return tmp;
 }
 
-bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, types::tyPtr ty){
+bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty){
     if(typeEnv[expr->exprType].size() == 1){
         // If this expression is constrained to a single type it's safe to do typeArr[0]
         return typeEnv[expr->exprType][0] == ty;
@@ -1202,12 +1196,12 @@ bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExp
 }
 
 bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                     const std::shared_ptr<typedAST::TypedASTExpr> expr2,types::tyPtr ty){
+                                     const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty){
     return exprConstrainedToType(expr1, ty) && exprConstrainedToType(expr2, ty);
 }
 
 llvm::Value* Compiler::codegenBinaryAdd(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                        const std::shared_ptr<typedAST::TypedASTExpr> expr2, Token op){
+                                        const std::shared_ptr<typedAST::TypedASTExpr> expr2, const Token op){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
@@ -1261,7 +1255,7 @@ llvm::Value* Compiler::codegenBinaryAdd(const std::shared_ptr<typedAST::TypedAST
 }
 
 llvm::Value* Compiler::codegenLogicOps(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                       const std::shared_ptr<typedAST::TypedASTExpr> expr2, typedAST::ComparisonOp op){
+                                       const std::shared_ptr<typedAST::TypedASTExpr> expr2, const typedAST::ComparisonOp op){
 
     bool canOptimize = exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
     auto castToBool = canOptimize ? curModule->getFunction("decodeBool") : curModule->getFunction("isTruthy");
@@ -1301,7 +1295,7 @@ llvm::Value* Compiler::codegenLogicOps(const std::shared_ptr<typedAST::TypedASTE
     return builder.CreateCall(curModule->getFunction("encodeBool"), PN);
 }
 
-bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, types::tyPtr ty){
+bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty){
     for(auto type : typeEnv[expr->exprType]){
         if(type->type == types::TypeFlag::ANY || type == ty) return false;
     }
@@ -1309,12 +1303,12 @@ bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> exp
 }
 
 bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                               const std::shared_ptr<typedAST::TypedASTExpr> expr2, types::tyPtr ty){
+                               const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty){
     return exprWithoutType(expr1, ty) && exprWithoutType(expr2, ty);
 }
 
 llvm::Value* Compiler::codegenCmp(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                  const std::shared_ptr<typedAST::TypedASTExpr> expr2, bool neg){
+                                  const std::shared_ptr<typedAST::TypedASTExpr> expr2, const bool neg){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
     // Numbers have to be compared using fcmp for rounding reasons,
@@ -1354,7 +1348,7 @@ llvm::Value* Compiler::codegenCmp(const std::shared_ptr<typedAST::TypedASTExpr> 
     return builder.CreateCall(curModule->getFunction("encodeBool"), sel);
 }
 
-void Compiler::codegenBlock(typedAST::Block& block){
+void Compiler::codegenBlock(const typedAST::Block& block){
     for(auto stmt : block.stmts){
         stmt->codegen(this);
     }

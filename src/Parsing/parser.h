@@ -1,11 +1,8 @@
 #pragma once
-#include "../common.h"
 #include "../AST/ASTDefs.h"
 #include "../AST/ASTProbe.h"
 #include "macroExpander.h"
 #include <initializer_list>
-#include <map>
-#include <unordered_map>
 
 namespace AST {
 	using std::unique_ptr;
@@ -38,7 +35,7 @@ namespace AST {
         INSTANCEOF,
 		PRIMARY
 	};
-	//conversion from enum to 1 byte number
+	// Conversion from enum to 1 byte number
 	inline constexpr unsigned operator+ (Precedence const val) { return static_cast<byte>(val); }
 
     using PrefixFunc = ASTNodePtr(*)(Parser* parser, Token token);
@@ -58,6 +55,7 @@ namespace AST {
 	public:
 		Parser();
 		void parse(vector<ESLModule*>& modules);
+        void verifySymbolImports(vector<ESLModule*>& modules);
         void highlight(vector<ESLModule*>& modules, string moduleToHighlight);
 	private:
 		ASTProbe* probe;
@@ -75,9 +73,9 @@ namespace AST {
 		unordered_map<TokenType, std::pair<int, InfixFunc>> infixParselets;
         // Postfix parselets use infix funcs since those are effectively the same as infix
         unordered_map<TokenType, std::pair<int, InfixFunc>> postfixParselets;
-        int prefixPrecLevel(TokenType type);
-        int infixPrecLevel(TokenType type);
-        int postfixPrecLevel(TokenType type);
+        int prefixPrecLevel(const TokenType type);
+        int infixPrecLevel(const TokenType type);
+        int postfixPrecLevel(const TokenType type);
 
         // For macro expansions
 		unordered_map<string, unique_ptr<Macro>> macros;
@@ -86,25 +84,25 @@ namespace AST {
 
 		ParseMode parseMode = ParseMode::Standard;
 
-		void addPrefix(TokenType type, Precedence prec, PrefixFunc func);
-		void addInfix(TokenType type, Precedence prec, InfixFunc func);
-        void addPostfix(TokenType type, Precedence prec, InfixFunc func);
+		void addPrefix(const TokenType type, const Precedence prec, const PrefixFunc func);
+		void addInfix(const TokenType type, const Precedence prec, const InfixFunc func);
+        void addPostfix(const TokenType type, const Precedence prec, const InfixFunc func);
 
 		void defineMacro();
 
         #pragma region Expressions
-		ASTNodePtr expression(int prec);
+		ASTNodePtr expression(const int prec);
 		ASTNodePtr expression();
 
 		// Parselets that need to have access to private methods of parser
-        friend ASTNodePtr parsePrefix(Parser* parser, Token token);
-        friend ASTNodePtr parseLiteral(Parser* parser, Token token);
-        friend ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, Token token);
-        friend ASTNodePtr parseConditional(Parser* parser, ASTNodePtr left, Token token);
-		friend ASTNodePtr parseBinary(Parser* parser, ASTNodePtr left, Token token);
-		friend ASTNodePtr parsePostfix(Parser* parser, ASTNodePtr left, Token token);
-		friend ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, Token token);
-		friend ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, Token token);
+        friend ASTNodePtr parsePrefix(Parser* parser, const Token token);
+        friend ASTNodePtr parseLiteral(Parser* parser, const Token token);
+        friend ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, const Token token);
+        friend ASTNodePtr parseConditional(Parser* parser, ASTNodePtr left, const Token token);
+		friend ASTNodePtr parseBinary(Parser* parser, ASTNodePtr left, const Token token);
+		friend ASTNodePtr parsePostfix(Parser* parser, ASTNodePtr left, const Token token);
+		friend ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, const Token token);
+		friend ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, const Token token);
 
 		// Macro expander needs to be able to parse additional tokens and report errors
 		friend class MacroExpander;
@@ -159,15 +157,18 @@ namespace AST {
 
 		Token previous();
 
-		Token consume(TokenType type, string msg);
+		Token consume(const TokenType type, const string msg);
 
-		ParserException error(Token token, string msg);
+		ParserException error(const Token token, const string msg);
 
 		vector<Token> readTokenTree(bool isNonLeaf = true);
 
 		void expandMacros();
 
 		void sync();
+
+        void checkDependency(ESLModule* unit, Dependency& dep, std::unordered_map<string, Dependency*>& symbols,
+                             std::unordered_map<string, Dependency*>& aliases);
         #pragma endregion
 
 	};

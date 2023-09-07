@@ -22,7 +22,7 @@ namespace typedASTParser{
         // Whether this local variable has been captured as an upvalue and should be accessed through ObjFreevar
         bool isUpval;
 
-        Local(string _name, int _depth, bool _isUpval) : name(_name), depth(_depth), isUpval(_isUpval) {}
+        Local(const string _name, int _depth, bool _isUpval) : name(_name), depth(_depth), isUpval(_isUpval) {}
         Local(){
             name = "";
             depth = -1;
@@ -66,15 +66,14 @@ namespace typedASTParser{
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
         std::unordered_map<string, std::pair<typedAST::ClassMethod, int>> methods;
-        types::tyVarIdx classTypeIdx;
+        const types::tyVarIdx classTypeIdx;
         std::shared_ptr<types::ClassType> classTy;
-        string mangledName;
+        const string mangledName;
 
         std::shared_ptr<ClassChunkInfo> parent;
 
-        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classType){
-            mangledName = _name;
-            classTypeIdx = _classType;
+        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classTypeIdx)
+            : mangledName(_name), classTypeIdx(_classTypeIdx){
             parent = nullptr;
             classTy = _classTy;
         }
@@ -172,39 +171,42 @@ namespace typedASTParser{
         #pragma region Helpers
         // Variables
         // Checks all imports to see if the symbol 'token' is imported
-        varPtr checkSymbol(Token symbol);
+        varPtr checkSymbol(const Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
-        varPtr resolveGlobal(Token symbol, bool canAssign);
-        varPtr declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx typeConstraint = -1);
-        void defineGlobalVar(string name);
+        varPtr resolveGlobal(const Token symbol, const bool canAssign);
+        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx typeConstraint = -1);
+        void defineGlobalVar(const string& name);
 
-        varPtr declareLocalVar(AST::ASTVar& name);
+        varPtr declareLocalVar(const AST::ASTVar& name);
         void defineLocalVar();
 
-        varPtr addLocal(AST::ASTVar name);
-        int resolveLocal(Token name);
+        varPtr addLocal(const AST::ASTVar& name);
+        int resolveLocal(const Token name);
 
-        int resolveUpvalue(Token name);
+        int resolveUpvalue(const Token name);
 
-        typedAST::exprPtr readVar(Token name);
-        typedAST::exprPtr storeToVar(Token name, Token op, typedAST::exprPtr toStore);
+        typedAST::exprPtr readVar(const Token name);
+        typedAST::exprPtr storeToVar(const Token name, const Token op, typedAST::exprPtr toStore);
 
         std::shared_ptr<typedAST::ScopeEdge> beginScope();
         std::shared_ptr<typedAST::ScopeEdge> endScope();
         // Functions
         std::shared_ptr<typedAST::Function> endFuncDecl();
-        void declareFuncArgs(vector<AST::ASTVar> args);
-        types::tyVarIdx createNewFunc(string name, int arity, FuncType fnKind, bool isClosure);
+        void declareFuncArgs(vector<AST::ASTVar>& args);
+        types::tyVarIdx createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure);
 
         // Classes and methods
-        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, Token overrides, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy);
-        std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2);
-        void detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides);
-        void processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys);
+        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
+                                           std::shared_ptr<types::FunctionType> fnTy, const types::tyVarIdx retTy);
+        std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
+                                                                 const Token paren1, const Token paren2);
+        void detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides);
+        void processMethods(const string className, vector<AST::ClassMethod>& methods,
+                            vector<std::shared_ptr<types::FunctionType>>& methodTys, vector<types::tyVarIdx>& retTys);
 
         // Resolve implicit object field access
-        std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(Token name);
-        std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(Token name, typedAST::exprPtr toStore, Token op);
+        std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(const Token name);
+        std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(const Token name, typedAST::exprPtr toStore, const Token op);
         Globalvar& getClassFromExpr(AST::ASTNodePtr expr);
         std::shared_ptr<ClassChunkInfo> getClassInfoFromExpr(AST::ASTNodePtr expr);
 
@@ -215,16 +217,16 @@ namespace typedASTParser{
         // Type stuff
         types::tyVarIdx addType(types::tyPtr ty);
         types::tyVarIdx createEmptyTy();
-        void addTypeConstraint(types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint);
-        types::tyVarIdx getBasicType(types::TypeFlag ty);
+        void addTypeConstraint(const types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint);
+        types::tyVarIdx getBasicType(const types::TypeFlag ty);
         void addBasicTypes();
 
         // Misc
-        Token syntheticToken(string str);
-        void updateLine(Token token);
-        void error(Token token, const string& msg) noexcept(false);
+        Token syntheticToken(const string& str);
+        void updateLine(const Token token);
+        void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
-        typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr> stmts);
+        typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);

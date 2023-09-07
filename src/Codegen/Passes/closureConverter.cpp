@@ -335,7 +335,7 @@ int ClosureConverter::resolveFreeVar(CurrentChunkInfo* func, Token name) {
     return -1;
 }
 
-int ClosureConverter::addFreeVar(CurrentChunkInfo* func, int index, bool isLocal, string name) {
+int ClosureConverter::addFreeVar(CurrentChunkInfo* func, const int index, const bool isLocal, const string& name) {
     // First check if this freevar/local has already been captured by this function
     for (int i = 0; i < func->freeVars.size(); i++) {
         FreeVariable* upval = &func->freeVars[i];

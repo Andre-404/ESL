@@ -16,7 +16,7 @@ namespace passes {
         public:
             TypeUnificator();
             bool hadError;
-            vector<vector<types::tyPtr>> run(tyEnv typeEnv);
+            vector<vector<types::tyPtr>> run(tyEnv& typeEnv);
         private:
             vector<vector<types::tyPtr>> collapsedTypes;
             tyEnv typeEnv;
@@ -24,9 +24,9 @@ namespace passes {
             // Transfers all types with no constraints to collapsedTypes
             void initalPass();
 
-            vector<types::tyPtr> collapseType(types::tyVarIdx idx, pair<types::tyPtr, vector<constraint>>& ty);
+            vector<types::tyPtr> collapseType(const types::tyVarIdx idx, pair<types::tyPtr, vector<constraint>>& ty);
 
-            vector<types::tyPtr> resolveConstraints(vector<constraint> tyConstraints, constraintSet& processed);
+            vector<types::tyPtr> resolveConstraints(vector<constraint>& tyConstraints, constraintSet& processed);
 
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AddTyConstraint> addConstraint);
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint);
@@ -34,9 +34,10 @@ namespace passes {
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint);
 
             // Helpers
-            vector<types::tyPtr> getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint, vector<types::tyPtr> possibleFutureTypes);
+            vector<types::tyPtr> getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint,
+                                                          vector<types::tyPtr>& possibleFutureTypes);
 
-            pair<vector<types::tyPtr>, vector<constraint>> getPossibleRetTysFromFuncs(vector<types::tyPtr> possibleFuncTypes);
+            pair<vector<types::tyPtr>, vector<constraint>> getPossibleRetTysFromFuncs(vector<types::tyPtr>& possibleFuncTypes);
         };
     }
 }

@@ -1,12 +1,9 @@
 #include "preprocessor.h"
-#include <filesystem>
 #include "../files.h"
-#include <iostream>
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
+#include <filesystem>
 
-
-using std::unordered_set;
 using std::unordered_map;
 using std::pair;
 using namespace preprocessing;
@@ -37,7 +34,7 @@ Preprocessor::Preprocessor(){
 Preprocessor::~Preprocessor() {
 }
 
-void Preprocessor::preprocessProject(string mainFilePath) {
+void Preprocessor::preprocessProject(const string mainFilePath) {
     path p(mainFilePath);
 
     // Check file validity
@@ -51,8 +48,9 @@ void Preprocessor::preprocessProject(string mainFilePath) {
     toposort(mainModule);
 }
 
-ESLModule* Preprocessor::scanFile(string filePath) {
+ESLModule* Preprocessor::scanFile(const string filePath) {
     path p(filePath);
+    // Scan the file and cache it in allUnits
     vector<Token> tokens = scanner.tokenizeSource(filePath, p.stem().string());
     ESLModule* unit = new ESLModule(tokens, scanner.getFile());
     allUnits[filePath] = unit;
@@ -120,7 +118,7 @@ vector<pair<Token, Token>> Preprocessor::retrieveDirectives(ESLModule* unit) {
 }
 
 // Processes directives to import into the parserCurrent file
-void Preprocessor::processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath) {
+void Preprocessor::processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, const string absolutePath) {
     // Absolute path to the same directory as the unit that these directives belong to
     path absP = path(absolutePath).parent_path();
     for (auto& [pathToken, alias] : depsToParse) {

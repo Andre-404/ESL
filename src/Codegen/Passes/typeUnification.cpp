@@ -7,7 +7,7 @@ TypeUnificator::TypeUnificator() {
     hadError = false;
 }
 
-vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv env){
+vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv& env){
     typeEnv = env;
     collapsedTypes.resize(typeEnv.size());
     initalPass();
@@ -37,7 +37,7 @@ void TypeUnificator::initalPass(){
     }
 }
 
-vector<types::tyPtr> TypeUnificator::collapseType(types::tyVarIdx idx, std::pair<types::tyPtr, vector<constraint>>& ty){
+vector<types::tyPtr> TypeUnificator::collapseType(const types::tyVarIdx idx, std::pair<types::tyPtr, vector<constraint>>& ty){
     // This type is already collapsed, return held types
     if(ty.second.empty()) return collapsedTypes[idx];
 
@@ -52,7 +52,7 @@ vector<types::tyPtr> TypeUnificator::collapseType(types::tyVarIdx idx, std::pair
     return heldTys;
 }
 
-vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint> tyConstraints, constraintSet& processed){
+vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint>& tyConstraints, constraintSet& processed){
     std::unordered_set<types::tyPtr> heldTys;
     while(!tyConstraints.empty()){
         auto c = tyConstraints.back();
@@ -178,7 +178,8 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint
     return getPossibleRetTysFromFuncs(possibleFuncs);
 }
 
-vector<types::tyPtr> TypeUnificator::getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint, vector<types::tyPtr> possibleFutureTypes){
+vector<types::tyPtr> TypeUnificator::getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint,
+                                                              vector<types::tyPtr>& possibleFutureTypes){
     vector<types::tyPtr> possibleFuncs;
     // Gets all possible types that could have been called to create the future being awaited,
     // this is done because a future can be created by async calling a variable which holds a function
@@ -204,7 +205,7 @@ vector<types::tyPtr> TypeUnificator::getPossibleFuncsFromFuts(shared_ptr<types::
     return possibleFuncs;
 }
 
-pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::getPossibleRetTysFromFuncs(vector<types::tyPtr> possibleFuncTypes){
+pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::getPossibleRetTysFromFuncs(vector<types::tyPtr>& possibleFuncTypes){
     // Gets all possible return types from the list of possible functions
     // Ignore all types that aren't functions
     // types held in retTy of each function is not collapsed, but rather it's constraints are returned(as with the add constraint)

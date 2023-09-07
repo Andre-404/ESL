@@ -23,7 +23,7 @@ namespace memory {
         threadsSuspended = 0;
 	}
 
-	void* GarbageCollector::alloc(uInt64 size) {
+	void* GarbageCollector::alloc(const uInt64 size) {
         // No thread is marked as suspended while allocating, even though they have to lock the allocMtx
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
 		std::scoped_lock<std::mutex> lk(allocMtx);
@@ -197,7 +197,7 @@ namespace memory {
         }
 	}
 
-	void GarbageCollector::markObj(object::Obj* object) {
+	void GarbageCollector::markObj(object::Obj* const object) {
         if(object->marked) return;
         byte ty = object->type;
         using objTy = object::ObjType;
@@ -209,20 +209,20 @@ namespace memory {
 		markStack.push_back(object);
 	}
 
-    void GarbageCollector::addStackStart(std::thread::id thread, uintptr_t* stackStart){
+    void GarbageCollector::addStackStart(const std::thread::id thread, uintptr_t* stackStart){
         {
             std::scoped_lock<std::mutex>lk(pauseMtx);
             threadsStack.insert_or_assign(thread, StackPtrEntry(stackStart));
         }
     }
-    void GarbageCollector::setStackEnd(std::thread::id thread, uintptr_t* stackEnd){
+    void GarbageCollector::setStackEnd(const std::thread::id thread, uintptr_t* stackEnd){
         {
             std::scoped_lock<std::mutex>lk(pauseMtx);
             threadsStack[thread].end = stackEnd;
         }
     }
     // Make sure to run this AFTER setting the val field in ObjFuture
-    void GarbageCollector::removeStackStart(std::thread::id thread){
+    void GarbageCollector::removeStackStart(const std::thread::id thread){
         {
             std::scoped_lock<std::mutex>lk(pauseMtx);
             threadsStack.erase(thread);
@@ -258,7 +258,7 @@ namespace memory {
         collect(lk);
     }
 
-    bool GarbageCollector::isValidPtr(object::Obj* ptr){
+    bool GarbageCollector::isValidPtr(object::Obj* const ptr){
         return objects.contains(ptr);
     }
     void GarbageCollector::addGlobalRoot(Value* ptr){

@@ -3,7 +3,7 @@
 #include "valueHelpersInline.cpp"
 #include <csetjmp>
 #include <stdarg.h>
-// Functions which the compiler calls, seperate from the native functions provided by the language as part of runtime library
+// Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 
 #ifdef _WIN32
 #define DLLEXPORT __declspec(dllexport)

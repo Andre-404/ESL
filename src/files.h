@@ -4,4 +4,4 @@
 
 string readFile(char* path);
 string readFile(const char* path);
-string readFile(string& path);
+string readFile(const string& path);

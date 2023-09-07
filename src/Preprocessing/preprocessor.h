@@ -1,13 +1,10 @@
 #pragma once
-#include "../common.h"
 #include "scanner.h"
 #include <unordered_map>
-#include <unordered_set>
 #include <memory>
 #include <tuple>
 
 namespace preprocessing {
-    using std::unordered_set;
     using std::unordered_map;
     using std::unique_ptr;
     using std::pair;
@@ -16,7 +13,7 @@ namespace preprocessing {
     public:
         Preprocessor();
         ~Preprocessor();
-        void preprocessProject(string mainFilePath);
+        void preprocessProject(const string mainFilePath);
 
         vector<ESLModule*> getSortedUnits() { return sortedUnits; }
     private:
@@ -28,9 +25,9 @@ namespace preprocessing {
 
         vector<pair<Token, Token>> retrieveDirectives(ESLModule* unit);
 
-        void processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, string absolutePath);
+        void processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, const string absolutePath);
 
-        ESLModule* scanFile(string unitName);
+        ESLModule* scanFile(const string unitName);
         void toposort(ESLModule* unit);
     };
 

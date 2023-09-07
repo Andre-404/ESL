@@ -1,6 +1,4 @@
 #pragma once
-#include "codegenDefs.h"
-#include "../Objects/objects.h"
 #include "Passes/ASTToTypedAST.h"
 #include "JIT.h"
 
@@ -25,7 +23,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*> _srcFiles, vector<vector<types::tyPtr>> _tyEnv);
+		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<vector<types::tyPtr>>& _tyEnv);
         void compile(std::shared_ptr<typedAST::Function> _code);
 
 		#pragma region Visitor pattern
@@ -88,42 +86,41 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::BasicBlock* advanceJumpDest;
 
         void createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode);
-        void createTyErr(string err, llvm::Value* val, Token token);
-        void createTyErr(string err, llvm::Value* lhs, llvm::Value* rhs, Token token);
-        llvm::Constant* createConstStr(string str);
+        void createTyErr(const string err, llvm::Value* const val, const Token token);
+        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token);
+        llvm::Constant* createConstStr(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
-        void createGcSafepoint();
 
         #pragma region Helpers
-        bool exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, types::tyPtr ty);
+        bool exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty);
 
         bool exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                   const std::shared_ptr<typedAST::TypedASTExpr> expr2, types::tyPtr ty);
+                                   const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty);
 
-        bool exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, types::tyPtr ty);
+        bool exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty);
 
         bool exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                             const std::shared_ptr<typedAST::TypedASTExpr> expr2, types::tyPtr ty);
+                             const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty);
 
-        int getClassFieldIndex(types::tyVarIdx exprTyIdx, types::tyPtr ty);
+        int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
 
         llvm::Value* codegenBinaryAdd(const std::shared_ptr<typedAST::TypedASTExpr> lhs,
-                                      const std::shared_ptr<typedAST::TypedASTExpr> rhs, Token op);
+                                      const std::shared_ptr<typedAST::TypedASTExpr> rhs, const Token op);
 
         llvm::Value* codegenLogicOps(const std::shared_ptr<typedAST::TypedASTExpr> lhs,
-                                     const std::shared_ptr<typedAST::TypedASTExpr> rhs, typedAST::ComparisonOp op);
+                                     const std::shared_ptr<typedAST::TypedASTExpr> rhs, const typedAST::ComparisonOp op);
 
         llvm::Value* codegenCmp(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                const std::shared_ptr<typedAST::TypedASTExpr> expr2, bool neg);
+                                const std::shared_ptr<typedAST::TypedASTExpr> expr2, const bool neg);
 
-        llvm::Value* codegenNeg(const std::shared_ptr<typedAST::TypedASTExpr> expr1, typedAST::UnaryOp op, Token dbg);
+        llvm::Value* codegenNeg(const std::shared_ptr<typedAST::TypedASTExpr> expr1, const typedAST::UnaryOp op, const Token dbg);
 
-        void codegenBlock(typedAST::Block& block);
+        void codegenBlock(const typedAST::Block& block);
         // Misc
-        void error(Token token, const string& msg) noexcept(false);
+        void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
 
-        llvm::Function* createNewFunc(int argCount, string name, std::shared_ptr<types::FunctionType> fnTy);
+        llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
         #pragma endregion
 	};
 }

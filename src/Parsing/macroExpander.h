@@ -1,6 +1,5 @@
 #pragma once
 #include "../AST/ASTDefs.h"
-#include "../moduleDefs.h"
 #include "parser.h"
 #include "../Includes/fmt/format.h"
 #include <map>

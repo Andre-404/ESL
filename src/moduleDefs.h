@@ -47,7 +47,7 @@ struct File {
     string path;
     //number that represents start of each line in the source string
     std::vector<uInt> lines;
-    File(string _sourceFile, string& _name, string _path) : sourceFile(_sourceFile), name(_name), path(_path) {};
+    File(const string _sourceFile, const string& _name, const string _path) : sourceFile(_sourceFile), name(_name), path(_path) {};
     File() = default;
 };
 

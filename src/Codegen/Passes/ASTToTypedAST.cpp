@@ -762,7 +762,7 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
 #pragma region Helpers
 // Variables
 // Checks all imports to see if the symbol 'token' is imported
-varPtr ASTTransformer::checkSymbol(Token symbol){
+varPtr ASTTransformer::checkSymbol(const Token symbol){
     for (Dependency& dep : curUnit->deps) {
         string fullSymbol = dep.module->file->name + std::to_string(dep.module->id) + "." + symbol.getLexeme();
         if (dep.alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
@@ -777,7 +777,7 @@ varPtr ASTTransformer::checkSymbol(Token symbol){
     return nullptr;
 }
 // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
-varPtr ASTTransformer::resolveGlobal(Token symbol, bool canAssign){
+varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
     string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." +symbol.getLexeme();
     auto it = globals.find(fullSymbol);
     if (canAssign) {
@@ -810,7 +810,7 @@ varPtr ASTTransformer::resolveGlobal(Token symbol, bool canAssign){
     return nullptr;
 }
 
-varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, types::tyVarIdx contraintType){
+varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx contraintType){
     typedAST::VarType varty;
     switch(type){
         case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL; break;
@@ -826,13 +826,13 @@ varPtr ASTTransformer::declareGlobalVar(string name, AST::ASTDeclType type, type
     globals.insert_or_assign(name, Globalvar(var));
     return var;
 }
-void ASTTransformer::defineGlobalVar(string name){
+void ASTTransformer::defineGlobalVar(const string& name){
     Globalvar& gvar = globals.at(name);
     gvar.isDefined = true;
 }
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
-varPtr ASTTransformer::declareLocalVar(AST::ASTVar& var) {
+varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var) {
     updateLine(var.name);
 
     for(int i = current->locals.size() - 1; i >= 0; i--){
@@ -850,7 +850,7 @@ varPtr ASTTransformer::declareLocalVar(AST::ASTVar& var) {
 void ASTTransformer::defineLocalVar(){
     current->locals.back().depth = current->scopeDepth;
 }
-varPtr ASTTransformer::addLocal(AST::ASTVar var){
+varPtr ASTTransformer::addLocal(const AST::ASTVar& var){
     updateLine(var.name);
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
@@ -863,7 +863,7 @@ varPtr ASTTransformer::addLocal(AST::ASTVar var){
     return local.ptr;
 }
 
-int ASTTransformer::resolveLocal(Token name){
+int ASTTransformer::resolveLocal(const Token name){
     // Checks to see if there is a local variable with a provided name, if there is return the index of the stack slot of the var
     updateLine(name);
     for (int i  = current->locals.size() - 1; i >= 0; i--) {
@@ -879,7 +879,7 @@ int ASTTransformer::resolveLocal(Token name){
 
     return -1;
 }
-int ASTTransformer::resolveUpvalue(Token name){
+int ASTTransformer::resolveUpvalue(const Token name){
     string upvalName = name.getLexeme();
     for(int i = 0; i < current->freevars.size(); i++){
         if(upvalName == current->freevars[i].name) return i;
@@ -889,7 +889,7 @@ int ASTTransformer::resolveUpvalue(Token name){
 
 // Order of checking:
 // locals->freevars->implicit object fields->globals->natives
-typedAST::exprPtr ASTTransformer::readVar(Token name){
+typedAST::exprPtr ASTTransformer::readVar(const Token name){
     updateLine(name);
     auto dbg = AST::VarReadDebugInfo(name);
     int argIndex = resolveLocal(name);
@@ -920,7 +920,7 @@ typedAST::exprPtr ASTTransformer::readVar(Token name){
     return nullptr;
 }
 
-typedAST::exprPtr ASTTransformer::storeToVar(Token name, Token op, typedAST::exprPtr toStore){
+typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, typedAST::exprPtr toStore){
     // TODO: If storing to a constrained types, don't add any constraints
     updateLine(name);
     int argIndex = resolveLocal(name);
@@ -1017,7 +1017,7 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
     }
     return func;
 }
-void ASTTransformer::declareFuncArgs(vector<AST::ASTVar> args){
+void ASTTransformer::declareFuncArgs(vector<AST::ASTVar>& args){
     for (AST::ASTVar& var : args) {
         current->func->args.push_back(declareLocalVar(var));
         defineLocalVar();
@@ -1033,7 +1033,7 @@ void ASTTransformer::declareFuncArgs(vector<AST::ASTVar> args){
         ptr->typeConstrained = true;
     }
 }
-types::tyVarIdx ASTTransformer::createNewFunc(string name, int arity, FuncType fnKind, bool isClosure){
+types::tyVarIdx ASTTransformer::createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure){
     auto retTy = createEmptyTy();
     std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(arity, retTy, isClosure);
     auto idx = addType(fnTy);
@@ -1045,7 +1045,8 @@ types::tyVarIdx ASTTransformer::createNewFunc(string name, int arity, FuncType f
 
 // Classes and methods
 // Class name is for recognizing constructor
-typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, Token overrides, string className, std::shared_ptr<types::FunctionType> fnTy, types::tyVarIdx retTy){
+typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
+                                                   std::shared_ptr<types::FunctionType> fnTy, const types::tyVarIdx retTy){
     updateLine(_method->getName());
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + className;
@@ -1067,7 +1068,8 @@ typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, Token
     for(auto arg : _method->args) params.push_back(arg.name);
     return typedAST::ClassMethod(func, AST::MethodDebugInfo(overrides, _method->keyword, _method->name, params));
 }
-std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr> args, Token paren1, Token paren2){
+std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
+                                                                         const Token paren1, const Token paren2){
     vector<types::tyVarIdx> argTys;
     for(auto arg : args){
         argTys.push_back(arg->exprType);
@@ -1088,7 +1090,8 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
     }
     return nullptr;
 }
-void ASTTransformer::processMethods(string className, vector<AST::ClassMethod> methods, vector<std::shared_ptr<types::FunctionType>> methodTys, vector<types::tyVarIdx> retTys){
+void ASTTransformer::processMethods(const string className, vector<AST::ClassMethod>& methods,
+                                    vector<std::shared_ptr<types::FunctionType>>& methodTys, vector<types::tyVarIdx>& retTys){
     int i = 0;
     for(auto method : methods){
         string str = method.method->getName().getLexeme();
@@ -1109,7 +1112,7 @@ void ASTTransformer::processMethods(string className, vector<AST::ClassMethod> m
     }
 }
 
-void ASTTransformer::detectDuplicateSymbol(Token publicName, bool isMethod, bool methodOverrides){
+void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides){
     string pubName = publicName.getLexeme();
     string privName = "priv." + pubName;
     // Immediately catch the thrown error since this isn't an error that would require unwinding
@@ -1175,7 +1178,7 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     }
     return nullptr;
 }
-std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(Token name, typedAST::exprPtr toStore, Token op) {
+std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(const Token name, typedAST::exprPtr toStore, const Token op) {
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
     // Accessor doesn't exist in the source code so it doesn't have any debug info
@@ -1292,13 +1295,13 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     return nullptr;
 }
 // Misc
-Token ASTTransformer::syntheticToken(string str){
+Token ASTTransformer::syntheticToken(const string& str){
     return Token(TokenType::IDENTIFIER, str);
 }
-void ASTTransformer::updateLine(Token token){
+void ASTTransformer::updateLine(const Token token){
     current->line = token.str.line;
 }
-void ASTTransformer::error(Token token, const string& msg) noexcept(false){
+void ASTTransformer::error(const Token token, const string& msg) noexcept(false){
     errorHandler::addCompileError(msg, token);
     hadError = true;
     throw TransformerException();
@@ -1309,7 +1312,7 @@ void ASTTransformer::error(const string& message) noexcept(false){
     throw TransformerException();
 }
 
-typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr> stmts){
+typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){
     typedAST::Block block;
     for(auto stmt : stmts){
         vector<typedAST::nodePtr> stmtVec;
@@ -1376,10 +1379,10 @@ types::tyVarIdx ASTTransformer::addType(types::tyPtr ty){
 types::tyVarIdx ASTTransformer::createEmptyTy(){
     return addType(nullptr);
 }
-void ASTTransformer::addTypeConstraint(types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint){
+void ASTTransformer::addTypeConstraint(const types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint){
     typeEnv[ty].second.push_back(constraint);
 }
-types::tyVarIdx ASTTransformer::getBasicType(types::TypeFlag ty){
+types::tyVarIdx ASTTransformer::getBasicType(const types::TypeFlag ty){
     return static_cast<types::tyVarIdx>(ty);
 }
 void ASTTransformer::addBasicTypes(){

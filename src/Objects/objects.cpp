@@ -1,6 +1,5 @@
 #include "objects.h"
 #include "../MemoryManagment/garbageCollector.h"
-#include "../Runtime/thread.h"
 #include "../Includes/fmt/format.h"
 #include "../Codegen/valueHelpersInline.cpp"
 
@@ -68,21 +67,21 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
 #pragma endregion
 
 #pragma region ObjString
-ObjString::ObjString(string& _str) {
+ObjString::ObjString(const string& _str) {
 	str = _str;
     marked = false;
 	type = +ObjType::STRING;
 }
 
-bool ObjString::compare(ObjString* other) {
+bool ObjString::compare(const ObjString* other) {
 	return (str.compare(other->str) == 0);
 }
 
-bool ObjString::compare(string other) {
+bool ObjString::compare(const string other) {
 	return (str.compare(other) == 0);
 }
 
-ObjString* ObjString::concat(ObjString* other) {
+ObjString* ObjString::concat(const ObjString* other) {
 	string temp = str + other->str;
 	return new ObjString(temp);
 }
@@ -126,21 +125,16 @@ ObjString* ObjString::createStr(string str){
 #pragma endregion
 
 #pragma region ObjFunction
-ObjFunc::ObjFunc(Function _func, int _arity, char* _name) {
-	arity = _arity;
+ObjFunc::ObjFunc(const Function _func, const int _arity, const char* _name)
+    : func(_func), arity(_arity), name(_name) {
 	type = +ObjType::FUNC;
-	name = _name;
-    func = _func;
     marked = false;
 }
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(Function _func, int _arity, char* _name, int _upvalCount) {
-	func = _func;
-    arity = _arity;
-    name = _name;
-    upvalCount = _upvalCount;
+ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _upvalCount)
+    : func(_func), arity(_arity), name(_name), upvalCount(_upvalCount){
     upvals = new object::ObjFreevar*[upvalCount];
     marked = false;
 	type = +ObjType::CLOSURE;
@@ -152,7 +146,7 @@ ObjClosure::~ObjClosure(){
 #pragma endregion
 
 #pragma region ObjUpval
-ObjFreevar::ObjFreevar(Value& _val) {
+ObjFreevar::ObjFreevar(const Value& _val) {
 	val = _val;
     marked = false;
 	type = +ObjType::FREEVAR;
@@ -165,7 +159,7 @@ ObjArray::ObjArray() {
 	numOfHeapPtr = 0;
     marked = false;
 }
-ObjArray::ObjArray(size_t size) {
+ObjArray::ObjArray(const size_t size) {
 	values.resize(size);
 	type = +ObjType::ARRAY;
 	numOfHeapPtr = 0;
@@ -199,8 +193,7 @@ ObjHashMap::ObjHashMap() {
 #pragma endregion
 
 #pragma region ObjBoundMethod
-ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjFunc* _method) {
-	receiver = _receiver;
+ObjBoundMethod::ObjBoundMethod(const Value _receiver, ObjFunc* _method) : receiver(_receiver) {
 	method = _method;
     marked = false;
 	type = +ObjType::BOUND_METHOD;
@@ -208,8 +201,7 @@ ObjBoundMethod::ObjBoundMethod(Value _receiver, ObjFunc* _method) {
 #pragma endregion
 
 #pragma region ObjFile
-ObjFile::ObjFile(string& _path, int _openType) {
-	path = _path;
+ObjFile::ObjFile(const string& _path, int _openType) : path(_path) {
     marked = false;
     openType = _openType;
 	stream.open(path, std::ios::in | std::ios::out);
@@ -277,10 +269,8 @@ ObjFuture::~ObjFuture() {
 #pragma endregion
 
 #pragma region ObjRange
-ObjRange::ObjRange(double _start, double _end, bool _isEndInclusive) {
-    start = _start;
-    end = _end;
-    isEndInclusive = _isEndInclusive;
+ObjRange::ObjRange(const double _start, const double _end, const bool _isEndInclusive)
+    : start(_start), end(_end), isEndInclusive(_isEndInclusive){
     marked = false;
     type = +ObjType::RANGE;
 }

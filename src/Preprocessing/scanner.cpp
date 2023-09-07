@@ -55,7 +55,7 @@ Scanner::Scanner() {
     curFile = nullptr;
 }
 
-vector<Token> Scanner::tokenizeSource(string path, string sourceName) {
+vector<Token> Scanner::tokenizeSource(const string path, const string sourceName) {
     // Setup
     curFile = new File(readFile(path), sourceName, path);
     line = 0;
@@ -92,12 +92,12 @@ bool Scanner::isAtEnd() {
 }
 
 // Checks if a given index is contained within the file (Is non-negative and less than file size)
-bool Scanner::isIndexInFile(int index) {
+bool Scanner::isIndexInFile(const int index) {
     return 0 <= index && index < curFile->sourceFile.size();
 }
 
-//if matched we consume the character
-bool Scanner::match(char expected) {
+// If matched consume the character
+bool Scanner::match(const char expected) {
     if (isAtEnd()) return false;
     if (curFile->sourceFile[current] != expected) return false;
     current++;
@@ -112,7 +112,7 @@ Token Scanner::scanToken() {
     start = current;
 
     char c = advance();
-    //identifiers start with _ or [a-z][A-Z]
+    // Identifiers start with _ or [a-z][A-Z]
     if (isdigit(c)) return number();
     if (isalpha(c) || c == '_') return identifier();
 
@@ -174,7 +174,7 @@ Token Scanner::scanToken() {
     return makeToken(TokenType::ERROR);
 }
 
-Token Scanner::makeToken(TokenType type) {
+Token Scanner::makeToken(const TokenType type) {
     Span newSpan(line, start - curFile->lines.back(), current - start, curFile);
     Token token(newSpan, type);
     return token;
@@ -260,7 +260,7 @@ Token Scanner::number() {
 }
 
 Token Scanner::identifier() {
-    //first character of the identifier has to be alphabetical, rest can be alphanumerical and '_'
+    // First character of the identifier has to be alphabetical, rest can be alphanumerical and '_'
     while (isalnum(peek()) || peek() == '_') advance();
     return makeToken(identifierType());
 }
@@ -268,14 +268,14 @@ Token Scanner::identifier() {
 TokenType Scanner::identifierType() {
     string tokenString = curFile->sourceFile.substr(start, current - start);
 
-    // language keyword
+    // Language keyword
     if (keywordToTokenType.contains(tokenString)) return keywordToTokenType[tokenString];
 
-    // variable name
+    // Variable name
     return TokenType::IDENTIFIER;
 }
 
-bool Scanner::checkKeyword(int keywordOffset, string keyword) {
+bool Scanner::checkKeyword(const int keywordOffset, const string keyword) {
     if (!isIndexInFile(start + keywordOffset + keyword.length())) return false;
     if (curFile->sourceFile.substr(start + keywordOffset, keyword.length()) == keyword) {
         return true;

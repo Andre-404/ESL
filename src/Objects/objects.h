@@ -33,7 +33,7 @@ namespace object {
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
         //this reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size) {
+        void* operator new(const size_t size) {
             return memory::gc->alloc(size);
         }
     };
@@ -47,13 +47,13 @@ namespace object {
     public:
         string str;
 
-        ObjString(string& _str);
+        ObjString(const string& _str);
 
-        bool compare(ObjString* other);
+        bool compare(const ObjString* other);
 
-        bool compare(string other);
+        bool compare(const string other);
 
-        ObjString* concat(ObjString* other);
+        ObjString* concat(const ObjString* other);
 
         static ObjString* createStr(string str);
     };
@@ -64,34 +64,34 @@ namespace object {
         // Used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
         uInt numOfHeapPtr;
         ObjArray();
-        ObjArray(size_t size);
+        ObjArray(const size_t size);
     };
 
     class ObjFunc : public Obj {
     public:
         // A function can have a maximum of 255 parameters
-        byte arity;
-        Function func;
-        char* name;
-        ObjFunc(Function _func, int _arity, char* _name);
+        const byte arity;
+        const Function func;
+        const char* name;
+        ObjFunc(const Function _func, const int _arity, const char* _name);
     };
 
     class ObjFreevar : public Obj {
     public:
         Value val;
-        ObjFreevar(Value& _value);
+        ObjFreevar(const Value& _value);
     };
 
     // Multiple closures with different freevars can point to the same function
     class ObjClosure : public Obj {
     public:
         // A function can have a maximum of 255 parameters and 255 upvalues
-        byte arity;
-        byte upvalCount;
-        Function func;
-        char* name;
+        const byte arity;
+        const byte upvalCount;
+        const Function func;
+        const char* name;
         ObjFreevar** upvals;
-        ObjClosure(Function _func, int _arity, char* _name, int _upvalCount);
+        ObjClosure(const Function _func, const int _arity, const char* _name, const int _upvalCount);
         ~ObjClosure();
     };
 
@@ -122,9 +122,10 @@ namespace object {
     // as long as the method exists, the instance it's bound to won't be GC-ed
     class ObjBoundMethod : public Obj {
     public:
-        Value receiver;
+        const Value receiver;
+
         ObjFunc* method;
-        ObjBoundMethod(Value _receiver, ObjFunc* _method);
+        ObjBoundMethod(const Value _receiver, ObjFunc* _method);
     };
 
     class ObjHashMap : public Obj{
@@ -136,11 +137,11 @@ namespace object {
     class ObjFile : public Obj {
     public:
         std::fstream stream;
-        string path;
+        const string path;
         // 0: read, 1: write
         int openType;
 
-        ObjFile(string& path, int _openType);
+        ObjFile(const string& path, int _openType);
         ~ObjFile();
     };
 
@@ -165,10 +166,10 @@ namespace object {
 
     class ObjRange : public Obj{
     public:
-        double start;
-        double end;
-        bool isEndInclusive;
+        const double start;
+        const double end;
+        const bool isEndInclusive;
 
-        ObjRange(double _start, double _end, bool _isEndInclusive);
+        ObjRange(const double _start, const double _end, const bool _isEndInclusive);
     };
 }

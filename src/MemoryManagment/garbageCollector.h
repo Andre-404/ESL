@@ -43,19 +43,19 @@ namespace memory {
     };
 	class GarbageCollector {
 	public:
-		void* alloc(uInt64 size);
+		void* alloc(const uInt64 size);
 		GarbageCollector();
-		void markObj(object::Obj* object);
+		void markObj(object::Obj* const object);
 
-        void addStackStart(std::thread::id thread, uintptr_t* stackStart);
+        void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
         // Note: any place where threadsSuspended is incremented should have addStackEnd before it
         // If a thread is considered suspended its stack start and end must be valid pointers
-        void setStackEnd(std::thread::id thread, uintptr_t* stackEnd);
-        void removeStackStart(std::thread::id thread);
+        void setStackEnd(const std::thread::id thread, uintptr_t* stackEnd);
+        void removeStackStart(const std::thread::id thread);
         // Called by each thread, last thread that suspends executes the collecting
         void suspendMe();
         // Checks if the provided ptr is a live object allocated by the gc
-        bool isValidPtr(object::Obj* ptr);
+        bool isValidPtr(object::Obj* const ptr);
         void addGlobalRoot(Value* ptr);
 
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run

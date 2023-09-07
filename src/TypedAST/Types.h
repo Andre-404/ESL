@@ -52,7 +52,7 @@ namespace types{
     class AddTyConstraint : public TypeConstraint{
     public:
         tyVarIdx toAdd;
-        AddTyConstraint(tyVarIdx _toAdd){
+        AddTyConstraint(const tyVarIdx _toAdd){
             toAdd = _toAdd;
             type = TypeConstraintFlag::ADD_TY;
         }
@@ -62,7 +62,7 @@ namespace types{
     public:
         tyVarIdx calleeType;
 
-        CallResTyConstraint(tyVarIdx _calleeType){
+        CallResTyConstraint(const tyVarIdx _calleeType){
             calleeType = _calleeType;
             type = TypeConstraintFlag::GET_RETURN_TY;
         }
@@ -72,7 +72,7 @@ namespace types{
     public:
         tyVarIdx potentialFuture;
 
-        AwaitTyConstraint(tyVarIdx _potentialFuture){
+        AwaitTyConstraint(const tyVarIdx _potentialFuture){
             potentialFuture = _potentialFuture;
             type = TypeConstraintFlag::GET_AWAIT_TY;
         }
@@ -83,7 +83,7 @@ namespace types{
         tyVarIdx potentialInst;
         string field;
 
-        InstGetFieldTyConstraint(tyVarIdx _potentialInst, string _field){
+        InstGetFieldTyConstraint(const tyVarIdx _potentialInst, const string _field){
             potentialInst = _potentialInst;
             field = _field;
             type = TypeConstraintFlag::INST_GET_FIELD_TY;
@@ -93,7 +93,7 @@ namespace types{
     class ArrayType : public Type{
     public:
         tyVarIdx itemType;
-        ArrayType(tyVarIdx _itemType){
+        ArrayType(const tyVarIdx _itemType){
             itemType = _itemType;
             type = TypeFlag::ARRAY;
         }
@@ -106,7 +106,7 @@ namespace types{
         vector<tyVarIdx> paramTypes;
         bool isClosure;
 
-        FunctionType(int _argCount, tyVarIdx _retType, bool _isClosure){
+        FunctionType(const int _argCount, const tyVarIdx _retType, const bool _isClosure){
             argCount = _argCount;
             retType = _retType;
             isClosure = _isClosure;
@@ -117,7 +117,7 @@ namespace types{
     class HashMapType : public Type{
     public:
         tyVarIdx itemType;
-        HashMapType(tyVarIdx _itemType){
+        HashMapType(const tyVarIdx _itemType){
             itemType = _itemType;
             type = TypeFlag::HASHMAP;
         }
@@ -128,7 +128,7 @@ namespace types{
     class InstanceType : public Type{
     public:
         std::shared_ptr<ClassType> klass;
-        InstanceType(std::shared_ptr<ClassType> _klass){
+        InstanceType(const std::shared_ptr<ClassType> _klass){
             klass = _klass;
             type = TypeFlag::INSTANCE;
         }
@@ -145,7 +145,7 @@ namespace types{
             type = TypeFlag::CLASS;
         }
 
-        void inherit(std::shared_ptr<ClassType> parent){
+        void inherit(const std::shared_ptr<ClassType> parent){
             methods = parent->methods;
             fields = parent->fields;
         }
@@ -155,12 +155,12 @@ namespace types{
     public:
         tyVarIdx calleeType;
 
-        FutureType(tyVarIdx _calleeType){
+        FutureType(const tyVarIdx _calleeType){
             calleeType = _calleeType;
             type = TypeFlag::FUTURE;
         }
     };
 
-    tyPtr getBasicType(TypeFlag type);
+    tyPtr getBasicType(const TypeFlag type);
 
 }

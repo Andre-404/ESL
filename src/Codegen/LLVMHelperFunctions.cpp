@@ -1,6 +1,5 @@
 #include "LLVMHelperFunctions.h"
-#include "../common.h"
-#include "valueHelpersInline.cpp"
+#include "LLVMNativeFunctionImplementation.h"
 
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
@@ -65,6 +64,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     llvm::CGSCCAnalysisManager CGAM;
     llvm::ModuleAnalysisManager MAM;
     llvm::PlaceSafepointsPass SafepointPass;
+
     // Create the new pass manager builder.
     // Take a look at the PassBuilder constructor parameters for more
     // customization, e.g. specifying a TargetMachine or various debugging
@@ -80,7 +80,9 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     // Create the pass manager.
     // This one corresponds to a typical -O3 optimization pipeline.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-    if(optimize) MPM.run(*module, MAM);
+    if(optimize) {
+        MPM.run(*module, MAM);
+    }
     for(auto& it : module->functions()){
         SafepointPass.run(it, FAM);
     }
@@ -115,7 +117,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     // No encode/decodeObj right now, need to think of how to represent objects in llvm IR
     [&]{
         llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(TYPE(Int64), TYPE(Int1), false));
-        // MASK_QNAN | (MASK_TYPE_TRUE*<i64>x)
+        // MASK_QNAN | (MASK_TYPE_TRUE* <i64>x)
         auto bitcastArg = builder.CreateZExt(f->getArg(0), builder.getInt64Ty());
         auto mul = builder.CreateMul(builder.getInt64(MASK_TYPE_TRUE), bitcastArg, "tmp", true, true);
         auto ret = builder.CreateOr(builder.getInt64(MASK_QNAN), mul);
