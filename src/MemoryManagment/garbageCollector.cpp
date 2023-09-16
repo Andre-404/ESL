@@ -77,8 +77,8 @@ namespace memory {
                 }
                 case +ObjType::CLOSURE:{
                     ObjClosure* cl = reinterpret_cast<ObjClosure*>(ptr);
-                    for(int i = 0; i < cl->upvalCount; i++){
-                        markObj(cl->upvals[i]);
+                    for(int i = 0; i < cl->freevarCount; i++){
+                        markObj(cl->freevars[i]);
                     }
                     break;
                 }
@@ -89,30 +89,14 @@ namespace memory {
                 }
                 case +ObjType::CLASS: {
                     ObjClass* klass = reinterpret_cast<ObjClass*>(ptr);
-                    for (auto & m : klass->methods) {
-                        markObj(m.second);
-                        m.first->marked = true;
-                    }
-                    for (auto & f : klass->fieldsInit) {
-                        f.first->marked = true;
-                    }
                     klass->name->marked = true;
                     if(klass->superclass) markObj(klass->superclass);
                     break;
                 }
                 case +ObjType::INSTANCE:{
                     ObjInstance* inst = reinterpret_cast<ObjInstance*>(ptr);
-                    for (auto & field : inst->fields) {
-                        field.first->marked = true;
-                        valueHelpers::mark(field.second);
-                    }
-                    if(inst->klass) markObj(inst->klass);
-                    break;
-                }
-                case +ObjType::BOUND_METHOD:{
-                    ObjBoundMethod* method = reinterpret_cast<ObjBoundMethod*>(ptr);
-                    valueHelpers::mark(method->receiver);
-                    markObj(method->method);
+
+                    markObj(inst->klass);
                     break;
                 }
                 case +ObjType::HASH_MAP:{
@@ -184,7 +168,6 @@ namespace memory {
                     case +object::ObjType::HASH_MAP: delete reinterpret_cast<object::ObjHashMap*>(obj); break;
                     case +object::ObjType::INSTANCE: delete reinterpret_cast<object::ObjInstance*>(obj); break;
                     case +object::ObjType::MUTEX: delete reinterpret_cast<object::ObjMutex*>(obj); break;
-                    case +object::ObjType::FUNC: delete reinterpret_cast<object::ObjFunc*>(obj); break;
                     case +object::ObjType::CLOSURE: delete reinterpret_cast<object::ObjClosure*>(obj); break;
                     default: delete obj; break;
                 }
@@ -202,7 +185,7 @@ namespace memory {
         byte ty = object->type;
         using objTy = object::ObjType;
         // No need to put untraceable objects on the trace stack at all
-        if(ty == +objTy::STRING || ty == +objTy::MUTEX || ty == +objTy::FILE || ty == +objTy::RANGE || ty == +objTy::FUNC) {
+        if(ty == +objTy::STRING || ty == +objTy::MUTEX || ty == +objTy::FILE || ty == +objTy::RANGE) {
             object->marked = true;
             return;
         }

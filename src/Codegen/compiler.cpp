@@ -74,7 +74,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
         }
         case typedAST::VarType::FREEVAR:{
             llvm::IRBuilder<> tempBuilder(&currentFunction->getEntryBlock(), currentFunction->getEntryBlock().begin());
-            auto tmp = tempBuilder.CreateCall(curModule->getFunction("createUpvalue"), std::nullopt, decl->dbgInfo.varName.getLexeme());
+            auto tmp = tempBuilder.CreateCall(curModule->getFunction("createFreevar"), std::nullopt, decl->dbgInfo.varName.getLexeme());
             variables.insert_or_assign(decl->uuid, tmp);
             break;
         }
@@ -401,9 +401,11 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 
 }
+
 llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
 
 }
+
 llvm::Value* Compiler::visitAsyncExpr(typedAST::AsyncExpr* expr) {
 
 }
@@ -420,7 +422,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
-        auto tmp = builder.CreateCall(curModule->getFunction("getUpvalue"), {currentFunction->getArg(0), builder.getInt32(i)});
+        auto tmp = builder.CreateCall(curModule->getFunction("getFreevar"), {currentFunction->getArg(0), builder.getInt32(i)});
         variables.insert_or_assign(freevar.second->uuid, tmp);
     }
 
@@ -435,7 +437,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
             varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, var->dbgInfo.varName.getLexeme());
             builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
         }else{
-            varPtr = builder.CreateCall(curModule->getFunction("createUpvalue"), std::nullopt, var->dbgInfo.varName.getLexeme());
+            varPtr = builder.CreateCall(curModule->getFunction("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
             // first index: access to the structure that's being pointed to,
             // second index: access to the second field(64bit field for the value)
             vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
@@ -460,19 +462,16 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     auto arity = builder.getInt8(expr->fn->args.size());
     auto name = createConstStr(expr->fn->name);
 
-    // If this lambda doesn't use any freevars bail early and don't convert it to a closure
-    if(expr->freevars.size() == 0) {
-        return builder.CreateCall(curModule->getFunction("createFunc"), {typeErasedFn, arity, name});
-    }
-
+    // Every function is converted to a closure(if even it has 0 freevars for ease of use when calling)
+    // If expr->freevars.size() is 0 then no array for freevars is allocated
     vector<llvm::Value*> closureConstructorArgs = {typeErasedFn, arity, name, builder.getInt32(expr->freevars.size())};
 
     // Freevars are gathered after switching to the enclosing function
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
-        // Pushes the local var/freevar that is enclosed by lambda to the arg list to be added to the closure
+        // Pushes the local var/freevars that is enclosed by lambda to the arg list to be added to the closure
         closureConstructorArgs.push_back(variables.at(freevar.first->uuid));
-        // Removes the freevar uuid from the variable pool since compilation for this function is done and this won't be used again
+        // Removes the freevars uuid from the variable pool since compilation for this function is done and this won't be used again
         variables.erase(freevar.second->uuid);
     }
     // Create the closure and put the freevars in it
@@ -483,9 +482,55 @@ llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
 
 }
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
+    auto enclosingFunction = currentFunction;
+    currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
 
+    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
+    // We just assign those positions to each arg
+    int argIndex = 0;
+    for (auto var : stmt->fn->args) {
+        llvm::Value* varPtr;
+        // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
+        if(var->varType == typedAST::VarType::LOCAL){
+            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, stmt->dbgInfo.params[argIndex].getLexeme());
+            builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
+        }else{
+            varPtr = builder.CreateCall(curModule->getFunction("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
+            // first index: access to the structure that's being pointed to,
+            // second index: access to the second field(64bit field for the value)
+            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevarAddr");
+            builder.CreateStore(currentFunction->getArg(argIndex++), tmpEle);
+        }
+        // Insert the argument into the pool of variables
+        variables.insert_or_assign(var->uuid, varPtr);
+    }
+
+    for(auto s : stmt->fn->block.stmts){
+        s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
+    }
+
+    // Enclosing function become the active one, the function that was just compiled is stored in fn
+    auto fn = currentFunction;
+    currentFunction = enclosingFunction;
+
+    // Set insertion point to the end of the enclosing function
+    builder.SetInsertPoint(&currentFunction->back());
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getInt8PtrTy());
+    auto arity = builder.getInt8(stmt->fn->args.size());
+    auto name = createConstStr(stmt->fn->name);
+
+    // Every function is converted to a closure(if even it has 0 freevars) for ease of use when calling
+    // Since this is a global function declaration number of freevars is always going to be 0
+    vector<llvm::Value*> closureConstructorArgs = {typeErasedFn, arity, name, builder.getInt32(0)};
+
+    // Create the closure
+    auto tmp = builder.CreateCall(curModule->getFunction("createClosure"), closureConstructorArgs);
+    // Store closure in var
+    builder.CreateStore(tmp, variables.at(stmt->globalVarUuid));
     return nullptr; // Stmts return nullptr on codegen
 }
+
 llvm::Value* Compiler::visitReturnStmt(typedAST::ReturnStmt* stmt) {
     builder.CreateRet(stmt->expr->codegen(this));
     return nullptr; // Stmts return nullptr on codegen
@@ -498,6 +543,7 @@ llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
     }
     return nullptr; // Stmts return nullptr on codegen
 }
+
 llvm::Value* Compiler::visitIfStmt(typedAST::IfStmt* stmt) {
     auto condtmp = stmt->cond->codegen(this);
     llvm::Value* cond;
@@ -583,10 +629,12 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
 
     return nullptr; // Stmts return nullptr on codegen
 }
+
 llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
 
     return nullptr; // Stmts return nullptr on codegen
 }
+
 llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
 
 }
@@ -596,6 +644,7 @@ llvm::Value* Compiler::visitInstSuperGet(typedAST::InstSuperGet* expr) {
 llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
 
 }
+
 llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
     // Erases local variables which will no longer be used, done to keep memory usage at least somewhat reasonable
     for(auto var : stmt->toPop){

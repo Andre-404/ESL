@@ -32,13 +32,11 @@ inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
 inline bool isInt(Value x) { return isNumber(x) && FLOAT_EQ(decodeNumber(x), std::round(decodeNumber(x))); }
 
 inline bool isString(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::STRING; }
-inline bool isFunction(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FUNC; }
 inline bool isArray(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::ARRAY; }
 inline bool isClosure(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::CLOSURE; }
 inline bool isClass(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::CLASS; }
 inline bool isInstance(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::INSTANCE; }
 inline bool isHashMap(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::HASH_MAP; }
-inline bool isBoundMethod(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::BOUND_METHOD; }
 inline bool isUpvalue(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FREEVAR; }
 inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FILE; }
 inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::MUTEX; }
@@ -49,13 +47,11 @@ inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x)
 
 // Uses reinterpret_cast because it assumes the object being passed is of the requested type
 inline object::ObjString* asString(Value x) { return reinterpret_cast<ObjString*>(decodeObj(x)); }
-inline object::ObjFunc* asFunction(Value x) { return reinterpret_cast<ObjFunc*>(decodeObj(x)); }
 inline object::ObjArray* asArray(Value x) { return reinterpret_cast<ObjArray*>(decodeObj(x)); }
 inline object::ObjClosure* asClosure(Value x) { return reinterpret_cast<ObjClosure*>(decodeObj(x)); }
 inline object::ObjClass* asClass(Value x) { return reinterpret_cast<ObjClass*>(decodeObj(x)); }
 inline object::ObjInstance* asInstance(Value x) { return reinterpret_cast<ObjInstance*>(decodeObj(x)); }
 inline object::ObjHashMap* asHashMap(Value x) { return reinterpret_cast<ObjHashMap*>(decodeObj(x)); }
-inline object::ObjBoundMethod* asBoundMethod(Value x) { return reinterpret_cast<ObjBoundMethod*>(decodeObj(x)); }
 inline object::ObjFreevar* asUpvalue(Value x) { return reinterpret_cast<ObjFreevar*>(decodeObj(x)); }
 inline object::ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
 inline object::ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }

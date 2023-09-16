@@ -74,6 +74,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
         returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, evalASTExpr(expr->field), toStore, dbg);
         return;
     }
+    // Tries to resolve this.field = expr if we're currently inside a method
     auto resolved = tryResolveThis(expr);
     if(resolved) {
         returnedExpr = resolved;
@@ -95,6 +96,7 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
         return;
     }
 
+    // Tries to resolve this.field if we're currently inside a method
     auto resolved = tryResolveThis(expr);
     if(resolved) {
         returnedExpr = resolved;
@@ -103,6 +105,7 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     // Guaranteed to be a literal
     Token field = probeToken(expr->field);
     auto inst = evalASTExpr(expr->callee);
+    // If inst->exprType is known to be a single type(determined through type inference) InstGetFieldTyConstraint will return ty of the field
     auto ty = createEmptyTy();
     addTypeConstraint(ty, std::make_shared<types::InstGetFieldTyConstraint>(inst->exprType, field.getLexeme()));
     auto dbg = AST::InstGetDebugInfo(field, expr->accessor);
@@ -460,10 +463,8 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
     varPtr var;
     if(decl->var.type == AST::ASTVarType::GLOBAL){
-        var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::VAR);
-    }else var = declareLocalVar(decl->var);
-
-    var->dbgInfo =  AST::VarDeclDebugInfo(decl->keyword, decl->getName());
+        var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::VAR, -1);
+    }else var = declareLocalVar(decl->var, -1);
 
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 
@@ -475,8 +476,8 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
     }
 
     if(decl->var.type == AST::ASTVarType::GLOBAL){
-        defineGlobalVar(fullGlobalSymbol);
-    }else defineLocalVar();
+        defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
+    }else defineLocalVar(AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
     auto toStore = storeToVar(decl->var.name, decl->op, initializer);
 
@@ -491,7 +492,7 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
 
     varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, ty);
     // Defining the function here to allow for recursion
-    defineGlobalVar(fullGlobalSymbol);
+    defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
     // No need for a endScope, since returning from the function discards the entire callstack
     auto scopeEdge = beginScope();
@@ -505,7 +506,8 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     for(auto arg : decl->args) params.push_back(arg.name);
     auto dbg = AST::FuncDeclDebugInfo(decl->keyword, decl->name, params);
 
-    nodesToReturn = {std::make_shared<typedAST::FuncDecl>(func, dbg)};
+
+    nodesToReturn = {name, std::make_shared<typedAST::FuncDecl>(func, dbg, name->uuid)};
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     updateLine(decl->getName());
@@ -516,7 +518,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
     varPtr var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::CLASS, classTyIdx);
     // Defining the function here to allows for creating a new instance of a class inside its own methods
-    defineGlobalVar(fullGlobalSymbol);
+    defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
     currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
@@ -592,8 +594,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         methodsDbg.insert_or_assign(str, AST::MethodDebugInfo(m.override, m.method->keyword, m.method->name, params));
     }
 
-    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, dbg, paren);
-    nodesToReturn = {klass};
+    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, dbg, var->uuid, paren);
+    nodesToReturn = {var, klass};
     currentClass = nullptr;
 }
 
@@ -826,13 +828,14 @@ varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclTy
     globals.insert_or_assign(name, Globalvar(var));
     return var;
 }
-void ASTTransformer::defineGlobalVar(const string& name){
+void ASTTransformer::defineGlobalVar(const string& name, AST::VarDeclDebugInfo dbgInfo){
     Globalvar& gvar = globals.at(name);
     gvar.isDefined = true;
+    gvar.valPtr->dbgInfo = dbgInfo;
 }
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
-varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var) {
+varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var, const types::tyVarIdx typeConstraint) {
     updateLine(var.name);
 
     for(int i = current->locals.size() - 1; i >= 0; i--){
@@ -845,20 +848,21 @@ varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var) {
             error(var.name, "Already a variable with this name in this scope.");
         }
     }
-    return addLocal(var);
+    return addLocal(var, typeConstraint);
 }
-void ASTTransformer::defineLocalVar(){
+void ASTTransformer::defineLocalVar(AST::VarDeclDebugInfo dbgInfo){
     current->locals.back().depth = current->scopeDepth;
+    current->locals.back().ptr->dbgInfo = dbgInfo;
 }
-varPtr ASTTransformer::addLocal(const AST::ASTVar& var){
+varPtr ASTTransformer::addLocal(const AST::ASTVar& var, const types::tyVarIdx typeConstraint){
     updateLine(var.name);
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
-    auto varTy = createEmptyTy();
+    auto varTy = typeConstraint == -1 ? createEmptyTy() : typeConstraint;
     if(!local.isUpval) {
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy, typeConstraint == -1);
     }else{
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy, typeConstraint == -1);
     }
     return local.ptr;
 }
@@ -1019,18 +1023,17 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
 }
 void ASTTransformer::declareFuncArgs(vector<AST::ASTVar>& args){
     for (AST::ASTVar& var : args) {
-        current->func->args.push_back(declareLocalVar(var));
-        defineLocalVar();
-        auto ptr = current->func->args.back();
+        types::tyVarIdx ty;
         // 'this' is of a known type so annotate it to enable optimizations,
         // currentClass is not null because 'this' can only appear as an argument in methods
         if(var.name.getLexeme() == "this"){
-            ptr->possibleTypes = addType(std::make_shared<types::InstanceType>(currentClass->classTy));
+            ty = addType(std::make_shared<types::InstanceType>(currentClass->classTy));
         }else{
             // Set the type of the other arguments
-            ptr->possibleTypes = getBasicType(types::TypeFlag::ANY);
+            ty = getBasicType(types::TypeFlag::ANY);
         }
-        ptr->typeConstrained = true;
+        current->func->args.push_back(declareLocalVar(var, ty));
+        defineLocalVar(AST::VarDeclDebugInfo(Token(), var.name));
     }
 }
 types::tyVarIdx ASTTransformer::createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure){
@@ -1255,7 +1258,7 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     auto dbg = AST::InstGetDebugInfo(expr->accessor, name);
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
-        auto readThis = readVar(syntheticToken("this"));
+        auto readThis = readVar(_this);
 
         auto instGetTy = createEmptyTy();
         addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
@@ -1264,7 +1267,7 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
-        auto readThis = readVar(syntheticToken("this"));
+        auto readThis = readVar(_this);
 
         auto instGetTy = createEmptyTy();
         addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
@@ -1276,6 +1279,7 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
 }
 std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* expr){
     if(!isLiteralThis(expr->callee)) return nullptr;
+
     Token _this = probeToken(expr->callee);
     Token name = probeToken(expr->field);
     string fieldName = name.getLexeme();
@@ -1283,7 +1287,7 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     if(!res.empty()){
         auto toStore = evalASTExpr(expr->value);
         auto dbg = AST::InstSetDebugInfo(name, expr->accessor, expr->op);
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, dbg);
+        return std::make_shared<typedAST::InstSet>(readVar(_this), res, toStore, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1373,7 +1377,7 @@ vector<typedAST::nodePtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNo
 }
 
 types::tyVarIdx ASTTransformer::addType(types::tyPtr ty){
-    typeEnv.emplace_back(ty, false);
+    typeEnv.emplace_back(ty, vector<std::shared_ptr<types::TypeConstraint>>());
     return typeEnv.size() - 1;
 }
 types::tyVarIdx ASTTransformer::createEmptyTy(){

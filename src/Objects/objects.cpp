@@ -11,13 +11,11 @@ using namespace valueHelpers;
 size_t Obj::getSize(){
     switch(type){
         case +ObjType::STRING: return sizeof(ObjString);
-        case +ObjType::FUNC: return sizeof(ObjFunc);
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
         case +ObjType::FREEVAR: return sizeof(ObjFreevar);
         case +ObjType::CLASS: return sizeof(ObjClass);
         case +ObjType::INSTANCE: return sizeof(ObjInstance);
-        case +ObjType::BOUND_METHOD: return sizeof(ObjBoundMethod);
         case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
         case +ObjType::FILE: return sizeof(ObjFile);
         case +ObjType::MUTEX: return sizeof(ObjMutex);
@@ -29,7 +27,6 @@ size_t Obj::getSize(){
 string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(type){
         case +ObjType::STRING: return reinterpret_cast<ObjString*>(this)->str;
-       // case +ObjType::FUNC: return "<" + reinterpret_cast<ObjFunc*>(this)->name + ">";;
         case +ObjType::ARRAY:{
             ObjArray* arr = reinterpret_cast<ObjArray*>(this);
             string str = "[";
@@ -40,10 +37,9 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
             return str;
         }
         case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";;
-        case +ObjType::FREEVAR: return "<upvalue>";
+        case +ObjType::FREEVAR: return "<freevar>";
         case +ObjType::CLASS: return "<class " + reinterpret_cast<ObjClass*>(this)->name->str + ">";
         case +ObjType::INSTANCE: return "<" + reinterpret_cast<ObjInstance*>(this)->klass->name->str + " instance>";
-        case +ObjType::BOUND_METHOD: return "<bound method>";
         case +ObjType::HASH_MAP:{
             ObjHashMap* map = reinterpret_cast<ObjHashMap*>(this);
             string str = "{";
@@ -124,24 +120,16 @@ ObjString* ObjString::createStr(string str){
 }
 #pragma endregion
 
-#pragma region ObjFunction
-ObjFunc::ObjFunc(const Function _func, const int _arity, const char* _name)
-    : func(_func), arity(_arity), name(_name) {
-	type = +ObjType::FUNC;
-    marked = false;
-}
-#pragma endregion
-
 #pragma region ObjClosure
-ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _upvalCount)
-    : func(_func), arity(_arity), name(_name), upvalCount(_upvalCount){
-    upvals = new object::ObjFreevar*[upvalCount];
+ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount)
+    : func(_func), arity(_arity), name(_name), freevarCount(_freevarCount){
+    freevars = freevarCount > 0 ? new object::ObjFreevar*[freevarCount] : nullptr;
     marked = false;
 	type = +ObjType::CLOSURE;
 }
 
 ObjClosure::~ObjClosure(){
-    delete upvals;
+    delete freevars;
 }
 #pragma endregion
 
@@ -179,7 +167,6 @@ ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
 #pragma region ObjInstance
 ObjInstance::ObjInstance(ObjClass* _klass) {
 	klass = _klass;
-	fields = klass->fieldsInit;
     marked = false;
 	type = +ObjType::INSTANCE;
 }
@@ -189,14 +176,6 @@ ObjInstance::ObjInstance(ObjClass* _klass) {
 ObjHashMap::ObjHashMap() {
 	marked = false;
 	type = +ObjType::HASH_MAP;
-}
-#pragma endregion
-
-#pragma region ObjBoundMethod
-ObjBoundMethod::ObjBoundMethod(const Value _receiver, ObjFunc* _method) : receiver(_receiver) {
-	method = _method;
-    marked = false;
-	type = +ObjType::BOUND_METHOD;
 }
 #pragma endregion
 

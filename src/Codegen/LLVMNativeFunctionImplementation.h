@@ -124,11 +124,6 @@ EXPORT Value createHashMap(int nFields, ...){
     return encodeObj(map);
 }
 
-EXPORT Value createFunc(char* fn, int arity, char* name){
-    auto func = new object::ObjFunc(fn, arity, name);
-    return encodeObj(func);
-}
-
 EXPORT object::ObjFreevar* createFreevar(){
     Value tmp = encodeNil();
     return new object::ObjFreevar(tmp);
@@ -136,7 +131,7 @@ EXPORT object::ObjFreevar* createFreevar(){
 
 EXPORT object::ObjFreevar* getFreevar(Value closure, int index){
     object::ObjClosure* cl = asClosure(closure);
-    return cl->upvals[index];
+    return cl->freevars[index];
 }
 
 EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...){
@@ -144,7 +139,7 @@ EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...)
     va_list ap;
     va_start(ap, upvalCount);
     for(int i=0; i<upvalCount; i++){
-        closure->upvals[i] = va_arg(ap, object::ObjFreevar*);
+        closure->freevars[i] = va_arg(ap, object::ObjFreevar*);
     }
     va_end(ap);
     return encodeObj(closure);

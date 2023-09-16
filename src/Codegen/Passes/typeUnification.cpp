@@ -30,6 +30,7 @@ void TypeUnificator::initalPass(){
         if(ty.second.empty()){
             if(ty.first == nullptr){
                 // TODO: error
+                std::cout<<"Type is neither constrained to a single type nor has any constraints.\n";
                 exit(64);
             }
             collapsedTypes[idx] = {ty.first};

@@ -24,11 +24,11 @@
 void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt8Ty(*ctx)}, "Obj");
+    types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt1Ty(*ctx)}, "Obj");
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
-    types["ObjFunc"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8Ptr), TYPE(Int8Ptr)}, "ObjFunc");
-    //Pointer to pointer
-    auto tmpFreevarArr = PTR_TY(PTR_TY(types["ObjFreevar"]));
+    types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
+    // Pointer to pointer
+    auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int8Ptr), tmpFreevarArr}, "ObjClosure");
 }
 
@@ -46,10 +46,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
-    CREATE_FUNC("createFunc", false, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int8Ptr));
-    CREATE_FUNC("createFreevar", false, PTR_TY(types["ObjFreevar"]));
-    CREATE_FUNC("getFreevar", false, PTR_TY(types["ObjFreevar"]), TYPE(Int64), TYPE(Int32));
-    CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
+    CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);

@@ -646,8 +646,8 @@ namespace typedAST{
         vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> freevars;
         AST::FuncLiteralDebugInfo dbgInfo;
 
-        CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _freevars, types::tyVarIdx ty,
-                          AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _freevars,
+                          types::tyVarIdx ty, AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fn = _fn;
             exprType = ty;
             freevars = _freevars;
@@ -665,9 +665,12 @@ namespace typedAST{
     public:
         std::shared_ptr<Function> fn;
         AST::FuncDeclDebugInfo dbgInfo;
+        // To store the function object to a variable
+        uInt64 globalVarUuid;
 
-        FuncDecl(std::shared_ptr<Function> _fn, AST::FuncDeclDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        FuncDecl(std::shared_ptr<Function> _fn, AST::FuncDeclDebugInfo _dbgInfo, uInt64 _globalVarUuid) : dbgInfo(_dbgInfo){
             fn = _fn;
+            globalVarUuid = _globalVarUuid;
             type = NodeType::FUNC_DECL;
         }
         ~FuncDecl() {};
@@ -846,13 +849,16 @@ namespace typedAST{
         std::unordered_map<string, std::pair<ClassMethod, int>> methods;
         std::shared_ptr<types::ClassType> classType;
         shared_ptr<VarDecl> parentClass; // Used for chaining classes to implement 'instanceof' operator
+        // To store the class object to a variable
+        uInt64 globalVarUuid;
 
         AST::ClassDeclDebugInfo dbgInfo;
 
-        ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, shared_ptr<VarDecl> _parentClass = nullptr)
-        : dbgInfo(_dbgInfo){
+        ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, uInt64 _globalVarUuid,
+                  shared_ptr<VarDecl> _parentClass) : dbgInfo(_dbgInfo){
             classType = ty;
             parentClass = _parentClass;
+            globalVarUuid = _globalVarUuid;
             type = NodeType::CLASS_DECL;
         }
         ~ClassDecl() {};

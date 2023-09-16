@@ -10,13 +10,11 @@ namespace object {
 
     enum class ObjType {
         STRING,
-        FUNC,
         ARRAY,
         CLOSURE,
         FREEVAR,
         CLASS,
         INSTANCE,
-        BOUND_METHOD,
         HASH_MAP,
         FILE,
         MUTEX,
@@ -41,6 +39,7 @@ namespace object {
 
     // Pointer to a compiled function
     using Function = char*;
+    using CheckFieldFunc = int (*)(const char*);
 
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
@@ -67,15 +66,6 @@ namespace object {
         ObjArray(const size_t size);
     };
 
-    class ObjFunc : public Obj {
-    public:
-        // A function can have a maximum of 255 parameters
-        const byte arity;
-        const Function func;
-        const char* name;
-        ObjFunc(const Function _func, const int _arity, const char* _name);
-    };
-
     class ObjFreevar : public Obj {
     public:
         Value val;
@@ -87,23 +77,21 @@ namespace object {
     public:
         // A function can have a maximum of 255 parameters and 255 upvalues
         const byte arity;
-        const byte upvalCount;
+        const byte freevarCount;
         const Function func;
         const char* name;
-        ObjFreevar** upvals;
-        ObjClosure(const Function _func, const int _arity, const char* _name, const int _upvalCount);
+        ObjFreevar** freevars;
+        ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount);
         ~ObjClosure();
     };
 
-    // Parent classes use copy down inheritance, meaning all methods of a superclass are copied into the hash map of this class
     class ObjClass : public Obj {
     public:
         object::ObjString* name;
-        // Uses copy down inheritance, but superclass ptr is still here for instanceof operator
+        // Uses copy down inheritance, superclass ptr is still here for instanceof operator
         object::ObjClass* superclass;
-        ankerl::unordered_dense::map<object::ObjString*, Obj*> methods;
-        // Dummy map which has the names of defined fields already inserted, gets copied to each ObjInstance
-        ankerl::unordered_dense::map<object::ObjString*, Value> fieldsInit;
+        CheckFieldFunc getMethod;
+        CheckFieldFunc getField;
 
         ObjClass(string _name, object::ObjClass* _superclass);
     };
@@ -113,19 +101,8 @@ namespace object {
     class ObjInstance : public Obj {
     public:
         ObjClass* klass;
-        ankerl::unordered_dense::map<object::ObjString*, Value> fields;
 
         ObjInstance(ObjClass* _klass);
-    };
-
-    // Method bound to a specific instance of a class
-    // as long as the method exists, the instance it's bound to won't be GC-ed
-    class ObjBoundMethod : public Obj {
-    public:
-        const Value receiver;
-
-        ObjFunc* method;
-        ObjBoundMethod(const Value _receiver, ObjFunc* _method);
     };
 
     class ObjHashMap : public Obj{

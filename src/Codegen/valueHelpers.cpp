@@ -47,11 +47,9 @@ string valueHelpers::typeToStr(Value x) {
             Obj* ptr = decodeObj(x);
             switch (ptr->type) {
                 case +ObjType::ARRAY: return "<array>";
-                case +ObjType::BOUND_METHOD: return "<bound method>";
                 case +ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
                 case +ObjType::CLOSURE: return "<function>";
-                case +ObjType::FUNC: return "<function>";
-                case +ObjType::INSTANCE: return asInstance(x)->klass == nullptr ? "<struct>" : "<instance>";
+                case +ObjType::INSTANCE: return "<instance>";
                 case +ObjType::STRING: return "<string>";
                 case +ObjType::FREEVAR: return "<upvalue>";
                 case +ObjType::HASH_MAP: return "<hash map>";

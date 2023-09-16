@@ -9,15 +9,11 @@ namespace object {
 
 	class ObjArray;
 
-	class ObjFunc;
-
 	class ObjFreevar;
 
 	class ObjClosure;
 
 	class ObjClass;
-
-	class ObjBoundMethod;
 
 	class ObjInstance;
 

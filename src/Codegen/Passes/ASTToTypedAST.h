@@ -31,7 +31,7 @@ namespace typedASTParser{
         }
     };
 
-    // Represents an Upvalue held in ObjClosure, at function entry all freevars are loaded from an object to the stack
+    // Represents a freevar held in ObjClosure, at function entry all freevars are loaded from an object to the stack
     // "ptr" represents the value loaded to the stack
     struct Upvalue {
         string name = "";
@@ -174,13 +174,13 @@ namespace typedASTParser{
         varPtr checkSymbol(const Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
         varPtr resolveGlobal(const Token symbol, const bool canAssign);
-        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx typeConstraint = -1);
-        void defineGlobalVar(const string& name);
+        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx typeConstraint);
+        void defineGlobalVar(const string& name, AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr declareLocalVar(const AST::ASTVar& name);
-        void defineLocalVar();
+        varPtr declareLocalVar(const AST::ASTVar& name, const types::tyVarIdx typeConstraint);
+        void defineLocalVar(AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr addLocal(const AST::ASTVar& name);
+        varPtr addLocal(const AST::ASTVar& name, const types::tyVarIdx typeConstraint);
         int resolveLocal(const Token name);
 
         int resolveUpvalue(const Token name);
