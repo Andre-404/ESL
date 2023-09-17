@@ -28,7 +28,8 @@ namespace types{
         ADD_TY,
         GET_RETURN_TY,
         GET_AWAIT_TY,
-        INST_GET_FIELD_TY
+        INST_GET_FIELD_TY,
+        COMPUTE_ADD_TYS,
     };
 
     class Type{
@@ -87,6 +88,18 @@ namespace types{
             potentialInst = _potentialInst;
             field = _field;
             type = TypeConstraintFlag::INST_GET_FIELD_TY;
+        }
+    };
+
+    class ComputeAddTysConstraint : public TypeConstraint{
+    public:
+        tyVarIdx lhs;
+        tyVarIdx rhs;
+
+        ComputeAddTysConstraint(const tyVarIdx _lhs, const tyVarIdx _rhs){
+            lhs = _lhs;
+            rhs = _rhs;
+            type = TypeConstraintFlag::COMPUTE_ADD_TYS;
         }
     };
 

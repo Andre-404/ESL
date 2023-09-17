@@ -455,17 +455,31 @@ namespace typedAST{
             return vis->visitCollectionGet(this);
         }
     };
+    enum class SetType{
+        SET,
+        ADD_SET,
+        SUB_SET,
+        MUL_SET,
+        DIV_SET,
+        REM_SET,
+        AND_SET,
+        OR_SET,
+        XOR_SET,
+    };
     class CollectionSet : public TypedASTExpr{
     public:
         exprPtr collection;
         exprPtr field;
         exprPtr toStore;
+        SetType operationType;
         AST::CollectionSetDebugInfo dbgInfo;
 
-        CollectionSet(exprPtr _collection, exprPtr _field, exprPtr _toStore, AST::CollectionSetDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        CollectionSet(exprPtr _collection, exprPtr _field, exprPtr _toStore, SetType _operationType, AST::CollectionSetDebugInfo _dbgInfo)
+        : dbgInfo(_dbgInfo){
             collection = _collection;
             field = _field;
             toStore = _toStore;
+            operationType = _operationType;
             exprType = toStore->exprType;
             type = NodeType::COLLECTION_SET;
         }
@@ -923,12 +937,15 @@ namespace typedAST{
         exprPtr instance;
         string field;
         exprPtr toStore;
+        SetType operationType;
         AST::InstSetDebugInfo dbgInfo;
 
-        InstSet(exprPtr _instance, string _field, exprPtr _toStore, AST::InstSetDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        InstSet(exprPtr _instance, string _field, exprPtr _toStore, SetType _operationType, AST::InstSetDebugInfo _dbgInfo)
+        : dbgInfo(_dbgInfo){
             instance = _instance;
             field = _field;
             toStore = _toStore;
+            operationType = _operationType;
             exprType = toStore->exprType;
             type = NodeType::INST_SET;
         }

@@ -12,8 +12,7 @@ vector<vector<types::tyPtr>> TypeUnificator::run(tyEnv& env){
     collapsedTypes.resize(typeEnv.size());
     initalPass();
     for(types::tyVarIdx idx = 0; idx < typeEnv.size(); idx++){
-        auto ty = typeEnv[idx];
-        collapsedTypes[idx] = collapseType(idx, ty);
+        collapsedTypes[idx] = collapseType(idx);
         if(collapsedTypes[idx].empty()){
             // TODO: do something when set is empty(maybe a separate pass?)
             std::cout<<"Empty set at index: " << idx << "\n";
@@ -38,20 +37,26 @@ void TypeUnificator::initalPass(){
     }
 }
 
-vector<types::tyPtr> TypeUnificator::collapseType(const types::tyVarIdx idx, std::pair<types::tyPtr, vector<constraint>>& ty){
+vector<types::tyPtr> TypeUnificator::collapseType(const types::tyVarIdx idx, shared_ptr<types::TypeConstraint> typeConstraint){
+    constraintSet processed;
+    // If this type is being collapsed by some constraint, add it to the constraint set beforehand to prevent recursion
+    if(typeConstraint) processed.insert(typeConstraint);
+
+    pair<types::tyPtr, vector<constraint>>& ty = typeEnv[idx];
     // This type is already collapsed, return held types
     if(ty.second.empty()) return collapsedTypes[idx];
 
     // Process constraints of the type, erasing constraints in process, and return the possible types according to constraints
     vector<types::tyPtr> heldTys;
     if(ty.first) heldTys.push_back(ty.first);
-    constraintSet processed;
     auto tmp = resolveConstraints(ty.second, processed);
     // After collapsing this type shouldn't have any constraints
     ty.second.clear();
     heldTys.insert(heldTys.end(), tmp.begin(), tmp.end());
     return heldTys;
 }
+
+#define rp_cast std::reinterpret_pointer_cast
 
 vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint>& tyConstraints, constraintSet& processed){
     std::unordered_set<types::tyPtr> heldTys;
@@ -67,21 +72,24 @@ vector<types::tyPtr> TypeUnificator::resolveConstraints(vector<constraint>& tyCo
 
         switch(c->type){
             case types::TypeConstraintFlag::ADD_TY: {
-                constraintRes = processConstraint(std::reinterpret_pointer_cast<types::AddTyConstraint>(c));
+                constraintRes = processConstraint(rp_cast<types::AddTyConstraint>(c));
                 break;
             }
             case types::TypeConstraintFlag::GET_RETURN_TY:{
-                constraintRes = processConstraint(std::reinterpret_pointer_cast<types::CallResTyConstraint>(c));
+                constraintRes = processConstraint(rp_cast<types::CallResTyConstraint>(c));
                 break;
             }
             case types::TypeConstraintFlag::GET_AWAIT_TY:{
-                constraintRes = processConstraint(std::reinterpret_pointer_cast<types::AwaitTyConstraint>(c));
+                constraintRes = processConstraint(rp_cast<types::AwaitTyConstraint>(c));
                 break;
             }
             case types::TypeConstraintFlag::INST_GET_FIELD_TY:{
-                constraintRes = processConstraint(std::reinterpret_pointer_cast<types::InstGetFieldTyConstraint>(c));
+                constraintRes = processConstraint(rp_cast<types::InstGetFieldTyConstraint>(c));
                 break;
             }
+            case types::TypeConstraintFlag::COMPUTE_ADD_TYS:
+                constraintRes = processConstraint(rp_cast<types::ComputeAddTysConstraint>(c));
+                break;
         }
         for(auto ty : constraintRes.first){
             heldTys.insert(ty);
@@ -108,70 +116,44 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint
 }
 
 pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint){
-    auto calleeTy = typeEnv[callConstraint->calleeType];
-    vector<types::tyPtr> possibleCalleeTypes;
+    vector<types::tyPtr> possibleCalleeTypes = collapseType(callConstraint->calleeType, callConstraint);
 
     // Gets the possible callee types, then filter which of these are functions and get their return type
     // Can safely ignore possible type being e.g. an int because that will cause a runtime error
-    if(calleeTy.second.empty()) possibleCalleeTypes = collapsedTypes[callConstraint->calleeType];
-    else{
-        constraintSet processed;
-        // Insert this constraint to prevent infinite recursion
-        processed.insert(callConstraint);
-        possibleCalleeTypes = resolveConstraints(calleeTy.second, processed);
-    }
+
     // After getting all the possible types of the callee get the return types of every type that is a function
     return getPossibleRetTysFromFuncs(possibleCalleeTypes);
 }
 
 pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint){
-    auto instTy = typeEnv[instGetConstraint->potentialInst];
-    vector<types::tyPtr> possibleInstTypes;
+    vector<types::tyPtr> possibleInstTypes = collapseType(instGetConstraint->potentialInst, instGetConstraint);
 
     // Gets the possible types of instTy, then filter which of those are instances
     // Can safely ignore possible type being e.g. an int because that will cause a runtime error
-    if(instTy.second.empty()) possibleInstTypes = collapsedTypes[instGetConstraint->potentialInst];
-    else{
-        constraintSet processed;
-        // Insert this constraint to prevent infinite recursion
-        processed.insert(instGetConstraint);
-        possibleInstTypes = resolveConstraints(instTy.second, processed);
-    }
-
     pair<vector<types::tyPtr>, vector<constraint>> toReturn;
     for(auto inst : possibleInstTypes){
-        if(inst->type != types::TypeFlag::INSTANCE){
-            auto casted = std::reinterpret_pointer_cast<types::InstanceType>(inst);
-            auto klass = casted->klass;
-            
-            if(klass->methods.contains(instGetConstraint->field)){
-                auto idx = klass->methods[instGetConstraint->field];
-                // Methods are already collapsed so just get the type at index 0
-                toReturn.first.push_back(collapsedTypes[idx][0]);
-            }else if(klass->fields.contains(instGetConstraint->field)){
-                // Exit early because type is ANY
-                // TODO: when fields become typed change this
-                toReturn.first = {collapsedTypes[static_cast<int>(types::TypeFlag::ANY)]};
-                toReturn.second.clear();
-                return toReturn;
-            }
+        if(inst->type != types::TypeFlag::INSTANCE) continue;
+
+        auto casted = std::reinterpret_pointer_cast<types::InstanceType>(inst);
+        auto klass = casted->klass;
+
+        if(klass->methods.contains(instGetConstraint->field)){
+            auto idx = klass->methods[instGetConstraint->field];
+            // Methods are already collapsed so just get the type at index 0
+            toReturn.first.push_back(collapsedTypes[idx][0]);
+        }else if(klass->fields.contains(instGetConstraint->field)){
+            // Exit early because type is ANY
+            // TODO: when fields become typed change this
+            toReturn.first = {collapsedTypes[static_cast<int>(types::TypeFlag::ANY)]};
+            toReturn.second.clear();
+            return toReturn;
         }
     }
     return toReturn;
 }
 
 pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint){
-    auto calleeTy = typeEnv[awaitConstraint->potentialFuture];
-    vector<types::tyPtr> possibleFutureTypes;
-
-    // Gets the possible types of the value being awaited
-    if(calleeTy.second.empty()) possibleFutureTypes = collapsedTypes[awaitConstraint->potentialFuture];
-    else{
-        constraintSet processed;
-        // Insert this constraint to prevent infinite recursion
-        processed.insert(awaitConstraint);
-        possibleFutureTypes = resolveConstraints(calleeTy.second, processed);
-    }
+    vector<types::tyPtr> possibleFutureTypes = collapseType(awaitConstraint->potentialFuture, awaitConstraint);
 
     vector<types::tyPtr> possibleFuncs = getPossibleFuncsFromFuts(awaitConstraint, possibleFutureTypes);
     // Once all the possible types that could be async called to create the future being awaited are known,
@@ -227,6 +209,29 @@ pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::getPossibleRetTys
         }
     }
     return toReturn;
+}
+
+pair<vector<types::tyPtr>, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::ComputeAddTysConstraint> computeAddConstraint){
+    vector<types::tyPtr> possibleLhsTys = collapseType(computeAddConstraint->lhs, computeAddConstraint);
+    vector<types::tyPtr> possibleRhsTys = collapseType(computeAddConstraint->rhs, computeAddConstraint);
+    bool containsNums = false;
+    bool containsStrings = false;
+    for(auto ty : possibleLhsTys){
+        if(ty->type == types::TypeFlag::NUMBER) containsNums = true;
+        else if(ty->type == types::TypeFlag::STRING) containsStrings = true;
+    }
+    for(auto ty : possibleRhsTys){
+        if(ty->type == types::TypeFlag::NUMBER) containsNums = true;
+        else if(ty->type == types::TypeFlag::STRING) containsStrings = true;
+    }
+    vector<types::tyPtr> res;
+    if(containsNums) res.push_back(types::getBasicType(types::TypeFlag::NUMBER));
+    if(containsStrings) res.push_back(types::getBasicType(types::TypeFlag::STRING));
+    if(!(containsStrings || containsNums)){
+        res.push_back(types::getBasicType(types::TypeFlag::NUMBER));
+        res.push_back(types::getBasicType(types::TypeFlag::STRING));
+    }
+    return std::make_pair(res, vector<constraint>());
 }
 
 #pragma endregion

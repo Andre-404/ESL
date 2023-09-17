@@ -178,15 +178,18 @@ namespace AST {
         // Precedence level -1 makes assignment right to left associative since parser->expression call won't stop when it hits '=' token
         // E.g. a = b = 2; gets parsed as a = (b = 2);
         auto rhs = parser->expression(parser->infixPrecLevel(token.type) - 1);
-        rhs = parseAssign(left, token, rhs);
         // Assignment can be either variable assignment or set expression
         if(left->type == ASTType::LITERAL){
+            // Only unwrap +=, -=, etc. if this is a normal variable assignment,
+            // Important to not do this for set expressions because then we'd be computing the callee and the field twice
+            rhs = parseAssign(left, token, rhs);
             left->accept(parser->probe);
             Token temp = parser->probe->getProbedToken();
             if (temp.type != TokenType::IDENTIFIER) throw parser->error(token, "Left side is not assignable");
             return make_shared<AssignmentExpr>(temp, token, rhs);
         }
         // Set expr, e.g. a.b = 3;
+        // Transforming a.b += 2 to a.b = a.b + 2 is illegal since eval-ing a could have side effects
         auto fieldAccess = std::static_pointer_cast<FieldAccessExpr>(left);
         return make_shared<SetExpr>(fieldAccess->callee, fieldAccess->field, fieldAccess->accessor, token, rhs);
     }

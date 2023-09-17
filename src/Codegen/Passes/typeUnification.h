@@ -24,7 +24,7 @@ namespace passes {
             // Transfers all types with no constraints to collapsedTypes
             void initalPass();
 
-            vector<types::tyPtr> collapseType(const types::tyVarIdx idx, pair<types::tyPtr, vector<constraint>>& ty);
+            vector<types::tyPtr> collapseType(const types::tyVarIdx idx, shared_ptr<types::TypeConstraint> typeConstraint = nullptr );
 
             vector<types::tyPtr> resolveConstraints(vector<constraint>& tyConstraints, constraintSet& processed);
 
@@ -32,6 +32,7 @@ namespace passes {
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint);
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint);
             pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint);
+            pair<vector<types::tyPtr>, vector<constraint>> processConstraint(shared_ptr<types::ComputeAddTysConstraint> computeAddConstraint);
 
             // Helpers
             vector<types::tyPtr> getPossibleFuncsFromFuts(shared_ptr<types::AwaitTyConstraint> awaitConstraint,

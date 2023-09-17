@@ -212,7 +212,7 @@ namespace typedASTParser{
 
         // Resolve public/private fields when this.field in encountered in code
         std::shared_ptr<typedAST::InstGet> tryResolveThis(AST::FieldAccessExpr* expr);
-        std::shared_ptr<typedAST::InstSet> tryResolveThis(AST::SetExpr* expr);
+        std::shared_ptr<typedAST::InstSet> tryResolveThis(AST::SetExpr* expr, typedAST::SetType operationTy);
 
         // Type stuff
         types::tyVarIdx addType(types::tyPtr ty);

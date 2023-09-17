@@ -66,16 +66,32 @@ void ASTTransformer::visitAssignmentExpr(AST::AssignmentExpr* expr){
     returnedExpr = storeToVar(expr->name, expr->op, rhs);
 }
 void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
+    // Needed because transforming a.b += 2 to a.b = a.b + 2 is illegal since eval-ing a could have side effects
+    typedAST::SetType operationType;
+    switch(expr->op.type){
+        case TokenType::EQUAL: operationType = typedAST::SetType::SET; break;
+        case TokenType::PLUS_EQUAL: operationType = typedAST::SetType::ADD_SET; break;
+        case TokenType::MINUS_EQUAL: operationType = typedAST::SetType::SUB_SET; break;
+        case TokenType::STAR_EQUAL: operationType = typedAST::SetType::MUL_SET; break;
+        case TokenType::SLASH_EQUAL: operationType = typedAST::SetType::DIV_SET; break;
+        case TokenType::PERCENTAGE_EQUAL: operationType = typedAST::SetType::REM_SET; break;
+        case TokenType::BITWISE_AND_EQUAL: operationType = typedAST::SetType::AND_SET; break;
+        case TokenType::BITWISE_OR_EQUAL: operationType = typedAST::SetType::OR_SET; break;
+        case TokenType::BITWISE_XOR_EQUAL: operationType = typedAST::SetType::XOR_SET; break;
+    }
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         auto collection = evalASTExpr(expr->callee);
+        auto field = evalASTExpr(expr->field);
         auto toStore = evalASTExpr(expr->value);
 
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
-        returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, evalASTExpr(expr->field), toStore, dbg);
+        returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, field, toStore, operationType, dbg);
+        // TODO: change this
+        returnedExpr->exprType = getBasicType(types::TypeFlag::ANY);
         return;
     }
     // Tries to resolve this.field = expr if we're currently inside a method
-    auto resolved = tryResolveThis(expr);
+    auto resolved = tryResolveThis(expr, operationType);
     if(resolved) {
         returnedExpr = resolved;
         return;
@@ -83,7 +99,9 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
     // Guaranteed to be a literal
     Token field = probeToken(expr->field);
     auto dbg = AST::InstSetDebugInfo(field, expr->accessor, expr->op);
-    returnedExpr = std::make_shared<typedAST::InstSet>(evalASTExpr(expr->callee), field.getLexeme(), evalASTExpr(expr->value), dbg);
+    auto instance = evalASTExpr(expr->callee);
+    auto toStore = evalASTExpr(expr->value);
+    returnedExpr = std::make_shared<typedAST::InstSet>(instance, field.getLexeme(), toStore, operationType, dbg);
 }
 void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
@@ -164,12 +182,10 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::BITSHIFT_LEFT: op = typedAST::ArithmeticOp::BITSHIFT_L; break;
                 case TokenType::BITSHIFT_RIGHT: op = typedAST::ArithmeticOp::BITSHIFT_R; break;
             }
-            // TODO: a bit hacky? addition can only result in a number or a string
             types::tyVarIdx exprType = getBasicType(types::TypeFlag::NUMBER);
             if(op == typedAST::ArithmeticOp::ADD){
                 auto ty = createEmptyTy();
-                addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(lhs->exprType));
-                addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(rhs->exprType));
+                addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(lhs->exprType, rhs->exprType));
                 exprType = ty;
             }
             returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op, exprType, dbg);
@@ -206,6 +222,7 @@ void ASTTransformer::visitUnaryExpr(AST::UnaryExpr* expr) {
     auto rhs = evalASTExpr(expr->right);
     typedAST::UnaryOp op;
     types::tyVarIdx ty = getBasicType(types::TypeFlag::NUMBER);
+
     switch(expr->op.type){
         case TokenType::TILDA: op = typedAST::UnaryOp::BIN_NEG; break;
         case TokenType::BANG: {
@@ -526,8 +543,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     if (decl->inheritedClass) {
         //decl->inheritedClass is always either a LiteralExpr with an identifier token or a ModuleAccessExpr
 
-        //if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
-        //undefined behavior (eg. class a : a)
+        // If a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
+        // undefined behavior (eg. class a : a)
         try { // try block because getClassInfoFromExpr can throw
             auto superclass = getClassInfoFromExpr(decl->inheritedClass);
             // Make the class type aware of the inheritance(copies methods and fields)
@@ -539,7 +556,6 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     }
     // Before compiling any code make the class type aware of its own fields and methods
     // Think of this as a sort of forward declaration
-
     for(auto field : decl->fields){
         // First check if this is a duplicate symbol
         detectDuplicateSymbol(field.field, false ,false);
@@ -1189,7 +1205,9 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(const 
     // If this class containes fieldName, transform fieldname -> this.fieldName
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, dbg);
+        // Can safely use normal SET since evaling "this" twice has no side effects
+        auto operationType = typedAST::SetType::SET;
+        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, operationType, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1277,7 +1295,7 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     // Never hit
     return nullptr;
 }
-std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* expr){
+std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* expr, typedAST::SetType operationTy){
     if(!isLiteralThis(expr->callee)) return nullptr;
 
     Token _this = probeToken(expr->callee);
@@ -1287,7 +1305,7 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     if(!res.empty()){
         auto toStore = evalASTExpr(expr->value);
         auto dbg = AST::InstSetDebugInfo(name, expr->accessor, expr->op);
-        return std::make_shared<typedAST::InstSet>(readVar(_this), res, toStore, dbg);
+        return std::make_shared<typedAST::InstSet>(readVar(_this), res, toStore, operationTy, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
