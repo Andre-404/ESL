@@ -972,12 +972,16 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
 
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
-        addTypeConstraint(valPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        if(!valPtr->typeConstrained) {
+            addTypeConstraint(valPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        }
         return std::make_shared<typedAST::VarStore>(valPtr, toStore, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         varPtr upvalPtr = current->freevars[argIndex].ptr;
-        addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        if(!upvalPtr->typeConstrained) {
+            addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        }
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
 
@@ -990,7 +994,9 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
     }
     varPtr globalPtr = resolveGlobal(name, true);
     if(globalPtr){
-        addTypeConstraint(globalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        if(!globalPtr->typeConstrained) {
+            addTypeConstraint(globalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
+        }
         return std::make_shared<typedAST::VarStore>(globalPtr, toStore, dbg);
     }
     auto it = nativesTypes.find(name.getLexeme());
@@ -1005,18 +1011,17 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
 
 std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::beginScope(){
     current->scopeDepth++;
-    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START,
-                                                 std::unordered_set<std::shared_ptr<typedAST::VarDecl>>());
+    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START,std::unordered_set<uInt64>());
 }
 // Pop every variable that was declared in this scope
 std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(){
     // First lower the scope, the check for every var that is deeper than the parserCurrent scope
     current->scopeDepth--;
     // Store which variables to pop(store the VarDecl ptr)
-    std::unordered_set<std::shared_ptr<typedAST::VarDecl>> toPop;
+    std::unordered_set<uInt64> toPop;
     // Pop from the stack
     while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
-        toPop.insert(current->locals.back().ptr);
+        toPop.insert(current->locals.back().ptr->uuid);
         current->locals.pop_back();
     }
     return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::END, toPop);

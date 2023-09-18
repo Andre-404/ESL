@@ -394,9 +394,27 @@ llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
     return PN;
 }
 
+// TODO: there should be errors if num of params passed and argc(if known) doesn't match
 llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
-    auto val = expr->args[0]->codegen(this);
-    return builder.CreateCall(curModule->getFunction("print"), val);
+    llvm::Function* fn;
+    // Optimize if this is a native var read
+    if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
+        auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
+        fn = nativeFunctions[native->nativeName];
+    }
+    auto funcType = getFuncFromType(expr->callee->exprType);
+    // Function might not be codegen-ed at this point, if it's not then just use its func type to do static arg count check
+    if(functions.contains(funcType)) fn = functions[funcType];
+
+    // TODO: remove this if there are no codegen-ing this has no side effects
+    auto closureObj = expr->callee->codegen(this);
+    vector<llvm::Value*> args;
+    for(auto arg : expr->args) args.push_back(arg->codegen(this));
+    // If function is known and codegen-ed, call it and discard closureObj
+    if(fn){
+        return builder.CreateCall(fn, args, "callres");
+    }
+    // TODO: implement calling when function is not compiled/known
 }
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 
@@ -647,8 +665,8 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
 
 llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
     // Erases local variables which will no longer be used, done to keep memory usage at least somewhat reasonable
-    for(auto var : stmt->toPop){
-        variables.erase(var->uuid);
+    for(auto uuid : stmt->toPop){
+        variables.erase(uuid);
     }
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -1236,7 +1254,7 @@ llvm::Function* Compiler::createNewFunc(const int argCount, const string name, c
     return tmp;
 }
 
-bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty){
+bool Compiler::exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty){
     if(typeEnv[expr->exprType].size() == 1){
         // If this expression is constrained to a single type it's safe to do typeArr[0]
         return typeEnv[expr->exprType][0] == ty;
@@ -1244,13 +1262,11 @@ bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExp
     return false;
 }
 
-bool Compiler::exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                     const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty){
+bool Compiler::exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
     return exprConstrainedToType(expr1, ty) && exprConstrainedToType(expr2, ty);
 }
 
-llvm::Value* Compiler::codegenBinaryAdd(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                        const std::shared_ptr<typedAST::TypedASTExpr> expr2, const Token op){
+llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExprPtr expr2, const Token op){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
@@ -1303,8 +1319,7 @@ llvm::Value* Compiler::codegenBinaryAdd(const std::shared_ptr<typedAST::TypedAST
     return phi;
 }
 
-llvm::Value* Compiler::codegenLogicOps(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                       const std::shared_ptr<typedAST::TypedASTExpr> expr2, const typedAST::ComparisonOp op){
+llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExprPtr expr2, const typedAST::ComparisonOp op){
 
     bool canOptimize = exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
     auto castToBool = canOptimize ? curModule->getFunction("decodeBool") : curModule->getFunction("isTruthy");
@@ -1344,24 +1359,22 @@ llvm::Value* Compiler::codegenLogicOps(const std::shared_ptr<typedAST::TypedASTE
     return builder.CreateCall(curModule->getFunction("encodeBool"), PN);
 }
 
-bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty){
+bool Compiler::exprWithoutType(const typedExprPtr expr, const types::tyPtr ty){
     for(auto type : typeEnv[expr->exprType]){
         if(type->type == types::TypeFlag::ANY || type == ty) return false;
     }
     return true;
 }
 
-bool Compiler::exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                               const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty){
+bool Compiler::exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
     return exprWithoutType(expr1, ty) && exprWithoutType(expr2, ty);
 }
 
-llvm::Value* Compiler::codegenCmp(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                  const std::shared_ptr<typedAST::TypedASTExpr> expr2, const bool neg){
+llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
     // Numbers have to be compared using fcmp for rounding reasons,
-    // other value types are compared as 64 bit ints
+    // other value types are compared as 64 bit ints since every object is unique(strings are interned)
 
     // Optimizations if types are known, no need to do runtime checks
     if(exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
@@ -1403,7 +1416,7 @@ void Compiler::codegenBlock(const typedAST::Block& block){
     }
 }
 
-llvm::Value* Compiler::codegenNeg(const std::shared_ptr<typedAST::TypedASTExpr> _rhs, typedAST::UnaryOp op, Token dbg){
+llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op, Token dbg){
     llvm::Value* rhs = _rhs->codegen(this);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
@@ -1450,6 +1463,22 @@ llvm::Value* Compiler::codegenNeg(const std::shared_ptr<typedAST::TypedASTExpr> 
     }
     assert(false && "Unreachable");
     return nullptr;
+}
+
+std::shared_ptr<types::FunctionType> Compiler::getFuncFromType(const types::tyVarIdx ty){
+    auto tyarr = typeEnv[ty];
+    types::tyPtr fnTy = nullptr;
+    bool isOnlyFunc = true;
+    for(auto innerTy : tyarr){
+        if(innerTy->type == types::TypeFlag::FUNCTION){
+            // If this type contains multiple functions don't return any of them since it can't be statically determined
+            // which function is being called
+            if(fnTy) return nullptr;
+            fnTy = innerTy;
+        }
+    }
+
+    return std::reinterpret_pointer_cast<types::FunctionType>(fnTy);
 }
 
 #pragma endregion

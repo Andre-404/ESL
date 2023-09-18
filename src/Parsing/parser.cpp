@@ -512,7 +512,7 @@ void Parser::defineMacro() {
 
 ASTNodePtr Parser::expression(const int prec) {
     Token token = advance();
-    //check if the token has a prefix function associated with it, and if it does, parse with it
+    // Check if the token has a prefix function associated with it, and if it does, parse with it
     if (prefixParselets.count(token.type) == 0) {
         // TODO: Fix hackyness
         if (token.str.length == 0) token = currentContainer->at(currentPtr - 2);

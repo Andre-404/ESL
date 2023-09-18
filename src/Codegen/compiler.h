@@ -18,6 +18,8 @@
 
 namespace compileCore {
 
+    using typedExprPtr = std::shared_ptr<typedAST::TypedASTExpr>;
+
 class Compiler : public typedAST::TypedASTCodegen {
 	public:
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
@@ -67,9 +69,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         ankerl::unordered_dense::map<uInt64, llvm::Value*> variables;
 
         ankerl::unordered_dense::map<std::shared_ptr<types::ClassType>, std::shared_ptr<typedAST::ClassDecl>> classes;
-        // Connects function types(unique for each function) and that function as represented in LLVM IR
-        ankerl::unordered_dense::map<std::shared_ptr<types::FunctionType>, llvm::Function*> functions;
-        ankerl::unordered_dense::map<string, llvm::Value*> nativeFunctions;
+        // Connects function types(unique for each function) and the LLVM IR representation of that function
+        ankerl::unordered_dense::map<types::tyPtr, llvm::Function*> functions;
+        ankerl::unordered_dense::map<string, llvm::Function*> nativeFunctions;
         ankerl::unordered_dense::map<string, llvm::Constant*> stringConstants;
         ankerl::unordered_dense::map<string, llvm::Type*> namedTypes;
 
@@ -92,28 +94,23 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* castToVal(llvm::Value* val);
 
         #pragma region Helpers
-        bool exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty);
+        bool exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty);
 
-        bool exprConstrainedToType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                   const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty);
+        bool exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
 
-        bool exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr, const types::tyPtr ty);
+        bool exprWithoutType(const typedExprPtr expr, const types::tyPtr ty);
 
-        bool exprWithoutType(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                             const std::shared_ptr<typedAST::TypedASTExpr> expr2, const types::tyPtr ty);
+        bool exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
 
         int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
 
-        llvm::Value* codegenBinaryAdd(const std::shared_ptr<typedAST::TypedASTExpr> lhs,
-                                      const std::shared_ptr<typedAST::TypedASTExpr> rhs, const Token op);
+        llvm::Value* codegenBinaryAdd(const typedExprPtr lhs, const typedExprPtr rhs, const Token op);
 
-        llvm::Value* codegenLogicOps(const std::shared_ptr<typedAST::TypedASTExpr> lhs,
-                                     const std::shared_ptr<typedAST::TypedASTExpr> rhs, const typedAST::ComparisonOp op);
+        llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
 
-        llvm::Value* codegenCmp(const std::shared_ptr<typedAST::TypedASTExpr> expr1,
-                                const std::shared_ptr<typedAST::TypedASTExpr> expr2, const bool neg);
+        llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
 
-        llvm::Value* codegenNeg(const std::shared_ptr<typedAST::TypedASTExpr> expr1, const typedAST::UnaryOp op, const Token dbg);
+        llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
 
         void codegenBlock(const typedAST::Block& block);
         // Misc
@@ -121,6 +118,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         void error(const string& message) noexcept(false);
 
         llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
+
+        std::shared_ptr<types::FunctionType> getFuncFromType(const types::tyVarIdx ty);
         #pragma endregion
 	};
 }

@@ -970,8 +970,8 @@ namespace typedAST{
         // Start or end edge of scope
         ScopeEdgeType edgeType;
         // Variables to pop from the variable map
-        std::unordered_set<shared_ptr<VarDecl>> toPop;
-        ScopeEdge(ScopeEdgeType _ty, std::unordered_set<shared_ptr<VarDecl>> _toPop){
+        std::unordered_set<uInt64> toPop;
+        ScopeEdge(ScopeEdgeType _ty, std::unordered_set<uInt64> _toPop){
             edgeType = _ty;
             toPop = _toPop;
             type = NodeType::BLOCK_EDGE;
