@@ -79,6 +79,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
         case TokenType::BITWISE_OR_EQUAL: operationType = typedAST::SetType::OR_SET; break;
         case TokenType::BITWISE_XOR_EQUAL: operationType = typedAST::SetType::XOR_SET; break;
     }
+
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         auto collection = evalASTExpr(expr->callee);
         auto field = evalASTExpr(expr->field);
@@ -86,22 +87,46 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
 
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
         returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, field, toStore, operationType, dbg);
-        // TODO: change this
-        returnedExpr->exprType = getBasicType(types::TypeFlag::ANY);
+        // TODO: actually do type inference
+        switch(operationType){
+            case typedAST::SetType::SET: break;
+            case typedAST::SetType::ADD_SET:{
+                auto ty = createEmptyTy();
+                addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(getBasicType(types::TypeFlag::ANY), toStore->exprType));
+                returnedExpr->exprType = ty;
+                break;
+            }
+            default: returnedExpr->exprType = getBasicType(types::TypeFlag::NUMBER);
+        }
         return;
     }
     // Tries to resolve this.field = expr if we're currently inside a method
     auto resolved = tryResolveThis(expr, operationType);
     if(resolved) {
         returnedExpr = resolved;
-        return;
+    }else {
+        // Guaranteed to be a literal
+        Token field = probeToken(expr->field);
+        auto dbg = AST::InstSetDebugInfo(field, expr->accessor, expr->op);
+        auto instance = evalASTExpr(expr->callee);
+        auto toStore = evalASTExpr(expr->value);
+
+        resolved = std::make_shared<typedAST::InstSet>(instance, field.getLexeme(), toStore, operationType, dbg);
     }
-    // Guaranteed to be a literal
-    Token field = probeToken(expr->field);
-    auto dbg = AST::InstSetDebugInfo(field, expr->accessor, expr->op);
-    auto instance = evalASTExpr(expr->callee);
-    auto toStore = evalASTExpr(expr->value);
-    returnedExpr = std::make_shared<typedAST::InstSet>(instance, field.getLexeme(), toStore, operationType, dbg);
+
+    returnedExpr = resolved;
+
+    switch(operationType){
+        case typedAST::SetType::SET: break;
+        case typedAST::SetType::ADD_SET:{
+            auto fieldty = getInstFieldTy(resolved->instance->exprType, resolved->field);
+            auto ty = createEmptyTy();
+            addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(fieldty, resolved->toStore->exprType));
+            returnedExpr->exprType = ty;
+            break;
+        }
+        default: returnedExpr->exprType = getBasicType(types::TypeFlag::NUMBER);
+    }
 }
 void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
@@ -124,10 +149,9 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     Token field = probeToken(expr->field);
     auto inst = evalASTExpr(expr->callee);
     // If inst->exprType is known to be a single type(determined through type inference) InstGetFieldTyConstraint will return ty of the field
-    auto ty = createEmptyTy();
-    addTypeConstraint(ty, std::make_shared<types::InstGetFieldTyConstraint>(inst->exprType, field.getLexeme()));
+    auto fieldty = getInstFieldTy(inst->exprType, field.getLexeme());
     auto dbg = AST::InstGetDebugInfo(field, expr->accessor);
-    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field.getLexeme(), ty, dbg);
+    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field.getLexeme(), fieldty, dbg);
 }
 
 void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
@@ -1181,19 +1205,17 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     // If this class containes fieldName, transform fieldname -> this.fieldName
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
+        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
-        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
+        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
-        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
     }
     return nullptr;
 }
@@ -1277,19 +1299,17 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(_this);
+        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
-        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(_this);
+        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        auto instGetTy = createEmptyTy();
-        addTypeConstraint(instGetTy, std::make_shared<types::InstGetFieldTyConstraint>(readThis->exprType, res));
-        return std::make_shared<typedAST::InstGet>(readThis, res, instGetTy, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
     // Never hit
@@ -1416,6 +1436,12 @@ void ASTTransformer::addBasicTypes(){
     addType(types::getBasicType(types::TypeFlag::RANGE));
     addType(types::getBasicType(types::TypeFlag::FILE));
     addType(types::getBasicType(types::TypeFlag::ANY));
+}
+
+types::tyVarIdx ASTTransformer::getInstFieldTy(const types::tyVarIdx possibleInstTy, string field){
+    auto ty = createEmptyTy();
+    addTypeConstraint(ty, std::make_shared<types::InstGetFieldTyConstraint>(possibleInstTy, field));
+    return ty;
 }
 
 CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName) {

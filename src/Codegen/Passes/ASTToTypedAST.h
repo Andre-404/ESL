@@ -220,12 +220,14 @@ namespace typedASTParser{
         void addTypeConstraint(const types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint);
         types::tyVarIdx getBasicType(const types::TypeFlag ty);
         void addBasicTypes();
+        types::tyVarIdx getInstFieldTy(const types::tyVarIdx possibleInstTy, string field);
 
         // Misc
         Token syntheticToken(const string& str);
         void updateLine(const Token token);
         void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
+
         typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
