@@ -117,9 +117,16 @@ class Compiler : public typedAST::TypedASTCodegen {
         void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
 
-        llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
+        llvm::Function* createNewFunc(const int argCount, const bool isClosure,
+                                      const string name, const std::shared_ptr<types::FunctionType> fnTy);
 
         std::shared_ptr<types::FunctionType> getFuncFromType(const types::tyVarIdx ty);
+
+        bool hasSideEffect(const typedExprPtr expr);
+
+        llvm::FunctionType* getFuncType(int argnum, bool isClosure);
+
+        llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         #pragma endregion
 	};
 }

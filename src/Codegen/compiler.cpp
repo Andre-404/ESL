@@ -396,25 +396,10 @@ llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
 
 // TODO: there should be errors if num of params passed and argc(if known) doesn't match
 llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
-    llvm::Function* fn;
-    // Optimize if this is a native var read
-    if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
-        auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
-        fn = nativeFunctions[native->nativeName];
-    }
-    auto funcType = getFuncFromType(expr->callee->exprType);
-    // Function might not be codegen-ed at this point, if it's not then just use its func type to do static arg count check
-    if(functions.contains(funcType)) fn = functions[funcType];
+    auto val = optimizedFuncCall(expr);
+    if(val) return val;
 
-    // TODO: remove this if there are no codegen-ing this has no side effects
-    auto closureObj = expr->callee->codegen(this);
-    vector<llvm::Value*> args;
-    for(auto arg : expr->args) args.push_back(arg->codegen(this));
-    // If function is known and codegen-ed, call it and discard closureObj
-    if(fn){
-        return builder.CreateCall(fn, args, "callres");
-    }
-    // TODO: implement calling when function is not compiled/known
+    // TODO: implement calling when function is not known
 }
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 
@@ -434,8 +419,9 @@ llvm::Value* Compiler::visitAwaitExpr(typedAST::AwaitExpr* expr) {
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
     // is stored in parserCurrent->enclosing
+    // TODO: this doesn't work
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(expr->fn->args.size() + (expr->freevars.size() > 0 ? 1 : 0), expr->fn->name, expr->fn->fnTy);
+    currentFunction = createNewFunc(expr->fn->args.size(), (expr->freevars.size() > 0 ? 1 : 0), expr->fn->name, expr->fn->fnTy);
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
     for(int i = 0; i < expr->freevars.size(); i++){
@@ -500,8 +486,9 @@ llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
 
 }
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
+    // TODO: this doesn't work
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
+    currentFunction = createNewFunc(stmt->fn->args.size(), false, stmt->fn->name, stmt->fn->fnTy);
 
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
@@ -1240,9 +1227,12 @@ llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
 }
 
-llvm::Function* Compiler::createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy){
+llvm::Function* Compiler::createNewFunc(const int argCount, const bool isClosure,
+                                        const string name, const std::shared_ptr<types::FunctionType> fnTy){
     // Create a function type with the appropriate number of arguments
     vector<llvm::Type*> params;
+    // If this function is a closure the first arg hold the data structure with free variables
+    if(isClosure) params.push_back(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
     for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
     auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
@@ -1479,6 +1469,115 @@ std::shared_ptr<types::FunctionType> Compiler::getFuncFromType(const types::tyVa
     }
 
     return std::reinterpret_pointer_cast<types::FunctionType>(fnTy);
+}
+
+bool Compiler::hasSideEffect(const typedExprPtr expr){
+    switch(expr->type){
+        case typedAST::NodeType::VAR_STORE: return true;
+        case typedAST::NodeType::VAR_READ: return false;
+        case typedAST::NodeType::VAR_NATIVE_READ: return false;
+        case typedAST::NodeType::ARITHEMTIC:{
+            auto arithmeticExpr = std::reinterpret_pointer_cast<typedAST::ArithmeticExpr>(expr);
+
+            if(hasSideEffect(arithmeticExpr->lhs)) return true;
+            return hasSideEffect(arithmeticExpr->rhs);
+        }
+        case typedAST::NodeType::COMPARISON:{
+            auto comparisonExpr = std::reinterpret_pointer_cast<typedAST::ComparisonExpr>(expr);
+
+            if(hasSideEffect(comparisonExpr->lhs)) return true;
+            return hasSideEffect(comparisonExpr->rhs);
+        }
+        case typedAST::NodeType::UNARY:{
+            auto unaryExpr = std::reinterpret_pointer_cast<typedAST::UnaryExpr>(expr);
+            bool nonSEoperation = unaryExpr->opType == typedAST::UnaryOp::BIN_NEG
+                    || unaryExpr->opType == typedAST::UnaryOp::NEG || unaryExpr->opType == typedAST::UnaryOp::FNEG;
+
+            if(nonSEoperation) return true;
+            return hasSideEffect(unaryExpr->rhs);
+        }
+        case typedAST::NodeType::LITERAL: return false;
+        case typedAST::NodeType::RANGE:{
+            auto rangeExpr = std::reinterpret_pointer_cast<typedAST::RangeExpr>(expr);
+
+            if(hasSideEffect(rangeExpr->rhs)) return true;
+            return hasSideEffect(rangeExpr->rhs);
+        }
+        case typedAST::NodeType::ARRAY: return true;
+        case typedAST::NodeType::HASHMAP: return true;
+        case typedAST::NodeType::COLLECTION_SET: return true;
+        case typedAST::NodeType::COLLECTION_GET: {
+            auto getExpr = std::reinterpret_pointer_cast<typedAST::CollectionGet>(expr);
+
+            if(hasSideEffect(getExpr->collection)) return true;
+            return hasSideEffect(getExpr->field);
+        }
+        case typedAST::NodeType::CONDITIONAL: {
+            auto condExpr = std::reinterpret_pointer_cast<typedAST::ConditionalExpr>(expr);
+
+            if(hasSideEffect(condExpr->cond)) return true;
+            else if(hasSideEffect(condExpr->thenExpr)) return true;
+
+            return hasSideEffect(condExpr->elseExpr);
+        }
+        case typedAST::NodeType::CALL: return true;
+        case typedAST::NodeType::INVOKE: return true;
+        case typedAST::NodeType::NEW: return true;
+        case typedAST::NodeType::ASYNC: return true;
+        case typedAST::NodeType::AWAIT: return true;
+        case typedAST::NodeType::CLOSURE: return true;
+        case typedAST::NodeType::INST_SET: return true;
+        case typedAST::NodeType::INST_GET: {
+            auto getExpr = std::reinterpret_pointer_cast<typedAST::InstGet>(expr);
+            return hasSideEffect(getExpr->instance);
+        }
+        case typedAST::NodeType::INST_SUPER_GET: return false;
+        default: assert(false && "Node type of expression isn't an expression."); break;
+    }
+    return false;
+}
+
+llvm::FunctionType* Compiler::getFuncType(int argnum, bool isClosure){
+
+}
+
+llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
+    if(typeEnv[expr->callee->exprType].size() != 1) return nullptr;
+    if(typeEnv[expr->callee->exprType][0]->type != types::TypeFlag::FUNCTION) return nullptr;
+
+    llvm::Function* fn;
+    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType][0]);
+    // Optimize if this is a native var read
+    if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
+        auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
+        fn = nativeFunctions[native->nativeName];
+    }else if(functions.contains(funcType)) { // Function might not be codegen-ed at this point
+        fn = functions[funcType];
+    }
+
+    // Eval the func object if:
+    // 1. Function is a closure(needs the closure data structure), or
+    // 2. Function hasn't been codegen-ed yet, or
+    // 3. Eval-ing the closure has side effects
+    llvm::Value* closureObj = nullptr;
+    if(funcType->isClosure || !fn || hasSideEffect(expr->callee)){
+        closureObj = expr->callee->codegen(this);
+    }
+    closureObj = builder.CreateCall(curModule->getFunction("castToClosure"), closureObj);
+
+    vector<llvm::Value*> args;
+    // Closures get their free variables from a data structure that is passed into the function as the first arg
+    if(funcType->isClosure) args.push_back(closureObj);
+    for(auto arg : expr->args) args.push_back(arg->codegen(this));
+
+    // If function is known and codegen-ed, call it and discard closureObj
+    if(fn) return builder.CreateCall(fn, args, "callres");
+
+    // If a functions type is known, but it hasn't been codegen-ed yet use the object to get the func ptr
+    // TODO: this can be optimized by reordering compilation order of functions
+    auto fnPtrAddr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closureObj, {0, 3});
+    auto fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrAddr);
+    return builder.CreateCall(getFuncType(funcType->argCount, funcType->isClosure), fnPtr, args);
 }
 
 #pragma endregion
