@@ -156,31 +156,17 @@ static bool isFloatingPointOp(typedAST::ArithmeticOp op){
 }
 
 llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
-    if(expr->opType == typedAST::ArithmeticOp::ADD) return codegenBinaryAdd(expr->lhs, expr->rhs, expr->dbgInfo.op);
+    using typedAST::ArithmeticOp;
+    if(expr->opType == ArithmeticOp::ADD) return codegenBinaryAdd(expr->lhs, expr->rhs, expr->dbgInfo.op);
 
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
-    llvm::Function *F = builder.GetInsertBlock()->getParent();
 
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprConstrainedToType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
-        llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-        llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "binopexecute");
-
-        auto isnum = curModule->getFunction("isNum");
-        auto c1 = builder.CreateCall(isnum, lhs);
-        auto c2 = builder.CreateCall(isnum, rhs);
-        builder.CreateCondBr(builder.CreateNot(builder.CreateAnd(c1, c2)), errorBB, executeOpBB);
-
-        // Calls the type error function which throws
-        builder.SetInsertPoint(errorBB);
-        createTyErr("Operands must be numbers, got '{}' and '{}'.", lhs, rhs, expr->dbgInfo.op);
-        // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-        builder.CreateBr(executeOpBB);
-        F->insert(F->end(), executeOpBB);
-        // Actual operation goes into this block
-        builder.SetInsertPoint(executeOpBB);
+        createRuntimeTypeCheck(curModule->getFunction("isNum"), lhs, rhs, "binopexecute",
+                               "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
     }
 
     // Transforms the operands into the required type
@@ -198,61 +184,47 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
 
     llvm::Value* val = nullptr;
     switch(expr->opType){
-        case typedAST::ArithmeticOp::SUB: val = builder.CreateFSub(lhs, rhs, "fsub"); break;
-        case typedAST::ArithmeticOp::MUL: val = builder.CreateFMul(lhs, rhs, "fmul"); break;
-        case typedAST::ArithmeticOp::DIV: val = builder.CreateFDiv(lhs, rhs, "fdiv"); break;
-        case typedAST::ArithmeticOp::MOD: val = builder.CreateFRem(lhs, rhs, "frem"); break;
-        case typedAST::ArithmeticOp::AND: val = builder.CreateAnd(ilhs, irhs, "and"); break;
-        case typedAST::ArithmeticOp::OR: val = builder.CreateOr(ilhs, irhs, "or"); break;
-        case typedAST::ArithmeticOp::XOR: val =builder.CreateXor(ilhs, irhs, "xor"); break;
-        case typedAST::ArithmeticOp::BITSHIFT_L: val =builder.CreateShl(ilhs, irhs, "shl"); break;
-        case typedAST::ArithmeticOp::BITSHIFT_R: val =builder.CreateAShr(ilhs, irhs, "ashr"); break;
-        case typedAST::ArithmeticOp::IDIV: {
+        case ArithmeticOp::SUB: val = builder.CreateFSub(lhs, rhs, "fsub"); break;
+        case ArithmeticOp::MUL: val = builder.CreateFMul(lhs, rhs, "fmul"); break;
+        case ArithmeticOp::DIV: val = builder.CreateFDiv(lhs, rhs, "fdiv"); break;
+        case ArithmeticOp::MOD: val = builder.CreateFRem(lhs, rhs, "frem"); break;
+        case ArithmeticOp::AND: val = builder.CreateAnd(ilhs, irhs, "and"); break;
+        case ArithmeticOp::OR: val = builder.CreateOr(ilhs, irhs, "or"); break;
+        case ArithmeticOp::XOR: val =builder.CreateXor(ilhs, irhs, "xor"); break;
+        case ArithmeticOp::BITSHIFT_L: val =builder.CreateShl(ilhs, irhs, "shl"); break;
+        case ArithmeticOp::BITSHIFT_R: val =builder.CreateAShr(ilhs, irhs, "ashr"); break;
+        case ArithmeticOp::IDIV: {
             auto tmp1 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, lhs);
             auto tmp2 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, rhs);
             val = builder.CreateFDiv(tmp1, tmp2, "floordivtmp");
             break;
         }
-        case typedAST::ArithmeticOp::ADD: assert(false && "Unreachable");
+        case ArithmeticOp::ADD: assert(false && "Unreachable");
     }
 
     if(!isFloatingPointOp(expr->opType)) val = builder.CreateSIToFP(val, builder.getDoubleTy());
     return builder.CreateBitCast(val, builder.getInt64Ty());
 }
 llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
-    if(expr->opType == typedAST::ComparisonOp::OR || expr->opType == typedAST::ComparisonOp::AND){
+    using typedAST::ComparisonOp;
+    if(expr->opType == ComparisonOp::OR || expr->opType == ComparisonOp::AND){
         return codegenLogicOps(expr->lhs, expr->rhs, expr->opType);
     }
-    else if(expr->opType == typedAST::ComparisonOp::EQUAL || expr->opType == typedAST::ComparisonOp::NOT_EQUAL){
-        return codegenCmp(expr->lhs, expr->rhs, expr->opType == typedAST::ComparisonOp::NOT_EQUAL);
+    else if(expr->opType == ComparisonOp::EQUAL || expr->opType == ComparisonOp::NOT_EQUAL){
+        return codegenCmp(expr->lhs, expr->rhs, expr->opType == ComparisonOp::NOT_EQUAL);
     }
-    else if(expr->opType == typedAST::ComparisonOp::INSTANCEOF){
+    else if(expr->opType == ComparisonOp::INSTANCEOF){
         // TODO: implement this
     }
 
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
-    llvm::Function *F = builder.GetInsertBlock()->getParent();
 
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprConstrainedToType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
-        llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-        llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "binopexecute");
-
-        auto isnum = curModule->getFunction("isNum");
-        auto c1 = builder.CreateCall(isnum, lhs);
-        auto c2 = builder.CreateCall(isnum, rhs);
-        builder.CreateCondBr(builder.CreateNot(builder.CreateAnd(c1, c2)), errorBB, executeOpBB);
-
-        // Calls the type error function which throws
-        builder.SetInsertPoint(errorBB);
-        createTyErr("Operands must be numbers, got '{}' and '{}'.", lhs, rhs, expr->dbgInfo.op);
-        // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-        builder.CreateBr(executeOpBB);
-        F->insert(F->end(), executeOpBB);
-        // Actual operation goes into this block
-        builder.SetInsertPoint(executeOpBB);
+        createRuntimeTypeCheck(curModule->getFunction("isNum"), lhs, rhs, "binopexecute",
+                               "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
     }
 
     lhs = builder.CreateBitCast(lhs, builder.getDoubleTy());
@@ -260,42 +232,31 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     llvm::Value* val;
 
     switch(expr->opType){
-        case typedAST::ComparisonOp::LESS: val = builder.CreateFCmpOLT(lhs, rhs, "olttmp"); break;
-        case typedAST::ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "oletmp"); break;
-        case typedAST::ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogttmp"); break;
-        case typedAST::ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "ogetmp"); break;
+        case ComparisonOp::LESS: val = builder.CreateFCmpOLT(lhs, rhs, "olttmp"); break;
+        case ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "oletmp"); break;
+        case ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogttmp"); break;
+        case ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "ogetmp"); break;
         default: assert(false && "Unreachable");
     }
     return builder.CreateCall(curModule->getFunction("encodeBool"), val);
 }
 llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
+    using typedAST::UnaryOp;
     // TODO: implement incrementing
-    if(expr->opType == typedAST::UnaryOp::NEG){
+    if(expr->opType == UnaryOp::NEG){
         llvm::Value* rhs = expr->rhs->codegen(this);
         // If type is known to be a bool skip the runtime check and just execute the expr
         if(exprConstrainedToType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
             return builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
         }
-        llvm::Function *F = builder.GetInsertBlock()->getParent();
-        // If rhs isn't of the correct type, go to error, otherwise proceed as normal
-        llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-        // Name is set in the switch
-        llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "negbool");
 
-        builder.CreateCondBr(builder.CreateNot(builder.CreateCall(curModule->getFunction("isBool"), rhs)), errorBB, executeOpBB);
-        // Calls the type error function which throws
-        builder.SetInsertPoint(errorBB);
-        createTyErr("Operand must be a boolean, got '{}'.", rhs, expr->dbgInfo.op);
-        // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-        builder.CreateBr(executeOpBB);
-
-        F->insert(F->end(), executeOpBB);
-        builder.SetInsertPoint(executeOpBB);
+        createRuntimeTypeCheck(curModule->getFunction("isBool"), rhs,
+                               "Operand must be a boolean, got '{}'.", "negbool", expr->dbgInfo.op);
         // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
         // Since that's just a single bit flag that's flipped on when true and off when false
         // This does rely on the fact that true and false are the first flags and are thus represented with 00 and 01
         return builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
-    }else if(expr->opType == typedAST::UnaryOp::FNEG || expr->opType == typedAST::UnaryOp::BIN_NEG){
+    }else if(expr->opType == UnaryOp::FNEG || expr->opType == UnaryOp::BIN_NEG){
         return codegenNeg(expr->rhs, expr->opType, expr->dbgInfo.op);
     }
     assert(false && "Unreachable");
@@ -399,7 +360,38 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     auto val = optimizedFuncCall(expr);
     if(val) return val;
 
-    // TODO: implement calling when function is not known
+    llvm::Value* closureVal = expr->callee->codegen(this);
+
+    createRuntimeTypeCheck(curModule->getFunction("isClosure"), closureVal,
+                           "Expected a function for a callee, got '{}'.", "call", expr->dbgInfo.paren1);
+
+    auto closurePtr = builder.CreateCall(curModule->getFunction("castToClosure"), closureVal);
+    auto argNumPtr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, {0, 1});
+    auto argNum = builder.CreateLoad(builder.getInt8PtrTy(), argNumPtr);
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    auto errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *callBB = llvm::BasicBlock::Create(*ctx, "call");
+
+    auto cond = builder.CreateICmpUGT(argNum, builder.getInt8(0));
+    builder.CreateCondBr(builder.CreateNot(cond), errorBB, callBB);
+
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    //TODO: make argument count error
+    createTyErr("Expected a function for a callee, got '{}'.", argNum, expr->dbgInfo.paren1);
+    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
+    builder.CreateBr(callBB);
+
+    F->insert(F->end(), callBB);
+    builder.SetInsertPoint(callBB);
+    std::pair<llvm::Value*, llvm::FunctionType*> func = getBitcastFunc(closurePtr, expr->args.size());
+
+    vector<llvm::Value*> args;
+    args.push_back(closurePtr);
+    for(auto arg : expr->args) args.push_back(arg->codegen(this));
+
+    return builder.CreateCall(func.second, func.first, args, "callres");
 }
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 
@@ -421,7 +413,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     // is stored in parserCurrent->enclosing
     // TODO: this doesn't work
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(expr->fn->args.size(), (expr->freevars.size() > 0 ? 1 : 0), expr->fn->name, expr->fn->fnTy);
+    currentFunction = createNewFunc(expr->fn->args.size(), expr->fn->name, expr->fn->fnTy);
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
     for(int i = 0; i < expr->freevars.size(); i++){
@@ -432,8 +424,8 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
 
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
-    // If a closure is passed(as the first arg), skip over it
-    int argIndex = expr->freevars.size() > 0 ? 1 : 0;
+    // Closure struct is always passed as the first arg
+    int argIndex = 1;
     for (auto var : expr->fn->args) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
@@ -488,11 +480,12 @@ llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     // TODO: this doesn't work
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(stmt->fn->args.size(), false, stmt->fn->name, stmt->fn->fnTy);
+    currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
 
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
-    int argIndex = 0;
+    // First argument is always the objclosure ptr
+    int argIndex = 1;
     for (auto var : stmt->fn->args) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
@@ -1186,30 +1179,28 @@ void Compiler::error(Token token, const string& msg) noexcept(false) {
     throw CompilerException();
 }*/
 
-
-void Compiler::createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode){
-    llvm::Constant* str = createConstStr(fmtErr);
-    auto argNum = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), args.size());
-    auto alloca = builder.CreateAlloca(llvm::Type::getInt8PtrTy(*ctx), argNum, "allocArr");
-    // Gets size(in bytes) of a pointer
-    int ptrSize = curModule->getDataLayout().getTypeAllocSize(llvm::Type::getInt8PtrTy(*ctx));
-    builder.CreateLifetimeStart(alloca, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), ptrSize * args.size()));
-    for(int i = 0; i < args.size(); i++){
-        auto gep = builder.CreateInBoundsGEP(llvm::Type::getInt8PtrTy(*ctx), alloca, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), i));
-        builder.CreateStore(args[i], gep);
+// Compile time type checking
+bool Compiler::exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty){
+    if(typeEnv[expr->exprType].size() == 1){
+        // If this expression is constrained to a single type it's safe to do typeArr[0]
+        return typeEnv[expr->exprType][0] == ty;
     }
-    auto val = builder.CreateBitCast(alloca, llvm::PointerType::getUnqual(llvm::Type::getInt8PtrTy(*ctx)));
-    builder.CreateCall(curModule->getFunction("runtimeErr"), {str, val, argNum});
-    builder.CreateLifetimeEnd(alloca, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx), ptrSize * args.size()));
+    return false;
+}
+bool Compiler::exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
+    return exprConstrainedToType(expr1, ty) && exprConstrainedToType(expr2, ty);
+}
+bool Compiler::exprWithoutType(const typedExprPtr expr, const types::tyPtr ty){
+    for(auto type : typeEnv[expr->exprType]){
+        if(type->type == types::TypeFlag::ANY || type == ty) return false;
+    }
+    return true;
+}
+bool Compiler::exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
+    return exprWithoutType(expr1, ty) && exprWithoutType(expr2, ty);
 }
 
-llvm::Constant* Compiler::createConstStr(const string& str){
-    if(stringConstants.contains(str)) return stringConstants[str];
-    auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
-    stringConstants[str] = constant;
-    return constant;
-}
-
+// Runtime type checking
 void Compiler::createTyErr(const string err, llvm::Value* const val, const Token token){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
@@ -1222,40 +1213,44 @@ void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value
     llvm::Constant* line = builder.getInt32(token.str.line);
     builder.CreateCall(curModule->getFunction("tyErrDouble"), {str, file, line, lhs, rhs});
 }
+void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* val, string executeBBName,
+                                      string errMsg, Token dbg){
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "executeBBName");
 
-llvm::Value* Compiler::castToVal(llvm::Value* val){
-    return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
+    auto cond = builder.CreateCall(typeCheckFunc, val);
+    builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    createTyErr(errMsg, val, dbg);
+    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
+    builder.CreateBr(executeOpBB);
+
+    F->insert(F->end(), executeOpBB);
+    builder.SetInsertPoint(executeOpBB);
+}
+void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* lhs, llvm::Value* rhs,
+                                      string executeBBName, string errMsg, Token dbg){
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
+
+    auto c1 = builder.CreateCall(typeCheckFunc, lhs);
+    auto c2 = builder.CreateCall(typeCheckFunc, rhs);
+    builder.CreateCondBr(builder.CreateNot(builder.CreateAnd(c1, c2)), errorBB, executeOpBB);
+
+    builder.SetInsertPoint(errorBB);
+    // Calls the type error function which throws
+    createTyErr(errMsg, lhs, rhs, dbg);
+    // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
+    builder.CreateBr(executeOpBB);
+    F->insert(F->end(), executeOpBB);
+    // Actual operation goes into this block
+    builder.SetInsertPoint(executeOpBB);
 }
 
-llvm::Function* Compiler::createNewFunc(const int argCount, const bool isClosure,
-                                        const string name, const std::shared_ptr<types::FunctionType> fnTy){
-    // Create a function type with the appropriate number of arguments
-    vector<llvm::Type*> params;
-    // If this function is a closure the first arg hold the data structure with free variables
-    if(isClosure) params.push_back(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
-    for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
-    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
-    auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
-    // Creates a connection between function types and functions
-    functions.insert_or_assign(fnTy, tmp);
-    tmp->setGC("statepoint-example");
-    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmp);
-    builder.SetInsertPoint(BB);
-    return tmp;
-}
-
-bool Compiler::exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty){
-    if(typeEnv[expr->exprType].size() == 1){
-        // If this expression is constrained to a single type it's safe to do typeArr[0]
-        return typeEnv[expr->exprType][0] == ty;
-    }
-    return false;
-}
-
-bool Compiler::exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
-    return exprConstrainedToType(expr1, ty) && exprConstrainedToType(expr2, ty);
-}
-
+// Codegen functions
 llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExprPtr expr2, const Token op){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
@@ -1308,9 +1303,7 @@ llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExp
     phi->addIncoming(stringAddRes, addStringBB);
     return phi;
 }
-
 llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExprPtr expr2, const typedAST::ComparisonOp op){
-
     bool canOptimize = exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
     auto castToBool = canOptimize ? curModule->getFunction("decodeBool") : curModule->getFunction("isTruthy");
 
@@ -1348,18 +1341,6 @@ llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExpr
     // Cast the bool to a Value
     return builder.CreateCall(curModule->getFunction("encodeBool"), PN);
 }
-
-bool Compiler::exprWithoutType(const typedExprPtr expr, const types::tyPtr ty){
-    for(auto type : typeEnv[expr->exprType]){
-        if(type->type == types::TypeFlag::ANY || type == ty) return false;
-    }
-    return true;
-}
-
-bool Compiler::exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
-    return exprWithoutType(expr1, ty) && exprWithoutType(expr2, ty);
-}
-
 llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg){
     llvm::Value* lhs = expr1->codegen(this);
     llvm::Value* rhs = expr2->codegen(this);
@@ -1399,13 +1380,6 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     auto sel = builder.CreateSelect(builder.CreateAnd(c1, c2), fcmptmp, icmptmp);
     return builder.CreateCall(curModule->getFunction("encodeBool"), sel);
 }
-
-void Compiler::codegenBlock(const typedAST::Block& block){
-    for(auto stmt : block.stmts){
-        stmt->codegen(this);
-    }
-}
-
 llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op, Token dbg){
     llvm::Value* rhs = _rhs->codegen(this);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
@@ -1423,22 +1397,10 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
             return builder.CreateBitCast(builder.CreateFNeg(tmp, "fnegtmp"), builder.getInt64Ty());
         }
     }
-    // If rhs isn't of the correct type, go to error, otherwise proceed as normal
-    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx);
-    if(op == typedAST::UnaryOp::BIN_NEG) executeOpBB->setName("binnegnum");
-    else executeOpBB->setName("negnum");
 
-    auto cond = builder.CreateCall(curModule->getFunction("isNum"), rhs);
-    builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
-    // Calls the type error function which throws
-    builder.SetInsertPoint(errorBB);
-    createTyErr("Operand must be a number, got '{}'.", rhs, dbg);
-    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
-    builder.CreateBr(executeOpBB);
+    createRuntimeTypeCheck(curModule->getFunction("isNum"), rhs,
+                           "Operand must be a number, got '{}'.", "numneg", dbg);
 
-    F->insert(F->end(), executeOpBB);
-    builder.SetInsertPoint(executeOpBB);
     // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
     if(op == typedAST::UnaryOp::BIN_NEG){
         // Cast value to double, then convert to signed 64bit integer and negate
@@ -1454,93 +1416,44 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
     assert(false && "Unreachable");
     return nullptr;
 }
-
-std::shared_ptr<types::FunctionType> Compiler::getFuncFromType(const types::tyVarIdx ty){
-    auto tyarr = typeEnv[ty];
-    types::tyPtr fnTy = nullptr;
-    bool isOnlyFunc = true;
-    for(auto innerTy : tyarr){
-        if(innerTy->type == types::TypeFlag::FUNCTION){
-            // If this type contains multiple functions don't return any of them since it can't be statically determined
-            // which function is being called
-            if(fnTy) return nullptr;
-            fnTy = innerTy;
-        }
+void Compiler::codegenBlock(const typedAST::Block& block){
+    for(auto stmt : block.stmts){
+        stmt->codegen(this);
     }
-
-    return std::reinterpret_pointer_cast<types::FunctionType>(fnTy);
 }
 
-bool Compiler::hasSideEffect(const typedExprPtr expr){
-    switch(expr->type){
-        case typedAST::NodeType::VAR_STORE: return true;
-        case typedAST::NodeType::VAR_READ: return false;
-        case typedAST::NodeType::VAR_NATIVE_READ: return false;
-        case typedAST::NodeType::ARITHEMTIC:{
-            auto arithmeticExpr = std::reinterpret_pointer_cast<typedAST::ArithmeticExpr>(expr);
+// Function codegen helpers
+llvm::Function* Compiler::createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy){
+    // Create a function type with the appropriate number of arguments
+    vector<llvm::Type*> params;
+    // First argument is always the closure structure
+    params.push_back(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
+    for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
+    auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
+    // Creates a connection between function types and functions
+    functions.insert_or_assign(fnTy, tmp);
+    tmp->setGC("statepoint-example");
 
-            if(hasSideEffect(arithmeticExpr->lhs)) return true;
-            return hasSideEffect(arithmeticExpr->rhs);
-        }
-        case typedAST::NodeType::COMPARISON:{
-            auto comparisonExpr = std::reinterpret_pointer_cast<typedAST::ComparisonExpr>(expr);
-
-            if(hasSideEffect(comparisonExpr->lhs)) return true;
-            return hasSideEffect(comparisonExpr->rhs);
-        }
-        case typedAST::NodeType::UNARY:{
-            auto unaryExpr = std::reinterpret_pointer_cast<typedAST::UnaryExpr>(expr);
-            bool nonSEoperation = unaryExpr->opType == typedAST::UnaryOp::BIN_NEG
-                    || unaryExpr->opType == typedAST::UnaryOp::NEG || unaryExpr->opType == typedAST::UnaryOp::FNEG;
-
-            if(nonSEoperation) return true;
-            return hasSideEffect(unaryExpr->rhs);
-        }
-        case typedAST::NodeType::LITERAL: return false;
-        case typedAST::NodeType::RANGE:{
-            auto rangeExpr = std::reinterpret_pointer_cast<typedAST::RangeExpr>(expr);
-
-            if(hasSideEffect(rangeExpr->rhs)) return true;
-            return hasSideEffect(rangeExpr->rhs);
-        }
-        case typedAST::NodeType::ARRAY: return true;
-        case typedAST::NodeType::HASHMAP: return true;
-        case typedAST::NodeType::COLLECTION_SET: return true;
-        case typedAST::NodeType::COLLECTION_GET: {
-            auto getExpr = std::reinterpret_pointer_cast<typedAST::CollectionGet>(expr);
-
-            if(hasSideEffect(getExpr->collection)) return true;
-            return hasSideEffect(getExpr->field);
-        }
-        case typedAST::NodeType::CONDITIONAL: {
-            auto condExpr = std::reinterpret_pointer_cast<typedAST::ConditionalExpr>(expr);
-
-            if(hasSideEffect(condExpr->cond)) return true;
-            else if(hasSideEffect(condExpr->thenExpr)) return true;
-
-            return hasSideEffect(condExpr->elseExpr);
-        }
-        case typedAST::NodeType::CALL: return true;
-        case typedAST::NodeType::INVOKE: return true;
-        case typedAST::NodeType::NEW: return true;
-        case typedAST::NodeType::ASYNC: return true;
-        case typedAST::NodeType::AWAIT: return true;
-        case typedAST::NodeType::CLOSURE: return true;
-        case typedAST::NodeType::INST_SET: return true;
-        case typedAST::NodeType::INST_GET: {
-            auto getExpr = std::reinterpret_pointer_cast<typedAST::InstGet>(expr);
-            return hasSideEffect(getExpr->instance);
-        }
-        case typedAST::NodeType::INST_SUPER_GET: return false;
-        default: assert(false && "Node type of expression isn't an expression."); break;
-    }
-    return false;
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmp);
+    builder.SetInsertPoint(BB);
+    return tmp;
 }
-
-llvm::FunctionType* Compiler::getFuncType(int argnum, bool isClosure){
-
+llvm::FunctionType* Compiler::getFuncType(int argCount){
+    vector<llvm::Type*> params;
+    // First argument is always the closure structure
+    params.push_back(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
+    for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
+    return fty;
 }
-
+std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Value* closurePtr, const int argc){
+    auto fnPtrAddr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, {0, 3});
+    llvm::Value* fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrAddr);
+    auto fnTy = getFuncType(argc);
+    fnPtr = builder.CreateBitCast(fnPtr, fnTy);
+    return std::make_pair(fnPtr, fnTy);
+}
 llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
     if(typeEnv[expr->callee->exprType].size() != 1) return nullptr;
     if(typeEnv[expr->callee->exprType][0]->type != types::TypeFlag::FUNCTION) return nullptr;
@@ -1555,35 +1468,31 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
         fn = functions[funcType];
     }
 
-    // Eval the func object if:
-    // 1. Function is a closure(needs the closure data structure), or
-    // 2. Function hasn't been codegen-ed yet, or
-    // 3. Eval-ing the closure has side effects
-    llvm::Value* closureObj = nullptr;
-    if(funcType->isClosure || !fn || hasSideEffect(expr->callee)){
-        closureObj = expr->callee->codegen(this);
-    }
-    closureObj = builder.CreateCall(curModule->getFunction("castToClosure"), closureObj);
+    llvm::Value* closurePtr =  closurePtr = expr->callee->codegen(this);
+    closurePtr = builder.CreateCall(curModule->getFunction("castToClosure"), closurePtr);
 
     vector<llvm::Value*> args;
-    // Closures get their free variables from a data structure that is passed into the function as the first arg
-    if(funcType->isClosure) args.push_back(closureObj);
+    // Every function contains the closure struct as the first argument
+    args.push_back(closurePtr);
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
 
-    // If function is known and codegen-ed, call it and discard closureObj
+    // If function is known and codegen-ed, call it and discard closurePtr
     if(fn) return builder.CreateCall(fn, args, "callres");
 
     // If a functions type is known, but it hasn't been codegen-ed yet use the object to get the func ptr
     // TODO: this can be optimized by reordering compilation order of functions
-    auto fnPtrAddr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closureObj, {0, 3});
-    auto fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrAddr);
-    return builder.CreateCall(getFuncType(funcType->argCount, funcType->isClosure), fnPtr, args);
+    std::pair<llvm::Value*, llvm::FunctionType*> func = getBitcastFunc(closurePtr, funcType->argCount);
+    return builder.CreateCall(func.second, func.first, args, "callres");
 }
 
+// Misc
+llvm::Value* Compiler::castToVal(llvm::Value* val){
+    return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
+}
+llvm::Constant* Compiler::createConstStr(const string& str){
+    if(stringConstants.contains(str)) return stringConstants[str];
+    auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
+    stringConstants[str] = constant;
+    return constant;
+}
 #pragma endregion
-
-// Only used when debugging _LONG versions of op codes
-#undef SHORT_CONSTANT_LIMIT
-
-#undef CHECK_SCOPE_FOR_LOOP
-#undef CHECK_SCOPE_FOR_SWITCH

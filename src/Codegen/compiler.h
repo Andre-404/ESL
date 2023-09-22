@@ -87,46 +87,43 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::BasicBlock* breakJumpDest;
         llvm::BasicBlock* advanceJumpDest;
 
-        void createRuntimeErrCall(string fmtErr, std::vector<llvm::Value*> args, int exitCode);
+        #pragma region Helpers
+        // Compile time type checking
+        bool exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty);
+        bool exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
+        bool exprWithoutType(const typedExprPtr expr, const types::tyPtr ty);
+        bool exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
+
+        // Runtime type checking
         void createTyErr(const string err, llvm::Value* const val, const Token token);
         void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token);
+        void createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* val, string executeBBName, string errMsg, Token dbg);
+        void createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* lhs, llvm::Value* rhs,
+                                    string executeBBName, string errMsg, Token dbg);
+
+        // Codegen functions(take in a typedAST expression and transform into LLVM IR)
+        // Made to avoid monolithic functions that contain a bunch of builder calls
+        llvm::Value* codegenBinaryAdd(const typedExprPtr lhs, const typedExprPtr rhs, const Token op);
+        llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
+        llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
+        llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
+        void codegenBlock(const typedAST::Block& block);
+
+        // Functions helpers
+        llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
+        llvm::FunctionType* getFuncType(int argnum);
+        // Tried to optimize a function call if possible, otherwise returns nullptr
+        llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
+        std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
+
+        // Class helpers
+        int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
+
+        // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
 
-        #pragma region Helpers
-        bool exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty);
 
-        bool exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
-
-        bool exprWithoutType(const typedExprPtr expr, const types::tyPtr ty);
-
-        bool exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
-
-        int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
-
-        llvm::Value* codegenBinaryAdd(const typedExprPtr lhs, const typedExprPtr rhs, const Token op);
-
-        llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
-
-        llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
-
-        llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
-
-        void codegenBlock(const typedAST::Block& block);
-        // Misc
-        void error(const Token token, const string& msg) noexcept(false);
-        void error(const string& message) noexcept(false);
-
-        llvm::Function* createNewFunc(const int argCount, const bool isClosure,
-                                      const string name, const std::shared_ptr<types::FunctionType> fnTy);
-
-        std::shared_ptr<types::FunctionType> getFuncFromType(const types::tyVarIdx ty);
-
-        bool hasSideEffect(const typedExprPtr expr);
-
-        llvm::FunctionType* getFuncType(int argnum, bool isClosure);
-
-        llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         #pragma endregion
 	};
 }
