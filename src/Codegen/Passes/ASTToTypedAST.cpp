@@ -900,9 +900,9 @@ varPtr ASTTransformer::addLocal(const AST::ASTVar& var, const types::tyVarIdx ty
     Local& local = current->locals.back();
     auto varTy = typeConstraint == -1 ? createEmptyTy() : typeConstraint;
     if(!local.isUpval) {
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy, typeConstraint == -1);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy, typeConstraint != -1);
     }else{
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy, typeConstraint == -1);
+        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy, typeConstraint != -1);
     }
     return local.ptr;
 }
