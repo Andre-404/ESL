@@ -107,6 +107,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
+        llvm::Value* codegenArrayGet(const llvm::Value* arr, const typedExprPtr field);
+        llvm::Value* codegenHashmapGet(const llvm::Value* hashmap, const typedExprPtr field);
         void codegenBlock(const typedAST::Block& block);
 
         // Functions helpers

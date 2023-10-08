@@ -308,6 +308,8 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
 }
 
 llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
+    llvm::Value* collection = expr->collection->codegen(this);
+    llvm::Value* field = expr->field->codegen(this);
 
 }
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
@@ -365,7 +367,7 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     createRuntimeTypeCheck(curModule->getFunction("isClosure"), closureVal,
                            "Expected a function for a callee, got '{}'.", "call", expr->dbgInfo.paren1);
 
-    auto closurePtr = builder.CreateCall(curModule->getFunction("castToClosure"), closureVal);
+    auto closurePtr = builder.CreateCall(curModule->getFunction("decodeClosure"), closureVal);
     auto argNumPtr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, {0, 1});
     auto argNum = builder.CreateLoad(builder.getInt8PtrTy(), argNumPtr);
 
@@ -378,8 +380,8 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
-    //TODO: make argument count error
-    createTyErr("Expected a function for a callee, got '{}'.", argNum, expr->dbgInfo.paren1);
+    //TODO: make better argument count error
+    createTyErr(fmt::format("Expected {} arguments but got {}.", "{}", expr->args.size()), argNum, expr->dbgInfo.paren1);
     // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
     builder.CreateBr(callBB);
 
@@ -411,7 +413,7 @@ llvm::Value* Compiler::visitAwaitExpr(typedAST::AwaitExpr* expr) {
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
     // is stored in parserCurrent->enclosing
-    // TODO: this doesn't work
+    // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
     currentFunction = createNewFunc(expr->fn->args.size(), expr->fn->name, expr->fn->fnTy);
 
@@ -478,7 +480,7 @@ llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
 
 }
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
-    // TODO: this doesn't work
+    // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
     currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
 
@@ -1416,6 +1418,12 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
     assert(false && "Unreachable");
     return nullptr;
 }
+llvm::Value* codegenArrayGet(const llvm::Value* arr, const typedExprPtr field){
+    return nullptr;
+}
+llvm::Value* codegenHashmapGet(const llvm::Value* hashmap, const typedExprPtr field){
+    return nullptr;
+}
 void Compiler::codegenBlock(const typedAST::Block& block){
     for(auto stmt : block.stmts){
         stmt->codegen(this);
@@ -1460,16 +1468,18 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
 
     llvm::Function* fn;
     auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType][0]);
-    // Optimize if this is a native var read
+    // If this is a native function then it's signature is stored in nativeFunctions
     if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
         auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
         fn = nativeFunctions[native->nativeName];
-    }else if(functions.contains(funcType)) { // Function might not be codegen-ed at this point
+    }else if(functions.contains(funcType)) {
+        // Function might not be codegen-ed at this point,
+        // but if it is then use its signature instead of casting the char ptr in ObjClosure to a function
         fn = functions[funcType];
     }
 
     llvm::Value* closurePtr =  closurePtr = expr->callee->codegen(this);
-    closurePtr = builder.CreateCall(curModule->getFunction("castToClosure"), closurePtr);
+    closurePtr = builder.CreateCall(curModule->getFunction("decodeClosure"), closurePtr);
 
     vector<llvm::Value*> args;
     // Every function contains the closure struct as the first argument
