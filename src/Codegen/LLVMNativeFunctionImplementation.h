@@ -99,7 +99,7 @@ EXPORT Value strTryAdd(Value lhs, Value rhs, const char* fileName, const int lin
     return encodeObj(object::ObjString::createStr(temp));
 }
 
-EXPORT Value createArr(int arrSize){
+EXPORT Value createArr(uInt64 arrSize){
     return encodeObj(new object::ObjArray(arrSize));
 }
 
@@ -148,3 +148,33 @@ EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...)
 EXPORT void addGCRoot(Value* ptr){
     memory::gc->addGlobalRoot(ptr);
 }
+
+EXPORT Value hashmapGetV(ObjHashMap* map, ObjString* str){
+    auto it = map->fields.find(str);
+    if(it == map->fields.end()) {
+        // TODO: error
+    }
+    return it->second;
+}
+
+// Can't error since if str isn't in map it's inserted as a new value
+EXPORT void hashmapSetV(ObjHashMap* map, ObjString* str, Value v){
+    map->fields.insert_or_assign(str, v);
+}
+
+EXPORT Value arrayGetV(ObjArray* arr, Value num){
+    int64_t n = floor(decodeNumber(num));
+    if(n < 0 || n >= arr->values.size()){
+        // TODO: error
+    }
+    return arr->values[n];
+}
+
+EXPORT void arraySetV(ObjArray* arr, Value num, Value v){
+    int64_t n = floor(decodeNumber(num));
+    if(n < 0 || n >= arr->values.size()){
+        // TODO: error
+    }
+    arr->values[n] = v;
+}
+

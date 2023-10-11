@@ -25,6 +25,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt1Ty(*ctx)}, "Obj");
+    types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     // Pointer to pointer
@@ -35,22 +36,40 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
+    // ret: double, args: Value
     CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
     CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
+    // ret: Value, args: raw C string
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
+    //
     CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
     CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    // ret: Value, args: lhs, rhs - both are known to be strings
     CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64));
+    // Same as strAdd, but has additional information in case of error, additional args: file name, line
     CREATE_FUNC("strTryAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32));
+    // Invoked by gc.safepoint
     CREATE_FUNC("stopThread", false, TYPE(Void));
-    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
+    // ret: Value, args: arr size
+    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int64));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
+    // What is this used for?
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
+    // First argument is number of field, which is then followed by n*2 Value-s
+    // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
+    // Creates a freevar(no args needed, its initialized to nil)
     CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
+    // Gets a freevar from closure, args: closure structure, index to which freevar to use
     CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], types["ObjClosurePtr"], TYPE(Int32));
+    // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
     CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
+    // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
+    // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
+    CREATE_FUNC("hashmapGetV", false, TYPE(Int64), types["ObjPtr"], types["ObjPtr"]);
+    // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
+    CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], TYPE(Int64));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
@@ -199,7 +218,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(PTR_TY(types["Obj"]), TYPE(Int64),false));
         // (Obj*)(x & MASK_PAYLOAD_OBJ)
         auto const1 = builder.getInt64(MASK_PAYLOAD_OBJ);
-        builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(f->getArg(0), const1), PTR_TY(types["Obj"])));
+        builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(f->getArg(0), const1), types["ObjPtr"]));
         llvm::verifyFunction(*f);
     }();
     // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage

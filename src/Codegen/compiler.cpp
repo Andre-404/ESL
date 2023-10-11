@@ -311,6 +311,13 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
 
+    if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
+        if(exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
+            field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
+        }
+    }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
+
+    }
 }
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
 

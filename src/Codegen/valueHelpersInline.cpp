@@ -20,7 +20,7 @@ inline Value encodeObj(object::Obj* x){ return MASK_SIGNATURE_OBJ | reinterpret_
 inline Value encodeNil(){ return MASK_SIGNATURE_NIL; }
 
 inline double decodeNumber(Value x){ return *reinterpret_cast<double*>(&x); }
-inline int32_t decodeInt(Value x){ return std::round(decodeNumber(x)); }
+inline int64_t decodeInt(Value x){ return std::round(decodeNumber(x)); }
 inline bool decodeBool(Value x){ return x == MASK_SIGNATURE_TRUE; }
 inline object::Obj* decodeObj(Value x){ return reinterpret_cast<object::Obj*>(x & MASK_PAYLOAD_OBJ); }
 
