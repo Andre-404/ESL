@@ -107,6 +107,10 @@ EXPORT Value* getArrPtr(Value arr){
     return asArray(arr)->values.data();
 }
 
+EXPORT int64_t getArrSize(Value arr){
+    return asArray(arr)->values.size();
+}
+
 EXPORT bool gcSafepoint(){
     return memory::gc->active == 1;
 }

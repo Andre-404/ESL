@@ -312,15 +312,45 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::Value* field = expr->field->codegen(this);
 
     if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
-        if(exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
-            field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
+        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
+            createRuntimeTypeCheck(curModule->getFunction("isNum"), field,
+                                   "getArrAddr", "Expected a number, got {}", expr->dbgInfo.accessor);
         }
+        field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
+        field = builder.CreateFPToUI(field, builder.getInt64Ty());
+        createArrBoundsCheck(collection, field);
+        collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
+        auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
+        return builder.CreateLoad(builder.getInt64Ty(), ptr);
+
     }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
 
     }
 }
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
+    llvm::Value* collection = expr->collection->codegen(this);
+    llvm::Value* field = expr->field->codegen(this);
+    llvm::Value* val = expr->toStore->codegen(this);
 
+    if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
+        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
+            createRuntimeTypeCheck(curModule->getFunction("isNum"), field,
+                                   "getArrAddr", "Expected a number, got {}", expr->dbgInfo.accessor);
+        }
+        field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
+        field = builder.CreateFPToUI(field, builder.getInt64Ty());
+        createArrBoundsCheck(collection, field);
+        collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
+        auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
+        if(expr->operationType == typedAST::SetType::SET){
+            return builder.CreateStore(val, ptr);
+        }
+        auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
+        val = decoupleSetOperation(storedVal, val, expr->operationType);
+        return builder.CreateStore(val, ptr);
+    }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
+
+    }
 }
 
 llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
@@ -1500,6 +1530,34 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
     // TODO: this can be optimized by reordering compilation order of functions
     std::pair<llvm::Value*, llvm::FunctionType*> func = getBitcastFunc(closurePtr, funcType->argCount);
     return builder.CreateCall(func.second, func.first, args, "callres");
+}
+
+// Array bounds checking
+void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index){
+    llvm::Value* upperbound = builder.CreateCall(curModule->getFunction("getArrSize"), arr);
+    auto cond = builder.CreateICmpUGT(index, upperbound);
+    // TODO: do cond checking and throw error
+}
+
+// TODO: do this shit
+llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy){
+    switch(opTy){
+        case typedAST::SetType::ADD_SET:
+        case typedAST::SetType::SUB_SET:
+            break;
+        case typedAST::SetType::MUL_SET:
+            break;
+        case typedAST::SetType::DIV_SET:
+            break;
+        case typedAST::SetType::REM_SET:
+            break;
+        case typedAST::SetType::AND_SET:
+            break;
+        case typedAST::SetType::OR_SET:
+            break;
+        case typedAST::SetType::XOR_SET:
+            break;
+    }
 }
 
 // Misc

@@ -114,9 +114,12 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Functions helpers
         llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
-        // Tried to optimize a function call if possible, otherwise returns nullptr
+        // Tries to optimize a function call if possible, otherwise returns nullptr
         llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
+        // Array optimization
+        void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index);
+        llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy);
 
         // Class helpers
         int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
