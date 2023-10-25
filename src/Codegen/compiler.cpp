@@ -318,13 +318,19 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
         }
         field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
         field = builder.CreateFPToUI(field, builder.getInt64Ty());
-        createArrBoundsCheck(collection, field);
+        createArrBoundsCheck(collection, field, "Index {} outside of array range.", expr->dbgInfo.accessor);
         collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
         auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
         return builder.CreateLoad(builder.getInt64Ty(), ptr);
 
     }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
-
+        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING))){
+            createRuntimeTypeCheck(curModule->getFunction("isString"), field,
+                                   "getHashmapV", "Expected a string, got {}", expr->dbgInfo.accessor);
+        }
+        collection = builder.CreateCall(curModule->getFunction("decodeObj"), collection);
+        field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
+        return builder.CreateCall(curModule->getFunction("hashmapGetV"), {collection, field});
     }
 }
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
@@ -339,18 +345,45 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
         }
         field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
         field = builder.CreateFPToUI(field, builder.getInt64Ty());
-        createArrBoundsCheck(collection, field);
+        createArrBoundsCheck(collection, field, "Index {} outside of array range.", expr->dbgInfo.accessor);
         collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
         auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
         if(expr->operationType == typedAST::SetType::SET){
             return builder.CreateStore(val, ptr);
         }
         auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
+        if(!exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))){
+            createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
+                                   "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+        }
+        createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
+                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
         val = decoupleSetOperation(storedVal, val, expr->operationType);
         return builder.CreateStore(val, ptr);
     }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
+        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING))){
+            createRuntimeTypeCheck(curModule->getFunction("isString"), field,
+                                   "setHashmapV", "Expected a string, got {}", expr->dbgInfo.accessor);
+        }
 
+        collection = builder.CreateCall(curModule->getFunction("decodeObj"), collection);
+        field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
+        if(expr->operationType == typedAST::SetType::SET){
+            builder.CreateCall(curModule->getFunction("hashmapSetV"), {collection, field, val});
+            return val;
+        }
+        auto storedVal = builder.CreateCall(curModule->getFunction("hashmapGetV"), {collection, field});
+        if(!exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))){
+            createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
+                                   "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+        }
+        createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
+                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+        val = decoupleSetOperation(storedVal, val, expr->operationType);
+        builder.CreateCall(curModule->getFunction("hashmapSetV"), {collection, field, val});
+        return val;
     }
+
 }
 
 llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
@@ -1533,30 +1566,53 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
 }
 
 // Array bounds checking
-void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index){
+void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg){
     llvm::Value* upperbound = builder.CreateCall(curModule->getFunction("getArrSize"), arr);
-    auto cond = builder.CreateICmpUGT(index, upperbound);
-    // TODO: do cond checking and throw error
+    auto cond = builder.CreateICmpUGE(index, upperbound);
+    auto cond2 = builder.CreateICmpULT(index, builder.getInt64(0));
+    cond = builder.CreateOr(cond, cond2);
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "executeBBName");
+
+    builder.CreateCondBr(cond, errorBB, executeOpBB);
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    createTyErr(errMsg, index, dbg);
+    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
+    builder.CreateBr(executeOpBB);
+
+    F->insert(F->end(), executeOpBB);
+    builder.SetInsertPoint(executeOpBB);
 }
 
-// TODO: do this shit
 llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy){
+    auto num1 = builder.CreateBitCast(storedVal, builder.getDoubleTy());
+    auto num2 = builder.CreateBitCast(newVal, builder.getDoubleTy());
     switch(opTy){
         case typedAST::SetType::ADD_SET:
+            return builder.CreateFAdd(num1, num2);
         case typedAST::SetType::SUB_SET:
-            break;
+            return builder.CreateFSub(num1, num2);
         case typedAST::SetType::MUL_SET:
-            break;
+            return builder.CreateFMul(num1, num2);
         case typedAST::SetType::DIV_SET:
-            break;
+            return builder.CreateFDiv(num1, num2);
         case typedAST::SetType::REM_SET:
-            break;
+            return builder.CreateFRem(num1, num2);
         case typedAST::SetType::AND_SET:
-            break;
+            num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
+            num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
+            return builder.CreateAnd(num1, num2);
         case typedAST::SetType::OR_SET:
-            break;
+            num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
+            num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
+            return builder.CreateOr(num1, num2);
         case typedAST::SetType::XOR_SET:
-            break;
+            num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
+            num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
+            return builder.CreateXor(num1, num2);
     }
 }
 

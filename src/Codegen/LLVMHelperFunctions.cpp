@@ -255,4 +255,13 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
     }();
+    [&]{
+        llvm::Function* f = createFunc("isString",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        auto arg = f->getArg(0);
+
+        auto cond1 = builder.CreateCall(module->getFunction("isObj"));
+        auto const0 = builder.getInt64(+ObjType::STRING);
+
+        llvm::verifyFunction(*f);
+    }();
 }

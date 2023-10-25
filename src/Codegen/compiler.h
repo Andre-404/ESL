@@ -118,7 +118,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
         // Array optimization
-        void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index);
+        void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy);
 
         // Class helpers
