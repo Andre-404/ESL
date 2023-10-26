@@ -310,80 +310,112 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
 llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
+    bool optArrIndex = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
+    bool optMapString = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING));
 
     if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
-        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
-            createRuntimeTypeCheck(curModule->getFunction("isNum"), field,
-                                   "getArrAddr", "Expected a number, got {}", expr->dbgInfo.accessor);
-        }
-        field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
-        field = builder.CreateFPToUI(field, builder.getInt64Ty());
-        createArrBoundsCheck(collection, field, "Index {} outside of array range.", expr->dbgInfo.accessor);
-        collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
-        auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
-        return builder.CreateLoad(builder.getInt64Ty(), ptr);
+        return getArrElement(collection, field, optArrIndex, expr->dbgInfo.accessor);
 
     }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
-        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING))){
-            createRuntimeTypeCheck(curModule->getFunction("isString"), field,
-                                   "getHashmapV", "Expected a string, got {}", expr->dbgInfo.accessor);
-        }
-        collection = builder.CreateCall(curModule->getFunction("decodeObj"), collection);
-        field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
-        return builder.CreateCall(curModule->getFunction("hashmapGetV"), {collection, field});
+        return getMapElement(collection, field, optMapString, expr->dbgInfo.accessor);
     }
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "isArr", F);
+    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "isMap");
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+
+    auto cond1 = builder.CreateBitCast(builder.CreateCall(curModule->getFunction("isArray"), collection), builder.getInt8Ty());
+    auto cond2 = builder.CreateBitCast(builder.CreateCall(curModule->getFunction("isHashmap"), collection), builder.getInt8Ty());
+    cond2 = builder.CreateShl(cond2, 2, "shl", true, true);
+    auto num = builder.CreateOr(cond1, cond2);
+    auto _switch = builder.CreateSwitch(num, errorBB, 3);
+    _switch->addCase(builder.getInt8(1), isArray);
+    _switch->addCase(builder.getInt8(2), isHashmap);
+
+    builder.SetInsertPoint(isArray);
+    llvm::Value* arrVal = getArrElement(collection, field, optArrIndex, expr->dbgInfo.accessor);
+
+    isArray = builder.GetInsertBlock();
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), isHashmap);
+    builder.SetInsertPoint(isHashmap);
+    llvm::Value* mapVal =  getMapElement(collection, field, optMapString, expr->dbgInfo.accessor);
+
+    isHashmap = builder.GetInsertBlock();
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), errorBB);
+    builder.SetInsertPoint(errorBB);
+    createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2, "collectionget");
+    phi->addIncoming(arrVal, isArray);
+    phi->addIncoming(mapVal, isHashmap);
+    return phi;
+
 }
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
     llvm::Value* val = expr->toStore->codegen(this);
+    bool optArrIndex = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
+    bool optMapString = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING));
+    bool optRhs = exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER));
 
     if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
-        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER))){
-            createRuntimeTypeCheck(curModule->getFunction("isNum"), field,
-                                   "getArrAddr", "Expected a number, got {}", expr->dbgInfo.accessor);
-        }
-        field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
-        field = builder.CreateFPToUI(field, builder.getInt64Ty());
-        createArrBoundsCheck(collection, field, "Index {} outside of array range.", expr->dbgInfo.accessor);
-        collection = builder.CreateCall(curModule->getFunction("getArrPtr"), collection);
-        auto ptr = builder.CreateGEP(builder.getInt64Ty(), collection, field);
-        if(expr->operationType == typedAST::SetType::SET){
-            return builder.CreateStore(val, ptr);
-        }
-        auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
-        if(!exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))){
-            createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
-                                   "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
-        }
-        createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
-                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
-        val = decoupleSetOperation(storedVal, val, expr->operationType);
-        return builder.CreateStore(val, ptr);
+        return setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,
+                             expr->dbgInfo.op);
     }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
-        if(!exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING))){
-            createRuntimeTypeCheck(curModule->getFunction("isString"), field,
-                                   "setHashmapV", "Expected a string, got {}", expr->dbgInfo.accessor);
-        }
-
-        collection = builder.CreateCall(curModule->getFunction("decodeObj"), collection);
-        field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
-        if(expr->operationType == typedAST::SetType::SET){
-            builder.CreateCall(curModule->getFunction("hashmapSetV"), {collection, field, val});
-            return val;
-        }
-        auto storedVal = builder.CreateCall(curModule->getFunction("hashmapGetV"), {collection, field});
-        if(!exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))){
-            createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
-                                   "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
-        }
-        createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
-                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
-        val = decoupleSetOperation(storedVal, val, expr->operationType);
-        builder.CreateCall(curModule->getFunction("hashmapSetV"), {collection, field, val});
-        return val;
+        return setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,
+                             expr->dbgInfo.op);
     }
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "isArr", F);
+    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "isMap");
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
+    auto cond1 = builder.CreateBitCast(builder.CreateCall(curModule->getFunction("isArray"), collection), builder.getInt8Ty());
+    auto cond2 = builder.CreateBitCast(builder.CreateCall(curModule->getFunction("isHashmap"), collection), builder.getInt8Ty());
+    cond2 = builder.CreateShl(cond2, 2, "shl", true, true);
+    auto num = builder.CreateOr(cond1, cond2);
+    auto _switch = builder.CreateSwitch(num, errorBB, 3);
+    _switch->addCase(builder.getInt8(1), isArray);
+    _switch->addCase(builder.getInt8(2), isHashmap);
+
+    builder.SetInsertPoint(isArray);
+    llvm::Value* arrVal = setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,
+                                        expr->dbgInfo.op);
+
+    isArray = builder.GetInsertBlock();
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), isHashmap);
+    builder.SetInsertPoint(isHashmap);
+    llvm::Value* mapVal = setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,
+                                         expr->dbgInfo.op);
+
+    isHashmap = builder.GetInsertBlock();
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), errorBB);
+    builder.SetInsertPoint(errorBB);
+    createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2, "collectionset");
+    phi->addIncoming(arrVal, isArray);
+    phi->addIncoming(mapVal, isHashmap);
+    return phi;
 }
 
 llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
@@ -434,8 +466,8 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 
     llvm::Value* closureVal = expr->callee->codegen(this);
 
-    createRuntimeTypeCheck(curModule->getFunction("isClosure"), closureVal,
-                           "Expected a function for a callee, got '{}'.", "call", expr->dbgInfo.paren1);
+    createRuntimeTypeCheck(curModule->getFunction("isClosure"), closureVal, "call",
+                           "Expected a function for a callee, got '{}'.", expr->dbgInfo.paren1);
 
     auto closurePtr = builder.CreateCall(curModule->getFunction("decodeClosure"), closureVal);
     auto argNumPtr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, {0, 1});
@@ -1289,7 +1321,7 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value
                                       string errMsg, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "executeBBName");
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
 
     auto cond = builder.CreateCall(typeCheckFunc, val);
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
@@ -1536,7 +1568,7 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
     if(typeEnv[expr->callee->exprType].size() != 1) return nullptr;
     if(typeEnv[expr->callee->exprType][0]->type != types::TypeFlag::FUNCTION) return nullptr;
 
-    llvm::Function* fn;
+    llvm::Function* fn = nullptr;
     auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType][0]);
     // If this is a native function then it's signature is stored in nativeFunctions
     if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
@@ -1614,6 +1646,68 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateXor(num1, num2);
     }
+}
+
+llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool opt, Token dbg){
+    if(!opt) createRuntimeTypeCheck(curModule->getFunction("isNum"), field,
+                                    "getArrAddr", "Expected a number, got {}", dbg);
+
+    field = builder.CreateCall(curModule->getFunction("decodeNum"), field);
+    field = builder.CreateFPToUI(field, builder.getInt64Ty());
+    createArrBoundsCheck(arr, field, "Index {} outside of array range.", dbg);
+    arr = builder.CreateCall(curModule->getFunction("getArrPtr"), arr);
+    auto ptr = builder.CreateGEP(builder.getInt64Ty(), arr, field);
+    return builder.CreateLoad(builder.getInt64Ty(), ptr);
+}
+
+llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg){
+    if(!opt) createRuntimeTypeCheck(curModule->getFunction("isString"), field,
+                               "getHashmapV", "Expected a string, got {}", dbg);
+    map = builder.CreateCall(curModule->getFunction("decodeObj"), map);
+    field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
+    return builder.CreateCall(curModule->getFunction("hashmapGetV"), {map, field});
+}
+
+llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
+                                     typedAST::SetType opTy, Token dbg){
+    if(!optIdx) createRuntimeTypeCheck(curModule->getFunction("isNum"), index,
+                                    "getArrAddr", "Expected a number, got {}", dbg);
+    index = builder.CreateCall(curModule->getFunction("decodeNum"), index);
+    index = builder.CreateFPToUI(index, builder.getInt64Ty());
+    createArrBoundsCheck(arr, index, "Index {} outside of array range.", dbg);
+    arr = builder.CreateCall(curModule->getFunction("getArrPtr"), arr);
+    auto ptr = builder.CreateGEP(builder.getInt64Ty(), arr, index);
+    if(opTy == typedAST::SetType::SET){
+        return builder.CreateStore(val, ptr);
+    }
+    auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
+    if(!optVal) createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
+                               "valIsNum", "Expected a number, got {}", dbg);
+
+    createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
+                           "valIsNum", "Expected a number, got {}", dbg);
+    val = decoupleSetOperation(storedVal, val, opTy);
+    return builder.CreateStore(val, ptr);
+}
+llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
+                                     typedAST::SetType opTy, Token dbg){
+    if(!optIdx) createRuntimeTypeCheck(curModule->getFunction("isString"), field,
+                               "setHashmapV", "Expected a string, got {}", dbg);
+
+    map = builder.CreateCall(curModule->getFunction("decodeObj"), map);
+    field = builder.CreateCall(curModule->getFunction("decodeObj"), field);
+    if(opTy == typedAST::SetType::SET){
+        builder.CreateCall(curModule->getFunction("hashmapSetV"), {map, field, val});
+        return val;
+    }
+    auto storedVal = builder.CreateCall(curModule->getFunction("hashmapGetV"), {map, field});
+    if(!optVal) createRuntimeTypeCheck(curModule->getFunction("isNum"), val,
+                               "valIsNum", "Expected a number, got {}", dbg);
+    createRuntimeTypeCheck(curModule->getFunction("isNum"), storedVal,
+                           "valIsNum", "Expected a number, got {}", dbg);
+    val = decoupleSetOperation(storedVal, val, opTy);
+    builder.CreateCall(curModule->getFunction("hashmapSetV"), {map, field, val});
+    return val;
 }
 
 // Misc

@@ -120,6 +120,10 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Array optimization
         void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy);
+        llvm::Value* getArrElement(llvm::Value* arr, llvm::Value* index, bool opt, Token dbg);
+        llvm::Value* getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg);
+        llvm::Value* setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal, typedAST::SetType opTy, Token dbg);
+        llvm::Value* setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal, typedAST::SetType opTy, Token dbg);
 
         // Class helpers
         int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
