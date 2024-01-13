@@ -1,5 +1,4 @@
 #pragma once
-#include "../AST/ASTDefs.h"
 #include "../AST/ASTProbe.h"
 #include "macroExpander.h"
 #include <initializer_list>

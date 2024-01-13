@@ -295,18 +295,6 @@ void SemanticAnalyzer::visitStructLiteralExpr(AST::StructLiteral* expr) {
     }
 }
 
-void SemanticAnalyzer::visitSuperExpr(AST::SuperExpr* expr) {
-    if (currentClass == nullptr) {
-        error(expr->methodName, "Can't use 'super' outside of a class.");
-        createSemanticToken(expr->methodName, "method");
-    }
-    else if (!currentClass->superclass) {
-        error(expr->methodName, "Can't use 'super' in a class with no superclass.");
-    }
-    resolveSuperClassField(expr->methodName);
-    createSemanticToken(expr->methodName, "method");
-}
-
 void SemanticAnalyzer::visitLiteralExpr(AST::LiteralExpr* expr) {
     switch (expr->token.type) {
         case TokenType::IDENTIFIER: {
@@ -725,29 +713,6 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
         }
         return true;
     }
-    else if (expr->callee->type == AST::ASTType::SUPER) {
-        auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-            createSemanticToken(superCall->methodName, "method");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        resolveSuperClassField(superCall->methodName);
-        createSemanticToken(superCall->methodName, "method");
-
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        for (AST::ASTNodePtr arg : expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
     // Class methods can be accessed without 'this' keyword inside of methods and called
     return resolveImplicitObjectField(expr);
 }
@@ -770,29 +735,6 @@ bool SemanticAnalyzer::invoke(AST::AsyncExpr* expr) {
         } else createSemanticToken(name, "method");
 
         for (AST::ASTNodePtr arg: expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
-    else if (expr->callee->type == AST::ASTType::SUPER) {
-        auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-            createSemanticToken(superCall->methodName, "method");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        resolveSuperClassField(superCall->methodName);
-        createSemanticToken(superCall->methodName, "method");
-
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        for (AST::ASTNodePtr arg : expr->args) {
             arg->accept(this);
         }
         return true;

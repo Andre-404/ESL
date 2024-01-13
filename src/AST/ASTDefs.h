@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 #include "../moduleDefs.h"
 
 namespace AST {
@@ -19,7 +18,6 @@ namespace AST {
 		AWAIT,
 		STRUCT,
 		LITERAL,
-		SUPER,
 		FUNC_LITERAL,
 		MODULE_ACCESS,
         MACRO,
@@ -54,7 +52,6 @@ namespace AST {
 	class AwaitExpr;
 	class StructLiteral;
 	class LiteralExpr;
-	class SuperExpr;
 	class FuncLiteral;
 	class ModuleAccessExpr;
     class MacroExpr;
@@ -93,7 +90,6 @@ namespace AST {
 		virtual void visitArrayLiteralExpr(ArrayLiteralExpr* expr) = 0;
 		virtual void visitStructLiteralExpr(StructLiteral* expr) = 0;
 		virtual void visitLiteralExpr(LiteralExpr* expr) = 0;
-		virtual void visitSuperExpr(SuperExpr* expr) = 0;
 		virtual void visitFuncLiteral(FuncLiteral* expr) = 0;
 		virtual void visitModuleAccessExpr(ModuleAccessExpr* expr) = 0;
         virtual void visitMacroExpr(MacroExpr* expr) = 0;
@@ -317,23 +313,6 @@ namespace AST {
 		}
 		void accept(Visitor* vis) override {
 			vis->visitFieldAccessExpr(this);
-		}
-	};
-
-	class SuperExpr : public ASTNode {
-	public:
-        Token keyword;
-        Token accessor;
-		Token methodName;
-
-		SuperExpr(Token _keyword, Token _accessor, Token _methodName) {
-			methodName = _methodName;
-            keyword = _keyword;
-            accessor = _accessor;
-			type = ASTType::SUPER;
-		}
-		void accept(Visitor* vis) override {
-			vis->visitSuperExpr(this);
 		}
 	};
 

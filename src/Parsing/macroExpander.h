@@ -1,6 +1,5 @@
 #pragma once
 #include "../AST/ASTDefs.h"
-#include "parser.h"
 #include "../Includes/fmt/format.h"
 #include <map>
 #include <queue>
@@ -129,7 +128,6 @@ namespace AST {
         void visitStructLiteralExpr(StructLiteral* expr) override;
         void visitLiteralExpr(LiteralExpr* expr) override;
         void visitFuncLiteral(FuncLiteral* expr) override;
-        void visitSuperExpr(SuperExpr* expr) override;
         void visitModuleAccessExpr(ModuleAccessExpr* expr) override;
         void visitMacroExpr(MacroExpr* expr) override;
 

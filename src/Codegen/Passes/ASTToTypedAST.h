@@ -46,7 +46,6 @@ namespace typedASTParser{
         // For closures
         CurrentChunkInfo* enclosing;
         std::shared_ptr<typedAST::Function> func;
-        types::tyVarIdx retTy;
         FuncType type;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
@@ -66,14 +65,13 @@ namespace typedASTParser{
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
         std::unordered_map<string, std::pair<typedAST::ClassMethod, int>> methods;
-        const types::tyVarIdx classTypeIdx;
         std::shared_ptr<types::ClassType> classTy;
         const string mangledName;
 
         std::shared_ptr<ClassChunkInfo> parent;
 
         ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classTypeIdx)
-            : mangledName(_name), classTypeIdx(_classTypeIdx){
+            : mangledName(_name){
             parent = nullptr;
             classTy = _classTy;
         }
@@ -109,7 +107,7 @@ namespace typedASTParser{
         std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
         run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
 
-        vector<vector<types::tyPtr>> getTypeEnv();
+        vector<types::tyPtr> getTypeEnv();
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -126,7 +124,6 @@ namespace typedASTParser{
         void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
         void visitStructLiteralExpr(AST::StructLiteral* expr) override;
         void visitLiteralExpr(AST::LiteralExpr* expr) override;
-        void visitSuperExpr(AST::SuperExpr* expr) override;
         void visitFuncLiteral(AST::FuncLiteral* expr) override;
         void visitModuleAccessExpr(AST::ModuleAccessExpr* expr) override;
         void visitMacroExpr(AST::MacroExpr* expr) override;
@@ -174,13 +171,13 @@ namespace typedASTParser{
         varPtr checkSymbol(const Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
         varPtr resolveGlobal(const Token symbol, const bool canAssign);
-        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx typeConstraint);
+        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx defaultTy);
         void defineGlobalVar(const string& name, AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr declareLocalVar(const AST::ASTVar& name, const types::tyVarIdx typeConstraint);
+        varPtr declareLocalVar(const AST::ASTVar& name, const types::tyVarIdx defaultTy);
         void defineLocalVar(AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr addLocal(const AST::ASTVar& name, const types::tyVarIdx typeConstraint);
+        varPtr addLocal(const AST::ASTVar& name, const types::tyVarIdx defaultTy);
         int resolveLocal(const Token name);
 
         int resolveUpvalue(const Token name);
@@ -197,12 +194,12 @@ namespace typedASTParser{
 
         // Classes and methods
         typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
-                                           std::shared_ptr<types::FunctionType> fnTy, const types::tyVarIdx retTy);
+                                           std::shared_ptr<types::FunctionType> fnTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
                                                                  const Token paren1, const Token paren2);
         void detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides);
         void processMethods(const string className, vector<AST::ClassMethod>& methods,
-                            vector<std::shared_ptr<types::FunctionType>>& methodTys, vector<types::tyVarIdx>& retTys);
+                            vector<std::shared_ptr<types::FunctionType>>& methodTys);
 
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(const Token name);

@@ -108,10 +108,6 @@ void ClosureConverter::visitStructLiteralExpr(AST::StructLiteral* expr) {
     }
 }
 
-void ClosureConverter::visitSuperExpr(AST::SuperExpr* expr) {
-    namedVar(Token(TokenType::IDENTIFIER, "this"));
-}
-
 void ClosureConverter::visitLiteralExpr(AST::LiteralExpr* expr) {
     switch (expr->token.type) {
         case TokenType::THIS: {

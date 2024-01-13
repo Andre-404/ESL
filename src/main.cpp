@@ -32,9 +32,9 @@ int main(int argc, char* argv[]) {
     // For ease of use during development
     #ifdef DEBUG_MODE
     #if defined(_WIN32) || defined(WIN32)
-    path = "C:\\Temp\\mergeSort.esl";
+    path = "C:\\Temp\\ESL-prez\\mergeSort.esl";
     #else
-    path = "/mnt/c/Temp/main.esl";
+    path = "/mnt/c/Temp/ESL-prez/main.esl";
     #endif
     flag = "-run";
     #else
@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
         auto res = transformer.run(modules, finder.generateFreevarMap());
         auto env = transformer.getTypeEnv();
 
-        compileCore::Compiler compiler(res.first, res.second, env);
+        //compileCore::Compiler compiler(res.first, res.second, env);
 
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) {

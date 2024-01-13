@@ -33,6 +33,6 @@ typedef uint64_t Value;
 
 //#define AST_DEBUG
 //#define COMPILER_DEBUG
-//#define DEBUG_MODE
+#define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
 //#define DEBUG_TRACE_EXECUTION

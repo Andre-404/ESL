@@ -15,7 +15,6 @@ void AST::ASTProbe::visitArrayLiteralExpr(ArrayLiteralExpr* expr) {}
 void AST::ASTProbe::visitStructLiteralExpr(StructLiteral* expr) {}
 void AST::ASTProbe::visitLiteralExpr(LiteralExpr* expr) { probedToken = expr->token; }
 void AST::ASTProbe::visitFuncLiteral(FuncLiteral* expr) {}
-void AST::ASTProbe::visitSuperExpr(SuperExpr* expr) {}
 void AST::ASTProbe::visitModuleAccessExpr(ModuleAccessExpr* expr) {}
 void AST::ASTProbe::visitMacroExpr(MacroExpr* expr) {}
 

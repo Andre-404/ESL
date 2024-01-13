@@ -1,3 +1,4 @@
+#pragma once
 #include <array>
 #include "../common.h"
 #include "../AST/ASTDefs.h"
@@ -218,8 +219,6 @@ namespace SemanticAnalysis {
         void visitStructLiteralExpr(AST::StructLiteral *expr) override;
 
         void visitLiteralExpr(AST::LiteralExpr *expr) override;
-
-        void visitSuperExpr(AST::SuperExpr *expr) override;
 
         void visitFuncLiteral(AST::FuncLiteral *expr) override;
 

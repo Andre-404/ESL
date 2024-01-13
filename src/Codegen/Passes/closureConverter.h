@@ -57,7 +57,6 @@ namespace closureConversion{
         void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
         void visitStructLiteralExpr(AST::StructLiteral* expr) override;
         void visitLiteralExpr(AST::LiteralExpr* expr) override;
-        void visitSuperExpr(AST::SuperExpr* expr) override;
         void visitFuncLiteral(AST::FuncLiteral* expr) override;
         void visitModuleAccessExpr(AST::ModuleAccessExpr* expr) override;
         void visitMacroExpr(AST::MacroExpr* expr) override;

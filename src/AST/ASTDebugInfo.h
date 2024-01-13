@@ -219,13 +219,4 @@ namespace AST {
 
         InstGetDebugInfo(const Token &field, const Token &accessor) : field(field), accessor(accessor) {}
     };
-
-    struct SuperExprDebugInfo{
-        Token keyword;
-        Token accessor;
-        Token method;
-
-        SuperExprDebugInfo(const Token &keyword, const Token &accessor, const Token &method)
-        : keyword(keyword), accessor(accessor), method(method) {}
-    };
 }

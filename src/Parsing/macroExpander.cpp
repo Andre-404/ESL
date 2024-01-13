@@ -1,4 +1,5 @@
 #include "macroExpander.h"
+#include "parser.h"
 #include <algorithm>
 
 AST::MacroExpander::MacroExpander(Parser* _parser) {
@@ -70,7 +71,6 @@ void AST::MacroExpander::visitFuncLiteral(FuncLiteral* expr) {
         expand(line);
     }
 }
-void AST::MacroExpander::visitSuperExpr(SuperExpr* expr) {}
 void AST::MacroExpander::visitModuleAccessExpr(ModuleAccessExpr* expr) {}
 
 void AST::MacroExpander::visitMacroExpr(MacroExpr* expr) {

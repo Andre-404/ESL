@@ -1,3 +1,4 @@
+#pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include "valueHelpersInline.cpp"

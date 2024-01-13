@@ -23,7 +23,6 @@ namespace AST {
 		void visitStructLiteralExpr(StructLiteral* expr);
 		void visitLiteralExpr(LiteralExpr* expr);
 		void visitFuncLiteral(FuncLiteral* expr);
-		void visitSuperExpr(SuperExpr* expr);
 		void visitModuleAccessExpr(ModuleAccessExpr* expr);
         void visitMacroExpr(MacroExpr* expr);
 

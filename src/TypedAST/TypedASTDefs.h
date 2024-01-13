@@ -55,7 +55,6 @@ namespace typedAST{
         CLASS_DECL,
         INST_SET,
         INST_GET,
-        INST_SUPER_GET,
 
         // Misc
         BLOCK_EDGE
@@ -89,7 +88,6 @@ namespace typedAST{
     class ClassDecl;
     class InstGet;
     class InstSet;
-    class InstSuperGet;
     class ScopeEdge;
 
     class TypedASTVisitor{
@@ -122,7 +120,6 @@ namespace typedAST{
         virtual void visitSwitchStmt(SwitchStmt* expr) = 0;
         virtual void visitClassDecl(ClassDecl* expr) = 0;
         virtual void visitInstGet(InstGet* expr) = 0;
-        virtual void visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual void visitInstSet(InstSet* expr) = 0;
         virtual void visitScopeBlock(ScopeEdge* expr) = 0;
     };
@@ -157,7 +154,6 @@ namespace typedAST{
         virtual llvm::Value* visitSwitchStmt(SwitchStmt* expr) = 0;
         virtual llvm::Value* visitClassDecl(ClassDecl* expr) = 0;
         virtual llvm::Value* visitInstGet(InstGet* expr) = 0;
-        virtual llvm::Value* visitInstSuperGet(InstSuperGet* expr) = 0;
         virtual llvm::Value* visitInstSet(InstSet* expr) = 0;
         virtual llvm::Value* visitScopeBlock(ScopeEdge* expr) = 0;
     };
@@ -193,17 +189,14 @@ namespace typedAST{
     class VarDecl : public TypedASTNode{
     public:
         VarType varType;
-        // Constrained by the type given in constructor
-        bool typeConstrained;
         types::tyVarIdx possibleTypes;
         AST::VarDeclDebugInfo dbgInfo;
         uInt64 uuid;
         static inline uInt64 instanceCount = 0;
 
-        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes, bool _typeConstrained = false){
+        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes){
             varType = _varType;
             uuid = instanceCount++;
-            typeConstrained = _typeConstrained;
             possibleTypes = _possibleTypes;
             type = NodeType::VAR_DECL;
         }
@@ -542,18 +535,13 @@ namespace typedAST{
         exprPtr inst;
         vector<exprPtr> args;
         string field;
-        types::tyVarIdx classTy;
-        // Pointer to a variable which holds the class
-        std::shared_ptr<typedAST::VarDecl> klass;
         AST::InvokeExprDebugInfo dbgInfo;
 
         InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, types::tyVarIdx _exprTy,
-                   AST::InvokeExprDebugInfo _dbgInfo, std::shared_ptr<typedAST::VarDecl> _klass = nullptr) : dbgInfo(_dbgInfo){
+                   AST::InvokeExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             inst = _inst;
             field = _field;
             args = _args;
-            // Used for super invokes
-            klass = _klass;
             // TODO: actually do type inference on this
             exprType = _exprTy;
             type = NodeType::INVOKE;
@@ -905,31 +893,6 @@ namespace typedAST{
         }
         llvm::Value* codegen(TypedASTCodegen* vis) override{
             return vis->visitInstGet(this);
-        }
-    };
-    class InstSuperGet : public TypedASTExpr{
-    public:
-        exprPtr instance;
-        // Pointer to a variable which holds the class
-        std::shared_ptr<typedAST::VarDecl> klass;
-        string method;
-        AST::SuperExprDebugInfo dbgInfo;
-
-        InstSuperGet(exprPtr _instance, string _method, std::shared_ptr<typedAST::VarDecl> _klass, types::tyVarIdx methodTy,
-                     AST::SuperExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
-            instance = _instance;
-            method = _method;
-            klass = _klass;
-            // ASTToTypedAST checks if class ty contains method
-            exprType = methodTy;
-            type = NodeType::INST_SUPER_GET;
-        }
-        ~InstSuperGet() {};
-        void accept(TypedASTVisitor* vis) override{
-            vis->visitInstSuperGet(this);
-        }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
-            return vis->visitInstSuperGet(this);
         }
     };
     class InstSet : public TypedASTExpr{

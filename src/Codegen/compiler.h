@@ -57,7 +57,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* visitSwitchStmt(typedAST::SwitchStmt* stmt) override;
         llvm::Value* visitClassDecl(typedAST::ClassDecl* stmt) override;
         llvm::Value* visitInstGet(typedAST::InstGet* expr) override;
-        llvm::Value* visitInstSuperGet(typedAST::InstSuperGet* expr) override;
         llvm::Value* visitInstSet(typedAST::InstSet* expr) override;
         llvm::Value* visitScopeBlock(typedAST::ScopeEdge* stmt) override;
 		#pragma endregion 

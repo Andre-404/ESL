@@ -740,9 +740,6 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
 llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
 
 }
-llvm::Value* Compiler::visitInstSuperGet(typedAST::InstSuperGet* expr) {
-
-}
 llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
 
 }

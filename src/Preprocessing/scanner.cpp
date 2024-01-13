@@ -18,7 +18,6 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"advance", TokenType::ADVANCE},
         {"or", TokenType::OR},
         {"return", TokenType::RETURN},
-        {"super", TokenType::SUPER},
         {"switch", TokenType::SWITCH},
         {"let", TokenType::LET},
         {"while", TokenType::WHILE},

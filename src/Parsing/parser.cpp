@@ -46,12 +46,6 @@ namespace AST {
 
     ASTNodePtr parseLiteral(Parser* parser, const Token token) {
         switch (token.type) {
-            // Super is always followed by a .
-            case TokenType::SUPER: {
-                auto accessor = parser->consume(TokenType::DOT, "Expected '.' after super.");
-                Token ident = parser->consume(TokenType::IDENTIFIER, "Expect superclass method name.");
-                return make_shared<SuperExpr>(token, accessor, ident);
-            }
             case TokenType::LEFT_PAREN: {
                 // Grouping can contain an expr of any precedence
                 ASTNodePtr expr = parser->expression();
@@ -346,7 +340,6 @@ Parser::Parser() {
     addPrefix(TokenType::LEFT_PAREN, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::LEFT_BRACKET, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::LEFT_BRACE, Precedence::PRIMARY, parseLiteral);
-    addPrefix(TokenType::SUPER, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::NEW, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::THIS, Precedence::PRIMARY, parseLiteral);

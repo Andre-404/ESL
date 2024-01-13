@@ -1,5 +1,4 @@
 #include "objects.h"
-#include "../MemoryManagment/garbageCollector.h"
 #include "../Includes/fmt/format.h"
 #include "../Codegen/valueHelpersInline.cpp"
 
