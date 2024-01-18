@@ -25,7 +25,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<vector<types::tyPtr>>& _tyEnv);
+		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv);
         void compile(std::shared_ptr<typedAST::Function> _code);
 
 		#pragma region Visitor pattern
@@ -62,7 +62,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 		#pragma endregion 
 	private:
         // Collapsed type environment, "exprType" inside of expressions is an index into a list of types in the environment
-        vector<vector<types::tyPtr>> typeEnv;
+        vector<types::tyPtr> typeEnv;
 
         // Integers are uuids of VarDecl instances
         ankerl::unordered_dense::map<uInt64, llvm::Value*> variables;
@@ -88,10 +88,10 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         #pragma region Helpers
         // Compile time type checking
-        bool exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty);
-        bool exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
-        bool exprWithoutType(const typedExprPtr expr, const types::tyPtr ty);
-        bool exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
+        bool exprIsType(const typedExprPtr expr, const types::tyPtr ty);
+        bool exprIsType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
+        bool exprCouldBeType(const typedExprPtr expr, const types::tyPtr ty);
+        bool exprCouldBeType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
 
         // Runtime type checking
         void createTyErr(const string err, llvm::Value* const val, const Token token);

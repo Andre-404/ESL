@@ -15,7 +15,7 @@
 
 using namespace compileCore;
 
-Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<vector<types::tyPtr>>& _tyEnv)
+Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
@@ -163,7 +163,7 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     llvm::Value* rhs = expr->rhs->codegen(this);
 
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
-    if(!exprConstrainedToType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
+    if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
         createRuntimeTypeCheck(curModule->getFunction("isNum"), lhs, rhs, "binopexecute",
                                "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
@@ -221,7 +221,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     llvm::Value* rhs = expr->rhs->codegen(this);
 
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
-    if(!exprConstrainedToType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
+    if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
         createRuntimeTypeCheck(curModule->getFunction("isNum"), lhs, rhs, "binopexecute",
                                "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
@@ -246,7 +246,7 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
     if(expr->opType == UnaryOp::NEG){
         llvm::Value* rhs = expr->rhs->codegen(this);
         // If type is known to be a bool skip the runtime check and just execute the expr
-        if(exprConstrainedToType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
+        if(exprIsType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
             return builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
         }
 
@@ -310,13 +310,13 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
 llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
-    bool optArrIndex = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
-    bool optMapString = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING));
+    bool optArrIndex = exprIsType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
+    bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
 
-    if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
+    if(exprIsType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
         return getArrElement(collection, field, optArrIndex, expr->dbgInfo.accessor);
 
-    }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
+    }else if(exprIsType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
         return getMapElement(collection, field, optMapString, expr->dbgInfo.accessor);
     }
     llvm::Function *F = builder.GetInsertBlock()->getParent();
@@ -360,18 +360,19 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     return phi;
 
 }
+// TODO: this only works when stored value is a number, what about strings?
 llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
     llvm::Value* val = expr->toStore->codegen(this);
-    bool optArrIndex = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
-    bool optMapString = exprConstrainedToType(expr->field, types::getBasicType(types::TypeFlag::STRING));
-    bool optRhs = exprConstrainedToType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER));
+    bool optArrIndex = exprIsType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
+    bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
+    bool optRhs = exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER));
 
-    if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
+    if(exprIsType(expr->collection, types::getBasicType(types::TypeFlag::ARRAY))){
         return setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,
                              expr->dbgInfo.op);
-    }else if(exprConstrainedToType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
+    }else if(exprIsType(expr->collection, types::getBasicType(types::TypeFlag::HASHMAP))){
         return setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,
                              expr->dbgInfo.op);
     }
@@ -422,7 +423,7 @@ llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
     auto condtmp = expr->cond->codegen(this);
     llvm::Value* cond = nullptr;
     // If condition is known to be a boolean the isNull check can be skipped
-    if(exprConstrainedToType(expr->cond, types::getBasicType(types::TypeFlag::BOOL))){
+    if(exprIsType(expr->cond, types::getBasicType(types::TypeFlag::BOOL))){
         cond = builder.CreateCall(curModule->getFunction("decodeBool"), condtmp);
     }
     else cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
@@ -649,7 +650,7 @@ llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
 llvm::Value* Compiler::visitIfStmt(typedAST::IfStmt* stmt) {
     auto condtmp = stmt->cond->codegen(this);
     llvm::Value* cond;
-    if(exprConstrainedToType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL))){
+    if(exprIsType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL))){
         cond = builder.CreateCall(curModule->getFunction("decodeBool"), condtmp);
     }else cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
 
@@ -676,7 +677,7 @@ llvm::Value* Compiler::visitIfStmt(typedAST::IfStmt* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
-    bool canOptimize = stmt->cond ? exprConstrainedToType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL)) : true;
+    bool canOptimize = stmt->cond ? exprIsType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL)) : true;
     auto decodeFn = canOptimize ? curModule->getFunction("decodeBool") : curModule->getFunction("isTruthy");
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
@@ -1281,24 +1282,18 @@ void Compiler::error(Token token, const string& msg) noexcept(false) {
 }*/
 
 // Compile time type checking
-bool Compiler::exprConstrainedToType(const typedExprPtr expr, const types::tyPtr ty){
-    if(typeEnv[expr->exprType].size() == 1){
-        // If this expression is constrained to a single type it's safe to do typeArr[0]
-        return typeEnv[expr->exprType][0] == ty;
-    }
-    return false;
+bool Compiler::exprIsType(const typedExprPtr expr, const types::tyPtr ty){
+    return typeEnv[expr->exprType] == ty;
 }
-bool Compiler::exprConstrainedToType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
-    return exprConstrainedToType(expr1, ty) && exprConstrainedToType(expr2, ty);
+bool Compiler::exprIsType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
+    return exprIsType(expr1, ty) && exprIsType(expr2, ty);
 }
-bool Compiler::exprWithoutType(const typedExprPtr expr, const types::tyPtr ty){
-    for(auto type : typeEnv[expr->exprType]){
-        if(type->type == types::TypeFlag::ANY || type == ty) return false;
-    }
-    return true;
+
+bool Compiler::exprCouldBeType(const typedExprPtr expr, const types::tyPtr ty){
+    return typeEnv[expr->exprType] != ty && typeEnv[expr->exprType] != types::getBasicType(types::TypeFlag::ANY);
 }
-bool Compiler::exprWithoutType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
-    return exprWithoutType(expr1, ty) && exprWithoutType(expr2, ty);
+bool Compiler::exprCouldBeType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty){
+    return exprCouldBeType(expr1, ty) || exprCouldBeType(expr2, ty);
 }
 
 // Runtime type checking
@@ -1358,11 +1353,11 @@ llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExp
     llvm::Function *F = builder.GetInsertBlock()->getParent();
 
     // If types of both lhs and rhs are known unnecessary runtime checks are skipped
-    if(exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
+    if(exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
         auto castlhs = builder.CreateBitCast(lhs, builder.getDoubleTy());
         auto castrhs = builder.CreateBitCast(rhs, builder.getDoubleTy());
         return castToVal(builder.CreateFAdd(castlhs, castrhs, "addtmp"));
-    }else if(exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::STRING))){
+    }else if(exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::STRING))){
         return builder.CreateCall(curModule->getFunction("strAdd"), {lhs, rhs});
     }
 
@@ -1405,7 +1400,7 @@ llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExp
     return phi;
 }
 llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExprPtr expr2, const typedAST::ComparisonOp op){
-    bool canOptimize = exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
+    bool canOptimize = exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
     auto castToBool = canOptimize ? curModule->getFunction("decodeBool") : curModule->getFunction("isTruthy");
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
@@ -1449,7 +1444,8 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     // other value types are compared as 64 bit ints since every object is unique(strings are interned)
 
     // Optimizations if types are known, no need to do runtime checks
-    if(exprConstrainedToType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
+    const auto numTy = types::getBasicType(types::TypeFlag::NUMBER);
+    if(exprIsType(expr1, expr2, numTy)){
         // fcmp when both values are numbers
         lhs = builder.CreateBitCast(lhs, builder.getDoubleTy());
         rhs = builder.CreateBitCast(rhs, builder.getDoubleTy());
@@ -1457,7 +1453,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
         auto val = neg ? builder.CreateFCmpONE(lhs, rhs, "fcmpone") : builder.CreateFCmpOEQ(lhs, rhs, "fcmpoeq");
         return builder.CreateCall(curModule->getFunction("encodeBool"), val);
     }
-    else if(exprWithoutType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
+    else if(!exprCouldBeType(expr1, expr2, numTy)){
         auto val = neg ? builder.CreateICmpNE(lhs, rhs, "icmpne") : builder.CreateICmpEQ(lhs, rhs, "icmpeq");
         return builder.CreateCall(curModule->getFunction("encodeBool"), val);
     }
@@ -1485,7 +1481,7 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
     llvm::Value* rhs = _rhs->codegen(this);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
-    if(exprConstrainedToType(_rhs, types::getBasicType(types::TypeFlag::NUMBER))){
+    if(exprIsType(_rhs, types::getBasicType(types::TypeFlag::NUMBER))){
         if(op == typedAST::UnaryOp::BIN_NEG){
             // Cast value to double, then convert to signed 64bit integer and negate
             auto tmp = builder.CreateBitCast(rhs, builder.getDoubleTy());
@@ -1562,11 +1558,10 @@ std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Valu
     return std::make_pair(fnPtr, fnTy);
 }
 llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
-    if(typeEnv[expr->callee->exprType].size() != 1) return nullptr;
-    if(typeEnv[expr->callee->exprType][0]->type != types::TypeFlag::FUNCTION) return nullptr;
+    if(!exprIsType(expr->callee, types::getBasicType(types::TypeFlag::FUNCTION))) return nullptr;
 
     llvm::Function* fn = nullptr;
-    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType][0]);
+    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
     // If this is a native function then it's signature is stored in nativeFunctions
     if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
         auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
@@ -1576,7 +1571,7 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
         // but if it is then use its signature instead of casting the char ptr in ObjClosure to a function
         fn = functions[funcType];
     }
-
+    // Have to codegen closurePtr even if function is known because of side effects
     llvm::Value* closurePtr =  closurePtr = expr->callee->codegen(this);
     closurePtr = builder.CreateCall(curModule->getFunction("decodeClosure"), closurePtr);
 
@@ -1643,6 +1638,7 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateXor(num1, num2);
     }
+    // This will never be hit
 }
 
 llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool opt, Token dbg){

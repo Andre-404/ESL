@@ -51,7 +51,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // Invoked by gc.safepoint
     CREATE_FUNC("stopThread", false, TYPE(Void));
     // ret: Value, args: arr size
-    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int64));
+    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
     // What is this used for?
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
@@ -248,14 +248,12 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
     [&]{
         llvm::Function *F = createFunc("decodeClosure",llvm::FunctionType::get(types["ObjClosurePtr"], TYPE(Int64),false));
-        llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
-        builder.SetInsertPoint(BB);
         llvm::Value* tmp = builder.CreateCall(module->getFunction("decodeObj"), F->getArg(0));
         tmp = builder.CreateBitCast(tmp, types["ObjClosurePtr"]);
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
     }();
-    [&]{
+    /*[&]{
         llvm::Function* f = createFunc("isString",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
         auto arg = f->getArg(0);
 
@@ -263,5 +261,5 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         auto const0 = builder.getInt64(+ObjType::STRING);
 
         llvm::verifyFunction(*f);
-    }();
+    }();*/
 }

@@ -100,7 +100,7 @@ EXPORT Value strTryAdd(Value lhs, Value rhs, const char* fileName, const int lin
     return encodeObj(object::ObjString::createStr(temp));
 }
 
-EXPORT Value createArr(uInt64 arrSize){
+EXPORT Value createArr(uint32_t arrSize){
     return encodeObj(new object::ObjArray(arrSize));
 }
 
