@@ -16,6 +16,9 @@
 
 #include <array>
 
+template<class T, class K>
+using fastMap = ankerl::unordered_dense::map<T, K>;
+
 namespace compileCore {
 
     using typedExprPtr = std::shared_ptr<typedAST::TypedASTExpr>;
@@ -65,14 +68,14 @@ class Compiler : public typedAST::TypedASTCodegen {
         vector<types::tyPtr> typeEnv;
 
         // Integers are uuids of VarDecl instances
-        ankerl::unordered_dense::map<uInt64, llvm::Value*> variables;
+        fastMap<uInt64, llvm::Value*> variables;
 
-        ankerl::unordered_dense::map<std::shared_ptr<types::ClassType>, std::shared_ptr<typedAST::ClassDecl>> classes;
+        fastMap<std::shared_ptr<types::ClassType>, std::shared_ptr<typedAST::ClassDecl>> classes;
         // Connects function types(unique for each function) and the LLVM IR representation of that function
-        ankerl::unordered_dense::map<types::tyPtr, llvm::Function*> functions;
-        ankerl::unordered_dense::map<string, llvm::Function*> nativeFunctions;
-        ankerl::unordered_dense::map<string, llvm::Constant*> stringConstants;
-        ankerl::unordered_dense::map<string, llvm::Type*> namedTypes;
+        fastMap<types::tyPtr, llvm::Function*> functions;
+        fastMap<string, llvm::Function*> nativeFunctions;
+        fastMap<string, llvm::Constant*> stringConstants;
+        fastMap<string, llvm::Type*> namedTypes;
 
 
         std::unique_ptr<llvm::LLVMContext> ctx;
@@ -90,8 +93,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Compile time type checking
         bool exprIsType(const typedExprPtr expr, const types::tyPtr ty);
         bool exprIsType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
-        bool exprCouldBeType(const typedExprPtr expr, const types::tyPtr ty);
-        bool exprCouldBeType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
+        bool exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag);
 
         // Runtime type checking
         void createTyErr(const string err, llvm::Value* const val, const Token token);
@@ -130,6 +132,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
+        llvm::Function* safeGetFunc(string name);
 
 
         #pragma endregion

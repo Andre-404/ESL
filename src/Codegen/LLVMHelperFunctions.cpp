@@ -14,14 +14,13 @@
 #include <unordered_set>
 #include <iostream>
 
-
-
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, name, module.get())
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt1Ty(*ctx)}, "Obj");
@@ -53,6 +52,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: Value, args: arr size
     CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
+    CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
     // What is this used for?
     CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
     // First argument is number of field, which is then followed by n*2 Value-s
@@ -125,7 +125,8 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     llvm::ExitOnError()(RT->remove());
 }
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     auto createFunc = [&](string name, llvm::FunctionType *FT){
         llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module.get());
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
@@ -133,7 +134,6 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         return F;
     };
     // Extremely cursed, but using lambdas that are immediately called avoids naming conflicts
-    // No encode/decodeObj right now, need to think of how to represent objects in llvm IR
     [&]{
         llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(TYPE(Int64), TYPE(Int1), false));
         // MASK_QNAN | (MASK_TYPE_TRUE* <i64>x)
@@ -215,7 +215,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(PTR_TY(types["Obj"]), TYPE(Int64),false));
+        llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(types["ObjPtr"], TYPE(Int64),false));
         // (Obj*)(x & MASK_PAYLOAD_OBJ)
         auto const1 = builder.getInt64(MASK_PAYLOAD_OBJ);
         builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(f->getArg(0), const1), types["ObjPtr"]));
@@ -253,13 +253,60 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
     }();
-    /*[&]{
-        llvm::Function* f = createFunc("isString",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = f->getArg(0);
+    [&]{
+        llvm::Function* F = createFunc("isObjType",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), TYPE(Int8)},false));
+        auto arg = F->getArg(0);
 
-        auto cond1 = builder.CreateCall(module->getFunction("isObj"));
-        auto const0 = builder.getInt64(+ObjType::STRING);
+        auto cond1 = builder.CreateCall(module->getFunction("isObj"), arg);
+        auto objTy = F->getArg(1);
+        llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
+        llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkType", F);
+        builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
 
-        llvm::verifyFunction(*f);
-    }();*/
+        builder.SetInsertPoint(checkTypeBB);
+        auto castPtr = builder.CreateCall(module->getFunction("decodeObj"), arg);
+        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(0)};
+        auto ptr = builder.CreateInBoundsGEP(types["Obj"], castPtr, idxList);
+        auto type = builder.CreateLoad(builder.getInt8Ty(), ptr);
+        builder.CreateRet(builder.CreateICmpEQ(type, objTy));
+
+        F->insert(F->end(), notObjBB);
+        builder.SetInsertPoint(notObjBB);
+        builder.CreateRet(builder.getInt1(false));
+
+        llvm::verifyFunction(*F);
+    }();
+    // is_ functions for objects
+    {
+        llvm::Function* F = createFunc("isString",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        auto arg = F->getArg(0);
+        auto const0 = builder.getInt8(+object::ObjType::STRING);
+        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
+
+        llvm::verifyFunction(*F);
+    }
+    {
+        llvm::Function* F = createFunc("isHashmap",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        auto arg = F->getArg(0);
+        auto const0 = builder.getInt8(+object::ObjType::HASH_MAP);
+        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
+
+        llvm::verifyFunction(*F);
+    }
+    {
+        llvm::Function* F = createFunc("isArray",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        auto arg = F->getArg(0);
+        auto const0 = builder.getInt8(+object::ObjType::ARRAY);
+        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
+
+        llvm::verifyFunction(*F);
+    }
+    {
+        llvm::Function* F = createFunc("isClosure",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        auto arg = F->getArg(0);
+        auto const0 = builder.getInt8(+object::ObjType::CLOSURE);
+        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
+
+        llvm::verifyFunction(*F);
+    }
 }
