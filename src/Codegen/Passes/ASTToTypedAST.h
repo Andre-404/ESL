@@ -224,6 +224,7 @@ namespace typedASTParser{
         void updateLine(const Token token);
         void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
+        vector<std::variant<double, void*, bool, string>> getCaseConstants(vector<Token> constants);
 
         typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);

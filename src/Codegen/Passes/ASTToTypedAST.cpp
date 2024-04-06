@@ -684,7 +684,7 @@ void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::CONTINUE, dbg)};
 }
 
-static vector<std::variant<double, void*, bool, string>> getCaseConstants(vector<Token> constants, uint8_t& flag){
+vector<std::variant<double, void*, bool, string>> ASTTransformer::getCaseConstants(vector<Token> constants){
     vector<std::variant<double, void*, bool, string>> converted;
     for (auto literal: constants) {
         if(literal.type == TokenType::STRING){
@@ -692,19 +692,20 @@ static vector<std::variant<double, void*, bool, string>> getCaseConstants(vector
             temp.erase(0, 1);
             temp.erase(temp.size() - 1, 1);
             converted.emplace_back(temp);
-            flag |= 2;
         }else if(literal.type == TokenType::NUMBER) {
             double num = std::stod(literal.getLexeme());
-            if(trunc(num) != num) flag |= 1;
+            if(trunc(num) != num) {
+                error(literal, "Case literal can't be a floating point.");
+            }else if(num > (1ull<<32ull)){
+                error(literal, "Integer constants in switch must be contained in 32bit integers.");
+            }
             converted.emplace_back(num);
         }
         else if(literal.type == TokenType::NIL) {
             converted.emplace_back(nullptr);
-            flag |= 3;
         }
         else {
             converted.emplace_back(literal.type == TokenType::TRUE);
-            flag |= 3;
         }
     }
     return converted;
@@ -713,13 +714,18 @@ static vector<std::variant<double, void*, bool, string>> getCaseConstants(vector
 void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     auto cond = evalASTExpr(stmt->expr);
     vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
+    // Used to check if switch stmt contains duplicate constants
     vector<typedAST::Block> caseBlocks;
-    caseBlocks.resize(stmt->cases.size());
     int defaultBlockIdx = -1;
     int i = 0;
-    // Bitflag for case constant types
-    // 0: all ints, 1: all nums, 2: all strings, 3: mixed
-    uint8_t flag = 0;
+    vector<Token> containedTokens;
+    auto contains = [&](Token t){
+        for(Token& tok : containedTokens){
+            if(tok.equals(t)) return true;
+        }
+        return false;
+    };
+    bool containsString = false;
     for(auto _case : stmt->cases){
         if(_case->caseType.type == TokenType::DEFAULT){
             defaultBlockIdx = i;
@@ -727,19 +733,20 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
             i++;
             continue;
         }
-        auto convertedLiterals = getCaseConstants(_case->constants, flag);
+        // For error reporting
+        for(Token& tok : _case->constants){
+            if(contains(tok)){
+                error(tok, "Switch cannot contains 2 same constants");
+            }
+            containedTokens.emplace_back(tok);
+            if(tok.type == TokenType::STRING) containsString = true;
+        }
+        auto convertedLiterals = getCaseConstants(_case->constants);
         for(auto literal : convertedLiterals){
             constants.emplace_back(literal, i);
         }
         caseBlocks.push_back(parseStmtsToBlock(_case->stmts));
         i++;
-    }
-    typedAST::SwitchConstantsType constantsType;
-    switch(flag){
-        case 0: constantsType = typedAST::SwitchConstantsType::ALL_INT; break;
-        case 1: constantsType = typedAST::SwitchConstantsType::ALL_NUM; break;
-        case 2: constantsType = typedAST::SwitchConstantsType::ALL_STRING; break;
-        case 3: constantsType = typedAST::SwitchConstantsType::MIXED; break;
     }
     vector<Token> cases;
     for(auto _case : stmt->cases){
@@ -747,7 +754,7 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     }
     auto dbg = AST::SwitchStmtDebugInfo(stmt->keyword, cases);
 
-    nodesToReturn = {std::make_shared<typedAST::SwitchStmt>(cond, constants, caseBlocks, constantsType, defaultBlockIdx, dbg)};
+    nodesToReturn = {std::make_shared<typedAST::SwitchStmt>(cond, constants, caseBlocks, defaultBlockIdx, containsString, dbg)};
 }
 void ASTTransformer::visitCaseStmt(AST::CaseStmt* _case) {
     //Nothing, everything is handled in visitSwitchStmt

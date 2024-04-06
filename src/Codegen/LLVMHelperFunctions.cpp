@@ -43,6 +43,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     //
     CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
     CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    // Helper from C std lib
+    CREATE_FUNC("printf", true, TYPE(Int32), TYPE(Int8Ptr));
+    CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
     // ret: Value, args: lhs, rhs - both are known to be strings
     CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64));
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
@@ -98,7 +101,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
     // Create the pass manager.
     // This one corresponds to a typical -O3 optimization pipeline.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O0);
     if(optimize) {
         MPM.run(*module, MAM);
     }

@@ -793,12 +793,6 @@ namespace typedAST{
         }
     };
 
-    enum class SwitchConstantsType{
-        ALL_INT = 0,
-        ALL_NUM = 1,
-        ALL_STRING = 2,
-        MIXED = 3
-    };
     class SwitchStmt : public TypedASTNode{
     public:
         exprPtr cond;
@@ -807,17 +801,17 @@ namespace typedAST{
         vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
         int defaultCaseBlockNum;
         vector<Block> cases;
-        SwitchConstantsType constantsType;
         AST::SwitchStmtDebugInfo dbgInfo;
+        bool containsStrings;
 
         SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants,
-                   vector<Block> _cases, SwitchConstantsType _ty, int _defaultCaseBlockNum, AST::SwitchStmtDebugInfo _dbgInfo)
+                   vector<Block> _cases, int _defaultCaseBlockNum, bool _containsStrings, AST::SwitchStmtDebugInfo _dbgInfo)
             : dbgInfo(_dbgInfo){
             cond = _cond;
             constants = _constants;
             cases = _cases;
-            constantsType = _ty;
             defaultCaseBlockNum = _defaultCaseBlockNum;
+            containsStrings = _containsStrings;
             type = NodeType::SWITCH;
         }
         ~SwitchStmt() {};

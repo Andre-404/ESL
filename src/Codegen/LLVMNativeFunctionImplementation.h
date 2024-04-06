@@ -56,6 +56,7 @@ EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
     exit(64);
 }
 
+// TODO: Probably use printf for this since it's easier to do the format
 EXPORT void tyErrSingle(const char* ptr, const char* fileName, const int line, Value val){
     string str(ptr);
     string type = valueHelpers::typeToStr(val);
@@ -80,7 +81,7 @@ EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, V
     pos += lhsTy.length();
 
     pos = str.find("{}", pos);
-    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
+    if(pos == str.npos) std::cout<< "Error formatting string for error output\n";
     str.replace(pos, 2, rhsTy);
 
 

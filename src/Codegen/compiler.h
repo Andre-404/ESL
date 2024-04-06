@@ -23,6 +23,12 @@ namespace compileCore {
 
     using typedExprPtr = std::shared_ptr<typedAST::TypedASTExpr>;
 
+    class CompilerError{
+    public:
+        string reason;
+        CompilerError(string _reason) : reason(_reason) {}
+    };
+
 class Compiler : public typedAST::TypedASTCodegen {
 	public:
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
@@ -133,6 +139,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Constant* createConstStr(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
         llvm::Function* safeGetFunc(string name);
+        void argCntError(Token token, llvm::Value* expected, const int got);
+        llvm::ConstantInt* createSwitchConst(std::variant<double, void*, bool, string>& constant);
 
 
         #pragma endregion

@@ -52,10 +52,13 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     builder.SetInsertPoint(BB);
     builder.CreateStore(builder.getInt8(0), curModule->getNamedGlobal("gcFlag"));
     currentFunction = tmpfn;
-    for(auto stmt : _code->block.stmts){
-        stmt->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
+    try {
+        for (auto stmt: _code->block.stmts) {
+            stmt->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
+        }
+    }catch(CompilerError err){
+        std::cout<<fmt::format("Compiler exited because of error: '{}'.", err.reason);
     }
-
     // Ends the main function
     builder.CreateRetVoid();
     llvm::verifyFunction(*tmpfn);
@@ -272,7 +275,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
             uInt64 val = get<bool>(expr->val) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
             return builder.getInt64(val);
         }
-        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);;
+        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
         case 3: {
             auto str = createConstStr(get<string>(expr->val));
             return builder.CreateCall(safeGetFunc("createStr"), str);
@@ -419,7 +422,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     auto phi = builder.CreatePHI(builder.getInt64Ty(), 3, "collectionset");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
-    // Useless, but needed
+    // Useless, but needed since errorBB is a parent of mergeBB
     phi->addIncoming(builder.getInt64(0), errorBB);
     return phi;
 }
@@ -478,19 +481,19 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
     vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
     auto argNumPtr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, idxList);
-    auto argNum = builder.CreateLoad(builder.getInt8PtrTy(), argNumPtr);
+    auto argNum = builder.CreateLoad(builder.getInt8Ty(), argNumPtr);
 
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     auto errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
     llvm::BasicBlock *callBB = llvm::BasicBlock::Create(*ctx, "call");
 
-    auto cond = builder.CreateICmpUGT(argNum, builder.getInt8(0));
+    auto cond = builder.CreateICmpEQ(argNum, builder.getInt8(expr->args.size()));
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, callBB);
 
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
-    //TODO: make better argument count error
-    createTyErr(fmt::format("Expected {} arguments but got {}.", "{}", expr->args.size()), argNum, expr->dbgInfo.paren1);
+    //TODO: make better argument count error since it doesn't work
+    argCntError(expr->dbgInfo.paren1, argNum, expr->args.size());
     // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
     builder.CreateBr(callBB);
 
@@ -512,6 +515,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
 
 }
 
+//TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
 llvm::Value* Compiler::visitAsyncExpr(typedAST::AsyncExpr* expr) {
 
 }
@@ -601,7 +605,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
         if(var->varType == typedAST::VarType::LOCAL){
-            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, stmt->dbgInfo.params[argIndex].getLexeme());
+            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, var->dbgInfo.varName.getLexeme());
             builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
         }else{
             varPtr = builder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
@@ -734,8 +738,41 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
+    auto compVal = stmt->cond->codegen(this);
+    compVal = builder.CreateBitCast(compVal, builder.getInt64Ty());
+    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "switch.merge");
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    int cnt = 0;
+    // Have to first create the basic blocks because of advance stmt
+    vector<llvm::BasicBlock*> blocks;
+    for(auto block : stmt->cases){
+        auto caseBB = llvm::BasicBlock::Create(*ctx, fmt::format("case{}", cnt++));
+        blocks.emplace_back(caseBB);
+    }
+    // This needs to be here because builder.CreateSwitch emits the switch op to the current block
+    auto inst = builder.CreateSwitch(compVal, stmt->defaultCaseBlockNum == -1 ? mergeBB : blocks[stmt->defaultCaseBlockNum]);
+    for(auto constant : stmt->constants){
+        inst->addCase(createSwitchConst(constant.first), blocks[constant.second]);
+    }
 
+    // Sets the destination blocks for break stmts, works like a stack
+    auto breakJumpDestTmp = breakJumpDest;
+    breakJumpDest = mergeBB;
 
+    for(int i = 0; i < stmt->cases.size(); i++){
+        advanceJumpDest = i+1 < blocks.size() ? blocks[i+1] : mergeBB;
+
+        F->insert(F->end(), blocks[i]);
+        builder.SetInsertPoint(blocks[i]);
+
+        codegenBlock(stmt->cases[i]);
+        if(!stmt->cases[i].terminates){
+            builder.CreateBr(mergeBB);
+        }
+    }
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+    breakJumpDest = breakJumpDestTmp;
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -1560,7 +1597,8 @@ std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Valu
     auto fnPtrAddr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, idxList);
     llvm::Value* fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrAddr);
     auto fnTy = getFuncType(argc);
-    fnPtr = builder.CreateBitCast(fnPtr, fnTy);
+    auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
+    fnPtr = builder.CreateBitCast(fnPtr, fnPtrTy);
     return std::make_pair(fnPtr, fnTy);
 }
 llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
@@ -1585,6 +1623,11 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
     // Every function contains the closure struct as the first argument
     args.push_back(closurePtr);
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
+    if(funcType->argCount != expr->args.size()){
+        errorHandler::addCompileError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
+                                      expr->dbgInfo.paren1);
+        throw CompilerError("Incorrect number of arguments passed");
+    }
 
     // If function is known and codegen-ed, call it and discard closurePtr
     if(fn) return builder.CreateCall(fn, args, "callres");
@@ -1729,5 +1772,23 @@ llvm::Function* Compiler::safeGetFunc(string name){
         exit(64);
     }
     return fn;
+}
+
+void Compiler::argCntError(Token token, llvm::Value* expected, const int got){
+    llvm::Constant* str = createConstStr(fmt::format("Expected %d arguments but got {}.", got));
+    llvm::Constant* file = createConstStr(token.str.sourceFile->path);
+    llvm::Constant* line = builder.getInt32(token.str.line);
+
+    builder.CreateCall(safeGetFunc("printf"), {str, expected});
+    builder.CreateCall(safeGetFunc("exit"), builder.getInt32(64));
+}
+
+// For everything except strings
+llvm::ConstantInt* Compiler::createSwitchConst(std::variant<double, void*, bool, string>& constant){
+    switch(constant.index()){
+        case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
+        case 1: return builder.getInt64(MASK_SIGNATURE_NIL);
+        case 2: return builder.getInt64(get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE);
+    }
 }
 #pragma endregion
