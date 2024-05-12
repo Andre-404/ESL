@@ -797,14 +797,14 @@ namespace typedAST{
     public:
         exprPtr cond;
         // Each constant has a literal and the index of the case it leads to
-        // For the default case ptr is null
-        vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
+        // No constant leads to defaultCase
+        vector<std::pair<std::variant<double, bool, void*, string>, int>> constants;
         int defaultCaseBlockNum;
         vector<Block> cases;
         AST::SwitchStmtDebugInfo dbgInfo;
         bool containsStrings;
 
-        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, void*, bool, string>, int>>& _constants,
+        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, bool, void*, string>, int>>& _constants,
                    vector<Block> _cases, int _defaultCaseBlockNum, bool _containsStrings, AST::SwitchStmtDebugInfo _dbgInfo)
             : dbgInfo(_dbgInfo){
             cond = _cond;

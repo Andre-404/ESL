@@ -15,6 +15,7 @@
 #include "llvm/IR/Verifier.h"
 
 #include <array>
+#include <stack>
 
 template<class T, class K>
 using fastMap = ankerl::unordered_dense::map<T, K>;
@@ -90,10 +91,10 @@ class Compiler : public typedAST::TypedASTCodegen {
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
         llvm::Function* currentFunction;
 
-        llvm::BasicBlock* continueJumpDest;
+        std::stack<llvm::BasicBlock*> continueJumpDest;
         // Both loops and switch statement push to breakJump stack
-        llvm::BasicBlock* breakJumpDest;
-        llvm::BasicBlock* advanceJumpDest;
+        std::stack<llvm::BasicBlock*> breakJumpDest;
+        std::stack<llvm::BasicBlock*> advanceJumpDest;
 
         #pragma region Helpers
         // Compile time type checking
@@ -114,13 +115,12 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
-        llvm::Value* codegenArrayGet(const llvm::Value* arr, const typedExprPtr field);
-        llvm::Value* codegenHashmapGet(const llvm::Value* hashmap, const typedExprPtr field);
         void codegenBlock(const typedAST::Block& block);
 
         // Functions helpers
         llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
+        void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         // Tries to optimize a function call if possible, otherwise returns nullptr
         llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
@@ -131,17 +131,21 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg);
         llvm::Value* setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal, typedAST::SetType opTy, Token dbg);
         llvm::Value* setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal, typedAST::SetType opTy, Token dbg);
+        // Switch stmt stuff
+        llvm::ConstantInt* createSwitchConstantInt(std::variant<double, bool, void*, string>& constant);
+        vector<llvm::BasicBlock*> createNCaseBlocks(int n);
+        llvm::Value* createSeqCmp(llvm::Value* compVal, vector<std::pair<std::variant<double, bool, void*, string>, int>>& constants);
 
         // Class helpers
         int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
 
         // Misc
         llvm::Constant* createConstStr(const string& str);
+        llvm::Value* createESLString(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
-        llvm::Function* safeGetFunc(string name);
+        llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
-        llvm::ConstantInt* createSwitchConst(std::variant<double, void*, bool, string>& constant);
-
+        llvm::Value* createConstant(std::variant<double, bool, void*,string>& constant);
 
         #pragma endregion
 	};

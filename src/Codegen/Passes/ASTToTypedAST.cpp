@@ -684,8 +684,8 @@ void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::CONTINUE, dbg)};
 }
 
-vector<std::variant<double, void*, bool, string>> ASTTransformer::getCaseConstants(vector<Token> constants){
-    vector<std::variant<double, void*, bool, string>> converted;
+vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstants(vector<Token> constants){
+    vector<std::variant<double, bool, void*, string>> converted;
     for (auto literal: constants) {
         if(literal.type == TokenType::STRING){
             string temp = literal.getLexeme();
@@ -713,7 +713,7 @@ vector<std::variant<double, void*, bool, string>> ASTTransformer::getCaseConstan
 
 void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     auto cond = evalASTExpr(stmt->expr);
-    vector<std::pair<std::variant<double, void*, bool, string>, int>> constants;
+    vector<std::pair<std::variant<double, bool, void*, string>, int>> constants;
     // Used to check if switch stmt contains duplicate constants
     vector<typedAST::Block> caseBlocks;
     int defaultBlockIdx = -1;

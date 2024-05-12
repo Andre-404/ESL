@@ -21,9 +21,6 @@ Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _sr
     typeEnv = _tyEnv;
 
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
-    continueJumpDest = nullptr;
-    breakJumpDest = nullptr;
-    advanceJumpDest = nullptr;
     currentFunction = nullptr;
 
     llvm::InitializeNativeTarget();
@@ -277,8 +274,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
         }
         case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
         case 3: {
-            auto str = createConstStr(get<string>(expr->val));
-            return builder.CreateCall(safeGetFunc("createStr"), str);
+            return createESLString(get<string>(expr->val));
         }
     }
     assert(false && "Unreachable");
@@ -344,7 +340,7 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
 
     F->insert(F->end(), isHashmap);
     builder.SetInsertPoint(isHashmap);
-    llvm::Value* mapVal =  getMapElement(collection, field, optMapString, expr->dbgInfo.accessor);
+    llvm::Value* mapVal = getMapElement(collection, field, optMapString, expr->dbgInfo.accessor);
 
     isHashmap = builder.GetInsertBlock();
     builder.CreateBr(mergeBB);
@@ -537,27 +533,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
         variables.insert_or_assign(freevar.second->uuid, tmp);
     }
 
-    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
-    // We just assign those positions to each arg
-    // Closure struct is always passed as the first arg
-    int argIndex = 1;
-    for (auto var : expr->fn->args) {
-        llvm::Value* varPtr;
-        // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
-        if(var->varType == typedAST::VarType::LOCAL){
-            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, var->dbgInfo.varName.getLexeme());
-            builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
-        }else{
-            varPtr = builder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
-            // first index: access to the structure that's being pointed to,
-            // second index: access to the second field(64bit field for the value)
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevarAddr");
-            builder.CreateStore(currentFunction->getArg(argIndex++), tmpEle);
-        }
-        // Insert the argument into the pool of variables
-        variables.insert_or_assign(var->uuid, varPtr);
-    }
+    declareFuncArgs(expr->fn->args);
 
     for(auto stmt : expr->fn->block.stmts){
         stmt->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -597,27 +573,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     auto enclosingFunction = currentFunction;
     currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
 
-    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
-    // We just assign those positions to each arg
-    // First argument is always the objclosure ptr
-    int argIndex = 1;
-    for (auto var : stmt->fn->args) {
-        llvm::Value* varPtr;
-        // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
-        if(var->varType == typedAST::VarType::LOCAL){
-            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, var->dbgInfo.varName.getLexeme());
-            builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
-        }else{
-            varPtr = builder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
-            // first index: access to the structure that's being pointed to,
-            // second index: access to the second field(64bit field for the value)
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevarAddr");
-            builder.CreateStore(currentFunction->getArg(argIndex++), tmpEle);
-        }
-        // Insert the argument into the pool of variables
-        variables.insert_or_assign(var->uuid, varPtr);
-    }
+    declareFuncArgs(stmt->fn->args);
 
     for(auto s : stmt->fn->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -629,7 +585,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&currentFunction->back());
-    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getInt8PtrTy());
+    auto typeErasedFn = builder.CreateBitCast(fn, builder.getInt8PtrTy());
     auto arity = builder.getInt8(stmt->fn->args.size());
     auto name = createConstStr(stmt->fn->name);
 
@@ -637,7 +593,6 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     // Since this is a global function declaration number of freevars is always going to be 0
     vector<llvm::Value*> closureConstructorArgs = {typeErasedFn, arity, name, builder.getInt32(0)};
 
-    // Create the closure
     auto tmp = builder.CreateCall(safeGetFunc("createClosure"), closureConstructorArgs);
     // Store closure in var
     builder.CreateStore(tmp, variables.at(stmt->globalVarUuid));
@@ -650,9 +605,9 @@ llvm::Value* Compiler::visitReturnStmt(typedAST::ReturnStmt* stmt) {
 }
 llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
     switch(stmt->jmpType){
-        case typedAST::JumpType::BREAK: builder.CreateBr(breakJumpDest); break;
-        case typedAST::JumpType::CONTINUE: builder.CreateBr(continueJumpDest); break;
-        case typedAST::JumpType::ADVANCE: builder.CreateBr(advanceJumpDest); break;
+        case typedAST::JumpType::BREAK: builder.CreateBr(breakJumpDest.top()); break;
+        case typedAST::JumpType::CONTINUE: builder.CreateBr(continueJumpDest.top()); break;
+        case typedAST::JumpType::ADVANCE: builder.CreateBr(advanceJumpDest.top()); break;
     }
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -699,11 +654,8 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     llvm::BasicBlock* condBB = llvm::BasicBlock::Create(*ctx, "while.cond");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
 
-    // Sets the destination blocks for both continue and break, works like a stack
-    auto continueJumpDestTmp = continueJumpDest;
-    continueJumpDest = condBB;
-    auto breakJumpDestTmp = breakJumpDest;
-    breakJumpDest = mergeBB;
+    continueJumpDest.push(condBB);
+    breakJumpDest.push(mergeBB);
     // If check before do-while
     builder.CreateCondBr(cond, loopBB, mergeBB);
 
@@ -714,7 +666,6 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
         // Unconditional fallthrough to condition block
         builder.CreateBr(condBB);
 
-        // Only compile the condition if the loop bb hasn't been terminated, no point in compiling it if it has no predecessors
         func->insert(func->end(), condBB);
         builder.SetInsertPoint(condBB);
 
@@ -722,6 +673,7 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
         if(stmt->afterLoopExpr) stmt->afterLoopExpr->codegen(this);
         // Eval the condition again
         // If stmt->cond is null we can reuse the true constant that's in cond
+        // Otherwise reevaluate the condition
         if(stmt->cond) cond = builder.CreateCall(decodeFn, stmt->cond->codegen(this));
 
         // Conditional jump to beginning of body(if cond is true), or to the end of the loop
@@ -732,35 +684,40 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     // Sets the builder up to emit code after the while stmt
     builder.SetInsertPoint(mergeBB);
     // Pop destinations so that any break/continue for an outer loop works correctly
-    continueJumpDest = continueJumpDestTmp;
-    breakJumpDest = breakJumpDestTmp;
+    continueJumpDest.pop();
+    breakJumpDest.pop();
 
     return nullptr; // Stmts return nullptr on codegen
 }
 llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
     auto compVal = stmt->cond->codegen(this);
     compVal = builder.CreateBitCast(compVal, builder.getInt64Ty());
-    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "switch.merge");
     llvm::Function *F = builder.GetInsertBlock()->getParent();
-    int cnt = 0;
-    // Have to first create the basic blocks because of advance stmt
-    vector<llvm::BasicBlock*> blocks;
-    for(auto block : stmt->cases){
-        auto caseBB = llvm::BasicBlock::Create(*ctx, fmt::format("case{}", cnt++));
-        blocks.emplace_back(caseBB);
+    // Have to create the basic blocks before codegening because of advance stmt
+    vector<llvm::BasicBlock *> blocks = createNCaseBlocks(stmt->cases.size());
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "switch.merge");
+    llvm::BasicBlock* defaultDest = stmt->defaultCaseBlockNum == -1 ? mergeBB : blocks[stmt->defaultCaseBlockNum];
+
+    // If this switch doesn't contain strings as case constants it can be optimized
+    if(!stmt->containsStrings){
+        auto inst = builder.CreateSwitch(compVal, defaultDest);
+        for(auto constant : stmt->constants){
+            inst->addCase(createSwitchConstantInt(constant.first), blocks[constant.second]);
+        }
     }
-    // This needs to be here because builder.CreateSwitch emits the switch op to the current block
-    auto inst = builder.CreateSwitch(compVal, stmt->defaultCaseBlockNum == -1 ? mergeBB : blocks[stmt->defaultCaseBlockNum]);
-    for(auto constant : stmt->constants){
-        inst->addCase(createSwitchConst(constant.first), blocks[constant.second]);
+    else {
+        llvm::Value *BBIdx = createSeqCmp(compVal, stmt->constants);
+        auto inst = builder.CreateSwitch(BBIdx, defaultDest);
+        for (int i = 0; i < blocks.size(); i++) {
+            inst->addCase(builder.getInt32(i), blocks[i]);
+        }
     }
 
-    // Sets the destination blocks for break stmts, works like a stack
-    auto breakJumpDestTmp = breakJumpDest;
-    breakJumpDest = mergeBB;
+    // Sets the destination blocks for break stmts
+    breakJumpDest.push(mergeBB);
 
     for(int i = 0; i < stmt->cases.size(); i++){
-        advanceJumpDest = i+1 < blocks.size() ? blocks[i+1] : mergeBB;
+        advanceJumpDest.push(i+1 < blocks.size() ? blocks[i+1] : mergeBB);
 
         F->insert(F->end(), blocks[i]);
         builder.SetInsertPoint(blocks[i]);
@@ -769,10 +726,11 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
         if(!stmt->cases[i].terminates){
             builder.CreateBr(mergeBB);
         }
+        advanceJumpDest.pop();
     }
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
-    breakJumpDest = breakJumpDestTmp;
+    breakJumpDest.pop();
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -1055,12 +1013,7 @@ void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
     }
     // Create the closure and stuff the freevars in it
     returnValue = builder.CreateCall(curModule->getFunction("createClosure"), closureConstructorArgs);
-}
 
-// This shouldn't ever be visited as every macro should be expanded before compilation
-void Compiler::visitMacroExpr(AST::MacroExpr* expr) {
-    error("Non-expanded macro encountered during compilation.");
-}
 
 void Compiler::visitAsyncExpr(AST::AsyncExpr* expr) {
    /*updateLine(expr->token);
@@ -1077,34 +1030,6 @@ void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
     emitByte(+OpCode::AWAIT);
 }
 
-void Compiler::visitFuncDecl(AST::FuncDecl* decl) {
-    string name = declareGlobalVar(decl->getName());
-    // Defining the function here to allow for recursion
-    defineGlobalVar(name, builder.getInt64(encodeNil()));
-    // Creating a new compilerInfo sets us up with a clean slate for writing bytecode, the enclosing functions info
-    //is stored in parserCurrent->enclosing
-    createNewFunc(decl->arity, decl->getName().getLexeme(), FuncType::TYPE_FUNC);
-    // No need for a endScope, since returning from the function discards the entire callstack
-    beginScope();
-    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
-    // we just assign those positions to each arg
-    int i = 0;
-    for (AST::ASTVar& var : decl->args) {
-        declareLocalVar(var);
-        defineLocalVar(current->func->getArg(i++));
-    }
-    for(auto stmt : decl->body->statements){
-        try {
-            stmt->accept(this);
-        }catch(CompilerException e){
-
-        }
-    }
-    llvm::Value* func = endFuncDecl(decl->args.size(), decl->getName().getLexeme());
-    // Store directly to global var since name is the full symbol
-    builder.CreateStore(func, globals.at(name).val);
-}
-/*
 void Compiler::visitClassDecl(AST::ClassDecl* decl) {
     /*Token className = decl->getName();
     uInt16 index = declareGlobalVar(className);
@@ -1155,161 +1080,6 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
     }
     currentClass = nullptr;
 }*/
-/*
-// Applies loop inversion
-void Compiler::visitWhileStmt(AST::WhileStmt* stmt) {
-    llvm::Function* func = builder.GetInsertBlock()->getParent();
-
-    auto condtmp = evalASTExpr(stmt->condition);
-    auto cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
-
-    llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*ctx, "while.loop", func);
-    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(*ctx, "while.cond");
-    llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
-
-    // Sets the destination blocks for both continue and break, works like a stack
-    continueJumpDest.push_back(condBB);
-    breakJumpDest.push_back(mergeBB);
-
-
-    // If check before do-while
-    builder.CreateCondBr(cond, loopBB, mergeBB);
-
-    // Loop body
-    builder.SetInsertPoint(loopBB);
-    stmt->body->accept(this);
-    // If the current BB ends with a break/continue/advance/return, don't emit the final break since this basic block is already terminated
-    if(BBTerminated) {
-        // Reset flag since the break/continue/advance/return statement has been handled
-        BBTerminated = false;
-    }
-    else {
-        // Unconditional fallthrough to condition block
-        builder.CreateBr(condBB);
-
-        // Only compile the condition if the loop bb hasn't been terminated, no point in compiling it if it has no predecessors
-        func->insert(func->end(), condBB);
-        builder.SetInsertPoint(condBB);
-        // Eval the condition again
-        condtmp = evalASTExpr(stmt->condition);
-        cond = builder.CreateCall(curModule->getFunction("isTruthy"), condtmp);
-        // Conditional jump to beginning of body(if cond is true), or to the end of the loop
-        builder.CreateCondBr(cond, loopBB, mergeBB);
-    }
-
-    func->insert(func->end(), mergeBB);
-    // Sets the builder up to emit code after the while stmt
-    builder.SetInsertPoint(mergeBB);
-    // Pop destinations so that any break/continue for an outer loop works correctly
-    continueJumpDest.pop_back();
-    breakJumpDest.pop_back();
-}
-*//*
-void Compiler::visitSwitchStmt(AST::SwitchStmt* stmt) {
-    /*current->scopeWithSwitch.push_back(current->scopeDepth);
-    //compile the expression in parentheses
-    stmt->expr->accept(this);
-    vector<uint16_t> constants;
-    vector<uint16_t> jumps;
-    bool isLong = false;
-    for (const auto & _case : stmt->cases) {
-        //a single case can contain multiple constants(eg. case 1 | 4 | 9:), each constant is compiled and its jump will point to the
-        //same case code block
-        for (const Token& constant : _case->constants) {
-            Value val;
-            updateLine(constant);
-            //create constant and add it to the constants array
-            try {
-                switch (constant.type) {
-                    case TokenType::NUMBER: {
-                        double num = std::stod(constant.getLexeme());//doing this becuase stod doesn't accept string_view
-                        val = encodeNumber(num);
-                        break;
-                    }
-                    case TokenType::TRUE: val = encodeBool(true); break;
-                    case TokenType::FALSE: val = encodeBool(false); break;
-                    case TokenType::NIL: val = encodeNil(); break;
-                    case TokenType::STRING: {
-                        //this gets rid of quotes, "Hello world"->Hello world
-                        string temp = constant.getLexeme();
-                        temp.erase(0, 1);
-                        temp.erase(temp.size() - 1, 1);
-                        val = encodeObj(ObjString::createStr(temp));
-                        break;
-                    }
-                    default: {
-                        error(constant, "Case expression can only be a constant.");
-                    }
-                }
-                constants.push_back(makeConstant(val));
-                if (constants.back() > SHORT_CONSTANT_LIMIT) isLong = true;
-            }
-            catch (CompilerException e) {}
-        }
-    }
-    //the arguments for a switch op code are:
-    //16-bit number n of case constants
-    //n 8 or 16 bit numbers for each constant
-    //n + 1 16-bit numbers of jump offsets(default case is excluded from constants, so the number of jumps is the number of constants + 1)
-    //the default jump offset is always the last
-    if (isLong) {
-        emitByteAnd16Bit(+OpCode::SWITCH_LONG, constants.size());
-        for (uInt16 constant : constants) {
-            emit16Bit(constant);
-        }
-    }
-    else {
-        emitByteAnd16Bit(+OpCode::SWITCH, constants.size());
-        for (uInt16 constant : constants) {
-            emitByte(constant);
-        }
-    }
-
-    for (int i = 0; i < constants.size(); i++) {
-        jumps.push_back(getChunk()->bytecode.size());
-        emit16Bit(0xffff);
-    }
-    //default jump
-    jumps.push_back(getChunk()->bytecode.size());
-    emit16Bit(0xffff);
-
-    //at the end of each case is a implicit break
-    vector<uint32_t> implicitBreaks;
-
-    //compile the code of all cases, before each case update the jump for that case to the parserCurrent ip
-    int i = 0;
-    for (const std::shared_ptr<AST::CaseStmt>& _case : stmt->cases) {
-        if (_case->caseType.getLexeme() == "default") {
-            patchJump(jumps[jumps.size() - 1]);
-        }
-        else {
-            //a single case can contain multiple constants(eg. case 1 | 4 | 9:), need to update jumps for each constant
-            int constantNum = _case->constants.size();
-            for (int j = 0; j < constantNum; j++) {
-                patchJump(jumps[i]);
-                i++;
-            }
-        }
-        //new scope because patchScopeJumps only looks at scope deeper than the one it's called at
-        beginScope();
-        _case->accept(this);
-        endScope();
-        //end scope takes care of freevars
-        implicitBreaks.push_back(emitJump(+OpCode::JUMP));
-        //patch advance after the implicit break jump for fallthrough
-        patchScopeJumps(ScopeJumpType::ADVANCE);
-    }
-    //if there is no default case the default jump goes to the end of the switch stmt
-    if (!stmt->hasDefault) jumps[jumps.size() - 1] = getChunk()->bytecode.size();
-
-    //all implicit breaks lead to the end of the switch statement
-    for (uInt jmp : implicitBreaks) {
-        patchJump(jmp);
-    }
-    current->scopeWithSwitch.pop_back();
-    patchScopeJumps(ScopeJumpType::BREAK);
-}
-*/
 #pragma endregion
 
 #pragma region helpers
@@ -1554,12 +1324,6 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
     assert(false && "Unreachable");
     return nullptr;
 }
-llvm::Value* codegenArrayGet(const llvm::Value* arr, const typedExprPtr field){
-    return nullptr;
-}
-llvm::Value* codegenHashmapGet(const llvm::Value* hashmap, const typedExprPtr field){
-    return nullptr;
-}
 void Compiler::codegenBlock(const typedAST::Block& block){
     for(auto stmt : block.stmts){
         stmt->codegen(this);
@@ -1591,6 +1355,30 @@ llvm::FunctionType* Compiler::getFuncType(int argCount){
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
     return fty;
 }
+void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args){
+    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
+    // We just assign those positions to each arg
+    // First argument is ALWAYS the objclosure ptr
+    int argIndex = 1;
+    for (auto var : args) {
+        llvm::Value* varPtr;
+        // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
+        if(var->varType == typedAST::VarType::LOCAL){
+            varPtr = builder.CreateAlloca(builder.getInt64Ty(), nullptr, var->dbgInfo.varName.getLexeme());
+            builder.CreateStore(currentFunction->getArg(argIndex++), varPtr);
+        }else{
+            varPtr = builder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, var->dbgInfo.varName.getLexeme());
+            // first index: access to the structure that's being pointed to,
+            // second index: access to the second field(64bit field for the value)
+            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevarAddr");
+            builder.CreateStore(currentFunction->getArg(argIndex++), tmpEle);
+        }
+        // Insert the argument into the pool of variables
+        variables.insert_or_assign(var->uuid, varPtr);
+    }
+}
+
 std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Value* closurePtr, const int argc){
     // Index for accessing the fn ptr is at 3, not 2, because we have a Obj struct at index 0
     vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(3)};
@@ -1754,6 +1542,39 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
     return val;
 }
 
+// Switch stmt stuff
+// For everything except strings
+llvm::ConstantInt* Compiler::createSwitchConstantInt(std::variant<double, bool, void*, string>& constant){
+    switch(constant.index()){
+        case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
+        case 1: return builder.getInt64(get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE);
+        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
+        default: assert(false && "Unreachable");
+    }
+}
+
+vector<llvm::BasicBlock*> Compiler::createNCaseBlocks(int n){
+    vector<llvm::BasicBlock*> blocks;
+    for(int i = 0; i < n; i++){
+        auto caseBB = llvm::BasicBlock::Create(*ctx, fmt::format("case{}", i));
+        blocks.emplace_back(caseBB);
+    }
+    return blocks;
+}
+
+llvm::Value* Compiler::createSeqCmp(llvm::Value* compVal, vector<std::pair<std::variant<double, bool, void*, string>, int>>& constants){
+    // Starting index is outside the range of blocks so that if switch executes with it control flow goes to default dest
+    llvm::Value* BBIdx = builder.getInt32(-1);
+    for(auto c : constants){
+        llvm::Value* val = createConstant(c.first);
+        // All constants(including strings because of interning) have a unique representation as I64, so ICmpEQ is sufficient
+        llvm::Value* cmp = builder.CreateICmpEQ(compVal, val);
+        // If comparison is successful BBIdx becomes the index of the block that the switch needs to jump to
+        BBIdx = builder.CreateSelect(cmp, builder.getInt32(c.second), BBIdx);
+    }
+    return BBIdx;
+}
+
 // Misc
 llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
@@ -1765,7 +1586,11 @@ llvm::Constant* Compiler::createConstStr(const string& str){
     return constant;
 }
 
-llvm::Function* Compiler::safeGetFunc(string name){
+llvm::Value* Compiler::createESLString(const string& str){
+    return builder.CreateCall(safeGetFunc("createStr"), createConstStr(str));
+}
+
+llvm::Function* Compiler::safeGetFunc(const string& name){
     auto* fn = curModule->getFunction(name);
     if(!fn){
         std::cerr<<fmt::format("Function {} hasn't been created yet.\n", name);
@@ -1783,12 +1608,22 @@ void Compiler::argCntError(Token token, llvm::Value* expected, const int got){
     builder.CreateCall(safeGetFunc("exit"), builder.getInt32(64));
 }
 
-// For everything except strings
-llvm::ConstantInt* Compiler::createSwitchConst(std::variant<double, void*, bool, string>& constant){
+llvm::Value* Compiler::createConstant(std::variant<double, bool, void*,string>& constant){
     switch(constant.index()){
-        case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
-        case 1: return builder.getInt64(MASK_SIGNATURE_NIL);
-        case 2: return builder.getInt64(get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE);
+        case 0: {
+            auto tmp = llvm::ConstantFP::get(*ctx, llvm::APFloat(get<double>(constant)));
+            return builder.CreateBitCast(tmp, builder.getInt64Ty());
+        }
+        case 1: {
+            uInt64 val = get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
+            return builder.getInt64(val);
+        }
+        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
+        case 3: {
+            return createESLString(get<string>(constant));
+        }
     }
+    assert(false && "Unreachable");
 }
+
 #pragma endregion

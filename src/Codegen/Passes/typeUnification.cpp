@@ -214,8 +214,8 @@ pair<types::tyPtr, vector<constraint>> TypeUnificator::processConstraint(shared_
     bool containsStrings = possibleLhsTy->type == types::TypeFlag::STRING || possibleRhsTy->type == types::TypeFlag::STRING;
     vector<types::tyPtr> res;
     if(!(containsStrings ^ containsNums)) return make_pair(types::getBasicType(types::TypeFlag::ANY), vector<constraint>());
-    if(containsNums) return make_pair(types::getBasicType(types::TypeFlag::NUMBER), vector<constraint>());
-    if(containsStrings) return make_pair(types::getBasicType(types::TypeFlag::STRING), vector<constraint>());
+    else if(containsNums) return make_pair(types::getBasicType(types::TypeFlag::NUMBER), vector<constraint>());
+    else return make_pair(types::getBasicType(types::TypeFlag::STRING), vector<constraint>());
 }
 
 #pragma endregion
