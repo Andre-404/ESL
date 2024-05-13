@@ -47,7 +47,7 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     tmpfn->setGC("statepoint-example");
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
     builder.SetInsertPoint(BB);
-    builder.CreateStore(builder.getInt8(0), curModule->getNamedGlobal("gcFlag"));
+    builder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
     currentFunction = tmpfn;
     try {
         for (auto stmt: _code->block.stmts) {
@@ -1580,14 +1580,28 @@ llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
 }
 llvm::Constant* Compiler::createConstStr(const string& str){
-    if(stringConstants.contains(str)) return stringConstants[str];
+    if(CStrings.contains(str)) return CStrings[str];
     auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
-    stringConstants[str] = constant;
+
+    CStrings[str] = constant;
     return constant;
 }
 
-llvm::Value* Compiler::createESLString(const string& str){
-    return builder.CreateCall(safeGetFunc("createStr"), createConstStr(str));
+llvm::Constant* Compiler::createESLString(const string& str){
+    if(ESLStrings.contains(str)) return ESLStrings[str];
+    auto st = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),
+                                        {builder.getInt8(+object::ObjType::STRING),
+                                         builder.getInt1(true)});
+    auto obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjString"), {
+        st, llvm::ConstantInt::get(builder.getInt64Ty(), str.length()), createConstStr(str)
+    });
+
+    auto gv = new llvm::GlobalVariable(*curModule, llvm::StructType::getTypeByName(*ctx, "ObjString"), false,
+                                       llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalStringObj");
+    auto val = llvm::ConstantExpr::getPtrToInt(gv, builder.getInt64Ty());
+    val = llvm::ConstantExpr::getOr(val, builder.getInt64(MASK_SIGNATURE_OBJ));
+    ESLStrings[str] = val;
+    return val;
 }
 
 llvm::Function* Compiler::safeGetFunc(const string& name){
@@ -1608,11 +1622,11 @@ void Compiler::argCntError(Token token, llvm::Value* expected, const int got){
     builder.CreateCall(safeGetFunc("exit"), builder.getInt32(64));
 }
 
-llvm::Value* Compiler::createConstant(std::variant<double, bool, void*,string>& constant){
+llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string>& constant){
     switch(constant.index()){
         case 0: {
             auto tmp = llvm::ConstantFP::get(*ctx, llvm::APFloat(get<double>(constant)));
-            return builder.CreateBitCast(tmp, builder.getInt64Ty());
+            return llvm::ConstantExpr::getBitCast(tmp, builder.getInt64Ty());
         }
         case 1: {
             uInt64 val = get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;

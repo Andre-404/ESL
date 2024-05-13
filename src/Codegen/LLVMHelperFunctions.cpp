@@ -25,6 +25,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt1Ty(*ctx)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
+    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx), TYPE(Int8Ptr)}, "ObjString");
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     // Pointer to pointer
@@ -56,8 +57,8 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
     CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
     CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
-    // What is this used for?
-    CREATE_FUNC("gcSafepoint", false, TYPE(Int1));
+
+    CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
@@ -78,8 +79,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
 }
 
 void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize){
-    uintptr_t* mainThreadStackStart = getStackPointer();
-    memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
+
     // Create the analysis managers.
     llvm::LoopAnalysisManager LAM;
     llvm::FunctionAnalysisManager FAM;

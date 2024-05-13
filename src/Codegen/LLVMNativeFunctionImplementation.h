@@ -15,6 +15,7 @@
 
 
 EXPORT void stopThread(){
+    if(!memory::gc) return;
     // Get stack end(lowest address) and then spill the registers to the stack
     uintptr_t* stackEnd = getStackPointer();
     jmp_buf jb;
@@ -37,7 +38,7 @@ EXPORT void print(Value x){
 }
 
 EXPORT Value createStr(char* ptr){
-    return encodeObj(ObjString::createStr(string(ptr)));
+    return encodeObj(ObjString::createStr(ptr));
 }
 
 EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
@@ -91,14 +92,12 @@ EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, V
 
 // Both values are known to be strings
 EXPORT Value strAdd(Value lhs, Value rhs){
-    string temp = asString(lhs)->str + asString(rhs)->str;
-    return encodeObj(object::ObjString::createStr(temp));
+    return encodeObj(asString(lhs)->concat(asString(rhs)));
 }
 
 EXPORT Value strTryAdd(Value lhs, Value rhs, const char* fileName, const int line){
     if(!isString(lhs) || !isString(rhs)) tyErrDouble("Operands must be numbers or strings, got '{}' and '{}'.", fileName, line, lhs, rhs);
-    string temp = asString(lhs)->str + asString(rhs)->str;
-    return encodeObj(object::ObjString::createStr(temp));
+    return encodeObj(asString(lhs)->concat(asString(rhs)));
 }
 
 EXPORT Value createArr(uint32_t arrSize){
@@ -113,8 +112,10 @@ EXPORT int64_t getArrSize(Value arr){
     return asArray(arr)->values.size();
 }
 
-EXPORT bool gcSafepoint(){
-    return memory::gc->active == 1;
+EXPORT void gcInit(char* gcFlag){
+    uintptr_t* mainThreadStackStart = getStackPointer();
+    memory::gc = new memory::GarbageCollector(reinterpret_cast<byte &>(*gcFlag));
+    memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
 }
 
 // hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString

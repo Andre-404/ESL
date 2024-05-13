@@ -81,7 +81,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Connects function types(unique for each function) and the LLVM IR representation of that function
         fastMap<types::tyPtr, llvm::Function*> functions;
         fastMap<string, llvm::Function*> nativeFunctions;
-        fastMap<string, llvm::Constant*> stringConstants;
+        fastMap<string, llvm::Constant*> CStrings;
+        fastMap<string, llvm::Constant*> ESLStrings;
         fastMap<string, llvm::Type*> namedTypes;
 
 
@@ -141,11 +142,11 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         // Misc
         llvm::Constant* createConstStr(const string& str);
-        llvm::Value* createESLString(const string& str);
+        llvm::Constant* createESLString(const string& str);
         llvm::Value* castToVal(llvm::Value* val);
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
-        llvm::Value* createConstant(std::variant<double, bool, void*,string>& constant);
+        llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
 
         #pragma endregion
 	};

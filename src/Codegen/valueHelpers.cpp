@@ -47,7 +47,7 @@ string valueHelpers::typeToStr(Value x) {
             Obj* ptr = decodeObj(x);
             switch (ptr->type) {
                 case +ObjType::ARRAY: return "<array>";
-                case +ObjType::CLASS: return "<class " + asClass(x)->name->str + ">";
+                case +ObjType::CLASS: return "<class " + string(asClass(x)->name->str) + ">";
                 case +ObjType::CLOSURE: return "<function>";
                 case +ObjType::INSTANCE: return "<instance>";
                 case +ObjType::STRING: return "<string>";

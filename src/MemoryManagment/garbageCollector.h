@@ -44,7 +44,7 @@ namespace memory {
 	class GarbageCollector {
 	public:
 		void* alloc(const uInt64 size);
-		GarbageCollector();
+		GarbageCollector(byte& active);
 		void markObj(object::Obj* const object);
 
         void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
@@ -61,14 +61,14 @@ namespace memory {
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
         std::atomic<int64_t> threadsSuspended;
         // 0 means gc is off, 1 means it's waiting to collect, and all threads should pause
-        std::atomic<byte> active;
+        std::atomic_ref<byte> active;
 
         // Notify threads to wake up, or notify a single random thread to run the gc cycle
         std::condition_variable STWcv;
         std::mutex pauseMtx;
 
         std::atomic<uInt64> heapSize;
-        ankerl::unordered_dense::map<string, object::ObjString*> interned;
+        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
 		uInt64 heapSizeLimit;

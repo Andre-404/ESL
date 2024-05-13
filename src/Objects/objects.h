@@ -44,17 +44,24 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
-        string str;
+        int64_t len;
+        char* str;
 
-        ObjString(const string& _str);
+        ObjString(char* _str);
 
-        bool compare(const ObjString* other);
+        bool compare(ObjString* other);
 
         bool compare(const string other);
 
-        ObjString* concat(const ObjString* other);
+        ObjString* concat(ObjString* other);
 
-        static ObjString* createStr(string str);
+        static ObjString* createStr(char* str);
+
+        //this reroutes the new operator to take memory which the GC gives out
+        void* operator new(size_t size, const int64_t strLen) {
+            return memory::gc->alloc(size+strLen);
+        }
+
     };
 
     class ObjArray : public Obj {

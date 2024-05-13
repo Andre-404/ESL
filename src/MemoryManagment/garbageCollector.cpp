@@ -14,9 +14,9 @@ NOINLINE uintptr_t* getStackPointer(){
 }
 
 namespace memory {
-	GarbageCollector* gc = new GarbageCollector();
+	GarbageCollector* gc= nullptr;
 
-	GarbageCollector::GarbageCollector() {
+	GarbageCollector::GarbageCollector(byte& active) : active(active) {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
 

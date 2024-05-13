@@ -25,7 +25,7 @@ size_t Obj::getSize(){
 
 string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(type){
-        case +ObjType::STRING: return reinterpret_cast<ObjString*>(this)->str;
+        case +ObjType::STRING: return string(reinterpret_cast<ObjString*>(this)->str);
         case +ObjType::ARRAY:{
             ObjArray* arr = reinterpret_cast<ObjArray*>(this);
             string str = "[";
@@ -37,13 +37,13 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
         }
         case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";;
         case +ObjType::FREEVAR: return "<freevar>";
-        case +ObjType::CLASS: return "<class " + reinterpret_cast<ObjClass*>(this)->name->str + ">";
-        case +ObjType::INSTANCE: return "<" + reinterpret_cast<ObjInstance*>(this)->klass->name->str + " instance>";
+        case +ObjType::CLASS: return "<class " + string(reinterpret_cast<ObjClass*>(this)->name->str) + ">";
+        case +ObjType::INSTANCE: return "<" + string(reinterpret_cast<ObjInstance*>(this)->klass->name->str) + " instance>";
         case +ObjType::HASH_MAP:{
             ObjHashMap* map = reinterpret_cast<ObjHashMap*>(this);
             string str = "{";
             for(auto it : map->fields){
-                str.append(" \"").append(it.first->str).append("\" : ");
+                str.append(" \"").append(string(it.first->str)).append("\" : ");
                 str.append(valueHelpers::toString(it.second, stack)).append(",");
             }
             str.erase(str.size() - 1).append(" }");
@@ -62,33 +62,38 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
 #pragma endregion
 
 #pragma region ObjString
-ObjString::ObjString(const string& _str) {
-	str = _str;
+ObjString::ObjString(char* _str) {
+    str = ((char*)this)+sizeof(ObjString);
+    auto view = std::string_view(_str);
+    view.copy(str, view.size()+1);
     marked = false;
 	type = +ObjType::STRING;
 }
 
-bool ObjString::compare(const ObjString* other) {
-	return (str.compare(other->str) == 0);
+bool ObjString::compare(ObjString* other) {
+	return std::strcmp(str, other->str) == 0;
 }
 
 bool ObjString::compare(const string other) {
-	return (str.compare(other) == 0);
+	return std::strcmp(str, other.c_str()) == 0;
 }
 
-ObjString* ObjString::concat(const ObjString* other) {
-	string temp = str + other->str;
-	return new ObjString(temp);
+ObjString* ObjString::concat(ObjString* other) {
+	string temp = string(str) + string(other->str);
+    // Gets rid of const, +1 for null terminator
+	return new(temp.size()+1) ObjString((char*)temp.c_str());
 }
 
-string convertBackSlashToEscape(const std::string& input)
+// TODO need to move this
+string convertBackSlashToEscape(const char* input)
 {
     string output;
     auto isEscapeChar = [](char c){
-        return c == 'n' || c == 'r' || c == 't' || c == 'a' || c == 'b' || c == 'f' || c == 'v';
+        return c == 'n' || c == 'r' || c == 't' || c == 'a' || c == 'b' || c == 'f' || c == 'v' || c == '\\';
     };
-    for (int i = 0; i < input.length(); i++) {
-        if (input[i] == '\\' && i < input.length() - 1 && isEscapeChar(input[i+1])) {
+    size_t len = strlen(input);
+    for (int i = 0; i < len; i++) {
+        if (input[i] == '\\' && i < len - 1 && isEscapeChar(input[i+1])) {
             // replace \\n with \n, \\r with \r, and \\t with \t
             switch (input[i+1]) {
                 case 'n': output += '\n'; break;
@@ -98,6 +103,7 @@ string convertBackSlashToEscape(const std::string& input)
                 case 'b': output += '\b'; break;
                 case 'f': output += '\f'; break;
                 case 'v': output += '\v'; break;
+                case '\\': output += '\\'; break;
             }
             i++; // skip the next character
         } else {
@@ -108,15 +114,17 @@ string convertBackSlashToEscape(const std::string& input)
     return output;
 }
 
-ObjString* ObjString::createStr(string str){
-    str = convertBackSlashToEscape(str);
-    auto it = memory::gc->interned.find(str);
+ObjString* ObjString::createStr(char* str){
+    auto view = std::string_view(str);
+    auto it = memory::gc->interned.find(view);
     if(it != memory::gc->interned.end()) return it->second;
-    auto newStr = new ObjString(str);
-    memory::gc->heapSize += str.size();
-    memory::gc->interned[str] = newStr;
+    // +1 for null terminator
+    ObjString* newStr = new(view.size()+1) ObjString(str);
+    // New string view that points to the char array managed by this string
+    memory::gc->interned[std::string_view(newStr->str)] = newStr;
     return newStr;
 }
+
 #pragma endregion
 
 #pragma region ObjClosure
@@ -156,7 +164,7 @@ ObjArray::ObjArray(const size_t size) {
 
 #pragma region ObjClass
 ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
-	name = ObjString::createStr(_name);
+	name = ObjString::createStr(const_cast<char *>(_name.c_str()));
     marked = false;
     superclass = _superclass;
 	type = +ObjType::CLASS;
