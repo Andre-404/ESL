@@ -44,7 +44,7 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
-        int64_t len;
+        uInt64 len;
         char* str;
 
         ObjString(char* _str);
@@ -99,17 +99,29 @@ namespace object {
         object::ObjClass* superclass;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
+        uInt64 methodArrLen;
 
         ObjClass(string _name, object::ObjClass* _superclass);
+
+        //this reroutes the new operator to take memory which the GC gives out
+        void* operator new(size_t size, const int64_t methodsN) {
+            return memory::gc->alloc(size+sizeof(ObjClosure*)*methodsN);
+        }
+
     };
 
-    // Fields contains both public and private fields, private fields have a prefix '!' which cannot appear as part of an identifier
-    // thus making sure that only the compiler can emit code to access a private member
+    // ObjInstance is a header followed by array of values(fields)
     class ObjInstance : public Obj {
     public:
         ObjClass* klass;
+        uInt64 fieldArrLen;
 
         ObjInstance(ObjClass* _klass);
+
+        //this reroutes the new operator to take memory which the GC gives out
+        void* operator new(size_t size, const int64_t fieldsN) {
+            return memory::gc->alloc(size+sizeof(Value)*fieldsN);
+        }
     };
 
     class ObjHashMap : public Obj{

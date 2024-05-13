@@ -47,7 +47,6 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     tmpfn->setGC("statepoint-example");
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
     builder.SetInsertPoint(BB);
-    builder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
     currentFunction = tmpfn;
     try {
         for (auto stmt: _code->block.stmts) {
@@ -56,6 +55,15 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     }catch(CompilerError err){
         std::cout<<fmt::format("Compiler exited because of error: '{}'.", err.reason);
     }
+    // Get all string constants into gc
+    llvm::IRBuilder<> tempBuilder(&tmpfn->getEntryBlock(), getIP());
+    tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
+    for(auto& gv : curModule->globals()){
+        if(gv.getName().contains("Obj")){
+            tempBuilder.CreateCall(safeGetFunc("gcAddConstant"), {curModule->getNamedGlobal(gv.getName())});
+        }
+    }
+
     // Ends the main function
     builder.CreateRetVoid();
     llvm::verifyFunction(*tmpfn);
@@ -73,7 +81,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             break;
         }
         case typedAST::VarType::FREEVAR:{
-            llvm::IRBuilder<> tempBuilder(&currentFunction->getEntryBlock(), currentFunction->getEntryBlock().begin());
+            llvm::IRBuilder<> tempBuilder(&currentFunction->getEntryBlock(), getIP());
             auto tmp = tempBuilder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, decl->dbgInfo.varName.getLexeme());
             variables.insert_or_assign(decl->uuid, tmp);
             break;
@@ -1638,6 +1646,14 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
         }
     }
     assert(false && "Unreachable");
+}
+
+llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, false, void>, false, false> Compiler::getIP(){
+    auto it = currentFunction->getEntryBlock().begin();
+    while(it->getOpcode() == llvm::Instruction::Alloca){
+        it++;
+    }
+    return it;
 }
 
 #pragma endregion

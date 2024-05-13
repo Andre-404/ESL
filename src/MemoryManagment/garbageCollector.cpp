@@ -143,6 +143,10 @@ namespace memory {
                 markObj(decodeObj(*globalRoots[i]));
             }
         }
+        // Mark all constant objects
+        for(Obj* obj : constantObjects){
+            markObj(obj);
+        }
 	}
 
 	void GarbageCollector::sweep() {
@@ -246,6 +250,9 @@ namespace memory {
     }
     void GarbageCollector::addGlobalRoot(Value* ptr){
         globalRoots.push_back(ptr);
+    }
+    void GarbageCollector::addConstant(object::Obj* obj){
+        constantObjects.push_back(obj);
     }
 }
 

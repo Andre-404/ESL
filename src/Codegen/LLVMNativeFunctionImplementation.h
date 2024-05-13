@@ -118,6 +118,10 @@ EXPORT void gcInit(char* gcFlag){
     memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
 }
 
+EXPORT void gcAddConstant(Obj* gcFlag){
+    memory::gc->addConstant(gcFlag);
+}
+
 // hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString
 EXPORT Value createHashMap(int nFields, ...){
     object::ObjHashMap* map = new object::ObjHashMap();

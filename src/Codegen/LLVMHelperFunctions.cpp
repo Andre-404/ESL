@@ -59,6 +59,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
 
     CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
+    CREATE_FUNC("gcAddConstant", false, TYPE(Void), types["ObjPtr"]);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
@@ -100,7 +101,6 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.registerLoopAnalyses(LAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
     // Create the pass manager.
-    // This one corresponds to a typical -O3 optimization pipeline.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O0);
     if(optimize) {
         MPM.run(*module, MAM);
