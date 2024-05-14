@@ -23,15 +23,23 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    types["Obj"] = llvm::StructType::create(*ctx, {llvm::Type::getInt8Ty(*ctx), llvm::Type::getInt1Ty(*ctx)}, "Obj");
+    types["Obj"] = llvm::StructType::create(*ctx, {TYPE(Int8), TYPE(Int1)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx), TYPE(Int8Ptr)}, "ObjString");
+    types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     // Pointer to pointer
     auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int8Ptr), tmpFreevarArr}, "ObjClosure");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
+
+
+    auto classType = llvm::StructType::create(*ctx, "ObjClass");
+    types["ObjClassPtr"] = PTR_TY(classType);
+    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {TYPE(Int64)}, false);
+    classType->setBody({TYPE(Int8Ptr), types["ObjClassPtr"], PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    types["ObjClass"] = classType;
 }
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
@@ -59,7 +67,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
 
     CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
-    CREATE_FUNC("gcAddConstant", false, TYPE(Void), types["ObjPtr"]);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));

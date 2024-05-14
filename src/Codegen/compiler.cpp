@@ -58,11 +58,6 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     // Get all string constants into gc
     llvm::IRBuilder<> tempBuilder(&tmpfn->getEntryBlock(), getIP());
     tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
-    for(auto& gv : curModule->globals()){
-        if(gv.getName().contains("Obj")){
-            tempBuilder.CreateCall(safeGetFunc("gcAddConstant"), {curModule->getNamedGlobal(gv.getName())});
-        }
-    }
 
     // Ends the main function
     builder.CreateRetVoid();
@@ -86,18 +81,16 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             variables.insert_or_assign(decl->uuid, tmp);
             break;
         }
-        case typedAST::VarType::GLOBAL:
         case typedAST::VarType::GLOBAL_FUNC:
-        case typedAST::VarType::GLOBAL_CLASS:{
+        case typedAST::VarType::GLOBAL_CLASS:
+        case typedAST::VarType::GLOBAL:{
             string varName = decl->dbgInfo.varName.getLexeme() + std::to_string(decl->uuid);
-            curModule->getOrInsertGlobal(varName, builder.getInt64Ty());
-            llvm::GlobalVariable* gvar = curModule->getNamedGlobal(varName);
-            gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
+            llvm::GlobalVariable* gvar = new llvm::GlobalVariable(*curModule, builder.getInt64Ty(), false,
+                                                                  llvm::GlobalVariable::PrivateLinkage,
+                                                                  builder.getInt64(MASK_SIGNATURE_NIL), varName);
             gvar->setAlignment(llvm::Align::Of<Value>());
-            gvar->setInitializer(builder.getInt64(MASK_SIGNATURE_NIL));
             // Globals aren't on the stack, so they need to be marked for GC collection separately
-            builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
-
+            if(decl->varType == typedAST::VarType::GLOBAL) builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
             variables.insert_or_assign(decl->uuid, gvar);
             break;
         }
@@ -539,7 +532,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     // is stored in parserCurrent->enclosing
     // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(expr->fn->args.size(), expr->fn->name, expr->fn->fnTy);
+    currentFunction = createNewFunc(expr->fn->name, expr->fn->fnTy);
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
     for(int i = 0; i < expr->freevars.size(); i++){
@@ -586,7 +579,7 @@ llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
-    currentFunction = createNewFunc(stmt->fn->args.size(), stmt->fn->name, stmt->fn->fnTy);
+    currentFunction = createNewFunc(stmt->fn->name, stmt->fn->fnTy);
 
     declareFuncArgs(stmt->fn->args);
 
@@ -600,17 +593,22 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&currentFunction->back());
-    auto typeErasedFn = builder.CreateBitCast(fn, builder.getInt8PtrTy());
+    // Every function is converted to a closure(even if it has 0 freevars) for ease of use when calling
+    // Since this is a global function declaration number of freevars is always going to be 0
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getInt8PtrTy());
     auto arity = builder.getInt8(stmt->fn->args.size());
     auto name = createConstStr(stmt->fn->name);
+    auto freeVarCnt = builder.getInt8(0);
+    auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
+    auto freeVarArr = llvm::ConstantPointerNull::get(ty);
 
-    // Every function is converted to a closure(if even it has 0 freevars) for ease of use when calling
-    // Since this is a global function declaration number of freevars is always going to be 0
-    vector<llvm::Value*> closureConstructorArgs = {typeErasedFn, arity, name, builder.getInt32(0)};
-
-    auto tmp = builder.CreateCall(safeGetFunc("createClosure"), closureConstructorArgs);
-    // Store closure in var
-    builder.CreateStore(tmp, variables.at(stmt->globalVarUuid));
+    // Create function constant
+    llvm::Constant* fnC = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
+                                         {createConstObjHeader(+object::ObjType::CLOSURE),
+                                          arity, freeVarCnt, typeErasedFn, name, freeVarArr});
+    // Creates a place in memory for the function and stores it there
+    llvm::Constant* fnLoc = storeConstObj(fnC);
+    replaceGV(stmt->globalVarUuid, constObjToVal(fnLoc));
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -750,7 +748,30 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
 }
 
 llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
+    string className = stmt->dbgInfo.className.getLexeme();
+    auto name = createConstStr(className);
+    auto fieldsLen = builder.getInt64(stmt->fields.size());
+    auto methodsLen = builder.getInt64(stmt->methods.size());
+    auto fieldsFunc = createFieldChooseFunc(className, stmt->fields);
+    auto methodsFunc = createMethodChooseFunc(className, stmt->methods);
+    llvm::Constant* parent = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(namedTypes["ObjClass"]));
+    if(stmt->parentClass){
+        parent = classes[stmt->parentClass->uuid];
+    }
+    vector<llvm::Constant*> methods;
+    for(auto p : stmt->methods){
+        methods.push_back(codegenMethod(p.second.first));
+    }
+    auto methodArr = llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosure"],
+                                                                   methods.size()), methods);
 
+    llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClass"), {
+        name, parent, methodsFunc, fieldsFunc, methodsLen, fieldsLen, storeConstObj(methodArr)
+    });
+    // Creates a place in memory for the class and stores it there
+    llvm::Constant* objLoc = storeConstObj(obj);
+    classes[stmt->globalVarUuid] = objLoc;
+    replaceGV(stmt->globalVarUuid, constObjToVal(objLoc));
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -1334,12 +1355,12 @@ void Compiler::codegenBlock(const typedAST::Block& block){
 }
 
 // Function codegen helpers
-llvm::Function* Compiler::createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy){
+llvm::Function* Compiler::createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy){
     // Create a function type with the appropriate number of arguments
     vector<llvm::Type*> params;
     // First argument is always the closure structure
     params.push_back(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
-    for(int i = 0; i < argCount; i++) params.push_back(builder.getInt64Ty());
+    for(int i = 0; i < fnTy->argCount; i++) params.push_back(builder.getInt64Ty());
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt64Ty(), params, false);
     auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, name, curModule.get());
     // Creates a connection between function types and functions
@@ -1588,6 +1609,75 @@ llvm::Value* Compiler::createSeqCmp(llvm::Value* compVal, vector<std::pair<std::
     return BBIdx;
 }
 
+// Class helpers
+llvm::Function* Compiler::createFieldChooseFunc(string className, std::unordered_map<string, int>& fields){
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
+    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, className+":fieldChoose", curModule.get());
+
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
+    builder.SetInsertPoint(BB);
+    llvm::Value* idx = builder.getInt32(-1);
+    for(auto p : fields){
+        auto toCmp = createESLString(p.first);
+        auto cmp = builder.CreateICmpEQ(fn->getArg(0), toCmp);
+        idx = builder.CreateSelect(cmp, builder.getInt32(p.second), idx);
+    }
+    builder.CreateRet(idx);
+
+    // Set insertion point to the end of the enclosing function
+    builder.SetInsertPoint(&currentFunction->back());
+    return fn;
+}
+llvm::Function* Compiler::createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods){
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
+    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, className+":methodChoose", curModule.get());
+
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
+    builder.SetInsertPoint(BB);
+    llvm::Value* idx = builder.getInt32(-1);
+    for(auto p : methods){
+        auto toCmp = createESLString(p.first);
+        auto cmp = builder.CreateICmpEQ(fn->getArg(0), toCmp);
+        idx = builder.CreateSelect(cmp, builder.getInt32(p.second.second), idx);
+    }
+    builder.CreateRet(idx);
+
+    // Set insertion point to the end of the enclosing function
+    builder.SetInsertPoint(&currentFunction->back());
+    return fn;
+}
+
+llvm::Constant* Compiler::codegenMethod(typedAST::ClassMethod& method){
+    // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
+    auto enclosingFunction = currentFunction;
+    currentFunction = createNewFunc(method.code->name, method.code->fnTy);
+
+    declareFuncArgs(method.code->args);
+
+    for(auto s : method.code->block.stmts){
+        s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
+    }
+
+    // Enclosing function become the active one, the function that was just compiled is stored in fn
+    auto fn = currentFunction;
+    currentFunction = enclosingFunction;
+
+    // Set insertion point to the end of the enclosing method
+    builder.SetInsertPoint(&currentFunction->back());
+    // Every function is converted to a closure(if even it has 0 freevars) for ease of use when calling
+    // Methods can't have freevars
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getInt8PtrTy());
+    auto arity = builder.getInt8(fn->arg_size());
+    auto name = createConstStr(method.code->name);
+    auto freeVarCnt = builder.getInt8(0);
+    auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
+    auto freeVarArr = llvm::ConstantPointerNull::get(ty);
+
+    // Create method constant
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
+                                                    {createConstObjHeader(+object::ObjType::CLOSURE),
+                                                     arity, freeVarCnt, typeErasedFn, name, freeVarArr});
+}
 // Misc
 llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
@@ -1602,17 +1692,10 @@ llvm::Constant* Compiler::createConstStr(const string& str){
 
 llvm::Constant* Compiler::createESLString(const string& str){
     if(ESLStrings.contains(str)) return ESLStrings[str];
-    auto st = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),
-                                        {builder.getInt8(+object::ObjType::STRING),
-                                         builder.getInt1(true)});
     auto obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjString"), {
-        st, llvm::ConstantInt::get(builder.getInt64Ty(), str.length()), createConstStr(str)
-    });
-
-    auto gv = new llvm::GlobalVariable(*curModule, llvm::StructType::getTypeByName(*ctx, "ObjString"), false,
-                                       llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalStringObj");
-    auto val = llvm::ConstantExpr::getPtrToInt(gv, builder.getInt64Ty());
-    val = llvm::ConstantExpr::getOr(val, builder.getInt64(MASK_SIGNATURE_OBJ));
+        createConstObjHeader(+object::ObjType::STRING), llvm::ConstantInt::get(builder.getInt64Ty(),str.length()),
+        createConstStr(str)});
+    auto val = constObjToVal(storeConstObj(obj));
     ESLStrings[str] = val;
     return val;
 }
@@ -1659,6 +1742,31 @@ llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, 
         it++;
     }
     return it;
+}
+
+llvm::Constant* Compiler::storeConstObj(llvm::Constant* obj){
+    return new llvm::GlobalVariable(*curModule, obj->getType(), false,
+                                    llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
+}
+llvm::Constant* Compiler::createConstObjHeader(int type){
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{builder.getInt8(type),
+                                         builder.getInt1(true)});
+}
+
+llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){
+    auto val = llvm::ConstantExpr::getPtrToInt(obj, builder.getInt64Ty());
+    return llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_NIL));
+}
+
+void Compiler::replaceGV(uInt64 uuid, llvm::Constant* newInit){
+    auto gv = (llvm::dyn_cast<llvm::GlobalVariable>(variables.at(uuid)));
+    llvm::GlobalVariable* newgv = new llvm::GlobalVariable(*curModule, builder.getInt64Ty(), false,
+                                                           llvm::GlobalVariable::PrivateLinkage,
+                                                           newInit, gv->getName());
+    newgv->setAlignment(llvm::Align::Of<Value>());
+    gv->replaceAllUsesWith(newgv);
+    variables.insert_or_assign(uuid, newgv);
+    gv->eraseFromParent();
 }
 
 #pragma endregion

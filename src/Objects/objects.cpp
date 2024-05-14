@@ -37,8 +37,8 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
         }
         case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";;
         case +ObjType::FREEVAR: return "<freevar>";
-        case +ObjType::CLASS: return "<class " + string(reinterpret_cast<ObjClass*>(this)->name->str) + ">";
-        case +ObjType::INSTANCE: return "<" + string(reinterpret_cast<ObjInstance*>(this)->klass->name->str) + " instance>";
+        case +ObjType::CLASS: return "<class " + string(reinterpret_cast<ObjClass*>(this)->name) + ">";
+        case +ObjType::INSTANCE: return "<" + string(reinterpret_cast<ObjInstance*>(this)->klass->name) + " instance>";
         case +ObjType::HASH_MAP:{
             ObjHashMap* map = reinterpret_cast<ObjHashMap*>(this);
             string str = "{";
@@ -164,7 +164,7 @@ ObjArray::ObjArray(const size_t size) {
 
 #pragma region ObjClass
 ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
-	name = ObjString::createStr(const_cast<char *>(_name.c_str()));
+	name = nullptr;
     marked = false;
     superclass = _superclass;
 	type = +ObjType::CLASS;

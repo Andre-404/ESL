@@ -89,7 +89,6 @@ namespace memory {
                 }
                 case +ObjType::CLASS: {
                     ObjClass* klass = reinterpret_cast<ObjClass*>(ptr);
-                    klass->name->marked = true;
                     if(klass->superclass) markObj(klass->superclass);
                     break;
                 }
@@ -143,28 +142,22 @@ namespace memory {
                 markObj(decodeObj(*globalRoots[i]));
             }
         }
-        // Mark all constant objects
-        for(Obj* obj : constantObjects){
-            markObj(obj);
-        }
 	}
 
 	void GarbageCollector::sweep() {
 		heapSize = 0;
-        for(auto it = interned.cbegin(); it != interned.cend(); ){
-            if(!it->second->marked) it = interned.erase(it);
-            else {
-                heapSize += it->second->getSize();
-                it++;
-            }
-        }
         for(auto it = objects.cbegin(); it !=  objects.cend();){
             object::Obj* obj = *it;
             if (!obj->marked) {
                 // Have to do this because we don't have access to virtual destructors,
                 // however some objects allocate STL containers that need cleaning up
                 switch(obj->type){
-                    case +object::ObjType::STRING: delete reinterpret_cast<object::ObjString*>(obj); break;
+                    case +object::ObjType::STRING:{
+                        // Remove strings from interned pool when deleting them
+                        object::ObjString* str = reinterpret_cast<object::ObjString*>(obj);
+                        interned.erase(str->str);
+                        delete reinterpret_cast<object::ObjString*>(obj); break;
+                    }
                     case +object::ObjType::ARRAY: delete reinterpret_cast<object::ObjArray*>(obj); break;
                     case +object::ObjType::CLASS: delete reinterpret_cast<object::ObjClass*>(obj); break;
                     case +object::ObjType::FILE: delete reinterpret_cast<object::ObjFile*>(obj); break;
@@ -250,9 +243,6 @@ namespace memory {
     }
     void GarbageCollector::addGlobalRoot(Value* ptr){
         globalRoots.push_back(ptr);
-    }
-    void GarbageCollector::addConstant(object::Obj* obj){
-        constantObjects.push_back(obj);
     }
 }
 

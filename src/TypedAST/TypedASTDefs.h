@@ -848,12 +848,16 @@ namespace typedAST{
         // To store the class object to a variable
         uInt64 globalVarUuid;
 
+        // Name is contained in dbgInfo
         AST::ClassDeclDebugInfo dbgInfo;
 
         ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, uInt64 _globalVarUuid,
-                  shared_ptr<VarDecl> _parentClass) : dbgInfo(_dbgInfo){
+                  shared_ptr<VarDecl> _parentClass, std::unordered_map<string, int>& _fields,
+                  std::unordered_map<string, std::pair<ClassMethod, int>>& _methods) : dbgInfo(_dbgInfo){
             classType = ty;
             parentClass = _parentClass;
+            fields = _fields;
+            methods = _methods;
             globalVarUuid = _globalVarUuid;
             type = NodeType::CLASS_DECL;
         }

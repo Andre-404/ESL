@@ -77,7 +77,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Integers are uuids of VarDecl instances
         fastMap<uInt64, llvm::Value*> variables;
 
-        fastMap<std::shared_ptr<types::ClassType>, std::shared_ptr<typedAST::ClassDecl>> classes;
+        fastMap<std::shared_ptr<types::ClassType>, std::shared_ptr<typedAST::ClassDecl>> classTypes;
+        // Maps uuids of classes to global variable holding the class struct
+        fastMap<uInt64, llvm::Constant*> classes;
         // Connects function types(unique for each function) and the LLVM IR representation of that function
         fastMap<types::tyPtr, llvm::Function*> functions;
         fastMap<string, llvm::Function*> nativeFunctions;
@@ -119,7 +121,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         void codegenBlock(const typedAST::Block& block);
 
         // Functions helpers
-        llvm::Function* createNewFunc(const int argCount, const string name, const std::shared_ptr<types::FunctionType> fnTy);
+        llvm::Function* createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         // Tries to optimize a function call if possible, otherwise returns nullptr
@@ -138,7 +140,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* createSeqCmp(llvm::Value* compVal, vector<std::pair<std::variant<double, bool, void*, string>, int>>& constants);
 
         // Class helpers
-        int getClassFieldIndex(const types::tyVarIdx exprTyIdx, const types::tyPtr ty);
+        llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
+        llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
+        llvm::Constant* codegenMethod(typedAST::ClassMethod& method);
 
         // Misc
         llvm::Constant* createConstStr(const string& str);
@@ -148,6 +152,10 @@ class Compiler : public typedAST::TypedASTCodegen {
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, false, void>, false, false> getIP();
+        llvm::Constant* storeConstObj(llvm::Constant* obj);
+        llvm::Constant* createConstObjHeader(int type);
+        llvm::Constant* constObjToVal(llvm::Constant* obj);
+        void replaceGV(uInt64 uuid, llvm::Constant* newInit);
         #pragma endregion
 	};
 }

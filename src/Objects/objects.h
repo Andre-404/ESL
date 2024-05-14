@@ -39,7 +39,7 @@ namespace object {
 
     // Pointer to a compiled function
     using Function = char*;
-    using CheckFieldFunc = int (*)(const char*);
+    using CheckFieldFunc = int (*)(ObjString*);
 
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
@@ -94,19 +94,18 @@ namespace object {
 
     class ObjClass : public Obj {
     public:
-        object::ObjString* name;
+        const char* name;
         // Uses copy down inheritance, superclass ptr is still here for instanceof operator
         object::ObjClass* superclass;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
         uInt64 methodArrLen;
+        uInt64 fieldsArrLen;
+        // We use ObjClosure* instead of ObjClosure** for optimization purposes to avoid having to allocate
+        // each ObjClosure individually and scatter it in memory
+        ObjClosure* methods;
 
         ObjClass(string _name, object::ObjClass* _superclass);
-
-        //this reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size, const int64_t methodsN) {
-            return memory::gc->alloc(size+sizeof(ObjClosure*)*methodsN);
-        }
 
     };
 

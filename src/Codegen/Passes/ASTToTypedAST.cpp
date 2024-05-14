@@ -608,7 +608,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         methodsDbg.insert_or_assign(str, AST::MethodDebugInfo(m.override, m.method->keyword, m.method->name, params));
     }
 
-    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy, dbg, var->uuid, paren);
+    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy,
+                                                       dbg, var->uuid, paren, currentClass->fields, currentClass->methods);
     nodesToReturn = {var, klass};
     currentClass = nullptr;
 }
