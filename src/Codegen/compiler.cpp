@@ -165,10 +165,18 @@ static bool isFloatingPointOp(typedAST::ArithmeticOp op){
 
 llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     using typedAST::ArithmeticOp;
-    if(expr->opType == ArithmeticOp::ADD) return codegenBinaryAdd(expr->lhs, expr->rhs, expr->dbgInfo.op);
-
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
+    if(expr->opType == ArithmeticOp::ADD) {
+        // If types of both lhs and rhs are known unnecessary runtime checks are skipped
+        if(exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))){
+            auto castlhs = builder.CreateBitCast(lhs, builder.getDoubleTy());
+            auto castrhs = builder.CreateBitCast(rhs, builder.getDoubleTy());
+            return castToVal(builder.CreateFAdd(castlhs, castrhs, "addtmp"));
+        }else if(exprIsType(expr->lhs, expr->lhs, types::getBasicType(types::TypeFlag::STRING))){
+            return builder.CreateCall(safeGetFunc("strAdd"), {lhs, rhs});
+        }else return codegenBinaryAdd(lhs, rhs, expr->dbgInfo.op);
+    }
 
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
@@ -496,7 +504,6 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
-    //TODO: make better argument count error since it doesn't work
     argCntError(expr->dbgInfo.paren1, argNum, expr->args.size());
     // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
     builder.CreateBr(callBB);
@@ -1165,20 +1172,8 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value
 }
 
 // Codegen functions
-llvm::Value* Compiler::codegenBinaryAdd(const typedExprPtr expr1, const typedExprPtr expr2, const Token op){
-    llvm::Value* lhs = expr1->codegen(this);
-    llvm::Value* rhs = expr2->codegen(this);
+llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, const Token op){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
-
-    // If types of both lhs and rhs are known unnecessary runtime checks are skipped
-    if(exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::NUMBER))){
-        auto castlhs = builder.CreateBitCast(lhs, builder.getDoubleTy());
-        auto castrhs = builder.CreateBitCast(rhs, builder.getDoubleTy());
-        return castToVal(builder.CreateFAdd(castlhs, castrhs, "addtmp"));
-    }else if(exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::STRING))){
-        return builder.CreateCall(safeGetFunc("strAdd"), {lhs, rhs});
-    }
-
     // If both are a number go to addNum, if not try adding as string
     // If both aren't strings, throw error(error is thrown inside strTryAdd C++ function)
     llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "addnum", F);
@@ -1456,7 +1451,7 @@ void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string
     builder.SetInsertPoint(executeOpBB);
 }
 
-llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy){
+llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg){
     auto num1 = builder.CreateBitCast(storedVal, builder.getDoubleTy());
     auto num2 = builder.CreateBitCast(newVal, builder.getDoubleTy());
     switch(opTy){
@@ -1518,6 +1513,11 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     if(opTy == typedAST::SetType::SET){
         builder.CreateStore(val, ptr);
         return val;
+    }else if(opTy == typedAST::SetType::ADD_SET){
+        // Special case because of strings
+        auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
+        val = builder.CreateBitCast(codegenBinaryAdd(storedVal, val, dbg), builder.getInt64Ty());
+        return val;
     }
     auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
     if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), val,
@@ -1525,7 +1525,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     createRuntimeTypeCheck(safeGetFunc("isNum"), storedVal,
                            "valIsNum", "Expected a number, got {}", dbg);
 
-    val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy), builder.getInt64Ty());
+    val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy, dbg), builder.getInt64Ty());
     builder.CreateStore(val, ptr);
     return val;
 }
@@ -1539,13 +1539,18 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
     if(opTy == typedAST::SetType::SET){
         builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
         return val;
+    }else if(opTy == typedAST::SetType::ADD_SET){
+        // Special case because of strings
+        auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
+        val = builder.CreateBitCast(codegenBinaryAdd(storedVal, val, dbg), builder.getInt64Ty());
+        return val;
     }
     auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
     if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), val,
                                "valIsNum", "Expected a number, got {}", dbg);
     createRuntimeTypeCheck(safeGetFunc("isNum"), storedVal,
                            "valIsNum", "Expected a number, got {}", dbg);
-    val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy), builder.getInt64Ty());
+    val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy, dbg), builder.getInt64Ty());
     builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
     return val;
 }

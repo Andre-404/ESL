@@ -112,7 +112,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         // Codegen functions(take in a typedAST expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
-        llvm::Value* codegenBinaryAdd(const typedExprPtr lhs, const typedExprPtr rhs, const Token op);
+        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, const Token op);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
@@ -127,7 +127,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
         // Array optimization
         void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
-        llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy);
+        llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg);
         llvm::Value* getArrElement(llvm::Value* arr, llvm::Value* index, bool opt, Token dbg);
         llvm::Value* getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg);
         llvm::Value* setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal, typedAST::SetType opTy, Token dbg);
