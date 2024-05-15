@@ -185,3 +185,10 @@ EXPORT void arraySetV(ObjArray* arr, Value num, Value v){
     arr->values[n] = v;
 }
 
+EXPORT Obj* gcAlloc(int bytes){
+    Obj* ptr = (Obj*)memory::gc->alloc(bytes);
+    ptr->type = +object::ObjType::THUNK;
+    ptr->marked = true;
+    return ptr;
+}
+

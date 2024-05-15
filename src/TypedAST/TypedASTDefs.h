@@ -183,8 +183,7 @@ namespace typedAST{
         FREEVAR,
         GLOBAL,
         // To optimize calling functions/instantiating classes
-        GLOBAL_FUNC,
-        GLOBAL_CLASS
+        GLOBAL_FUNC
     };
     class VarDecl : public TypedASTNode{
     public:
@@ -556,12 +555,12 @@ namespace typedAST{
     };
     class NewExpr : public TypedASTExpr{
     public:
-        exprPtr callee;
+        string className;
         vector<exprPtr> args;
         AST::NewExprDebugInfo dbgInfo;
 
-        NewExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _instType, AST::NewExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
-            callee = _callee;
+        NewExpr(string _className, vector<exprPtr> _args, types::tyVarIdx _instType, AST::NewExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+            className = _className;
             args = _args;
             exprType = _instType;
             type = NodeType::NEW;
@@ -844,21 +843,21 @@ namespace typedAST{
         std::unordered_map<string, int> fields;
         std::unordered_map<string, std::pair<ClassMethod, int>> methods;
         std::shared_ptr<types::ClassType> classType;
-        shared_ptr<VarDecl> parentClass; // Used for chaining classes to implement 'instanceof' operator
+        string parentClassName; // Used for chaining classes to implement 'instanceof' operator
         // To store the class object to a variable
-        uInt64 globalVarUuid;
+        string fullName;
 
         // Name is contained in dbgInfo
         AST::ClassDeclDebugInfo dbgInfo;
 
-        ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, uInt64 _globalVarUuid,
-                  shared_ptr<VarDecl> _parentClass, std::unordered_map<string, int>& _fields,
+        ClassDecl(std::shared_ptr<types::ClassType> ty, AST::ClassDeclDebugInfo _dbgInfo, string _fullName,
+                  string _parentClassName, std::unordered_map<string, int>& _fields,
                   std::unordered_map<string, std::pair<ClassMethod, int>>& _methods) : dbgInfo(_dbgInfo){
             classType = ty;
-            parentClass = _parentClass;
+            parentClassName = _parentClassName;
             fields = _fields;
             methods = _methods;
-            globalVarUuid = _globalVarUuid;
+            fullName = _fullName;
             type = NodeType::CLASS_DECL;
         }
         ~ClassDecl() {};

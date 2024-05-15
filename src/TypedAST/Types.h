@@ -150,8 +150,8 @@ namespace types{
     class ClassType : public Type{
     public:
         // Privates are prefixed with "priv."
-        std::unordered_map<string, tyVarIdx> fields;
-        std::unordered_map<string, tyVarIdx> methods;
+        std::unordered_map<string, std::pair<tyVarIdx, uInt64>> fields;
+        std::unordered_map<string, std::pair<tyVarIdx, uInt64>> methods;
 
         // Fields and methods get filled up from the outside
         ClassType(){

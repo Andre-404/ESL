@@ -82,7 +82,6 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             break;
         }
         case typedAST::VarType::GLOBAL_FUNC:
-        case typedAST::VarType::GLOBAL_CLASS:
         case typedAST::VarType::GLOBAL:{
             string varName = decl->dbgInfo.varName.getLexeme() + std::to_string(decl->uuid);
             llvm::GlobalVariable* gvar = new llvm::GlobalVariable(*curModule, builder.getInt64Ty(), false,
@@ -113,8 +112,7 @@ llvm::Value* Compiler::visitVarRead(typedAST::VarRead* expr) {
             return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadfreevar");
         }
         case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:
-        case typedAST::VarType::GLOBAL_CLASS:{
+        case typedAST::VarType::GLOBAL_FUNC:{
             return builder.CreateLoad(builder.getInt64Ty(), variables.at(expr->varPtr->uuid), "loadgvar");
         }
     }
@@ -139,8 +137,7 @@ llvm::Value* Compiler::visitVarStore(typedAST::VarStore* expr) {
             break;
         }
         case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:
-        case typedAST::VarType::GLOBAL_CLASS:{
+        case typedAST::VarType::GLOBAL_FUNC:{
             builder.CreateStore(valToStore, variables.at(expr->varPtr->uuid));
             break;
         }
@@ -516,7 +513,28 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 }
 
 llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
-
+    auto& klass = classes[expr->className];
+    string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
+    auto instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
+    auto memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt32(instSize)});
+    builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), instSize);
+    auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
+    auto address = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(0), builder.getInt32(2)});
+    auto nextaddr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(1)});
+    nextaddr = builder.CreateBitCast(nextaddr, llvm::PointerType::getUnqual(builder.getInt64Ty()));
+    builder.CreateStore(nextaddr, address);
+    inst = builder.CreateBitCast(inst, namedTypes["ObjPtr"]);
+    inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst});
+    if(klass.ty->methods.contains(name)){
+        auto fnty = klass.ty->methods[name];
+        auto fn  = functions[typeEnv[fnty.first]];
+        auto null = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(namedTypes["ObjClosure"]));
+        vector<llvm::Value*> args = {null, inst};
+        for(auto arg : expr->args) args.push_back(arg->codegen(this));
+        return builder.CreateCall(fn, args);
+    }else{
+        return inst;
+    }
 }
 
 //TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
@@ -748,15 +766,20 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
 }
 
 llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
-    string className = stmt->dbgInfo.className.getLexeme();
-    auto name = createConstStr(className);
+    auto name = createConstStr(stmt->fullName);
     auto fieldsLen = builder.getInt64(stmt->fields.size());
     auto methodsLen = builder.getInt64(stmt->methods.size());
-    auto fieldsFunc = createFieldChooseFunc(className, stmt->fields);
-    auto methodsFunc = createMethodChooseFunc(className, stmt->methods);
+    auto fieldsFunc = createFieldChooseFunc(stmt->fullName, stmt->fields);
+    auto methodsFunc = createMethodChooseFunc(stmt->fullName, stmt->methods);
     llvm::Constant* parent = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(namedTypes["ObjClass"]));
-    if(stmt->parentClass){
-        parent = classes[stmt->parentClass->uuid];
+    // This global is declared as a forward ref in case the class is used inside its own methods,
+    // later its replaced with the global holding the class
+    curModule->getOrInsertGlobal(stmt->fullName, namedTypes["ObjClass"]);
+    llvm::GlobalVariable* forwardref = curModule->getNamedGlobal(stmt->fullName);
+    classes[stmt->fullName] = Class(forwardref, createInstanceTemplate(forwardref, stmt->fields.size()), stmt->classType);
+
+    if(stmt->parentClassName.length() > 0){
+        parent = classes[stmt->parentClassName].classPtr;
     }
     vector<llvm::Constant*> methods;
     for(auto p : stmt->methods){
@@ -766,12 +789,10 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
                                                                    methods.size()), methods);
 
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClass"), {
-        name, parent, methodsFunc, fieldsFunc, methodsLen, fieldsLen, storeConstObj(methodArr)
+            createConstObjHeader(+object::ObjType::CLASS), name, parent, methodsFunc, fieldsFunc, methodsLen, fieldsLen, storeConstObj(methodArr)
     });
-    // Creates a place in memory for the class and stores it there
-    llvm::Constant* objLoc = storeConstObj(obj);
-    classes[stmt->globalVarUuid] = objLoc;
-    replaceGV(stmt->globalVarUuid, constObjToVal(objLoc));
+    // Replace forwardref with actual object
+    forwardref->setInitializer(obj);
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -1678,6 +1699,21 @@ llvm::Constant* Compiler::codegenMethod(typedAST::ClassMethod& method){
                                                     {createConstObjHeader(+object::ObjType::CLOSURE),
                                                      arity, freeVarCnt, typeErasedFn, name, freeVarArr});
 }
+
+llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, int fieldN){
+    vector<llvm::Constant*> fields(fieldN);
+    std::fill(fields.begin(), fields.end(), builder.getInt64(MASK_SIGNATURE_NIL));
+    llvm::Constant* fieldArr = llvm::ConstantArray::get(llvm::ArrayType::get(builder.getInt64Ty(), fieldN), fields);
+    llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjInstance"), {
+            createConstObjHeader(+object::ObjType::INSTANCE), klass, builder.getInt64(fieldN),
+            llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(builder.getInt64Ty()))
+    });
+    auto inst =  llvm::ConstantStruct::get(llvm::StructType::create(*ctx,{namedTypes["ObjInstance"],
+                                                                    llvm::ArrayType::get(builder.getInt64Ty(), fieldN)}),
+                                     {obj, fieldArr});
+    return storeConstObj(inst);
+}
+
 // Misc
 llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));
@@ -1744,7 +1780,7 @@ llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, 
     return it;
 }
 
-llvm::Constant* Compiler::storeConstObj(llvm::Constant* obj){
+llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
     return new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
 }

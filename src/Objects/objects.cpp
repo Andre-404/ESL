@@ -172,9 +172,11 @@ ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
 #pragma endregion
 
 #pragma region ObjInstance
-ObjInstance::ObjInstance(ObjClass* _klass) {
+ObjInstance::ObjInstance(ObjClass* _klass, uInt64 _fieldArrLen) {
 	klass = _klass;
+    fieldArrLen = _fieldArrLen;
     marked = false;
+    fields = (Value*)(((char*)this)+sizeof(ObjInstance));
 	type = +ObjType::INSTANCE;
 }
 #pragma endregion

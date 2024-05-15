@@ -684,6 +684,7 @@ shared_ptr<ClassDecl> Parser::classDecl() {
 
                 consume(TokenType::SEMICOLON, "Expected ';' after field name");
             } else if (match(TokenType::FN)) {
+                // TODO: maybe warn if constructor isn't declared pub?
                 auto decl = funcDecl();
                 checkName(decl->name);
                 // Implicitly declare "this"

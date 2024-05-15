@@ -648,7 +648,6 @@ namespace AST {
 	class FuncDecl : public ASTDecl {
 	public:
 		vector<ASTVar> args;
-        int arity;
 		shared_ptr<BlockStmt> body;
 		Token name;
         Token keyword;
@@ -656,7 +655,6 @@ namespace AST {
 		FuncDecl(Token _name, vector<ASTVar> _args, shared_ptr<BlockStmt> _body, Token _keyword) {
 			name = _name;
 			args = _args;
-			arity = _args.size();
 			body = _body;
             keyword = _keyword;
 			type = ASTType::FUNC;

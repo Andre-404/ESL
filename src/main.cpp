@@ -69,7 +69,9 @@ int main(int argc, char* argv[]) {
         closureConversion::ClosureConverter finder(modules);
         passes::typedASTParser::ASTTransformer transformer;
         auto res = transformer.run(modules, finder.generateFreevarMap());
+        errorHandler::showCompileErrors();
         auto env = transformer.getTypeEnv();
+
 
         compileCore::Compiler compiler(res.first, res.second, env);
 

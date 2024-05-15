@@ -143,7 +143,7 @@ pair<types::tyPtr, vector<constraint>> TypeUnificator::processConstraint(shared_
     auto klass = casted->klass;
 
     if(klass->methods.contains(instGetConstraint->field)){
-        auto idx = klass->methods[instGetConstraint->field];
+        auto idx = klass->methods[instGetConstraint->field].second;
         // Methods are already collapsed
         toReturn.first = collapsedTypes[idx];
     }else if(klass->fields.contains(instGetConstraint->field)){

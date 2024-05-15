@@ -19,7 +19,9 @@ namespace object {
         FILE,
         MUTEX,
         FUTURE,
-        RANGE
+        RANGE,
+
+        THUNK
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
@@ -114,8 +116,9 @@ namespace object {
     public:
         ObjClass* klass;
         uInt64 fieldArrLen;
+        Value* fields;
 
-        ObjInstance(ObjClass* _klass);
+        ObjInstance(ObjClass* _klass, uInt64 _fieldsArrLen);
 
         //this reroutes the new operator to take memory which the GC gives out
         void* operator new(size_t size, const int64_t fieldsN) {

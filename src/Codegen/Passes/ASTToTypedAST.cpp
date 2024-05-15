@@ -285,7 +285,6 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto klass = getClassInfoFromExpr(expr->call->callee);
-    auto callee = globals.at(klass->mangledName);
     vector<typedAST::exprPtr> args;
     for(auto arg : expr->call->args){
         args.push_back(evalASTExpr(arg));
@@ -298,7 +297,7 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto dbg = AST::NewExprDebugInfo(expr->keyword, className, expr->call->paren1, expr->call->paren2);
     auto varDbg = AST::VarReadDebugInfo(className);
 
-    returnedExpr = std::make_shared<typedAST::NewExpr>(std::make_shared<typedAST::VarRead>(callee.valPtr, varDbg), args, instTy, dbg);
+    returnedExpr = std::make_shared<typedAST::NewExpr>(klass->mangledName, args, instTy, dbg);
 }
 
 void ASTTransformer::visitAsyncExpr(AST::AsyncExpr* expr) {
@@ -459,12 +458,11 @@ void ASTTransformer::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
     string fullSymbol = unit->file->name + std::to_string(unit->id) + symbol.getLexeme();
     if(globals.contains(fullSymbol)){
         auto ptr = globals.at(fullSymbol).valPtr;
-        if(ptr->varType == typedAST::VarType::GLOBAL_CLASS){
-            error(symbol, fmt::format("Classes aren't first class values.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
-        }
         auto dbg = AST::VarReadDebugInfo(expr->ident);
         returnedExpr = std::make_shared<typedAST::VarRead>(ptr, dbg);
         return;
+    }else if(globalClasses.contains(fullSymbol)){
+        error(symbol, fmt::format("Classes aren't first class values.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
     }
 
     error(symbol, fmt::format("Module '{}' with alias '{}' doesn't export this symbol.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
@@ -505,7 +503,7 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     updateLine(decl->getName());
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-    auto ty = createNewFunc("func." + fullGlobalSymbol, decl->arity, FuncType::TYPE_FUNC, false);
+    auto ty = createNewFunc("func." + fullGlobalSymbol, decl->args.size(), FuncType::TYPE_FUNC, false);
 
     varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, ty);
     // Defining the function here to allow for recursion
@@ -533,9 +531,6 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     auto classTyIdx = addType(classTy);
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
-    varPtr var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::CLASS, classTyIdx);
-    // Defining the function here to allows for creating a new instance of a class inside its own methods
-    defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
     currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
@@ -567,7 +562,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 
         // New field is inserted at the end of the fields array
         currentClass->fields.insert_or_assign(str, idx);
-        classTy->fields.insert_or_assign(str, getBasicType(types::TypeFlag::ANY));
+        classTy->fields.insert_or_assign(str, std::make_pair(getBasicType(types::TypeFlag::ANY), idx));
     }
 
     vector<std::shared_ptr<types::FunctionType>> methodTys;
@@ -579,21 +574,27 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         str = (method.isPublic ? str : ("priv." + str));
 
         // Creates new type for each method(if it's an override then just override the field in classTy)
-        auto methodTy = std::make_shared<types::FunctionType>(method.method->arity,
+        auto methodTy = std::make_shared<types::FunctionType>(method.method->args.size(),
                                                               createEmptyTy(), false);
         auto tyIdx = addType(methodTy);
         methodTys.push_back(methodTy);
 
-        classTy->methods.insert_or_assign(str, tyIdx);
+
+        int fieldIndex = currentClass->classTy->methods.size();
+        if(currentClass->methods.contains(str)){
+            fieldIndex = currentClass->methods[str].second;
+        }
+
+        classTy->methods.insert_or_assign(str, std::make_pair(tyIdx, fieldIndex));
     }
 
     // Process the methods after forward declaring the fields
     processMethods(decl->getName().getLexeme(), decl->methods, methodTys);
 
     // Only pass pointer to where the class is stored if this class inherits
-    varPtr paren = nullptr;
+    string paren = "";
     if(currentClass->parent){
-        paren = globals.at(currentClass->parent->mangledName).valPtr;
+        paren = currentClass->parent->mangledName;
     }
 
     // Debug stuff
@@ -609,8 +610,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     }
 
     auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy,
-                                                       dbg, var->uuid, paren, currentClass->fields, currentClass->methods);
-    nodesToReturn = {var, klass};
+                                                       dbg, fullGlobalSymbol, paren, currentClass->fields, currentClass->methods);
+    nodesToReturn = {klass};
     currentClass = nullptr;
 }
 
@@ -794,8 +795,9 @@ varPtr ASTTransformer::checkSymbol(const Token symbol){
             if(!gvar.isDefined){
                 error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
             }
-            else if(gvar.valPtr->varType == typedAST::VarType::GLOBAL_CLASS) error(symbol, "Cannot read a class.");
             return gvar.valPtr;
+        }else if(dep.alias.type == TokenType::NONE && globalClasses.contains(fullSymbol)){
+            error(symbol, "Classes aren't first class values.");
         }
     }
     return nullptr;
@@ -809,12 +811,14 @@ varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
         if (it != globals.end()){
             Globalvar& var = it->second;
             if(var.valPtr->varType == typedAST::VarType::GLOBAL_FUNC) error(symbol, "Cannot assign to a function.");
-            else if(var.valPtr->varType == typedAST::VarType::GLOBAL_CLASS) error(symbol, "Cannot assign to a class.");
 
             if(!var.isDefined){
                 error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
             }
             return var.valPtr;
+        }
+        if(globalClasses.contains(fullSymbol)){
+            error(symbol, "Classes aren't first class values.");
         }
         error(symbol, "Cannot assign to a variable not declared in this module.");
     }
@@ -822,8 +826,11 @@ varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
         if (it != globals.end()) {
             if(!it->second.isDefined){
                 error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
-            }else if(it->second.valPtr->varType == typedAST::VarType::GLOBAL_CLASS) error(symbol, "Classes aren't first class values.");
+            }
             return it->second.valPtr;
+        }
+        else if(globalClasses.contains(fullSymbol)){
+            error(symbol, "Classes aren't first class values.");
         }
         else {
             // Global variables defined in an imported file are guaranteed to be already defined
@@ -839,7 +846,7 @@ varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclTy
     switch(type){
         case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL; break;
         case AST::ASTDeclType::FUNCTION: varty = typedAST::VarType::GLOBAL_FUNC; break;
-        case AST::ASTDeclType::CLASS: varty = typedAST::VarType::GLOBAL_CLASS; break;
+        case AST::ASTDeclType::CLASS: break; // Unreachable
     }
     varPtr var;
     if(defaultTy != -1) {
@@ -1004,8 +1011,6 @@ std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(){
 
 // Functions
 std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
-    auto scopeEdge = endScope();
-    current->func->block.stmts.push_back(scopeEdge);
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
     if(!current->func->block.terminates){
@@ -1025,6 +1030,9 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
         current->func->block.stmts.push_back(ret);
         current->func->block.terminates = true;
     }
+    // Need to end scope AFTER emitting return because "this" is a local var(arg)
+    auto scopeEdge = endScope();
+    current->func->block.stmts.push_back(scopeEdge);
 
     auto func = current->func;
     CurrentChunkInfo* temp = current->enclosing;
@@ -1115,7 +1123,6 @@ void ASTTransformer::processMethods(const string className, vector<AST::ClassMet
         if(currentClass->methods.contains(str)){
             fieldIndex = currentClass->methods[str].second;
         }
-
         auto transformedMethod = createMethod(method.method.get(), method.override, className, methodTys[i]);
 
         // If this is an override of a method, it gets the index that the overriden function had
@@ -1216,7 +1223,7 @@ std::shared_ptr<ClassChunkInfo> ASTTransformer::getClassInfoFromExpr(AST::ASTNod
     if (expr->type == AST::ASTType::LITERAL) {
         Token symbol = probeToken(expr);
         // First check this module
-        string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + symbol.getLexeme();
+        string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + symbol.getLexeme();
         auto it = globalClasses.find(fullSymbol);
         if (it != globalClasses.end()) return it->second;
         // Then check imported modules

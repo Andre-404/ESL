@@ -38,8 +38,11 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {TYPE(Int64)}, false);
-    classType->setBody({TYPE(Int8Ptr), types["ObjClassPtr"], PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    classType->setBody({types["Obj"], TYPE(Int8Ptr), types["ObjClassPtr"], PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
+
+    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], types["ObjClassPtr"], TYPE(Int64), PTR_TY(TYPE(Int64))}, "ObjInstance");
+    types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 }
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
@@ -67,6 +70,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
 
     CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
+    // Marks a pointer to a variable as a gc root, this is used for all global variables
+    CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
+    CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
@@ -76,8 +82,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], types["ObjClosurePtr"], TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
     CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
-    // Marks a pointer to a variable as a gc root, this is used for all global variables
-    CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
     CREATE_FUNC("hashmapGetV", false, TYPE(Int64), types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
