@@ -290,37 +290,32 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         llvm::verifyFunction(*F);
     }();
-    // is_ functions for objects
-    {
-        llvm::Function* F = createFunc("isString",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = F->getArg(0);
-        auto const0 = builder.getInt8(+object::ObjType::STRING);
-        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
+
+    [&]{
+        llvm::Function* F = createFunc("isInstAndClass",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), types["ObjClassPtr"]},false));
+        llvm::Value* inst = F->getArg(0);
+
+        auto cond1 = builder.CreateCall(module->getFunction("isObjType"),
+                                        {inst, builder.getInt8(+object::ObjType::INSTANCE)});
+
+        auto classPtr = builder.CreatePtrToInt(F->getArg(1), builder.getInt64Ty());
+        llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
+        llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkClassType", F);
+        builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
+
+        builder.SetInsertPoint(checkTypeBB);
+        inst = builder.CreateCall(module->getFunction("decodeObj"), {inst});
+        inst = builder.CreateBitCast(inst, types["ObjInstancePtr"]);
+        auto ptr = builder.CreateInBoundsGEP(types["ObjInstance"], inst,
+                                             {builder.getInt32(0), builder.getInt32(1)});
+        llvm::Value* ty = builder.CreateLoad(types["ObjClassPtr"], ptr);
+        ty = builder.CreatePtrToInt(ty, builder.getInt64Ty());
+        auto cmp = builder.CreateICmpEQ(classPtr, ty);
+        builder.CreateRet(cmp);
+        F->insert(F->end(), notObjBB);
+        builder.SetInsertPoint(notObjBB);
+        builder.CreateRet(builder.getInt1(false));
 
         llvm::verifyFunction(*F);
-    }
-    {
-        llvm::Function* F = createFunc("isHashmap",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = F->getArg(0);
-        auto const0 = builder.getInt8(+object::ObjType::HASH_MAP);
-        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
-
-        llvm::verifyFunction(*F);
-    }
-    {
-        llvm::Function* F = createFunc("isArray",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = F->getArg(0);
-        auto const0 = builder.getInt8(+object::ObjType::ARRAY);
-        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
-
-        llvm::verifyFunction(*F);
-    }
-    {
-        llvm::Function* F = createFunc("isClosure",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
-        auto arg = F->getArg(0);
-        auto const0 = builder.getInt8(+object::ObjType::CLOSURE);
-        builder.CreateRet(builder.CreateCall(module->getFunction("isObjType"), {arg, const0}));
-
-        llvm::verifyFunction(*F);
-    }
+    }();
 }

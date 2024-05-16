@@ -96,6 +96,7 @@ namespace memory {
                     ObjInstance* inst = reinterpret_cast<ObjInstance*>(ptr);
 
                     markObj(inst->klass);
+                    for (int i = 0; i < inst->fieldArrLen; i++) valueHelpers::mark(inst->fields[i]);
                     break;
                 }
                 case +ObjType::HASH_MAP:{

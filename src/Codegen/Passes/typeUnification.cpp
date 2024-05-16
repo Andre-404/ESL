@@ -148,7 +148,10 @@ pair<types::tyPtr, vector<constraint>> TypeUnificator::processConstraint(shared_
         toReturn.first = collapsedTypes[idx];
     }else if(klass->fields.contains(instGetConstraint->field)){
         // TODO: when fields become typed change this
-        toReturn.first = collapsedTypes[static_cast<int>(types::TypeFlag::ANY)];
+        toReturn.first = types::getBasicType(types::TypeFlag::ANY);
+    }else{
+        // TODO: proper error
+        toReturn.first = types::getBasicType(types::TypeFlag::ANY);
     }
     return toReturn;
 }

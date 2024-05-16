@@ -256,7 +256,7 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
             return builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
         }
 
-        createRuntimeTypeCheck(safeGetFunc("isBool"), rhs,
+        createRuntimeTypeCheck(safeGetFunc("isBool"), {rhs},
                                "Operand must be a boolean, got '{}'.", "negbool", expr->dbgInfo.op);
         // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
         // Since that's just a single bit flag that's flipped on when true and off when false
@@ -330,9 +330,13 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-    auto cond1 = builder.CreateZExt(builder.CreateCall(safeGetFunc("isArray"), collection), builder.getInt8Ty());
-    auto cond2 = builder.CreateZExt(builder.CreateCall(safeGetFunc("isHashmap"), collection), builder.getInt8Ty());
+    llvm::Value* cond1 = builder.CreateCall(safeGetFunc("isObjType"),{collection, builder.getInt8(+object::ObjType::ARRAY)});
+    cond1 = builder.CreateZExt(cond1, builder.getInt8Ty());
+
+    llvm::Value* cond2 = builder.CreateCall(safeGetFunc("isObjType"),{collection, builder.getInt8(+object::ObjType::HASH_MAP)});
+    cond2 = builder.CreateZExt(cond2,builder.getInt8Ty());
     cond2 = builder.CreateShl(cond2, 1, "shl", true, true);
+
     auto num = builder.CreateOr(cond1, cond2);
     auto _switch = builder.CreateSwitch(num, errorBB, 3);
     _switch->addCase(builder.getInt8(1), isArray);
@@ -389,9 +393,13 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-    auto cond1 = builder.CreateZExt(builder.CreateCall(safeGetFunc("isArray"), collection), builder.getInt8Ty());
-    auto cond2 = builder.CreateZExt(builder.CreateCall(safeGetFunc("isHashmap"), collection), builder.getInt8Ty());
+    llvm::Value* cond1 = builder.CreateCall(safeGetFunc("isObjType"),{collection, builder.getInt8(+object::ObjType::ARRAY)});
+    cond1 = builder.CreateZExt(cond1, builder.getInt8Ty());
+
+    llvm::Value* cond2 = builder.CreateCall(safeGetFunc("isObjType"),{collection, builder.getInt8(+object::ObjType::HASH_MAP)});
+    cond2 = builder.CreateZExt(cond2,builder.getInt8Ty());
     cond2 = builder.CreateShl(cond2, 1, "shl", true, true);
+
     auto num = builder.CreateOr(cond1, cond2);
     auto _switch = builder.CreateSwitch(num, errorBB, 3);
     _switch->addCase(builder.getInt8(1), isArray);
@@ -477,8 +485,8 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 
     llvm::Value* closureVal = expr->callee->codegen(this);
 
-    createRuntimeTypeCheck(safeGetFunc("isClosure"), closureVal, "call",
-                           "Expected a function for a callee, got '{}'.", expr->dbgInfo.paren1);
+    createRuntimeTypeCheck(safeGetFunc("isObjType"), {closureVal, builder.getInt8(+object::ObjType::CLOSURE)},
+                           "call","Expected a function for a callee, got '{}'.", expr->dbgInfo.paren1);
 
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
     vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
@@ -519,7 +527,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     auto memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt32(instSize)});
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), instSize);
     auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
-    auto address = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(0), builder.getInt32(2)});
+    auto address = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(0), builder.getInt32(3)});
     auto nextaddr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(1)});
     nextaddr = builder.CreateBitCast(nextaddr, llvm::PointerType::getUnqual(builder.getInt64Ty()));
     builder.CreateStore(nextaddr, address);
@@ -783,7 +791,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     }
     vector<llvm::Constant*> methods;
     for(auto p : stmt->methods){
-        methods.push_back(codegenMethod(p.second.first));
+        methods.push_back(codegenMethod(p.second.first, forwardref));
     }
     auto methodArr = llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosure"],
                                                                    methods.size()), methods);
@@ -797,7 +805,28 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
 }
 
 llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
+    auto inst = expr->instance->codegen(this);
+    if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+        return optimizeInstGet(inst, expr->field, klass);
+    }
+    auto field = createESLString(expr->field);
+    createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
+                           "isInst", "Expected an instance, got '{}'", expr->dbgInfo.accessor);
 
+    inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
+    inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
+
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
+                                         {builder.getInt32(0), builder.getInt32(1)});
+    auto klass = builder.CreateLoad(namedTypes["ObjClassPtr"], ptr);
+
+    // first el: field index, second el: method index
+    // Atleast one of these 2 is guaranteed to be -1 since methods and fields can't share names
+    auto indicies = instGetUnoptIdx(klass, field);
+
+    // Creates the switch which returns either method or field
+    return instGetUnoptimized(inst, indicies.first, indicies.second, klass, expr->field);
 }
 llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
 
@@ -1176,31 +1205,30 @@ void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value
     llvm::Constant* line = builder.getInt32(token.str.line);
     builder.CreateCall(safeGetFunc("tyErrDouble"), {str, file, line, lhs, rhs});
 }
-void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* val, string executeBBName,
+void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> args, string executeBBName,
                                       string errMsg, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
     llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
-
-    auto cond = builder.CreateCall(typeCheckFunc, val);
+    auto cond = builder.CreateCall(predicate, args);
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
-    createTyErr(errMsg, val, dbg);
+    createTyErr(errMsg, args[0], dbg);
     // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
     builder.CreateBr(executeOpBB);
 
     F->insert(F->end(), executeOpBB);
     builder.SetInsertPoint(executeOpBB);
 }
-void Compiler::createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* lhs, llvm::Value* rhs,
+void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
                                       string executeBBName, string errMsg, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
     llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
 
-    auto c1 = builder.CreateCall(typeCheckFunc, lhs);
-    auto c2 = builder.CreateCall(typeCheckFunc, rhs);
+    auto c1 = builder.CreateCall(predicate, lhs);
+    auto c2 = builder.CreateCall(predicate, rhs);
     builder.CreateCondBr(builder.CreateNot(builder.CreateAnd(c1, c2)), errorBB, executeOpBB);
 
     builder.SetInsertPoint(errorBB);
@@ -1351,7 +1379,7 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
         }
     }
 
-    createRuntimeTypeCheck(safeGetFunc("isNum"), rhs,
+    createRuntimeTypeCheck(safeGetFunc("isNum"), {rhs},
                            "Operand must be a number, got '{}'.", "numneg", dbg);
 
     // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
@@ -1524,7 +1552,7 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
 }
 
 llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool opt, Token dbg){
-    if(!opt) createRuntimeTypeCheck(safeGetFunc("isNum"), field,
+    if(!opt) createRuntimeTypeCheck(safeGetFunc("isNum"), {field},
                                     "getArrAddr", "Expected a number, got {}", dbg);
 
     field = builder.CreateBitCast(field, builder.getDoubleTy());
@@ -1536,7 +1564,7 @@ llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool 
 }
 
 llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg){
-    if(!opt) createRuntimeTypeCheck(safeGetFunc("isString"), field,
+    if(!opt) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
                                "getHashmapV", "Expected a string, got {}", dbg);
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
@@ -1545,7 +1573,7 @@ llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool 
 
 llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
-    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isNum"), index,
+    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isNum"), {index},
                                     "getArrAddr", "Expected a number, got {}", dbg);
     index = builder.CreateBitCast(index, builder.getDoubleTy());
     index = builder.CreateFPToUI(index, builder.getInt64Ty());
@@ -1562,9 +1590,9 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
         return val;
     }
     auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
-    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), val,
+    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
                                "valIsNum", "Expected a number, got {}", dbg);
-    createRuntimeTypeCheck(safeGetFunc("isNum"), storedVal,
+    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
                            "valIsNum", "Expected a number, got {}", dbg);
 
     val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy, dbg), builder.getInt64Ty());
@@ -1573,7 +1601,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
 }
 llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
-    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isString"), field,
+    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
                                "setHashmapV", "Expected a string, got {}", dbg);
 
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
@@ -1588,9 +1616,9 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
         return val;
     }
     auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
-    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), val,
+    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
                                "valIsNum", "Expected a number, got {}", dbg);
-    createRuntimeTypeCheck(safeGetFunc("isNum"), storedVal,
+    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
                            "valIsNum", "Expected a number, got {}", dbg);
     val = builder.CreateBitCast(decoupleSetOperation(storedVal, val, opTy, dbg), builder.getInt64Ty());
     builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
@@ -1668,12 +1696,14 @@ llvm::Function* Compiler::createMethodChooseFunc(string className, std::unordere
     return fn;
 }
 
-llvm::Constant* Compiler::codegenMethod(typedAST::ClassMethod& method){
+llvm::Constant* Compiler::codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr){
     // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
     currentFunction = createNewFunc(method.code->name, method.code->fnTy);
 
     declareFuncArgs(method.code->args);
+    createRuntimeTypeCheck(safeGetFunc("isInstAndClass"), {currentFunction->getArg(1), classPtr},
+                           "isInst", "Expected instance of class, got '{}'.", method.dbg.name);
 
     for(auto s : method.code->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -1714,6 +1744,105 @@ llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, in
     return storeConstObj(inst);
 }
 
+llvm::Value* Compiler::optimizeInstGet(llvm::Value* inst, string field, Class& klass){
+    if(klass.ty->methods.contains(field)){
+        // Index into the array of ObjClosure contained in the class
+        auto arrIdx = builder.getInt32(klass.ty->methods[field].second);
+
+        // Gets the pointer to the array which stores ObjClosures
+        vector<llvm::Constant*> indices = {builder.getInt32(0), builder.getInt32(7)};
+        auto ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClass"], klass.classPtr, indices);
+        llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
+
+        // Doesn't actually access the array, but treats the pointer as a pointer to allocated ObjClosure
+        val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, arrIdx);
+        return builder.CreateCall(safeGetFunc("encodeObj"), {val});
+    }else if(klass.ty->fields.contains(field)){
+        // Index into the array of fields of the instance
+        auto arrIdx = builder.getInt32(klass.ty->fields[field].second);
+
+
+        inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
+        inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
+        // TODO: maybe just use 2 GEPs without load in between? since first load just loads the pointer at the end of ObjInstance
+        auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
+                                             {builder.getInt32(0), builder.getInt32(3)});
+        ptr = builder.CreateLoad(llvm::PointerType::getUnqual(builder.getInt64Ty()), ptr);
+
+        ptr = builder.CreateInBoundsGEP(builder.getInt64Ty(), ptr, {arrIdx});
+        return builder.CreateLoad(builder.getInt64Ty(), ptr);
+    }else{
+        // Error
+    }
+}
+llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string fieldName){
+    auto cmp1 = builder.CreateICmpSGT(fieldIdx, builder.getInt32(-1));
+    auto cmp2 = builder.CreateICmpSGT(methodIdx, builder.getInt32(-1));
+
+    llvm::Value* dest = builder.getInt32(0);
+    dest = builder.CreateSelect(cmp1, builder.getInt32(1), dest);
+    dest = builder.CreateSelect(cmp2, builder.getInt32(2), dest);
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
+    llvm::BasicBlock *fieldBB = llvm::BasicBlock::Create(*ctx, "fields");
+    llvm::BasicBlock *methodBB = llvm::BasicBlock::Create(*ctx, "methods");
+
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+
+    auto sw = builder.CreateSwitch(dest, errorBB);
+    sw->addCase(builder.getInt32(1), fieldBB);
+    sw->addCase(builder.getInt32(2), methodBB);
+
+    F->insert(F->end(), fieldBB);
+    builder.SetInsertPoint(fieldBB);
+
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(0), builder.getInt32(3)});
+    ptr = builder.CreateLoad(llvm::PointerType::getUnqual(builder.getInt64Ty()), ptr);
+    ptr = builder.CreateInBoundsGEP(builder.getInt64Ty(), ptr, fieldIdx);
+    auto field =  builder.CreateLoad(builder.getInt64Ty(), ptr);
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), methodBB);
+    builder.SetInsertPoint(methodBB);
+
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(7)});
+    llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
+    val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, methodIdx);
+    auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val});
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), errorBB);
+    builder.SetInsertPoint(errorBB);
+
+    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
+                                               createConstStr(fieldName)});
+    builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 3);
+    phi->addIncoming(field, fieldBB);
+    phi->addIncoming(method, methodBB);
+    // Never hit, but still needed for phi node
+    phi->addIncoming(builder.getInt64(0), errorBB);
+    return phi;
+}
+
+std::pair<llvm::Value*, llvm::Value*> Compiler::instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field){
+    auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
+    auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(3)});
+    auto methodFunc = builder.CreateLoad(fnPtrTy, ptr);
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
+    auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
+
+    llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, field);
+    llvm::Value* methodIdx = builder.CreateCall(fnTy, methodFunc, field);
+    return std::make_pair(fieldIdx, methodIdx);
+}
 // Misc
 llvm::Value* Compiler::castToVal(llvm::Value* val){
     return builder.CreateBitCast(val, llvm::Type::getInt64Ty(*ctx));

@@ -528,9 +528,12 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     updateLine(decl->getName());
 
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
+
     auto classTyIdx = addType(classTy);
 
     string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
+
+    classTy->name = fullGlobalSymbol;
 
     currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
@@ -1145,7 +1148,7 @@ void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool is
             error(publicName, "Method marked as 'override' but there is no parent method with matching name.");
         }
 
-        if(currentClass->fields.contains(privName) || currentClass->fields.contains(privName)){
+        if(currentClass->fields.contains(pubName) || currentClass->fields.contains(privName)){
             error(publicName, "Duplicate symbol found. Fields are inherited from parents.");
         }
     }catch(TransformerException& e){

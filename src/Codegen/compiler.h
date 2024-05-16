@@ -122,8 +122,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Runtime type checking
         void createTyErr(const string err, llvm::Value* const val, const Token token);
         void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token);
-        void createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* val, string executeBBName, string errMsg, Token dbg);
-        void createRuntimeTypeCheck(llvm::Function* typeCheckFunc, llvm::Value* lhs, llvm::Value* rhs,
+        void createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> val,
+                string executeBBName, string errMsg, Token dbg);
+        void createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
                                     string executeBBName, string errMsg, Token dbg);
 
         // Codegen functions(take in a typedAST expression and transform into LLVM IR)
@@ -156,8 +157,11 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Class helpers
         llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
         llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
-        llvm::Constant* codegenMethod(typedAST::ClassMethod& method);
+        llvm::Constant* codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr);
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
+        llvm::Value* optimizeInstGet(llvm::Value* inst, string name, Class& klass);
+        llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
+        std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
 
         // Misc
         llvm::Constant* createConstStr(const string& str);

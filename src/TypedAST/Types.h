@@ -152,6 +152,7 @@ namespace types{
         // Privates are prefixed with "priv."
         std::unordered_map<string, std::pair<tyVarIdx, uInt64>> fields;
         std::unordered_map<string, std::pair<tyVarIdx, uInt64>> methods;
+        string name;
 
         // Fields and methods get filled up from the outside
         ClassType(){
