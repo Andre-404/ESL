@@ -162,6 +162,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* optimizeInstGet(llvm::Value* inst, string name, Class& klass);
         llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
         std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
+        llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
+        llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
 
         // Misc
         llvm::Constant* createConstStr(const string& str);

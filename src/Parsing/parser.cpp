@@ -127,45 +127,46 @@ namespace AST {
     // Parses =, +=, -=, *=, /=, %=, ^=, |=, &=
     static ASTNodePtr parseAssign(ASTNodePtr left, const Token op, ASTNodePtr right) {
         // No token other than the ones listed here will ever be passed to parseAssign
+        Token newTok = op;
         switch (op.type) {
             case TokenType::EQUAL: {
-                break;
+               return right;
             }
             case TokenType::PLUS_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::PLUS, "+"), right);
+                newTok.type = TokenType::PLUS;
                 break;
             }
             case TokenType::MINUS_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::MINUS, "-"), right);
+                newTok.type = TokenType::MINUS;
                 break;
             }
             case TokenType::SLASH_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::SLASH, "/"), right);
+                newTok.type = TokenType::SLASH;
                 break;
             }
             case TokenType::STAR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::STAR, "*"), right);
+                newTok.type = TokenType::STAR;
                 break;
             }
             case TokenType::BITWISE_XOR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_XOR, "^"), right);
+                newTok.type = TokenType::BITWISE_XOR;
                 break;
             }
             case TokenType::BITWISE_AND_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_AND, "&"), right);
+                newTok.type = TokenType::BITWISE_AND;
                 break;
             }
             case TokenType::BITWISE_OR_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::BITWISE_OR, "|"), right);
+                newTok.type = TokenType::BITWISE_OR;
                 break;
             }
             case TokenType::PERCENTAGE_EQUAL: {
-                right = make_shared<BinaryExpr>(left, Token(TokenType::PERCENTAGE, "%"), right);
+                newTok.type = TokenType::PERCENTAGE;
                 break;
             }
             default: break; // Never hit
         }
-        return right;
+        return make_shared<BinaryExpr>(left, newTok, right);
     }
     ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, const Token token) {
         if (!(left->type == ASTType::LITERAL || left->type == ASTType::FIELD_ACCESS)) throw parser->error(token, "Left side is not assignable");

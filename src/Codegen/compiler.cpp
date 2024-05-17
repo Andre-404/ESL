@@ -541,6 +541,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
         return builder.CreateCall(fn, args);
     }else{
+        // TODO: error if there are arguments passed when the constructor doesn't exist
         return inst;
     }
 }
@@ -829,7 +830,37 @@ llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     return instGetUnoptimized(inst, indicies.first, indicies.second, klass, expr->field);
 }
 llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
+    auto inst = expr->instance->codegen(this);
+    llvm::Value* fieldPtr = nullptr;
+    if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+        fieldPtr = getOptInstFieldPtr(inst, klass, expr->field);
+    }else{
+        fieldPtr = getUnoptInstFieldPtr(inst, expr->field, expr->dbgInfo.field);
+    }
+    auto val = expr->toStore->codegen(this);
 
+    if(expr->operationType == typedAST::SetType::SET){
+        builder.CreateStore(val, fieldPtr);
+        return val;
+    }else if(expr->operationType == typedAST::SetType::ADD_SET){
+        // Special case because of strings
+        auto storedVal = builder.CreateLoad(builder.getInt64Ty(), fieldPtr);
+        val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
+        return val;
+    }
+    auto storedField = builder.CreateLoad(builder.getInt64Ty(), fieldPtr);
+    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+        createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
+                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+    }
+    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
+                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+
+    val = builder.CreateBitCast(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op),
+                                builder.getInt64Ty());
+    builder.CreateStore(val, fieldPtr);
+    return val;
 }
 
 llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
@@ -1586,7 +1617,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     }else if(opTy == typedAST::SetType::ADD_SET){
         // Special case because of strings
         auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
-        val = builder.CreateBitCast(codegenBinaryAdd(storedVal, val, dbg), builder.getInt64Ty());
+        val = codegenBinaryAdd(storedVal, val, dbg);
         return val;
     }
     auto storedVal = builder.CreateLoad(builder.getInt64Ty(), ptr);
@@ -1612,7 +1643,7 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
     }else if(opTy == typedAST::SetType::ADD_SET){
         // Special case because of strings
         auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
-        val = builder.CreateBitCast(codegenBinaryAdd(storedVal, val, dbg), builder.getInt64Ty());
+        val = codegenBinaryAdd(storedVal, val, dbg), builder.getInt64Ty();
         return val;
     }
     auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
@@ -1842,6 +1873,80 @@ std::pair<llvm::Value*, llvm::Value*> Compiler::instGetUnoptIdx(llvm::Value* kla
     llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, field);
     llvm::Value* methodIdx = builder.CreateCall(fnTy, methodFunc, field);
     return std::make_pair(fieldIdx, methodIdx);
+}
+
+
+llvm::Value* Compiler::getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field){
+    if(klass.ty->fields.contains(field)){
+        // Index into the array of fields of the instance
+        auto arrIdx = builder.getInt32(klass.ty->fields[field].second);
+
+        inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
+        inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
+        // TODO: maybe just use 2 GEPs without load in between? since first load just loads the pointer at the end of ObjInstance
+        auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
+                                             {builder.getInt32(0), builder.getInt32(3)});
+        ptr = builder.CreateLoad(llvm::PointerType::getUnqual(builder.getInt64Ty()), ptr);
+
+        ptr = builder.CreateInBoundsGEP(builder.getInt64Ty(), ptr, {arrIdx});
+        return ptr;
+    }else{
+        // Error
+    }
+    // Unreachable (at least it should be)
+    return nullptr;
+}
+
+llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg){
+    createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
+                           "isInst", "Expected an instance, got '{}'", dbg);
+
+    inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
+    inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
+
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
+                                         {builder.getInt32(0), builder.getInt32(1)});
+    auto klass = builder.CreateLoad(namedTypes["ObjClassPtr"], ptr);
+
+    auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
+    auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
+    auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
+
+    llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, createESLString(field));
+    auto cmp = builder.CreateICmpSGT(fieldIdx, builder.getInt32(-1));
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
+    llvm::BasicBlock *fieldBB = llvm::BasicBlock::Create(*ctx, "fields");
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+    builder.CreateCondBr(cmp, fieldBB, errorBB);
+
+    F->insert(F->end(), fieldBB);
+    builder.SetInsertPoint(fieldBB);
+
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(0), builder.getInt32(3)});
+    ptr = builder.CreateLoad(llvm::PointerType::getUnqual(builder.getInt64Ty()), ptr);
+    ptr = builder.CreateInBoundsGEP(builder.getInt64Ty(), ptr, fieldIdx);
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), errorBB);
+    builder.SetInsertPoint(errorBB);
+
+    // TODO make better errors
+    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field '%s'"),
+                                               createConstStr(field)});
+    builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+    auto phi = builder.CreatePHI(llvm::PointerType::getUnqual(builder.getInt64Ty()), 2);
+    phi->addIncoming(ptr, fieldBB);
+    // Never hit, but still needed for phi node
+    phi->addIncoming(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(builder.getInt64Ty())), errorBB);
+    return phi;
 }
 // Misc
 llvm::Value* Compiler::castToVal(llvm::Value* val){

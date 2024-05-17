@@ -972,7 +972,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
 
-    std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, Token());
+    std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, op);
     if(implicitClassField){
         if(current->type == FuncType::TYPE_FUNC){
             error(name, fmt::format("Cannot access object fields within a closure without 'this', use this.{}", name.getLexeme()));
