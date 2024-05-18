@@ -585,7 +585,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 
         int fieldIndex = currentClass->classTy->methods.size();
         if(currentClass->methods.contains(str)){
-            fieldIndex = currentClass->methods[str].second;
+            fieldIndex = currentClass->classTy->methods[str].second;
         }
 
         classTy->methods.insert_or_assign(str, std::make_pair(tyIdx, fieldIndex));
@@ -1121,15 +1121,10 @@ void ASTTransformer::processMethods(const string className, vector<AST::ClassMet
     for(auto method : methods){
         string str = method.method->getName().getLexeme();
         str = (method.isPublic ? str : ("priv." + str));
-        // Get the index of the linearized field
-        int fieldIndex = currentClass->classTy->methods.size();
-        if(currentClass->methods.contains(str)){
-            fieldIndex = currentClass->methods[str].second;
-        }
         auto transformedMethod = createMethod(method.method.get(), method.override, className, methodTys[i]);
 
         // If this is an override of a method, it gets the index that the overriden function had
-        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, fieldIndex));
+        currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, currentClass->classTy->methods[str].second));
         i++;
     }
 }

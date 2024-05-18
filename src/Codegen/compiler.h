@@ -35,13 +35,15 @@ namespace compileCore {
         llvm::Constant* classPtr;
         llvm::GlobalVariable* instTemplatePtr;
         std::shared_ptr<types::ClassType> ty;
+        llvm::Constant* methodArrPtr;
 
-        Class(llvm::Constant* classPtr, llvm::GlobalVariable* instTemplatePtr, std::shared_ptr<types::ClassType> ty) :
-            classPtr(classPtr), instTemplatePtr(instTemplatePtr), ty(ty) {}
+        Class(llvm::Constant* classPtr, llvm::GlobalVariable* instTemplatePtr, std::shared_ptr<types::ClassType> ty, llvm::Constant* methodArrPtr) :
+            classPtr(classPtr), instTemplatePtr(instTemplatePtr), ty(ty), methodArrPtr(methodArrPtr) {}
         Class(){
             classPtr = nullptr;
             instTemplatePtr = nullptr;
             ty = nullptr;
+            methodArrPtr = nullptr;
         }
     };
 
@@ -139,6 +141,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
+        llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
         // Tries to optimize a function call if possible, otherwise returns nullptr
         llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
@@ -157,14 +160,19 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Class helpers
         llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
         llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
-        llvm::Constant* codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr);
+        llvm::Function* forwardDeclMethod(typedAST::ClassMethod& method);
+        void codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr, llvm::Function* methodFn);
+        llvm::Constant* createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr);
+
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
-        llvm::Value* optimizeInstGet(llvm::Value* inst, string name, Class& klass);
+        llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
         llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
         std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
         llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
         llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
-
+        llvm::Value* optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
+        llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
+                                       string field, vector<llvm::Value*> args, Token dbg);
         // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Constant* createESLString(const string& str);
