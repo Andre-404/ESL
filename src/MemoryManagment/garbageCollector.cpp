@@ -89,7 +89,6 @@ namespace memory {
                 }
                 case +ObjType::CLASS: {
                     ObjClass* klass = reinterpret_cast<ObjClass*>(ptr);
-                    if(klass->superclass) markObj(klass->superclass);
                     break;
                 }
                 case +ObjType::INSTANCE:{

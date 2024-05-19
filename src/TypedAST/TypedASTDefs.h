@@ -23,6 +23,7 @@ namespace typedAST{
 
         ARITHEMTIC,
         COMPARISON, // Includes && and ||
+        INSTANCEOF,
         UNARY,
 
         LITERAL,
@@ -65,6 +66,7 @@ namespace typedAST{
     class VarReadNative;
     class ArithmeticExpr;
     class ComparisonExpr;
+    class InstanceofExpr;
     class UnaryExpr;
     class LiteralExpr;
     class HashmapExpr;
@@ -98,6 +100,7 @@ namespace typedAST{
         virtual void visitVarReadNative(VarReadNative* expr) = 0;
         virtual void visitArithmeticExpr(ArithmeticExpr* expr) = 0;
         virtual void visitComparisonExpr(ComparisonExpr* expr) = 0;
+        virtual void visitInstanceofExpr(InstanceofExpr* expr) = 0;
         virtual void visitUnaryExpr(UnaryExpr* expr) = 0;
         virtual void visitLiteralExpr(LiteralExpr* expr) = 0;
         virtual void visitHashmapExpr(HashmapExpr* expr) = 0;
@@ -132,6 +135,7 @@ namespace typedAST{
         virtual llvm::Value* visitVarReadNative(VarReadNative* expr) = 0;
         virtual llvm::Value* visitArithmeticExpr(ArithmeticExpr* expr) = 0;
         virtual llvm::Value* visitComparisonExpr(ComparisonExpr* expr) = 0;
+        virtual llvm::Value* visitInstanceofExpr(InstanceofExpr* expr) = 0;
         virtual llvm::Value* visitUnaryExpr(UnaryExpr* expr) = 0;
         virtual llvm::Value* visitLiteralExpr(LiteralExpr* expr) = 0;
         virtual llvm::Value* visitHashmapExpr(HashmapExpr* expr) = 0;
@@ -309,8 +313,7 @@ namespace typedAST{
         EQUAL,
         NOT_EQUAL,
         AND,
-        OR,
-        INSTANCEOF
+        OR
     };
     class ComparisonExpr : public TypedASTExpr{
     public:
@@ -335,6 +338,29 @@ namespace typedAST{
             return vis->visitComparisonExpr(this);
         }
     };
+
+    class InstanceofExpr : public TypedASTExpr{
+    public:
+        exprPtr lhs;
+        string className;
+        AST::BinaryExprDebugInfo dbgInfo;
+
+        InstanceofExpr(exprPtr _lhs, string _className, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo): dbgInfo(_dbgInfo){
+                lhs = _lhs;
+                className = _className;
+                exprType = _exprTy;
+                type = NodeType::INSTANCEOF;
+        }
+        ~InstanceofExpr() {};
+        void accept(TypedASTVisitor* vis) override{
+            vis->visitInstanceofExpr(this);
+        }
+        llvm::Value* codegen(TypedASTCodegen* vis) override{
+            return vis->visitInstanceofExpr(this);
+        }
+    };
+
+
 
     enum class UnaryOp{
         INC_PRE,

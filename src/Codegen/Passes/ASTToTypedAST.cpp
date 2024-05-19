@@ -54,6 +54,11 @@ vector<types::tyPtr> ASTTransformer::getTypeEnv(){
     return unificator.run(typeEnv);
 }
 
+ankerl::unordered_dense::map<string, std::pair<int, int>> ASTTransformer::getClassHierarchy(){
+    computeClassHierarchy::ComputeClassHierarchyPass pass;
+    return pass.run(classNodes);
+}
+
 #pragma region Visitor
 static Token probeToken(AST::ASTNodePtr ptr){
     AST::ASTProbe p;
@@ -175,10 +180,15 @@ void ASTTransformer::visitRangeExpr(AST::RangeExpr* expr) {
     returnedExpr = std::make_shared<typedAST::RangeExpr>(lhs, rhs, expr->endInclusive, getBasicType(types::TypeFlag::RANGE), dbg);
 }
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
-    auto lhs = evalASTExpr(expr->left);
-    auto rhs = evalASTExpr(expr->right);
-
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
+
+    auto lhs = evalASTExpr(expr->left);
+    if(expr->op.type == TokenType::INSTANCEOF){
+        returnedExpr = createInstanceofExpr(lhs, expr->right, dbg);
+        return;
+    }
+
+    auto rhs = evalASTExpr(expr->right);
     switch(expr->op.type){
         case TokenType::MINUS:
         case TokenType::PLUS:
@@ -233,8 +243,6 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::LESS_EQUAL: op = typedAST::ComparisonOp::LESSEQ; break;
                 case TokenType::AND: op = typedAST::ComparisonOp::AND; break;
                 case TokenType::OR: op = typedAST::ComparisonOp::OR; break;
-                // TODO: this is dumb, we need to use getclassfromexpr for rhs
-                case TokenType::INSTANCEOF: op = typedAST::ComparisonOp::INSTANCEOF; break;
             }
             returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, getBasicType(types::TypeFlag::BOOL), dbg);
             return;
@@ -537,6 +545,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 
     currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
+    classNodes.insert_or_assign(fullGlobalSymbol, computeClassHierarchy::ClassNode());
 
     if (decl->inheritedClass) {
         //decl->inheritedClass is always either a LiteralExpr with an identifier token or a ModuleAccessExpr
@@ -548,6 +557,8 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
             // Make the class type aware of the inheritance(copies methods and fields)
             currentClass->inherit(superclass);
             currentClass->classTy->inherit(superclass->classTy);
+            // Creates a vertex between this class and parent class
+            classNodes[superclass->mangledName].subclasses.push_back(fullGlobalSymbol);
         }catch(TransformerException& e){
 
         }
@@ -1127,6 +1138,16 @@ void ASTTransformer::processMethods(const string className, vector<AST::ClassMet
         currentClass->methods.insert_or_assign(str, std::make_pair(transformedMethod, currentClass->classTy->methods[str].second));
         i++;
     }
+}
+
+std::shared_ptr<typedAST::InstanceofExpr> ASTTransformer::createInstanceofExpr(typedAST::exprPtr lhs, AST::ASTNodePtr rhs,
+                                                                               AST::BinaryExprDebugInfo dbg){
+    if(rhs->type != AST::ASTType::LITERAL && rhs->type != AST::ASTType::MODULE_ACCESS) {
+        error(dbg.op, "Expected class identifier on right side.");
+    }
+    std::shared_ptr<ClassChunkInfo> info = getClassInfoFromExpr(rhs);
+    typedAST::InstanceofExpr a (lhs, info->mangledName, getBasicType(types::TypeFlag::BOOL), dbg);
+    return std::make_shared<typedAST::InstanceofExpr>(lhs, info->mangledName, getBasicType(types::TypeFlag::BOOL), dbg);
 }
 
 void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides){

@@ -163,10 +163,9 @@ ObjArray::ObjArray(const size_t size) {
 #pragma endregion
 
 #pragma region ObjClass
-ObjClass::ObjClass(string _name, object::ObjClass* _superclass) {
+ObjClass::ObjClass(string _name) {
 	name = nullptr;
     marked = false;
-    superclass = _superclass;
 	type = +ObjType::CLASS;
 }
 #pragma endregion

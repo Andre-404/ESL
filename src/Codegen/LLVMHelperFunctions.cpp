@@ -38,7 +38,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {TYPE(Int64)}, false);
-    classType->setBody({types["Obj"], TYPE(Int8Ptr), types["ObjClassPtr"], PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    classType->setBody({types["Obj"], TYPE(Int8Ptr), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
 
     types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], types["ObjClassPtr"], TYPE(Int64), PTR_TY(TYPE(Int64))}, "ObjInstance");
@@ -292,13 +292,14 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
 
     [&]{
-        llvm::Function* F = createFunc("isInstAndClass",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), types["ObjClassPtr"]},false));
+        llvm::Function* F = createFunc("isInstAndClass",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), TYPE(Int32), TYPE(Int32)},false));
         llvm::Value* inst = F->getArg(0);
+        llvm::Value* subclassIdxStart = F->getArg(1);
+        llvm::Value* subclassIdxEnd = F->getArg(2);
 
         auto cond1 = builder.CreateCall(module->getFunction("isObjType"),
                                         {inst, builder.getInt8(+object::ObjType::INSTANCE)});
 
-        auto classPtr = builder.CreatePtrToInt(F->getArg(1), builder.getInt64Ty());
         llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
         llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkClassType", F);
         builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
@@ -308,9 +309,15 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         inst = builder.CreateBitCast(inst, types["ObjInstancePtr"]);
         auto ptr = builder.CreateInBoundsGEP(types["ObjInstance"], inst,
                                              {builder.getInt32(0), builder.getInt32(1)});
-        llvm::Value* ty = builder.CreateLoad(types["ObjClassPtr"], ptr);
-        ty = builder.CreatePtrToInt(ty, builder.getInt64Ty());
-        auto cmp = builder.CreateICmpEQ(classPtr, ty);
+        ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);
+
+        llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(2)});
+        llvm::Value* idxEnd = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(3)});
+        idxStart = builder.CreateLoad(TYPE(Int32), idxStart, "idxStart");
+        idxEnd = builder.CreateLoad(TYPE(Int32), idxEnd, "idxEnd");
+
+        auto cmp = builder.CreateAnd(builder.CreateICmpSGE(idxStart, subclassIdxStart),
+                                             builder.CreateICmpSLE(subclassIdxEnd, idxEnd));
         builder.CreateRet(cmp);
         F->insert(F->end(), notObjBB);
         builder.SetInsertPoint(notObjBB);

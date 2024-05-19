@@ -98,7 +98,8 @@ namespace object {
     public:
         const char* name;
         // Uses copy down inheritance, superclass ptr is still here for instanceof operator
-        object::ObjClass* superclass;
+        int classHierarchyStart;
+        int classHierarchyEnd;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
         uInt64 methodArrLen;
@@ -107,7 +108,7 @@ namespace object {
         // each ObjClosure individually and scatter it in memory
         ObjClosure* methods;
 
-        ObjClass(string _name, object::ObjClass* _superclass);
+        ObjClass(string _name);
 
     };
 

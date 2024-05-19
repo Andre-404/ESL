@@ -52,7 +52,8 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv);
+		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+                 fastMap<string, std::pair<int, int>>& _classHierarchy);
         void compile(std::shared_ptr<typedAST::Function> _code);
 
 		#pragma region Visitor pattern
@@ -62,6 +63,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* visitVarReadNative(typedAST::VarReadNative* expr) override;
         llvm::Value* visitArithmeticExpr(typedAST::ArithmeticExpr* expr) override;
         llvm::Value* visitComparisonExpr(typedAST::ComparisonExpr* expr) override;
+        llvm::Value* visitInstanceofExpr(typedAST::InstanceofExpr* expr) override;
         llvm::Value* visitUnaryExpr(typedAST::UnaryExpr* expr) override;
         llvm::Value* visitLiteralExpr(typedAST::LiteralExpr* expr) override;
         llvm::Value* visitHashmapExpr(typedAST::HashmapExpr* expr) override;
@@ -96,6 +98,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         // Maps uuids of classes to global variable holding the class struct
         fastMap<string, Class> classes;
+        fastMap<string, std::pair<int, int>> classHierarchy;
         // Connects function types(unique for each function) and the LLVM IR representation of that function
         fastMap<types::tyPtr, llvm::Function*> functions;
         fastMap<string, llvm::Function*> nativeFunctions;
@@ -161,7 +164,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
         llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
         llvm::Function* forwardDeclMethod(typedAST::ClassMethod& method);
-        void codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr, llvm::Function* methodFn);
+        void codegenMethod(typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd, llvm::Function* methodFn);
         llvm::Constant* createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr);
 
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);

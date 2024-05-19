@@ -3,6 +3,7 @@
 #include "../../TypedAST/TypedASTDefs.h"
 #include "closureConverter.h"
 #include "../../Includes/unorderedDense.h"
+#include "computeClassHierarchy.h"
 
 namespace passes{
 namespace typedASTParser{
@@ -109,6 +110,8 @@ namespace typedASTParser{
 
         vector<types::tyPtr> getTypeEnv();
 
+        ankerl::unordered_dense::map<string, std::pair<int, int>> getClassHierarchy();
+
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
@@ -161,6 +164,7 @@ namespace typedASTParser{
         ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
         // Empty constraint set means type is collapsed
         vector<std::pair<types::tyPtr, vector<std::shared_ptr<types::TypeConstraint>>>> typeEnv;
+        ankerl::unordered_dense::map<string, computeClassHierarchy::ClassNode> classNodes;
 
         vector<typedAST::nodePtr> nodesToReturn;
         typedAST::exprPtr returnedExpr;
@@ -200,6 +204,7 @@ namespace typedASTParser{
         void detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides);
         void processMethods(const string className, vector<AST::ClassMethod>& methods,
                             vector<std::shared_ptr<types::FunctionType>>& methodTys);
+        std::shared_ptr<typedAST::InstanceofExpr> createInstanceofExpr(typedAST::exprPtr lhs, AST::ASTNodePtr rhs, AST::BinaryExprDebugInfo dbg);
 
         // Resolve implicit object field access
         std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(const Token name);

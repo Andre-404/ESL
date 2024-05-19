@@ -71,9 +71,10 @@ int main(int argc, char* argv[]) {
         auto res = transformer.run(modules, finder.generateFreevarMap());
         errorHandler::showCompileErrors();
         auto env = transformer.getTypeEnv();
+        auto classes = transformer.getClassHierarchy();
 
 
-        compileCore::Compiler compiler(res.first, res.second, env);
+        compileCore::Compiler compiler(res.first, res.second, env, classes);
 
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) {

@@ -15,10 +15,12 @@
 
 using namespace compileCore;
 
-Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv)
+Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+                   fastMap<string, std::pair<int, int>>& _classHierarchy)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
+    classHierarchy = _classHierarchy;
 
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
     currentFunction = nullptr;
@@ -219,9 +221,6 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     else if(expr->opType == ComparisonOp::EQUAL || expr->opType == ComparisonOp::NOT_EQUAL){
         return codegenCmp(expr->lhs, expr->rhs, expr->opType == ComparisonOp::NOT_EQUAL);
     }
-    else if(expr->opType == ComparisonOp::INSTANCEOF){
-        // TODO: implement this
-    }
 
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
@@ -245,6 +244,12 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
         default: assert(false && "Unreachable");
     }
     return builder.CreateCall(safeGetFunc("encodeBool"), val);
+}
+llvm::Value* Compiler::visitInstanceofExpr(typedAST::InstanceofExpr* expr){
+    llvm::Value* inst = expr->lhs->codegen(this);
+    auto subclassesInterval = classHierarchy[expr->className];
+    return builder.CreateCall(safeGetFunc("isInstAndClass"),
+                              {inst, builder.getInt32(subclassesInterval.first), builder.getInt32(subclassesInterval.second)});
 }
 llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
     using typedAST::UnaryOp;
@@ -777,10 +782,8 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     auto methodsLen = builder.getInt64(stmt->methods.size());
     auto fieldsFunc = createFieldChooseFunc(stmt->fullName, stmt->fields);
     auto methodsFunc = createMethodChooseFunc(stmt->fullName, stmt->methods);
-    llvm::Constant* parent = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(namedTypes["ObjClass"]));
-    if(stmt->parentClassName.length() > 0){
-        parent = classes[stmt->parentClassName].classPtr;
-    }
+    auto subClassIdxStart = builder.getInt32(classHierarchy[stmt->fullName].first);
+    auto subClassIdxEnd = builder.getInt32(classHierarchy[stmt->fullName].second);
 
     fastMap<string, llvm::Function*> methodDecl;
     vector<llvm::Constant*> methods(stmt->methods.size());
@@ -793,8 +796,8 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
                                                                    methods.size()), methods));
 
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClass"), {
-            createConstObjHeader(+object::ObjType::CLASS), name, parent, methodsFunc, fieldsFunc, methodsLen, fieldsLen, methodArr
-    });
+            createConstObjHeader(+object::ObjType::CLASS), name, subClassIdxStart, subClassIdxEnd, methodsFunc,
+            fieldsFunc, methodsLen, fieldsLen, methodArr});
     llvm::GlobalVariable* klass = new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
 
@@ -802,7 +805,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
                                     stmt->classType, methodArr);
 
     for(auto p : stmt->methods){
-        codegenMethod(p.second.first, klass, methodDecl[p.first]);
+        codegenMethod(p.second.first, subClassIdxStart, subClassIdxEnd, methodDecl[p.first]);
     }
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -1773,7 +1776,8 @@ llvm::Function* Compiler::forwardDeclMethod(typedAST::ClassMethod& method){
     fn->setGC("statepoint-example");
     return fn;
 }
-void Compiler::codegenMethod(typedAST::ClassMethod& method, llvm::Constant* classPtr, llvm::Function* methodFn){
+void Compiler::codegenMethod(typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd,
+                             llvm::Function* methodFn){
     // TODO: this relies on the fact that no errors are thrown and the stack is never unwinded, fix that
     auto enclosingFunction = currentFunction;
     currentFunction = methodFn;
@@ -1781,7 +1785,7 @@ void Compiler::codegenMethod(typedAST::ClassMethod& method, llvm::Constant* clas
     builder.SetInsertPoint(BB);
 
     declareFuncArgs(method.code->args);
-    createRuntimeTypeCheck(safeGetFunc("isInstAndClass"), {currentFunction->getArg(1), classPtr},
+    createRuntimeTypeCheck(safeGetFunc("isInstAndClass"),{currentFunction->getArg(1), subClassIdxStart, subClassIdxEnd},
                            "isInst", "Expected instance of class, got '{}'.", method.dbg.name);
 
     for(auto s : method.code->block.stmts){
@@ -1883,7 +1887,7 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
     F->insert(F->end(), methodBB);
     builder.SetInsertPoint(methodBB);
 
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(7)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(8)});
     llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
     val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, methodIdx);
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val});
@@ -1910,9 +1914,9 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
 std::pair<llvm::Value*, llvm::Value*> Compiler::instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field){
     auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
     auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
-    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(3)});
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
     auto methodFunc = builder.CreateLoad(fnPtrTy, ptr);
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(5)});
     auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
 
     llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, field);
@@ -1954,7 +1958,7 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Tok
 
     auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
     auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(5)});
     auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
 
     llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, createESLString(field));
@@ -2049,7 +2053,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
     F->insert(F->end(), methodBB);
     builder.SetInsertPoint(methodBB);
 
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(7)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(8)});
     llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
     val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, methodIdx);
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), val);
