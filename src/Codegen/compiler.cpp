@@ -101,50 +101,12 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
 }
 
 llvm::Value* Compiler::visitVarRead(typedAST::VarRead* expr) {
-    switch(expr->varPtr->varType){
-        case typedAST::VarType::LOCAL:{
-            return builder.CreateLoad(builder.getInt64Ty(), variables.at(expr->varPtr->uuid), "loadlocal");
-        }
-        case typedAST::VarType::FREEVAR:{
-            llvm::Value* upvalPtr = variables.at(expr->varPtr->uuid);
-            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
-            // second index: gets the second element of the ObjFreevar struct
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevarAddr");
-            return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadfreevar");
-        }
-        case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:{
-            return builder.CreateLoad(builder.getInt64Ty(), variables.at(expr->varPtr->uuid), "loadgvar");
-        }
-    }
-    assert(false && "Unreachable");
-    return nullptr;
+    return codegenVarRead(expr->varPtr);
 }
 llvm::Value* Compiler::visitVarStore(typedAST::VarStore* expr) {
     llvm::Value* valToStore = expr->toStore->codegen(this);
 
-    switch(expr->varPtr->varType){
-        case typedAST::VarType::LOCAL:{
-            builder.CreateStore(valToStore, variables.at(expr->varPtr->uuid));
-            break;
-        }
-        case typedAST::VarType::FREEVAR:{
-            llvm::Value* freevarPtr = variables.at(expr->varPtr->uuid);
-            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
-            // second index: gets the ref to the second element of the ObjFreevar struct
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], freevarPtr, idxList, "freevarAddr");
-            builder.CreateStore(valToStore, tmpEle);
-            break;
-        }
-        case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:{
-            builder.CreateStore(valToStore, variables.at(expr->varPtr->uuid));
-            break;
-        }
-    }
-    return valToStore;
+    return codegenVarStore(expr->varPtr, valToStore);
 }
 llvm::Value* Compiler::visitVarReadNative(typedAST::VarReadNative* expr) {
     // TODO: implement this
@@ -269,6 +231,8 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
         return builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
     }else if(expr->opType == UnaryOp::FNEG || expr->opType == UnaryOp::BIN_NEG){
         return codegenNeg(expr->rhs, expr->opType, expr->dbgInfo.op);
+    }else{
+        return codegenIncrement(expr->opType, expr->rhs);
     }
     assert(false && "Unreachable");
 }
@@ -860,7 +824,7 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
                                "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
     }
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
-                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.field);
 
     val = builder.CreateBitCast(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op),
                                 builder.getInt64Ty());
@@ -1437,6 +1401,48 @@ void Compiler::codegenBlock(const typedAST::Block& block){
     for(auto stmt : block.stmts){
         stmt->codegen(this);
     }
+}
+llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr) {
+    if(expr->type == typedAST::NodeType::VAR_READ){
+        return codegenVarIncrement(op, std::reinterpret_pointer_cast<typedAST::VarRead>(expr));
+    }else if(expr->type == typedAST::NodeType::INST_GET){
+        return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr));
+    }
+    // TODO: error
+}
+llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr) {
+    llvm::Value* val = codegenVarRead(expr->varPtr);
+    if(!exprIsType(expr, types::getBasicType(types::TypeFlag::NUMBER))){
+        createRuntimeTypeCheck(safeGetFunc("isNum"), {val}, "isNum",
+                               "Expected a number, got '{}'.", expr->dbgInfo.varName);
+    }
+    llvm::Value* res = builder.CreateBitCast(val, builder.getDoubleTy());
+    if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
+    else res = builder.CreateFSub(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
+    res = builder.CreateBitCast(res, builder.getInt64Ty());
+    codegenVarStore(expr->varPtr, res);
+    return val;
+}
+llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr) {
+    auto inst = expr->instance->codegen(this);
+    llvm::Value* fieldPtr = nullptr;
+    if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+        fieldPtr = getOptInstFieldPtr(inst, klass, expr->field);
+    }else{
+        fieldPtr = getUnoptInstFieldPtr(inst, expr->field, expr->dbgInfo.field);
+    }
+    auto val = llvm::ConstantFP::get(builder.getDoubleTy(), 1.);
+    llvm::Value* storedField = builder.CreateLoad(builder.getInt64Ty(), fieldPtr);
+    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
+                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.field);
+    llvm::Value* res = builder.CreateBitCast(storedField, builder.getDoubleTy());
+    if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, val);
+    else res = builder.CreateFSub(res, val);
+
+    res = builder.CreateBitCast(res,builder.getInt64Ty());
+    builder.CreateStore(val, fieldPtr);
+    return storedField;
 }
 
 // Function codegen helpers
@@ -2168,6 +2174,52 @@ void Compiler::replaceGV(uInt64 uuid, llvm::Constant* newInit){
     gv->replaceAllUsesWith(newgv);
     variables.insert_or_assign(uuid, newgv);
     gv->eraseFromParent();
+}
+
+llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr){
+    switch(varPtr->varType){
+        case typedAST::VarType::LOCAL:{
+            return builder.CreateLoad(builder.getInt64Ty(), variables.at(varPtr->uuid), "loadlocal");
+        }
+        case typedAST::VarType::FREEVAR:{
+            llvm::Value* upvalPtr = variables.at(varPtr->uuid);
+            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
+            // second index: gets the second element of the ObjFreevar struct
+            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevarAddr");
+            return builder.CreateLoad(builder.getInt64Ty(), tmpEle, "loadfreevar");
+        }
+        case typedAST::VarType::GLOBAL:
+        case typedAST::VarType::GLOBAL_FUNC:{
+            return builder.CreateLoad(builder.getInt64Ty(), variables.at(varPtr->uuid), "loadgvar");
+        }
+    }
+    assert(false && "Unreachable");
+    return nullptr;
+}
+
+llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore){
+    switch(varPtr->varType){
+        case typedAST::VarType::LOCAL:{
+            builder.CreateStore(toStore, variables.at(varPtr->uuid));
+            break;
+        }
+        case typedAST::VarType::FREEVAR:{
+            llvm::Value* freevarPtr = variables.at(varPtr->uuid);
+            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
+            // second index: gets the ref to the second element of the ObjFreevar struct
+            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], freevarPtr, idxList, "freevarAddr");
+            builder.CreateStore(toStore, tmpEle);
+            break;
+        }
+        case typedAST::VarType::GLOBAL:
+        case typedAST::VarType::GLOBAL_FUNC:{
+            builder.CreateStore(toStore, variables.at(varPtr->uuid));
+            break;
+        }
+    }
+    return toStore;
 }
 
 #pragma endregion

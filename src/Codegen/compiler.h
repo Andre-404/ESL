@@ -139,6 +139,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
         void codegenBlock(const typedAST::Block& block);
+        llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr);
+        llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr);
+        llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr);
 
         // Functions helpers
         llvm::Function* createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy);
@@ -188,6 +191,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Constant* createConstObjHeader(int type);
         llvm::Constant* constObjToVal(llvm::Constant* obj);
         void replaceGV(uInt64 uuid, llvm::Constant* newInit);
+        llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
+        llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
         #pragma endregion
 	};
 }
