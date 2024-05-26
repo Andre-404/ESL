@@ -366,6 +366,34 @@ void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
 
     returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields, addType(hashmapTy), dbg);
 }
+
+static string convertBackSlashToEscape(string input)
+{
+    string output;
+    auto isEscapeChar = [](char c){
+        return c == 'n' || c == 'r' || c == 't' || c == 'a' || c == 'b' || c == 'f' || c == 'v' || c == '\\';
+    };
+    for (int i = 0; i < input.size(); i++) {
+        if (input[i] == '\\' && i < input.size() - 1 && isEscapeChar(input[i+1])) {
+            // replace \\n with \n, \\r with \r, and \\t with \t
+            switch (input[i+1]) {
+                case 'n': output += '\n'; break;
+                case 'r': output += '\r'; break;
+                case 't': output += '\t'; break;
+                case 'a': output += '\a'; break;
+                case 'b': output += '\b'; break;
+                case 'f': output += '\f'; break;
+                case 'v': output += '\v'; break;
+                case '\\': output += '\\'; break;
+            }
+            i++; // skip the next character
+        } else {
+            // copy the current character
+            output += input[i];
+        }
+    }
+    return output;
+}
 void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
     types::tyVarIdx ty;
     std::variant<double, bool, void*, string> variant;
@@ -374,6 +402,7 @@ void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
             string temp = expr->token.getLexeme();
             temp.erase(0, 1);
             temp.erase(temp.size() - 1, 1);
+            temp = convertBackSlashToEscape(temp);
             variant = temp;
             ty = getBasicType(types::TypeFlag::STRING);
             break;
@@ -1460,5 +1489,6 @@ void ASTTransformer::createNativeFn(string name, int arity, types::tyVarIdx retT
 
 void ASTTransformer::declareNativeFunctions(){
     createNativeFn("print", 1, getBasicType(types::TypeFlag::NIL));
+    createNativeFn("ms_since_epoch", 0, getBasicType(types::TypeFlag::NUMBER));
 }
 #pragma endregion

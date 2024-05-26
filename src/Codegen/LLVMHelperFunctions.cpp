@@ -1,5 +1,6 @@
 #include "LLVMHelperFunctions.h"
-#include "LLVMNativeFunctionImplementation.h"
+#include "../Runtime/LLVMHelperExports.h"
+#include "../Runtime/nativeFunctionsExports.h"
 
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
@@ -70,6 +71,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
 
     CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
+    CREATE_FUNC("gcInternStr", false ,TYPE(Void), TYPE(Int64));
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
     CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
@@ -120,9 +122,10 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
         SafepointPass.run(it, FAM);
     }
 
+    #ifdef COMPILER_DEBUG
     llvm::errs()<<"-------------- Optimized module --------------\n";
     module->print(llvm::errs(), nullptr);
-
+    #endif
     auto RT = JIT->getMainJITDylib().createResourceTracker();
 
     auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
@@ -132,10 +135,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     assert(ExprSymbol.getAddress() && "Function not found");
 
     void (*FP)() = ExprSymbol.getAddress().toPtr<void (*)()>();
-    double duration1 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     FP();
-    double duration2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::cout<<"Duration in ms: "<<duration2 - duration1<<"\n";
     llvm::ExitOnError()(RT->remove());
 }
 

@@ -30,9 +30,15 @@ typedef uint64_t Value;
 #define NOINLINE __attribute__((noinline))
 #endif
 
+#ifdef _WIN32
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT __attribute__((visibility("default")))
+#endif
+
 
 //#define AST_DEBUG
-//#define COMPILER_DEBUG
+#define COMPILER_DEBUG
 #define DEBUG_MODE
 //#define COMPILER_USE_LONG_INSTRUCTION
 //#define DEBUG_TRACE_EXECUTION

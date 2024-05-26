@@ -63,11 +63,16 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
     std::advance(it, getIP());
     llvm::IRBuilder<> tempBuilder(&tmpfn->getEntryBlock(), it);
     tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
+    for(auto strObj : ESLStrings){
+        tempBuilder.CreateCall(safeGetFunc("gcInternStr"), {strObj.second});
+    }
 
     // Ends the main function
     builder.CreateRetVoid();
     llvm::verifyFunction(*tmpfn);
+#ifdef COMPILER_DEBUG
     curModule->print(llvm::errs(), nullptr);
+#endif
 }
 
 
@@ -2166,7 +2171,7 @@ llvm::Constant* Compiler::createConstObjHeader(int type){
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){
     auto val = llvm::ConstantExpr::getPtrToInt(obj, builder.getInt64Ty());
-    return llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_NIL));
+    return llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_OBJ));
 }
 
 void Compiler::replaceGV(uInt64 uuid, llvm::Constant* newInit){

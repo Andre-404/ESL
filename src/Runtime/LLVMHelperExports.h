@@ -1,25 +1,19 @@
 #pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "valueHelpersInline.cpp"
+#include "../Codegen/valueHelpersInline.cpp"
 #include <csetjmp>
 #include <stdarg.h>
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
-
-#ifdef _WIN32
-#define DLLEXPORT __declspec(dllexport)
-#else
-#define DLLEXPORT __attribute__((visibility("default")))
-#endif
 #define EXPORT extern "C" DLLEXPORT
 
 
 EXPORT void stopThread(){
     if(!memory::gc) return;
     // Get stack end(lowest address) and then spill the registers to the stack
-    uintptr_t* stackEnd = getStackPointer();
     jmp_buf jb;
     setjmp(jb);
+    uintptr_t* stackEnd = getStackPointer();
     memory::gc->setStackEnd(std::this_thread::get_id(), stackEnd);
     memory::gc->suspendMe();
 }
@@ -29,11 +23,6 @@ EXPORT double asNum(Value x){
         return decodeNumber(x);
     }
     exit(64);
-}
-
-EXPORT Value print(ObjClosure* ptr, Value x){
-    std::cout<< valueHelpers::toString(x);
-    return encodeNil();
 }
 
 EXPORT Value createStr(char* ptr){
@@ -191,3 +180,11 @@ EXPORT Obj* gcAlloc(int bytes){
     return ptr;
 }
 
+EXPORT void gcInternStr(Value val){
+    // Known to be an ObjString
+    ObjString* ptr = reinterpret_cast<ObjString*>(decodeObj(val));
+    memory::gc->interned[ptr->str] = ptr;
+}
+
+
+#undef EXPORT
