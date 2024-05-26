@@ -5,6 +5,7 @@ if(WIN32)
     set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
 else()
     set(LLVM_DIR "~/Git/llvm-project/build-static/lib/cmake/llvm")
+    set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic")
 endif()
 find_package(LLVM REQUIRED CONFIG)
 
