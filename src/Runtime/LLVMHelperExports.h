@@ -1,7 +1,7 @@
 #pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpersInline.cpp"
+#include "Values/valueHelpersInline.cpp"
 #include <csetjmp>
 #include <stdarg.h>
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library

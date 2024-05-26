@@ -1,3 +1,4 @@
+#pragma once
 #include "../Objects/objects.h"
 #include "valueHelpers.h"
 

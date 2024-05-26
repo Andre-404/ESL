@@ -1,6 +1,6 @@
 #pragma once
-#include "../common.h"
-#include "../Includes/unorderedDense.h"
+#include "../../common.h"
+#include "../../Includes/unorderedDense.h"
 #include <mutex>
 #include <atomic>
 #include <thread>

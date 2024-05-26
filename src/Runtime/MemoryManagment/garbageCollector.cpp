@@ -1,8 +1,8 @@
 #include "garbageCollector.h"
-#include "../ErrorHandling/errorHandler.h"
+#include "../../ErrorHandling/errorHandler.h"
 #include "../Objects/objects.h"
-#include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpersInline.cpp"
+#include "../../Includes/fmt/format.h"
+#include "../Values/valueHelpersInline.cpp"
 
 using namespace valueHelpers;
 

@@ -1,7 +1,8 @@
 #pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpers.h"
+#include "Values/valueHelpers.h"
+#include "Values/valueHelpersInline.cpp"
 #include <csetjmp>
 #include <stdarg.h>
 

@@ -2,7 +2,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include "LLVMHelperFunctions.h"
-#include "valueHelpers.h"
+#include "../Runtime/Values/valueHelpers.h"
 
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/TargetSelect.h"

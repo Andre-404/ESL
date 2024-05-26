@@ -1,4 +1,3 @@
-#pragma once
 #include "computeClassHierarchy.h"
 
 using namespace passes::computeClassHierarchy;

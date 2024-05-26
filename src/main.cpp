@@ -5,7 +5,7 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
-#include "MemoryManagment/garbageCollector.h"
+#include "Runtime/MemoryManagment/garbageCollector.h"
 #include "Codegen/Passes/closureConverter.h"
 #include "Codegen/Passes/ASTToTypedAST.h"
 #include <chrono>

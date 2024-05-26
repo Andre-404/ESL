@@ -3,7 +3,7 @@
 #include <iostream>
 #include "../../Includes/fmt/format.h"
 #include "../../ErrorHandling/errorHandler.h"
-#include "../valueHelpersInline.cpp"
+#include "../../Runtime/Values/valueHelpersInline.cpp"
 
 using namespace closureConversion;
 using namespace object;

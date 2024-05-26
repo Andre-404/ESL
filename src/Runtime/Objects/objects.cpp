@@ -1,6 +1,6 @@
 #include "objects.h"
-#include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpersInline.cpp"
+#include "../../Includes/fmt/format.h"
+#include "../Values/valueHelpersInline.cpp"
 
 using namespace object;
 using namespace memory;

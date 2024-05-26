@@ -1,7 +1,7 @@
 #include "valueHelpers.h"
-#include "../ErrorHandling/errorHandler.h"
-#include "../Includes/fmt/format.h"
-#include "../Codegen/valueHelpersInline.cpp"
+#include "../../ErrorHandling/errorHandler.h"
+#include "../../Includes/fmt/format.h"
+#include "valueHelpersInline.cpp"
 #include <iostream>
 #include <iomanip>
 
