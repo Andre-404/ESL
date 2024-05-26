@@ -186,7 +186,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, false, void>, false, false> getIP();
+        int getIP();
         llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
         llvm::Constant* createConstObjHeader(int type);
         llvm::Constant* constObjToVal(llvm::Constant* obj);

@@ -58,7 +58,9 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
         std::cout<<fmt::format("Compiler exited because of error: '{}'.", err.reason);
     }
     // Get all string constants into gc
-    llvm::IRBuilder<> tempBuilder(&tmpfn->getEntryBlock(), getIP());
+    auto it = currentFunction->getEntryBlock().begin();
+    std::advance(it, getIP());
+    llvm::IRBuilder<> tempBuilder(&tmpfn->getEntryBlock(), it);
     tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
 
     // Ends the main function
@@ -78,9 +80,12 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             break;
         }
         case typedAST::VarType::FREEVAR:{
-            llvm::IRBuilder<> tempBuilder(&currentFunction->getEntryBlock(), getIP());
+            auto it = currentFunction->getEntryBlock().begin();
+            std::advance(it, getIP());
+            llvm::IRBuilder<> tempBuilder(&currentFunction->getEntryBlock(), it);
             auto tmp = tempBuilder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, decl->dbgInfo.varName.getLexeme());
             variables.insert_or_assign(decl->uuid, tmp);
+
             break;
         }
         case typedAST::VarType::GLOBAL_FUNC:
@@ -2143,12 +2148,14 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
     assert(false && "Unreachable");
 }
 
-llvm::ilist_iterator<llvm::ilist_detail::node_options<llvm::Instruction, false, false, void>, false, false> Compiler::getIP(){
+int Compiler::getIP(){
     auto it = currentFunction->getEntryBlock().begin();
+    int i = 0;
     while(it->getOpcode() == llvm::Instruction::Alloca){
         it++;
+        i++;
     }
-    return it;
+    return i;
 }
 
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
