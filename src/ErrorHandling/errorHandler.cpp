@@ -92,7 +92,7 @@ namespace errorHandler {
 		compileErrors.emplace_back(msg, token.str.sourceFile, token);
 	}
 	void addSystemError(string msg) {
-        std::cout<<msg;
+        std::cout << msg << '\n';
         exit(1);
 	}
 
