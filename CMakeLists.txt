@@ -6,6 +6,7 @@ if(WIN32)
 else()
     set(LLVM_DIR "~/tools/llvm-project-17.x/build/lib/cmake/llvm/")
     set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic")
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 find_package(LLVM REQUIRED CONFIG)
 
