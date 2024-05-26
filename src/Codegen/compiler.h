@@ -53,7 +53,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 		vector<File*> sourceFiles;
 
 		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                 fastMap<string, std::pair<int, int>>& _classHierarchy);
+                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives);
         void compile(std::shared_ptr<typedAST::Function> _code);
 
 		#pragma region Visitor pattern
@@ -101,7 +101,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         fastMap<string, std::pair<int, int>> classHierarchy;
         // Connects function types(unique for each function) and the LLVM IR representation of that function
         fastMap<types::tyPtr, llvm::Function*> functions;
-        fastMap<string, llvm::Function*> nativeFunctions;
+        fastMap<string, llvm::Value*> nativeFunctions;
         fastMap<string, llvm::Constant*> CStrings;
         fastMap<string, llvm::Constant*> ESLStrings;
         fastMap<string, llvm::Type*> namedTypes;
@@ -193,6 +193,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         void replaceGV(uInt64 uuid, llvm::Constant* newInit);
         llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
+        void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
         #pragma endregion
 	};
 }

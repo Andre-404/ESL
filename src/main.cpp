@@ -74,7 +74,7 @@ int main(int argc, char* argv[]) {
         auto classes = transformer.getClassHierarchy();
 
 
-        compileCore::Compiler compiler(res.first, res.second, env, classes);
+        compileCore::Compiler compiler(res.first, res.second, env, classes, transformer.getNativeFuncTypes());
 
         errorHandler::showCompileErrors();
         if (errorHandler::hasErrors()) {

@@ -111,8 +111,9 @@ namespace typedASTParser{
         vector<types::tyPtr> getTypeEnv();
 
         ankerl::unordered_dense::map<string, std::pair<int, int>> getClassHierarchy();
+        ankerl::unordered_dense::map<string, types::tyVarIdx>& getNativeFuncTypes();
 
-        #pragma region Visitor pattern
+#pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
         void visitConditionalExpr(AST::ConditionalExpr* expr) override;
@@ -235,6 +236,8 @@ namespace typedASTParser{
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
+        void createNativeFn(string name, int arity, types::tyVarIdx retTy);
+        void declareNativeFunctions();
         #pragma endregion
     };
 

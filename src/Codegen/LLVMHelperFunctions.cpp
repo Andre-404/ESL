@@ -49,7 +49,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     createLLVMTypes(ctx, types);
     // ret: double, args: Value
     CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
-    CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
+    //CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     // ret: Value, args: raw C string
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
     //

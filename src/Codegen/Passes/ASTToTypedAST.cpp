@@ -22,6 +22,7 @@ ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLit
     units = _units;
     freevarMap = _freevarMap;
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, "func.main");
+    declareNativeFunctions();
     for (ESLModule* unit : units) {
         curUnit = unit;
         sourceFiles.push_back(unit->file);
@@ -57,6 +58,10 @@ vector<types::tyPtr> ASTTransformer::getTypeEnv(){
 ankerl::unordered_dense::map<string, std::pair<int, int>> ASTTransformer::getClassHierarchy(){
     computeClassHierarchy::ComputeClassHierarchyPass pass;
     return pass.run(classNodes);
+}
+
+ankerl::unordered_dense::map<string, types::tyVarIdx>& ASTTransformer::getNativeFuncTypes(){
+    return nativesTypes;
 }
 
 #pragma region Visitor
@@ -1446,5 +1451,14 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type,
     line = 0;
     func = std::make_shared<typedAST::Function>();
     func->name = funcName;
+}
+
+void ASTTransformer::createNativeFn(string name, int arity, types::tyVarIdx retTy){
+    std::shared_ptr<types::FunctionType> ty = std::make_shared<types::FunctionType>(arity, retTy, false);
+    nativesTypes.insert_or_assign(name, addType(ty));
+}
+
+void ASTTransformer::declareNativeFunctions(){
+    createNativeFn("print", 1, getBasicType(types::TypeFlag::NIL));
 }
 #pragma endregion

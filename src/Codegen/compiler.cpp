@@ -16,7 +16,7 @@
 using namespace compileCore;
 
 Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                   fastMap<string, std::pair<int, int>>& _classHierarchy)
+                   fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
@@ -38,6 +38,7 @@ Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _sr
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
     gvar->setInitializer(builder.getInt8(0));
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
+    implementNativeFunctions(natives);
 
     compile(_code);
     llvmHelpers::runModule(curModule, JIT, ctx, true);
@@ -114,7 +115,7 @@ llvm::Value* Compiler::visitVarStore(typedAST::VarStore* expr) {
     return codegenVarStore(expr->varPtr, valToStore);
 }
 llvm::Value* Compiler::visitVarReadNative(typedAST::VarReadNative* expr) {
-    // TODO: implement this
+    return nativeFunctions[expr->nativeName];
 }
 
 static bool isFloatingPointOp(typedAST::ArithmeticOp op){
@@ -1545,11 +1546,7 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
 
     llvm::Function* fn = nullptr;
     auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
-    // If this is a native function then it's signature is stored in nativeFunctions
-    if(expr->callee->type == typedAST::NodeType::VAR_NATIVE_READ){
-        auto native = std::reinterpret_pointer_cast<typedAST::VarReadNative>(expr->callee);
-        fn = nativeFunctions[native->nativeName];
-    }else if(functions.contains(funcType)) {
+    if(functions.contains(funcType)) {
         // Function might not be codegen-ed at this point,
         // but if it is then use its signature instead of casting the char ptr in ObjClosure to a function
         fn = functions[funcType];
@@ -2227,6 +2224,34 @@ llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr
         }
     }
     return toStore;
+}
+
+void Compiler::implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives){
+    auto addNativeFn = [&](string name, int argc, types::tyPtr type){
+        vector<llvm::Type*> args(argc, builder.getInt64Ty());
+        args.insert(args.begin(), namedTypes["ObjClosurePtr"]);
+        auto func = llvm::Function::Create(llvm::FunctionType::get(builder.getInt64Ty(), args, false),
+                                         llvm::Function::ExternalLinkage, name, curModule.get());
+        functions[type] = func;
+        auto typeErasedFn = llvm::ConstantExpr::getBitCast(func, builder.getInt8PtrTy());
+        auto arity = builder.getInt8(argc);
+        auto cname = createConstStr(name);
+        auto freeVarCnt = builder.getInt8(0);
+        auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
+        auto freeVarArr = llvm::ConstantPointerNull::get(ty);
+
+        // Create function constant
+        llvm::Constant* fnC = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
+                                                        {createConstObjHeader(+object::ObjType::CLOSURE),
+                                                         arity, freeVarCnt, typeErasedFn, cname, freeVarArr});
+        // Creates a place in memory for the function and stores it there
+        llvm::Constant* fnLoc = storeConstObj(fnC);
+        return constObjToVal(fnLoc);
+    };
+    for(std::pair<string, types::tyVarIdx> p : natives){
+        auto fnTy = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[p.second]);
+        nativeFunctions[p.first] = addNativeFn(p.first, fnTy->argCount, fnTy);
+    }
 }
 
 #pragma endregion

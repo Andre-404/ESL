@@ -31,10 +31,9 @@ EXPORT double asNum(Value x){
     exit(64);
 }
 
-EXPORT void print(Value x){
-    memory::gc->active = 1;
-    if(memory::gc->active == 1) stopThread();
-    std::cout<< "Value is: "<< valueHelpers::toString(x)<<std::endl;
+EXPORT Value print(ObjClosure* ptr, Value x){
+    std::cout<< valueHelpers::toString(x);
+    return encodeNil();
 }
 
 EXPORT Value createStr(char* ptr){
