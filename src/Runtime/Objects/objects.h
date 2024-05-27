@@ -46,7 +46,6 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
-        uInt64 len;
         char* str;
 
         ObjString(char* _str);
@@ -68,9 +67,9 @@ namespace object {
 
     class ObjArray : public Obj {
     public:
-        vector<Value> values;
         // Used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
         uInt numOfHeapPtr;
+        vector<Value> values;
         ObjArray();
         ObjArray(const size_t size);
     };
@@ -115,11 +114,11 @@ namespace object {
     // ObjInstance is a header followed by array of values(fields)
     class ObjInstance : public Obj {
     public:
+        uInt fieldArrLen;
         ObjClass* klass;
-        uInt64 fieldArrLen;
         Value* fields;
 
-        ObjInstance(ObjClass* _klass, uInt64 _fieldsArrLen);
+        ObjInstance(ObjClass* _klass, uInt _fieldsArrLen);
 
         //this reroutes the new operator to take memory which the GC gives out
         void* operator new(size_t size, const int64_t fieldsN) {

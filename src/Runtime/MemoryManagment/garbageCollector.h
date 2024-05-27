@@ -74,6 +74,7 @@ namespace memory {
 		uInt64 heapSizeLimit;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> objects;
+        vector<object::Obj*> tmpAlloc;
         vector<Value*> globalRoots;
 
 		vector<object::Obj*> markStack;

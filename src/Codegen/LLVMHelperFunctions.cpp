@@ -26,7 +26,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     types["Obj"] = llvm::StructType::create(*ctx, {TYPE(Int8), TYPE(Int1)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
-    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx), TYPE(Int8Ptr)}, "ObjString");
+    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
@@ -42,7 +42,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     classType->setBody({types["Obj"], TYPE(Int8Ptr), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
 
-    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], types["ObjClassPtr"], TYPE(Int64), PTR_TY(TYPE(Int64))}, "ObjInstance");
+    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(TYPE(Int64))}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 }
 
@@ -54,11 +54,16 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: Value, args: raw C string
     CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
     //
-    CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
-    CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
+    fn->addFnAttr(llvm::Attribute::NoReturn);
+    fn->addFnAttr(llvm::Attribute::Cold);
+    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    fn->addFnAttr(llvm::Attribute::NoReturn);
+    fn->addFnAttr(llvm::Attribute::Cold);
     // Helper from C std lib
     CREATE_FUNC("printf", true, TYPE(Int32), TYPE(Int8Ptr));
     CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
+
     // ret: Value, args: lhs, rhs - both are known to be strings
     CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64));
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
@@ -114,7 +119,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.registerLoopAnalyses(LAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
     // Create the pass manager.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O0);
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     if(optimize) {
         MPM.run(*module, MAM);
     }
@@ -247,7 +252,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         auto load = builder.CreateLoad(builder.getInt8Ty(), module->getNamedGlobal("gcFlag"), true);
         load->setAtomic(llvm::AtomicOrdering::Monotonic);
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
-
+        cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
@@ -275,6 +280,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         auto objTy = F->getArg(1);
         llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
         llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkType", F);
+        cond1 = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond1, builder.getInt1(true)});
         builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
 
         builder.SetInsertPoint(checkTypeBB);
@@ -302,13 +308,14 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
         llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkClassType", F);
+        cond1 = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond1, builder.getInt1(true)});
         builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
 
         builder.SetInsertPoint(checkTypeBB);
         inst = builder.CreateCall(module->getFunction("decodeObj"), {inst});
         inst = builder.CreateBitCast(inst, types["ObjInstancePtr"]);
         auto ptr = builder.CreateInBoundsGEP(types["ObjInstance"], inst,
-                                             {builder.getInt32(0), builder.getInt32(1)});
+                                             {builder.getInt32(0), builder.getInt32(2)});
         ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);
 
         llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(2)});

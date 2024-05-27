@@ -141,7 +141,7 @@ ObjClass::ObjClass(string _name) {
 #pragma endregion
 
 #pragma region ObjInstance
-ObjInstance::ObjInstance(ObjClass* _klass, uInt64 _fieldArrLen) {
+ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
 	klass = _klass;
     fieldArrLen = _fieldArrLen;
     marked = false;

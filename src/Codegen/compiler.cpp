@@ -338,16 +338,14 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
     createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
-    errorBB = builder.GetInsertBlock();
-    builder.CreateBr(mergeBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
 
-    auto phi = builder.CreatePHI(builder.getInt64Ty(), 3, "collectionget");
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2, "collectionget");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
-    phi->addIncoming(builder.getInt64(0), errorBB);
     return phi;
 
 }
@@ -403,17 +401,14 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
     createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
-    errorBB = builder.GetInsertBlock();
-    builder.CreateBr(mergeBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
 
-    auto phi = builder.CreatePHI(builder.getInt64Ty(), 3, "collectionset");
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2, "collectionset");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
-    // Useless, but needed since errorBB is a parent of mergeBB
-    phi->addIncoming(builder.getInt64(0), errorBB);
     return phi;
 }
 
@@ -485,7 +480,7 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
 
     auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                         {builder.getInt32(0), builder.getInt32(1)});
+                                         {builder.getInt32(0), builder.getInt32(2)});
     auto klass = builder.CreateLoad(namedTypes["ObjClassPtr"], ptr);
 
     // first el: field index, second el: method index
@@ -799,7 +794,7 @@ llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
 
     auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                         {builder.getInt32(0), builder.getInt32(1)});
+                                         {builder.getInt32(0), builder.getInt32(2)});
     auto klass = builder.CreateLoad(namedTypes["ObjClassPtr"], ptr);
 
     // first el: field index, second el: method index
@@ -1222,12 +1217,12 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Va
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
     llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
     auto cond = builder.CreateCall(predicate, args);
+    cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(true)});
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
     createTyErr(errMsg, args[0], dbg);
-    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
-    builder.CreateBr(executeOpBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), executeOpBB);
     builder.SetInsertPoint(executeOpBB);
@@ -1240,13 +1235,14 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lh
 
     auto c1 = builder.CreateCall(predicate, lhs);
     auto c2 = builder.CreateCall(predicate, rhs);
-    builder.CreateCondBr(builder.CreateNot(builder.CreateAnd(c1, c2)), errorBB, executeOpBB);
+    auto cond = builder.CreateAnd(c1, c2);
+    cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(true)});
+    builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
 
     builder.SetInsertPoint(errorBB);
     // Calls the type error function which throws
     createTyErr(errMsg, lhs, rhs, dbg);
-    // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-    builder.CreateBr(executeOpBB);
+    builder.CreateUnreachable();
     F->insert(F->end(), executeOpBB);
     // Actual operation goes into this block
     builder.SetInsertPoint(executeOpBB);
@@ -1524,8 +1520,7 @@ llvm::Value* Compiler::createFuncCall(llvm::Value* closureVal, vector<llvm::Valu
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
     argCntError(dbg, argNum, args.size());
-    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
-    builder.CreateBr(callBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), callBB);
     builder.SetInsertPoint(callBB);
@@ -1594,8 +1589,7 @@ void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
     createTyErr(errMsg, index, dbg);
-    // Is never actually hit since tyErr throws, but LLVM requires every block to have a terminator
-    builder.CreateBr(executeOpBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), executeOpBB);
     builder.SetInsertPoint(executeOpBB);
@@ -1834,7 +1828,7 @@ llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, in
     std::fill(fields.begin(), fields.end(), builder.getInt64(MASK_SIGNATURE_NIL));
     llvm::Constant* fieldArr = llvm::ConstantArray::get(llvm::ArrayType::get(builder.getInt64Ty(), fieldN), fields);
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjInstance"), {
-            createConstObjHeader(+object::ObjType::INSTANCE), klass, builder.getInt64(fieldN),
+            createConstObjHeader(+object::ObjType::INSTANCE), builder.getInt32(fieldN), klass,
             llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(builder.getInt64Ty()))
     });
     auto inst =  llvm::ConstantStruct::get(llvm::StructType::create(*ctx,{namedTypes["ObjInstance"],
@@ -1912,15 +1906,13 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
     builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
                                                createConstStr(fieldName)});
     builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
-    builder.CreateBr(mergeBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
-    auto phi = builder.CreatePHI(builder.getInt64Ty(), 3);
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2);
     phi->addIncoming(field, fieldBB);
     phi->addIncoming(method, methodBB);
-    // Never hit, but still needed for phi node
-    phi->addIncoming(builder.getInt64(0), errorBB);
     return phi;
 }
 
@@ -1966,7 +1958,7 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Tok
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
 
     auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                         {builder.getInt32(0), builder.getInt32(1)});
+                                         {builder.getInt32(0), builder.getInt32(2)});
     auto klass = builder.CreateLoad(namedTypes["ObjClassPtr"], ptr);
 
     auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getInt64Ty()}, false);
@@ -1990,7 +1982,7 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Tok
     builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field '%s'"),
                                                createConstStr(field)});
     builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
-    builder.CreateBr(fieldBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), fieldBB);
     builder.SetInsertPoint(fieldBB);
@@ -2081,15 +2073,13 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
     builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
                                                createConstStr(fieldName)});
     builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
-    builder.CreateBr(mergeBB);
+    builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
-    auto phi = builder.CreatePHI(builder.getInt64Ty(), 3);
+    auto phi = builder.CreatePHI(builder.getInt64Ty(), 2);
     phi->addIncoming(callres1, fieldBB);
     phi->addIncoming(callres2, methodBB);
-    // Never hit, but still needed for phi node
-    phi->addIncoming(builder.getInt64(0), errorBB);
     return phi;
 }
 // Misc
@@ -2107,8 +2097,7 @@ llvm::Constant* Compiler::createConstStr(const string& str){
 llvm::Constant* Compiler::createESLString(const string& str){
     if(ESLStrings.contains(str)) return ESLStrings[str];
     auto obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjString"), {
-        createConstObjHeader(+object::ObjType::STRING), llvm::ConstantInt::get(builder.getInt64Ty(),str.length()),
-        createConstStr(str)});
+        createConstObjHeader(+object::ObjType::STRING), createConstStr(str)});
     auto val = constObjToVal(storeConstObj(obj));
     ESLStrings[str] = val;
     return val;

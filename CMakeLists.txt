@@ -24,6 +24,7 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/Passes/computeClassHierarchy.h
         src/Codegen/Passes/computeClassHierarchy.cpp
         src/Runtime/nativeFunctionsExports.h
+        src/Runtime/MemoryManagment/memoryPool.h
 )
 
 #execute_process(COMMAND llvm-config)

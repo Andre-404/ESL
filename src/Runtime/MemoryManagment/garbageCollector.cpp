@@ -3,6 +3,7 @@
 #include "../Objects/objects.h"
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
+#include <sys/stat.h>
 
 using namespace valueHelpers;
 
@@ -11,6 +12,7 @@ using namespace valueHelpers;
 
 NOINLINE uintptr_t* getStackPointer(){
     return (uintptr_t*)(GET_FRAME_ADDRESS);
+
 }
 
 namespace memory {
@@ -19,6 +21,7 @@ namespace memory {
 	GarbageCollector::GarbageCollector(byte& active) : active(active) {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
+        tmpAlloc.reserve(512);
 
         threadsSuspended = 0;
 	}
@@ -36,12 +39,16 @@ namespace memory {
 		catch (const std::bad_alloc& e) {
 			errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
 		}
-        objects.insert(reinterpret_cast<Obj*>(block));
+        tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
 		return block;
 	}
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
+        for(auto o : tmpAlloc){
+            objects.insert(o);
+        }
+        tmpAlloc.clear();
 		markRoots();
 		mark();
 		sweep();
@@ -156,14 +163,14 @@ namespace memory {
                         // Remove strings from interned pool when deleting them
                         object::ObjString* str = reinterpret_cast<object::ObjString*>(obj);
                         interned.erase(str->str);
-                        delete reinterpret_cast<object::ObjString*>(obj); break;
+                        delete reinterpret_cast<byte*>(obj); break;
                     }
                     case +object::ObjType::ARRAY: delete reinterpret_cast<object::ObjArray*>(obj); break;
                     case +object::ObjType::CLASS: delete reinterpret_cast<object::ObjClass*>(obj); break;
                     case +object::ObjType::FILE: delete reinterpret_cast<object::ObjFile*>(obj); break;
                     case +object::ObjType::FUTURE: delete reinterpret_cast<object::ObjFuture*>(obj); break;
                     case +object::ObjType::HASH_MAP: delete reinterpret_cast<object::ObjHashMap*>(obj); break;
-                    case +object::ObjType::INSTANCE: delete reinterpret_cast<object::ObjInstance*>(obj); break;
+                    case +object::ObjType::INSTANCE: delete reinterpret_cast<byte*>(obj); break;
                     case +object::ObjType::MUTEX: delete reinterpret_cast<object::ObjMutex*>(obj); break;
                     case +object::ObjType::CLOSURE: delete reinterpret_cast<object::ObjClosure*>(obj); break;
                     default: delete obj; break;
