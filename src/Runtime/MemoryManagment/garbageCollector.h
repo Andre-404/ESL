@@ -1,11 +1,13 @@
 #pragma once
 #include "../../common.h"
 #include "../../Includes/unorderedDense.h"
+#include "memoryPool.h"
 #include <mutex>
 #include <atomic>
 #include <thread>
 #include <stack>
 #include <condition_variable>
+#include <array>
 
 namespace object {
 	class Obj;
@@ -67,11 +69,12 @@ namespace memory {
         std::condition_variable STWcv;
         std::mutex pauseMtx;
 
-        std::atomic<uInt64> heapSize;
+        uInt64 heapSize;
         ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
 		uInt64 heapSizeLimit;
+        std::array<MemoryPool, 6> mempools;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> objects;
         vector<object::Obj*> tmpAlloc;

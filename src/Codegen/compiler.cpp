@@ -496,7 +496,10 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
     auto instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
     auto memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt32(instSize)});
+    auto flagPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(1)});
+    auto flag = builder.CreateLoad(namedTypes["Obj"], flagPtr);
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), instSize);
+    builder.CreateStore(flag, flagPtr);
     auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
     auto address = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(0), builder.getInt32(3)});
     auto nextaddr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(1)});
@@ -2154,8 +2157,9 @@ llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
+    // 128 is a magic constant that tells the gc that this is a constant object
     return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{builder.getInt8(type),
-                                         builder.getInt1(true)});
+                                         builder.getInt8(128),builder.getInt1(true)});
 }
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){

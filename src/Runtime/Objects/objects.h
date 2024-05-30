@@ -28,6 +28,7 @@ namespace object {
     class Obj{
     public:
         byte type;
+        byte allocType;
         bool marked;
 
         size_t getSize();

@@ -10,6 +10,20 @@ using namespace valueHelpers;
 //start size of heap in KB
 #define HEAP_START_SIZE 1024
 
+constexpr std::array<int, 6> mempoolBlockSizes = {16, 32, 48, 64, 128, 256};
+inline int szToIdx(uint64_t x){
+    if(x > 32 && x <= 48) return 2;
+    uint64_t blocksz = (1ull << std::bit_width(x-1));
+    switch(blocksz) {
+        case 16:return 0;
+        case 32:return 1;
+        case 64:return 3;
+        case 128:return 4;
+        case 256:return 5;
+    }
+    return -1;
+}
+
 NOINLINE uintptr_t* getStackPointer(){
     return (uintptr_t*)(GET_FRAME_ADDRESS);
 
@@ -21,7 +35,10 @@ namespace memory {
 	GarbageCollector::GarbageCollector(byte& active) : active(active) {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
-        tmpAlloc.reserve(512);
+        tmpAlloc.reserve(1024);
+        for(int i = 0; i < mempools.size(); i++){
+            mempools[i] = MemoryPool(16384, mempoolBlockSizes[i]);
+        }
 
         threadsSuspended = 0;
 	}
@@ -31,23 +48,31 @@ namespace memory {
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
 		std::scoped_lock<std::mutex> lk(allocMtx);
 		heapSize += size;
-		if (heapSize > heapSizeLimit) active = 1;
-		byte* block = nullptr;
-		try {
-			block = new byte[size];
-		}
-		catch (const std::bad_alloc& e) {
-			errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
-		}
+        if (heapSize > heapSizeLimit) {
+            active = 1;
+        }
+        byte* block = nullptr;
+        int idx = szToIdx(size);
+        if(idx == -1){
+            try {
+                block = new byte[size];
+            }
+            catch (const std::bad_alloc& e) {
+                errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
+            }
+            // Flags that this pointer was malloc-d
+            reinterpret_cast<Obj*>(block)->allocType = 127;
+        }else{
+            block = reinterpret_cast<byte *>(mempools[idx].alloc());
+            reinterpret_cast<Obj*>(block)->allocType = idx;
+        }
         tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
 		return block;
 	}
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
-        for(auto o : tmpAlloc){
-            objects.insert(o);
-        }
+        objects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
 		markRoots();
 		mark();
@@ -94,14 +119,8 @@ namespace memory {
                     valueHelpers::mark(upval->val);
                     break;
                 }
-                case +ObjType::CLASS: {
-                    ObjClass* klass = reinterpret_cast<ObjClass*>(ptr);
-                    break;
-                }
                 case +ObjType::INSTANCE:{
                     ObjInstance* inst = reinterpret_cast<ObjInstance*>(ptr);
-
-                    markObj(inst->klass);
                     for (int i = 0; i < inst->fieldArrLen; i++) valueHelpers::mark(inst->fields[i]);
                     break;
                 }
@@ -163,18 +182,20 @@ namespace memory {
                         // Remove strings from interned pool when deleting them
                         object::ObjString* str = reinterpret_cast<object::ObjString*>(obj);
                         interned.erase(str->str);
-                        delete reinterpret_cast<byte*>(obj); break;
+                        break;
                     }
-                    case +object::ObjType::ARRAY: delete reinterpret_cast<object::ObjArray*>(obj); break;
-                    case +object::ObjType::CLASS: delete reinterpret_cast<object::ObjClass*>(obj); break;
-                    case +object::ObjType::FILE: delete reinterpret_cast<object::ObjFile*>(obj); break;
-                    case +object::ObjType::FUTURE: delete reinterpret_cast<object::ObjFuture*>(obj); break;
-                    case +object::ObjType::HASH_MAP: delete reinterpret_cast<object::ObjHashMap*>(obj); break;
-                    case +object::ObjType::INSTANCE: delete reinterpret_cast<byte*>(obj); break;
-                    case +object::ObjType::MUTEX: delete reinterpret_cast<object::ObjMutex*>(obj); break;
-                    case +object::ObjType::CLOSURE: delete reinterpret_cast<object::ObjClosure*>(obj); break;
-                    default: delete obj; break;
+                    case +object::ObjType::ARRAY: {
+                        reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();
+                        break;
+                    }
+                    case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
+                    case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
+                    case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;;
+                    case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
+                    default: obj->~Obj(); break;
                 }
+                if(obj->allocType == 127) delete reinterpret_cast<byte*>(obj);
+                else mempools[obj->allocType].free(obj);
                 it = objects.erase(it);
                 continue;
             }
