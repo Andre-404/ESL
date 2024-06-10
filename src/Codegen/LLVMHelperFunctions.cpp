@@ -20,6 +20,12 @@
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
+using namespace llvmHelpers;
+
+llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
+    // Opaque pointer
+    return llvm::PointerType::get(ctx, 1);
+}
 void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
@@ -28,7 +34,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
-    types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], llvm::Type::getInt64Ty(*ctx)}, "ObjFreevar");
+    types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], getESLValType(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     // Pointer to pointer
     auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
@@ -38,26 +44,25 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
 
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
-    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {TYPE(Int64)}, false);
+    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
     classType->setBody({types["Obj"], TYPE(Int8Ptr), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
 
-    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(TYPE(Int64))}, "ObjInstance");
+    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(getESLValType(*ctx))}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 }
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
-    // ret: double, args: Value
-    CREATE_FUNC("asNum", false, TYPE(Double),  TYPE(Int64));
     //CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     // ret: Value, args: raw C string
-    CREATE_FUNC("createStr", false, TYPE(Int64), TYPE(Int8Ptr));
+    llvm::Type* eslValTy = getESLValType(*ctx);
+    CREATE_FUNC("createStr", false, eslValTy, TYPE(Int8Ptr));
     //
-    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64));
+    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
-    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), TYPE(Int64), TYPE(Int64));
+    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy, eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     // Helper from C std lib
@@ -65,40 +70,41 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
 
     // ret: Value, args: lhs, rhs - both are known to be strings
-    CREATE_FUNC("strAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64));
+    CREATE_FUNC("strAdd", false, eslValTy, eslValTy, eslValTy);
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
-    CREATE_FUNC("strTryAdd", false, TYPE(Int64), TYPE(Int64), TYPE(Int64), TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("strTryAdd", false, eslValTy, eslValTy, eslValTy, TYPE(Int8Ptr), TYPE(Int32));
     // Invoked by gc.safepoint
     CREATE_FUNC("stopThread", false, TYPE(Void));
     // ret: Value, args: arr size
-    CREATE_FUNC("createArr", false, TYPE(Int64), TYPE(Int32));
-    CREATE_FUNC("getArrPtr", false, TYPE(Int64Ptr), TYPE(Int64));
-    CREATE_FUNC("getArrSize", false, TYPE(Int64), TYPE(Int64));
+    CREATE_FUNC("createArr", false, eslValTy, TYPE(Int32));
+    CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
+    CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
 
     CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
-    CREATE_FUNC("gcInternStr", false ,TYPE(Void), TYPE(Int64));
+    CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
-    CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(TYPE(Int64)));
-    CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
+    CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
+    fn = CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
+    fn->addFnAttr("allockind", "alloc");
+    fn->addFnAttr(llvm::Attribute::NoRecurse);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
-    CREATE_FUNC("createHashMap", true, TYPE(Int64), TYPE(Int32));
+    CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
     // Creates a freevar(no args needed, its initialized to nil)
     CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
     // Gets a freevar from closure, args: closure structure, index to which freevar to use
-    CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], types["ObjClosurePtr"], TYPE(Int32));
+    CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], eslValTy, TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
-    CREATE_FUNC("createClosure", true, TYPE(Int64), TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("createClosure", true, eslValTy, TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
-    CREATE_FUNC("hashmapGetV", false, TYPE(Int64), types["ObjPtr"], types["ObjPtr"]);
+    CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
-    CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], TYPE(Int64));
+    CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
 
 void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize){
-
     // Create the analysis managers.
     llvm::LoopAnalysisManager LAM;
     llvm::FunctionAnalysisManager FAM;
@@ -111,6 +117,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     // customization, e.g. specifying a TargetMachine or various debugging
     // options.
     llvm::PassBuilder PB;
+    llvm::Type::getIntNTy(*ctx, 64);
 
     // Register all the basic analyses with the managers.
     PB.registerModuleAnalyses(MAM);
@@ -123,7 +130,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     if(optimize) {
         MPM.run(*module, MAM);
     }
-    for(auto& it : module->functions()){
+    for(auto& it : module->functions()) {
         SafepointPass.run(it, FAM);
     }
 
@@ -144,6 +151,14 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     llvm::ExitOnError()(RT->remove());
 }
 
+static llvm::Value* ESLValToI64(llvm::Value* val, llvm::IRBuilder<>& builder){
+    return builder.CreatePtrToInt(val, builder.getInt64Ty());
+}
+static llvm::Constant* ESLConstToI64(llvm::Constant* constant){
+    return llvm::ConstantExpr::getPtrToInt(constant, llvm::Type::getInt64Ty(constant->getContext()));
+}
+
+
 void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     auto createFunc = [&](string name, llvm::FunctionType *FT){
@@ -152,39 +167,40 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         builder.SetInsertPoint(BB);
         return F;
     };
+    llvm::Type* eslValTy = getESLValType(*ctx);
     // Extremely cursed, but using lambdas that are immediately called avoids naming conflicts
     [&]{
-        llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(TYPE(Int64), TYPE(Int1), false));
+        llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(eslValTy, TYPE(Int1), false));
         // MASK_QNAN | (MASK_TYPE_TRUE* <i64>x)
         auto bitcastArg = builder.CreateZExt(f->getArg(0), builder.getInt64Ty());
         auto mul = builder.CreateMul(builder.getInt64(MASK_TYPE_TRUE), bitcastArg, "tmp", true, true);
         auto ret = builder.CreateOr(builder.getInt64(MASK_QNAN), mul);
-        builder.CreateRet(ret);
+        builder.CreateRet(builder.CreateIntToPtr(ret, eslValTy));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("encodeNull",llvm::FunctionType::get(TYPE(Int64), false));
-        builder.CreateRet(llvm::ConstantInt::get(TYPE(Int64), encodeNil()));
+        llvm::Function* f = createFunc("encodeNull",llvm::FunctionType::get(eslValTy, false));
+        builder.CreateRet(builder.CreateIntToPtr(llvm::ConstantInt::get(TYPE(Int64), encodeNil()), eslValTy));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("decodeBool",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("decodeBool",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // At this point we know that arg is either MASK_SIGNATURE_TRUE or MASK_SIGNATURE_FALSE, so just cmp with MASK_SIGNATURE_TRUE
-        builder.CreateRet(builder.CreateICmpEQ(f->getArg(0), builder.getInt64(MASK_SIGNATURE_TRUE)));
+        builder.CreateRet(builder.CreateICmpEQ(ESLValToI64(f->getArg(0), builder),builder.getInt64(MASK_SIGNATURE_TRUE)));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("isNum",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("isNum",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // (x & MASK_QNAN) != MASK_QNAN
-        auto arg = f->getArg(0);
+        auto arg = ESLValToI64(f->getArg(0), builder);
         auto constant = builder.getInt64(MASK_QNAN);
         builder.CreateRet(builder.CreateICmpNE(builder.CreateAnd(arg, constant), constant));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("isBool",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("isBool",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // x == MASK_SIGNATURE_TRUE || x == MASK_SIGNATURE_FALSE
-        auto arg = f->getArg(0);
+        auto arg = ESLValToI64(f->getArg(0), builder);
 
         auto const1 = builder.getInt64(MASK_SIGNATURE_TRUE);
         auto const2 = builder.getInt64(MASK_SIGNATURE_FALSE);
@@ -192,15 +208,15 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("isNull",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("isNull",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // x == MASK_SIGNATURE_NIL
-        builder.CreateRet(builder.CreateICmpEQ(f->getArg(0), builder.getInt64(MASK_SIGNATURE_NIL)));
+        builder.CreateRet(builder.CreateICmpEQ(ESLValToI64(f->getArg(0), builder), builder.getInt64(MASK_SIGNATURE_NIL)));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("isObj",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("isObj",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ
-        auto arg = f->getArg(0);
+        auto arg = ESLValToI64(f->getArg(0), builder);
 
         auto const0 = builder.getInt64(MASK_SIGNATURE);
         auto const1 = builder.getInt64(MASK_SIGNATURE_OBJ);
@@ -208,7 +224,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("isTruthy",llvm::FunctionType::get(TYPE(Int1), TYPE(Int64),false));
+        llvm::Function* f = createFunc("isTruthy",llvm::FunctionType::get(TYPE(Int1), eslValTy,false));
         // (isBool(x) && !decodeBool(x)) || isNil(x)
         // Even though x might not be bool it will still be decoded as a bool, but that's just an icmp so it's ok
         auto arg = f->getArg(0);
@@ -226,18 +242,18 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("encodeObj",llvm::FunctionType::get(TYPE(Int64), PTR_TY(types["Obj"]),false));
+        llvm::Function* f = createFunc("encodeObj",llvm::FunctionType::get(eslValTy, PTR_TY(types["Obj"]),false));
         // MASK_SIGNATURE_OBJ | (Int64)x
         auto cast = builder.CreatePtrToInt(f->getArg(0), builder.getInt64Ty());
         auto const1 = builder.getInt64(MASK_SIGNATURE_OBJ);
-        builder.CreateRet(builder.CreateOr(const1, cast));
+        builder.CreateRet(builder.CreateIntToPtr(builder.CreateOr(const1, cast), eslValTy));
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(types["ObjPtr"], TYPE(Int64),false));
+        llvm::Function* f = createFunc("decodeObj",llvm::FunctionType::get(types["ObjPtr"], eslValTy,false));
         // (Obj*)(x & MASK_PAYLOAD_OBJ)
         auto const1 = builder.getInt64(MASK_PAYLOAD_OBJ);
-        builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(f->getArg(0), const1), types["ObjPtr"]));
+        builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(builder.CreatePtrToInt(f->getArg(0), builder.getInt64Ty()), const1), types["ObjPtr"]));
         llvm::verifyFunction(*f);
     }();
     // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
@@ -266,14 +282,14 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
 
     [&]{
-        llvm::Function *F = createFunc("decodeClosure",llvm::FunctionType::get(types["ObjClosurePtr"], TYPE(Int64),false));
+        llvm::Function *F = createFunc("decodeClosure",llvm::FunctionType::get(types["ObjClosurePtr"], eslValTy,false));
         llvm::Value* tmp = builder.CreateCall(module->getFunction("decodeObj"), F->getArg(0));
         tmp = builder.CreateBitCast(tmp, types["ObjClosurePtr"]);
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
     }();
     [&]{
-        llvm::Function* F = createFunc("isObjType",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), TYPE(Int8)},false));
+        llvm::Function* F = createFunc("isObjType",llvm::FunctionType::get(TYPE(Int1), {eslValTy, TYPE(Int8)},false));
         auto arg = F->getArg(0);
 
         auto cond1 = builder.CreateCall(module->getFunction("isObj"), arg);
@@ -298,13 +314,13 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
 
     [&]{
-        llvm::Function* F = createFunc("isInstAndClass",llvm::FunctionType::get(TYPE(Int1), {TYPE(Int64), TYPE(Int32), TYPE(Int32)},false));
+        llvm::Function* F = createFunc("isInstAndClass",llvm::FunctionType::get(TYPE(Int1), {eslValTy, TYPE(Int32), TYPE(Int32)},false));
         llvm::Value* inst = F->getArg(0);
         llvm::Value* subclassIdxStart = F->getArg(1);
         llvm::Value* subclassIdxEnd = F->getArg(2);
 
         auto cond1 = builder.CreateCall(module->getFunction("isObjType"),
-                                        {inst, builder.getInt8(+object::ObjType::INSTANCE)});
+                                        {inst, builder.getInt8(+ObjType::INSTANCE)});
 
         llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
         llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkClassType", F);
@@ -323,7 +339,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         idxStart = builder.CreateLoad(TYPE(Int32), idxStart, "idxStart");
         idxEnd = builder.CreateLoad(TYPE(Int32), idxEnd, "idxEnd");
 
-        auto cmp = builder.CreateAnd(builder.CreateICmpSGE(idxStart, subclassIdxStart),
+        auto cmp = builder.CreateAnd(builder.CreateICmpSGE(subclassIdxStart, idxStart),
                                              builder.CreateICmpSLE(subclassIdxEnd, idxEnd));
         builder.CreateRet(cmp);
         F->insert(F->end(), notObjBB);

@@ -65,7 +65,8 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
 ObjString::ObjString(char* _str) {
     str = ((char*)this)+sizeof(ObjString);
     auto view = std::string_view(_str);
-    view.copy(str, view.size()+1);
+    view.copy(str, view.size());
+    str[view.size()] = '\0';
     marked = false;
 	type = +ObjType::STRING;
 }

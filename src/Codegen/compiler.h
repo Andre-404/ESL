@@ -47,6 +47,21 @@ namespace compileCore {
         }
     };
 
+    class Function{
+    public:
+        llvm::Function* fn;
+        llvm::AllocaInst* frameStack;
+        int stackSize;
+        int maxStackSize;
+        Function(){
+            fn = nullptr;
+            frameStack = nullptr;
+            stackSize = 0;
+            maxStackSize = 0;
+        }
+        Function(llvm::Function* fn) : fn(fn), frameStack(nullptr), stackSize(0), maxStackSize(0){}
+    };
+
 class Compiler : public typedAST::TypedASTCodegen {
 	public:
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
@@ -111,7 +126,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::IRBuilder<> builder;
         std::unique_ptr<llvm::Module> curModule;
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
-        llvm::Function* currentFunction;
+        std::stack<Function> inProgressFuncs;
 
         std::stack<llvm::BasicBlock*> continueJumpDest;
         // Both loops and switch statement push to breakJump stack
@@ -148,6 +163,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
+
+
         // Tries to optimize a function call if possible, otherwise returns nullptr
         llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
@@ -182,11 +199,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Constant* createESLString(const string& str);
-        llvm::Value* castToVal(llvm::Value* val);
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        int getIP();
         llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
         llvm::Constant* createConstObjHeader(int type);
         llvm::Constant* constObjToVal(llvm::Constant* obj);
@@ -194,6 +209,11 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
         void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+        llvm::Value* ESLValTo(llvm::Value* val, llvm::Type* ty);
+        llvm::Constant* ESLConstTo(llvm::Constant* constant, llvm::Type* ty);
+        llvm::Value* CastToESLVal(llvm::Value* val);
+        llvm::Constant* ConstCastToESLVal(llvm::Constant* constant);
+        llvm::Type* getESLValType();
         #pragma endregion
 	};
 }

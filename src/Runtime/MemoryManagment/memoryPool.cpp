@@ -40,15 +40,14 @@ void MemoryPool::allocNewPage(){
     pages.emplace_back(page, pageSize);
     char* tmp = reinterpret_cast<char*>(page);
     char* end = tmp + pageSize;
-    while(tmp < end){
-        BlockHeader* header = reinterpret_cast<BlockHeader*>(tmp);
-        if(end - tmp < 2*(sizeof(BlockHeader) + blockSize)){
-            header->next = head;
-            break;
-        }
-        tmp += sizeof(BlockHeader) + blockSize;
-        header->next = reinterpret_cast<BlockHeader*>(tmp);
+    uint64_t blockn = pageSize / (sizeof(BlockHeader) + blockSize);
+    BlockHeader* header = reinterpret_cast<BlockHeader*>(tmp);
+    for(uint64_t i = 0; i < (blockn-1); i++){
+        header->next = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(header) + sizeof(BlockHeader) + blockSize);
+        header = header->next;
     }
+    header = reinterpret_cast<BlockHeader*>(tmp + (blockn-1)*(sizeof(BlockHeader) + blockSize));
+    header->next = head;
     head = reinterpret_cast<BlockHeader*>(page);
 }
 

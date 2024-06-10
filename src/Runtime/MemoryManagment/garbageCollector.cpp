@@ -10,18 +10,11 @@ using namespace valueHelpers;
 //start size of heap in KB
 #define HEAP_START_SIZE 1024
 
-constexpr std::array<int, 6> mempoolBlockSizes = {16, 32, 48, 64, 128, 256};
+constexpr std::array<int, 6> mempoolBlockSizes = {48, 16, 32, 64, 128, 256};
 inline int szToIdx(uint64_t x){
-    if(x > 32 && x <= 48) return 2;
-    uint64_t blocksz = (1ull << std::bit_width(x-1));
-    switch(blocksz) {
-        case 16:return 0;
-        case 32:return 1;
-        case 64:return 3;
-        case 128:return 4;
-        case 256:return 5;
-    }
-    return -1;
+    if(x > 256) return -1;
+    if(x > 32 && x <= 48) return 0;
+    return std::bit_width(x-1) - 3;
 }
 
 NOINLINE uintptr_t* getStackPointer(){
@@ -35,7 +28,7 @@ namespace memory {
 	GarbageCollector::GarbageCollector(byte& active) : active(active) {
 		heapSize = 0;
 		heapSizeLimit = HEAP_START_SIZE*1024;
-        tmpAlloc.reserve(1024);
+        tmpAlloc.reserve(4096);
         for(int i = 0; i < mempools.size(); i++){
             mempools[i] = MemoryPool(16384, mempoolBlockSizes[i]);
         }
@@ -72,8 +65,12 @@ namespace memory {
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
+        double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        objects.reserve(objects.size() + tmpAlloc.size());
         objects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
+        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Inserting + marking took: "<<d2-d<<"\n";
 		markRoots();
 		mark();
 		sweep();

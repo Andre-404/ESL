@@ -10,6 +10,7 @@
 #include "../common.h"
 
 namespace llvmHelpers {
+    llvm::Type* getESLValType(llvm::LLVMContext& ctx);
     void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module,
                                                                     std::unique_ptr<llvm::LLVMContext> &context,
                                                                     llvm::IRBuilder<>& builder,

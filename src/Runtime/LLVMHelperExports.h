@@ -4,9 +4,10 @@
 #include "Values/valueHelpersInline.cpp"
 #include <csetjmp>
 #include <stdarg.h>
+#include "unwind.h"
+#include <any>
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
-
 
 EXPORT void stopThread(){
     if(!memory::gc) return;
@@ -100,9 +101,9 @@ EXPORT int64_t getArrSize(Value arr){
     return asArray(arr)->values.size();
 }
 
-EXPORT void gcInit(char* gcFlag){
+EXPORT void gcInit(byte* gcFlag){
     uintptr_t* mainThreadStackStart = getStackPointer();
-    memory::gc = new memory::GarbageCollector(reinterpret_cast<byte &>(*gcFlag));
+    memory::gc = new memory::GarbageCollector(*gcFlag);
     memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
 }
 
