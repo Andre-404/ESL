@@ -36,11 +36,11 @@ int main(int argc, char* argv[]) {
     #else
     path = string(argv[1]);
     #endif
-    flag = "-run";
+    flag = "-jit";
     #else
     if(argc == 2) {
         path = string(argv[1]);
-        flag = "-run";
+        flag = "-jit";
     }
     else if(argc == 3){
         path = string(argv[1]);
@@ -54,52 +54,30 @@ int main(int argc, char* argv[]) {
     #if defined(_WIN32) || defined(WIN32)
     windowsSetTerminalProcessing();
     #endif
-    if(flag == "-run") {
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<ESLModule *> modules = preprocessor.getSortedUnits();
+    preprocessing::Preprocessor preprocessor;
+    preprocessor.preprocessProject(path);
+    vector<ESLModule *> modules = preprocessor.getSortedUnits();
 
-        AST::Parser parser;
+    AST::Parser parser;
 
-        parser.parse(modules);
+    parser.parse(modules);
 
-        errorHandler::showCompileErrors();
-        if (errorHandler::hasErrors()) exit(64);
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
 
-        closureConversion::ClosureConverter finder(modules);
-        passes::typedASTParser::ASTTransformer transformer;
-        auto res = transformer.run(modules, finder.generateFreevarMap());
-        errorHandler::showCompileErrors();
-        auto env = transformer.getTypeEnv();
-        auto classes = transformer.getClassHierarchy();
+    closureConversion::ClosureConverter finder(modules);
+    passes::typedASTParser::ASTTransformer transformer;
+    auto res = transformer.run(modules, finder.generateFreevarMap());
+    errorHandler::showCompileErrors();
+    auto env = transformer.getTypeEnv();
+    auto classes = transformer.getClassHierarchy();
 
+    compileCore::CompileType type = flag == "-jit" ? compileCore::CompileType::JIT : compileCore::CompileType::OBJECT_CODE;
+    compileCore::Compiler compiler(type, res.first, res.second, env, classes, transformer.getNativeFuncTypes());
 
-        compileCore::Compiler compiler(res.first, res.second, env, classes, transformer.getNativeFuncTypes());
-
-        errorHandler::showCompileErrors();
-        if (errorHandler::hasErrors()) {
-            exit(64);
-        }
-    }else if(flag == "-validate-file"){
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<ESLModule *> modules = preprocessor.getSortedUnits();
-
-        AST::Parser().parse(modules);
-
-        SemanticAnalysis::SemanticAnalyzer semanticAnalyzer;
-        std::cout << semanticAnalyzer.generateDiagnostics(modules);
-    }else if(flag == "-semantic-analysis"){
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<ESLModule *> modules = preprocessor.getSortedUnits();
-
-        AST::Parser parser;
-
-        parser.highlight(modules, path);
-    }else{
-        std::cout<<"Unrecognized flag.\n";
-        return 1;
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) {
+        exit(64);
     }
     return 0;
 }

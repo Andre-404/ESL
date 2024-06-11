@@ -5,6 +5,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -104,7 +105,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
 
-void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize){
+void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_ptr<llvm::LLVMContext> ctx,
+                            std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT, std::unique_ptr<llvm::TargetMachine> machine,
+                            bool shouldJIT){
     // Create the analysis managers.
     llvm::LoopAnalysisManager LAM;
     llvm::FunctionAnalysisManager FAM;
@@ -127,9 +130,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
     // Create the pass manager.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-    if(optimize) {
-        MPM.run(*module, MAM);
-    }
+    MPM.run(*module, MAM);
     for(auto& it : module->functions()) {
         SafepointPass.run(it, FAM);
     }
@@ -138,17 +139,41 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module>& module, std::unique_p
     llvm::errs()<<"-------------- Optimized module --------------\n";
     module->print(llvm::errs(), nullptr);
     #endif
-    auto RT = JIT->getMainJITDylib().createResourceTracker();
 
-    auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
-    llvm::ExitOnError()(JIT->addModule(std::move(TSM), RT));
+    if(shouldJIT) {
+        auto RT = JIT->getMainJITDylib().createResourceTracker();
 
-    llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
-    assert(ExprSymbol.getAddress() && "Function not found");
+        auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
+        llvm::ExitOnError()(JIT->addModule(std::move(TSM), RT));
 
-    void (*FP)() = ExprSymbol.getAddress().toPtr<void (*)()>();
-    FP();
-    llvm::ExitOnError()(RT->remove());
+        llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
+        assert(ExprSymbol.getAddress() && "Function not found");
+
+        void (*FP)() = ExprSymbol.getAddress().toPtr < void(*)
+        () > ();
+        FP();
+        llvm::ExitOnError()(RT->remove());
+    }else{
+        auto Filename = "output.o";
+        std::error_code EC;
+        llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
+
+        if (EC) {
+            llvm::errs() << "Could not open file: " << EC.message();
+            return;
+        }
+        llvm::legacy::PassManager pass;
+
+        auto FileType = llvm::CodeGenFileType::CGFT_ObjectFile;
+
+        if (machine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+            llvm::errs() << "TargetMachine can't emit a file of this type";
+            return;
+        }
+
+        pass.run(*module);
+        dest.flush();
+    }
 }
 
 static llvm::Value* ESLValToI64(llvm::Value* val, llvm::IRBuilder<>& builder){

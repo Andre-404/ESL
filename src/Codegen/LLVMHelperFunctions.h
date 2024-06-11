@@ -16,6 +16,8 @@ namespace llvmHelpers {
                                                                     llvm::IRBuilder<>& builder,
                                                                     ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
-    void runModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT, std::unique_ptr<llvm::LLVMContext>& ctx, bool optimize);
+    void runModule(std::unique_ptr<llvm::Module> module, std::unique_ptr<llvm::LLVMContext> ctx,
+                   std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT, std::unique_ptr<llvm::TargetMachine> machine,
+                   bool shouldJIT);
 
 }

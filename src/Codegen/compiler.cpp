@@ -9,28 +9,21 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+#include "llvm/MC/TargetRegistry.h"
 
 #include <unordered_set>
 #include <iostream>
 
 using namespace compileCore;
 
-Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
                    fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
     classHierarchy = _classHierarchy;
 
-    curModule = std::make_unique<llvm::Module>("Module", *ctx);
-
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
-    auto err = llvm::orc::KaleidoscopeJIT::Create().moveInto(JIT);
-    auto targetTriple = llvm::sys::getDefaultTargetTriple();
-    curModule->setDataLayout(JIT->getDataLayout());
-    curModule->setTargetTriple(targetTriple);
+    setupModule(compileFlag);
 
     curModule->getOrInsertGlobal("gcFlag", builder.getInt8Ty());
     llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
@@ -39,13 +32,21 @@ Compiler::Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _sr
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
     implementNativeFunctions(natives);
 
-    compile(_code);
-    llvmHelpers::runModule(curModule, JIT, ctx, true);
+    // Because we use some windows printing apis it's treated as a gui so it neeeds the WinMain start function
+    string startFunction;
+    #if defined(_WIN32) || defined(WIN32)
+        startFunction = "main";
+    #else
+        startFunction = "main";
+    #endif
+    compile(_code, compileFlag == CompileType::JIT ? "func.main" : startFunction);
+    llvmHelpers::runModule(std::move(curModule), std::move(ctx), std::move(JIT),
+                           std::move(targetMachine), compileFlag == CompileType::JIT);
 }
 
-void Compiler::compile(std::shared_ptr<typedAST::Function> _code){
+void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
     llvm::FunctionType* FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
-    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, "func.main", curModule.get());
+    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, mainFnName, curModule.get());
     tmpfn->setGC("statepoint-example");
     tmpfn->addFnAttr("frame-pointer", "all");
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
@@ -862,6 +863,40 @@ llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
+void Compiler::setupModule(CompileType compileFlag){
+    curModule = std::make_unique<llvm::Module>("Module", *ctx);
+    auto targetTriple = llvm::sys::getDefaultTargetTriple();
+    if(compileFlag == CompileType::JIT){
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
+        auto err = llvm::orc::KaleidoscopeJIT::Create().moveInto(JIT);
+        curModule->setDataLayout(JIT->getDataLayout());
+    }else{
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
+
+        std::string Error;
+        auto Target = llvm::TargetRegistry::lookupTarget(targetTriple, Error);
+
+        // Print an error and exit if we couldn't find the requested target.
+        // This generally occurs if we've forgotten to initialise the
+        // TargetRegistry or we have a bogus target triple.
+        if (!Target) {
+            llvm::errs() << Error;
+            exit(64);
+        }
+        auto CPU = "generic";
+        auto Features = "";
+
+        llvm::TargetOptions opt;
+        targetMachine.reset(Target->createTargetMachine(targetTriple, CPU, Features, opt, llvm::Reloc::PIC_));
+        curModule->setDataLayout(targetMachine->createDataLayout());
+    }
+    curModule->setTargetTriple(targetTriple);
+}
+
 #pragma region old stuff
 /*
 void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
@@ -1191,16 +1226,6 @@ void Compiler::visitClassDecl(AST::ClassDecl* decl) {
 #pragma endregion
 
 #pragma region helpers
-/*
-void Compiler::error(const string& message) noexcept(false) {
-    errorHandler::addSystemError("System compile error [line " + std::to_string(current->line) + "] in '" + curUnit->file->name + "': \n" + message + "\n");
-    throw CompilerException();
-}
-
-void Compiler::error(Token token, const string& msg) noexcept(false) {
-    errorHandler::addCompileError(msg, token);
-    throw CompilerException();
-}*/
 
 // Compile time type checking
 bool Compiler::exprIsType(const typedExprPtr expr, const types::tyPtr ty){
@@ -2274,6 +2299,7 @@ void Compiler::implementNativeFunctions(fastMap<string, types::tyVarIdx>& native
     }
 }
 
+// All of these functions are noops but are needed because of llvms type system
 llvm::Value* Compiler::ESLValTo(llvm::Value* val, llvm::Type* ty){
     if(ty->isPointerTy()){
         return builder.CreateBitCast(val, ty);

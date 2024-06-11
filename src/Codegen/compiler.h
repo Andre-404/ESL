@@ -22,6 +22,11 @@ using fastMap = ankerl::unordered_dense::map<T, K>;
 
 namespace compileCore {
 
+    enum class CompileType{
+        JIT,
+        OBJECT_CODE
+    };
+
     using typedExprPtr = std::shared_ptr<typedAST::TypedASTExpr>;
 
     class CompilerError{
@@ -67,9 +72,9 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+		Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
                  fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives);
-        void compile(std::shared_ptr<typedAST::Function> _code);
+        void compile(std::shared_ptr<typedAST::Function> _code, string mainFnName);
 
 		#pragma region Visitor pattern
         llvm::Value* visitVarDecl(typedAST::VarDecl* decl) override;
@@ -126,12 +131,16 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::IRBuilder<> builder;
         std::unique_ptr<llvm::Module> curModule;
         std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
-        std::stack<Function> inProgressFuncs;
+        std::unique_ptr<llvm::TargetMachine> targetMachine;
 
+        std::stack<Function> inProgressFuncs;
         std::stack<llvm::BasicBlock*> continueJumpDest;
         // Both loops and switch statement push to breakJump stack
         std::stack<llvm::BasicBlock*> breakJumpDest;
         std::stack<llvm::BasicBlock*> advanceJumpDest;
+
+        // LLVM stuff
+        void setupModule(CompileType compileFlag);
 
         #pragma region Helpers
         // Compile time type checking
@@ -157,6 +166,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr);
         llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr);
         llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr);
+        llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
+        llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
 
         // Functions helpers
         llvm::Function* createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy);
@@ -196,24 +207,28 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
         llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
                                        string field, vector<llvm::Value*> args, Token dbg);
-        // Misc
-        llvm::Constant* createConstStr(const string& str);
+
+        // Const objects
         llvm::Constant* createESLString(const string& str);
-        llvm::Function* safeGetFunc(const string& name);
-        void argCntError(Token token, llvm::Value* expected, const int got);
-        llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
         llvm::Constant* createConstObjHeader(int type);
         llvm::Constant* constObjToVal(llvm::Constant* obj);
-        void replaceGV(uInt64 uuid, llvm::Constant* newInit);
-        llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
-        llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
-        void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+        llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
+
+        // ESL val casting
         llvm::Value* ESLValTo(llvm::Value* val, llvm::Type* ty);
         llvm::Constant* ESLConstTo(llvm::Constant* constant, llvm::Type* ty);
         llvm::Value* CastToESLVal(llvm::Value* val);
         llvm::Constant* ConstCastToESLVal(llvm::Constant* constant);
         llvm::Type* getESLValType();
+        // Misc
+        llvm::Constant* createConstStr(const string& str);
+        llvm::Function* safeGetFunc(const string& name);
+        void argCntError(Token token, llvm::Value* expected, const int got);
+        llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
+        void replaceGV(uInt64 uuid, llvm::Constant* newInit);
+        void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+
+
         #pragma endregion
 	};
 }
