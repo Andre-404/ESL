@@ -50,7 +50,7 @@ namespace memory {
 		heapSizeLimit = HEAP_START_SIZE*1024;
         tmpAlloc.reserve(4096);
         for(int i = 0; i < mempools.size(); i++){
-            mempools[i] = MemoryPool(16384, mempoolBlockSizes[i]);
+            mempools[i] = MemoryPool(16384*4, mempoolBlockSizes[i]);
         }
 
         threadsSuspended = 0;
@@ -260,6 +260,7 @@ namespace memory {
         }
         for(auto it = interned.begin(); it != interned.end();){
             if(!isMarked(it->second, mempools.data())) it = interned.erase(it);
+            it++;
         }
 	}
 
