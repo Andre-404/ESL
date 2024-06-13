@@ -1,74 +1,128 @@
 #include "memoryPool.h"
+#include <string.h>
+#include <cassert>
 
 using namespace memory;
 
-PageData::PageData(void *basePtr, uint64_t size) : basePtr(basePtr), size(size) {}
+PageData::PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize)
+: basePtr(basePtr), blockStart(blockStart),blockSize(blockSize), bitmapSize(bitmapSize) {}
 PageData::PageData(){
     basePtr = nullptr;
-    size = 0;
+    blockStart = nullptr;
+    blockSize = 0;
+    bitmapSize = 0;
+}
+
+static constexpr uint64_t i64Mask = 0xffffffffffffffff;
+static constexpr char i8Mask = 0xff;
+
+// Finds first free block or returns nullptr
+char* PageData::firstFreeBlock(){
+    // Because this division floors we have some excess blocks that can never be allocated to, but that is a maximum of 7 objects
+    // So it's fine really, maximum we lose is 7*256 bytes right now
+    uint64_t * pbi = (uint64_t*) basePtr;
+    uint64_t* pbiUpper = ((uint64_t*) (((char*) basePtr) + bitmapSize)) - 1;
+    for (;pbi <= pbiUpper; pbi++) {
+        if (*pbi != i64Mask) {
+            uint64_t freeBlocks = *pbi;
+            uint64_t offset = ((char *) pbi - basePtr) * 8 + std::countr_one(freeBlocks);
+            setAllocatedBit(offset);
+            return blockStart + offset*blockSize;
+        }
+    }
+    for (char* p = (char*) pbi; p < ((char*) basePtr) + bitmapSize; p++) {
+        if (*p != i8Mask) {
+            uint8_t freeBlocks = *p;
+            uint64_t offset = ((char *) p - basePtr) * 8 + std::countr_one(freeBlocks);
+            setAllocatedBit(offset);
+            return blockStart + offset*blockSize;
+        }
+    }
+    return nullptr;
+}
+
+void PageData::clearFreeBitmap(){
+    memset(basePtr, 0, bitmapSize);
+}
+
+void PageData::setAllocatedBit(uint64_t offset){
+    uint64_t byteOffset = offset / 8;
+    uint8_t bitMask = 1 << (offset%8);
+    *(basePtr+byteOffset) |= bitMask;
+}
+
+bool PageData::testAllocatedBit(uint64_t offset){
+    uint64_t byteOffset = offset / 8;
+    uint8_t bitMask = 128 >> (offset&8);
+    return (*(basePtr+offset)) & bitMask;
 }
 
 MemoryPool::MemoryPool(uint64_t pageSize, uint64_t blockSize) : pageSize(pageSize), blockSize(blockSize) {
-    head = nullptr;
+    // Calculates number of objects that can be allocated in a single page such that the page can still fit the bitmap info
+    // From formula: pageSize = n/8 + 1 + blockSize*n where n is number of blocks, and n/8 + 1 is number of bit marks needed
+    blocksPerPage = (8*pageSize - 64) / (1+8*blockSize);
+    firstNonFullPage = 0;
 }
 
 MemoryPool::MemoryPool() {
-    head = nullptr;
     pageSize = 0;
     blockSize = 0;
+    blocksPerPage = 0;
+    firstNonFullPage = 0;
 }
 
-void* MemoryPool::alloc() {
-    if(!head){
+void* MemoryPool::alloc(uint32_t* pageIdx) {
+    void* ptr = nullptr;
+    if(pages.empty() || (firstNonFullPage == pages.size()-1 && !(ptr = pages[firstNonFullPage].firstFreeBlock()))){
         allocNewPage();
     }
-    void* tmp = head;
-    head = head->next;
-    char* ptr = reinterpret_cast<char*>(tmp) + sizeof(BlockHeader);
-    return reinterpret_cast<void*>(ptr);
+    if(!ptr) ptr = pages[firstNonFullPage].firstFreeBlock();
+    // if firstFreeBlock doesn't return nullptr it automatically sets the allocated bit
+    while(!ptr) {
+        firstNonFullPage++;
+        ptr = pages[firstNonFullPage].firstFreeBlock();
+    }
+    *pageIdx = firstNonFullPage;
+    return ptr;
 }
-void MemoryPool::free(void* ptr){
-    char* p = reinterpret_cast<char*>(ptr);
-    p -= sizeof(BlockHeader);
-    BlockHeader* block = reinterpret_cast<BlockHeader*>(p);
-    block->next = head;
-    head = block;
+bool MemoryPool::allocedByThisPool(uintptr_t ptr){
+    for(PageData& page : pages){
+        if((uintptr_t)(page.blockStart) <= ptr && ptr < (uintptr_t)(page.basePtr+pageSize)){
+            uint64_t diff = (char*)ptr - (page.blockStart);
+            if(diff%blockSize == 0) return true;
+        }
+    }
+    return false;
+}
+void MemoryPool::clearFreeBitmap(){
+    for(PageData& page : pages) page.clearFreeBitmap();
+    firstNonFullPage = 0;
+}
+
+void MemoryPool::markBlock(uint32_t pageIdx, uintptr_t ptr){
+    PageData& page = pages[pageIdx];
+    // Byte offset to start of blocks, divided by block size it gives the bit position
+    uint64_t offset = (char*)ptr - (page.blockStart);
+    assert(offset%blockSize == 0 && "Offset isn't multiple of block size?");
+    page.setAllocatedBit(offset/blockSize);
+}
+
+bool MemoryPool::isFree(uint32_t pageIdx, uintptr_t ptr){
+    PageData& page = pages[pageIdx];
+    uint64_t offset = (char*)ptr - (page.blockStart);
+    assert(offset%blockSize == 0 && "Offset isn't multiple of block size?");
+    return !page.testAllocatedBit(offset/blockSize);
 }
 
 void MemoryPool::allocNewPage(){
     void* page = malloc(pageSize);
-    pages.emplace_back(page, pageSize);
-    char* tmp = reinterpret_cast<char*>(page);
-    char* end = tmp + pageSize;
-    uint64_t blockn = pageSize / (sizeof(BlockHeader) + blockSize);
-    BlockHeader* header = reinterpret_cast<BlockHeader*>(tmp);
-    for(uint64_t i = 0; i < (blockn-1); i++){
-        header->next = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(header) + sizeof(BlockHeader) + blockSize);
-        header = header->next;
-    }
-    header = reinterpret_cast<BlockHeader*>(tmp + (blockn-1)*(sizeof(BlockHeader) + blockSize));
-    header->next = head;
-    head = reinterpret_cast<BlockHeader*>(page);
+    memset(page, 0, pageSize);
+    pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (blocksPerPage/8)%8, blockSize, blocksPerPage/8);
+    firstNonFullPage = pages.size()-1;
 }
 
 void MemoryPool::freePage(int pageIdx) {
     PageData& data = pages[pageIdx];
-    BlockHeader* start = reinterpret_cast<BlockHeader*>(data.basePtr);
-    BlockHeader* end = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(start) + data.size);
-    while(head > start && head < end){
-        head = head->next;
-    }
-    BlockHeader* prev = head;
-    BlockHeader* cur = head->next;
-    while(cur){
-        if(cur > start && cur < end){
-            prev->next = cur->next;
-            cur = cur->next;
-        }else{
-            prev = cur;
-            cur = cur->next;
-        }
-    }
     free(data.basePtr);
     pages.erase(pages.begin() + pageIdx);
 }

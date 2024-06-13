@@ -9,6 +9,7 @@
 namespace object {
 
     enum class ObjType {
+        THUNK,
         STRING,
         ARRAY,
         CLOSURE,
@@ -19,9 +20,7 @@ namespace object {
         FILE,
         MUTEX,
         FUTURE,
-        RANGE,
-
-        THUNK
+        RANGE
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
@@ -29,7 +28,9 @@ namespace object {
     public:
         byte type;
         byte allocType;
-        bool marked;
+        // Arbitrary GC data that depends on allocType
+        // MSB is reserved for shouldDestruct flag
+        uint32_t GCdata;
 
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);

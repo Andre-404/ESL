@@ -511,9 +511,13 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     // This flag is used by the gc and needs to be updated since the template will not(and should not) have the same gc flag
     auto flagPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(1)});
     auto flag = builder.CreateLoad(namedTypes["Obj"], flagPtr);
+    // Arbitrary GC that
+    auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(2)});
+    auto gcdata = builder.CreateLoad(namedTypes["Obj"], gcdataPtr);
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), instSize);
     // Restore flag
     builder.CreateStore(flag, flagPtr);
+    builder.CreateStore(gcdata, gcdataPtr);
     // Fixes up pointers
     auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
     // Field arr ptr
@@ -2206,7 +2210,7 @@ llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
 llvm::Constant* Compiler::createConstObjHeader(int type){
     // 128 is a magic constant that tells the gc that this is a constant object
     return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{builder.getInt8(type),
-                                         builder.getInt8(128),builder.getInt1(true)});
+                                         builder.getInt8(128),builder.getInt32(0)});
 }
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){

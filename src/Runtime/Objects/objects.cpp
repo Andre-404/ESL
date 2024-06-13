@@ -67,7 +67,6 @@ ObjString::ObjString(char* _str) {
     auto view = std::string_view(_str);
     view.copy(str, view.size());
     str[view.size()] = '\0';
-    marked = false;
 	type = +ObjType::STRING;
 }
 
@@ -102,7 +101,6 @@ ObjString* ObjString::createStr(char* str){
 ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount)
     : func(_func), arity(_arity), name(_name), freevarCount(_freevarCount){
     freevars = freevarCount > 0 ? new object::ObjFreevar*[freevarCount] : nullptr;
-    marked = false;
 	type = +ObjType::CLOSURE;
 }
 
@@ -114,7 +112,6 @@ ObjClosure::~ObjClosure(){
 #pragma region ObjUpval
 ObjFreevar::ObjFreevar(const Value& _val) {
 	val = _val;
-    marked = false;
 	type = +ObjType::FREEVAR;
 }
 #pragma endregion
@@ -123,20 +120,17 @@ ObjFreevar::ObjFreevar(const Value& _val) {
 ObjArray::ObjArray() {
 	type = +ObjType::ARRAY;
 	numOfHeapPtr = 0;
-    marked = false;
 }
 ObjArray::ObjArray(const size_t size) {
 	values.resize(size);
 	type = +ObjType::ARRAY;
 	numOfHeapPtr = 0;
-    marked = false;
 }
 #pragma endregion
 
 #pragma region ObjClass
 ObjClass::ObjClass(string _name) {
 	name = nullptr;
-    marked = false;
 	type = +ObjType::CLASS;
 }
 #pragma endregion
@@ -145,7 +139,6 @@ ObjClass::ObjClass(string _name) {
 ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
 	klass = _klass;
     fieldArrLen = _fieldArrLen;
-    marked = false;
     fields = (Value*)(((char*)this)+sizeof(ObjInstance));
 	type = +ObjType::INSTANCE;
 }
@@ -153,14 +146,12 @@ ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
 
 #pragma region ObjHashMap
 ObjHashMap::ObjHashMap() {
-	marked = false;
 	type = +ObjType::HASH_MAP;
 }
 #pragma endregion
 
 #pragma region ObjFile
 ObjFile::ObjFile(const string& _path, int _openType) : path(_path) {
-    marked = false;
     openType = _openType;
 	stream.open(path, std::ios::in | std::ios::out);
 	type = +ObjType::FILE;
@@ -172,7 +163,6 @@ ObjFile::~ObjFile() {
 
 #pragma region ObjMutex
 ObjMutex::ObjMutex() {
-    marked = false;
 	type = +ObjType::MUTEX;
 }
 #pragma endregion
@@ -212,7 +202,6 @@ void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
 }
 
 ObjFuture::ObjFuture(ObjClosure* closure, int argc, Value* args) {
-    marked = false;
     done = false;
 	val = encodeNil();
 	type = +ObjType::FUTURE;
@@ -229,7 +218,6 @@ ObjFuture::~ObjFuture() {
 #pragma region ObjRange
 ObjRange::ObjRange(const double _start, const double _end, const bool _isEndInclusive)
     : start(_start), end(_end), isEndInclusive(_isEndInclusive){
-    marked = false;
     type = +ObjType::RANGE;
 }
 #pragma endregion

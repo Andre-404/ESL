@@ -31,7 +31,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    types["Obj"] = llvm::StructType::create(*ctx, {TYPE(Int8), TYPE(Int8), TYPE(Int1)}, "Obj");
+    types["Obj"] = llvm::StructType::create(*ctx, {TYPE(Int8), TYPE(Int8), TYPE(Int32)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);

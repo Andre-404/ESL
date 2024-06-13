@@ -11,6 +11,12 @@ using namespace valueHelpers;
 #define HEAP_START_SIZE 1024
 
 constexpr std::array<int, 6> mempoolBlockSizes = {48, 16, 32, 64, 128, 256};
+constexpr uint32_t GCDataMask = (1u<<31u) - 1u;
+constexpr uint32_t shouldDestructFlagMask = (1u<<31u);
+enum GCAllocType{
+    MALLOC = mempoolBlockSizes.size(),
+    CONSTANT = 128
+};
 inline int szToIdx(uint64_t x){
     if(x > 256) return -1;
     if(x > 32 && x <= 48) return 0;
@@ -20,6 +26,19 @@ inline int szToIdx(uint64_t x){
 NOINLINE uintptr_t* getStackPointer(){
     return (uintptr_t*)(GET_FRAME_ADDRESS);
 
+}
+
+static inline void runObjDestructor(object::Obj* obj){
+    // Have to do this because we don't have access to virtual destructors,
+    // however some objects allocate STL containers that need cleaning up
+    switch(obj->type){
+        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();break;
+        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
+        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
+        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;;
+        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
+        default: obj->~Obj(); break;
+    }
 }
 
 namespace memory {
@@ -54,26 +73,37 @@ namespace memory {
                 errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
             }
             // Flags that this pointer was malloc-d
-            reinterpret_cast<Obj*>(block)->allocType = 127;
+            reinterpret_cast<Obj*>(block)->allocType = GCAllocType::MALLOC;
+            reinterpret_cast<Obj*>(block)->GCdata = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
+            tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
         }else{
-            block = reinterpret_cast<byte *>(mempools[idx].alloc());
-            reinterpret_cast<Obj*>(block)->allocType = idx;
+            uint32_t pageIdx;
+            block = reinterpret_cast<byte *>(mempools[idx].alloc(&pageIdx));
+            Obj* obj = reinterpret_cast<Obj*>(block);
+            // Lazy sweeping
+            if(obj->GCdata & shouldDestructFlagMask) runObjDestructor(obj);
+            obj->allocType = idx;
+            // Used to more efficiently set/test bit for objects
+            obj->GCdata = 1u<<31u | pageIdx;
         }
-        tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
+
 		return block;
 	}
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
         double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        objects.reserve(objects.size() + tmpAlloc.size());
-        objects.insert(tmpAlloc.begin(), tmpAlloc.end());
+        largeObjects.reserve(largeObjects.size() + tmpAlloc.size());
+        largeObjects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
-        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Inserting + marking took: "<<d2-d<<"\n";
+
+        heapSize = 0;
+        resetMarkFlag();
 		markRoots();
 		mark();
 		sweep();
+        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"GC took: "<<d2-d<<"\n";
 		if (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
         // Tells all waiting threads that gc cycle is over
         active = 0;
@@ -83,13 +113,43 @@ namespace memory {
         STWcv.notify_all();
 	}
 
+    void GarbageCollector::resetMarkFlag(){
+        for(MemoryPool& mempool : mempools){
+            mempool.clearFreeBitmap();
+        }
+        for(auto obj : largeObjects) obj->GCdata = 0;
+    }
+
+    static inline bool markIfNotMarked(object::Obj* ptr, MemoryPool* mempools){
+        if(ptr->allocType == GCAllocType::CONSTANT) return true;
+        if(ptr->allocType == GCAllocType::MALLOC){
+            if (ptr->GCdata == 1) return true;
+            ptr->GCdata = true;
+        }else{
+            // This is mempool allocated
+            if(!mempools[ptr->allocType].isFree(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr))) return true;
+            mempools[ptr->allocType].markBlock(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr));
+        }
+        return false;
+    }
+    static inline bool isMarked(object::Obj* ptr, MemoryPool* mempools){
+        if(ptr->allocType == GCAllocType::CONSTANT) return true;
+        if(ptr->allocType == GCAllocType::MALLOC){
+            if (ptr->GCdata == 1) return true;
+        }else{
+            // This is mempool allocated
+            if(!mempools[ptr->allocType].isFree(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr))) return true;
+        }
+        return false;
+    }
+
 	void GarbageCollector::mark() {
 		//we use a stack to avoid going into a deep recursion(which might fail)
 		while (!markStack.empty()) {
 			object::Obj* ptr = markStack.back();
 			markStack.pop_back();
-			if (ptr->marked) continue;
-			ptr->marked = true;
+            if(markIfNotMarked(ptr, mempools.data())) continue;
+            heapSize += ptr->getSize();
             switch(ptr->type){
                 case +ObjType::ARRAY:{
                     ObjArray* arr = reinterpret_cast<ObjArray*>(ptr);
@@ -124,7 +184,7 @@ namespace memory {
                 case +ObjType::HASH_MAP:{
                     ObjHashMap* map = reinterpret_cast<ObjHashMap*>(ptr);
                     for (auto & field : map->fields) {
-                        field.first->marked = true;
+                        markObj(field.first);
                         valueHelpers::mark(field.second);
                     }
                     break;
@@ -152,8 +212,8 @@ namespace memory {
                     Obj* object = decodeObj(address);
                     // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object
                     // Because of that before accessing the object first we check if 'object' really points to an allocated object
-                    if (objects.contains(object)) markObj(object);
-                }else if(objects.contains(reinterpret_cast<Obj *>(end))){
+                    if (isValidPtr(object)) markObj(object);
+                }else if(isValidPtr(reinterpret_cast<Obj *>(end))){
                     markObj(reinterpret_cast<Obj *>(end));
                 }
                 end++;
@@ -167,50 +227,42 @@ namespace memory {
         }
 	}
 
+    // TODO: can this be optimized? Running through every page of every mempool seems expensive?
+    // Should work for now but might be a problem when the heap gets into GB teritory
+    bool GarbageCollector::isAllocedByMempools(object::Obj* ptr){
+        for(MemoryPool& mempool : mempools) {
+            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
+        }
+        return false;
+    }
+
 	void GarbageCollector::sweep() {
-		heapSize = 0;
-        for(auto it = objects.cbegin(); it !=  objects.cend();){
+		// Sweeps large objects, small objects are swept lazily
+        for(auto it = largeObjects.cbegin(); it !=  largeObjects.cend();){
             object::Obj* obj = *it;
-            if (!obj->marked) {
+            if (obj->GCdata == 0) {
                 // Have to do this because we don't have access to virtual destructors,
                 // however some objects allocate STL containers that need cleaning up
                 switch(obj->type){
-                    case +object::ObjType::STRING:{
-                        // Remove strings from interned pool when deleting them
-                        object::ObjString* str = reinterpret_cast<object::ObjString*>(obj);
-                        interned.erase(str->str);
-                        break;
-                    }
-                    case +object::ObjType::ARRAY: {
-                        reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();
-                        break;
-                    }
+                    case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();break;
                     case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
                     case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
                     case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;;
                     case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
                     default: obj->~Obj(); break;
                 }
-                if(obj->allocType == 127) delete reinterpret_cast<byte*>(obj);
-                else mempools[obj->allocType].free(obj);
-                it = objects.erase(it);
+                delete reinterpret_cast<byte*>(obj);
+                it = largeObjects.erase(it);
                 continue;
             }
-            heapSize += obj->getSize();
-            obj->marked = false;
             it++;
+        }
+        for(auto it = interned.begin(); it != interned.end();){
+            if(!isMarked(it->second, mempools.data())) it = interned.erase(it);
         }
 	}
 
 	void GarbageCollector::markObj(object::Obj* const object) {
-        if(object->marked) return;
-        byte ty = object->type;
-        using objTy = object::ObjType;
-        // No need to put untraceable objects on the trace stack at all
-        if(ty == +objTy::STRING || ty == +objTy::MUTEX || ty == +objTy::FILE || ty == +objTy::RANGE) {
-            object->marked = true;
-            return;
-        }
 		markStack.push_back(object);
 	}
 
@@ -264,7 +316,7 @@ namespace memory {
     }
 
     bool GarbageCollector::isValidPtr(object::Obj* const ptr){
-        return objects.contains(ptr);
+        return largeObjects.contains(ptr) || isAllocedByMempools(ptr);
     }
     void GarbageCollector::addGlobalRoot(Value* ptr){
         globalRoots.push_back(ptr);

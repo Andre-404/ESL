@@ -76,7 +76,7 @@ namespace memory {
 		uInt64 heapSizeLimit;
         std::array<MemoryPool, 6> mempools;
 		// List of all allocated objects
-        ankerl::unordered_dense::set<object::Obj*> objects;
+        ankerl::unordered_dense::set<object::Obj*> largeObjects;
         vector<object::Obj*> tmpAlloc;
         vector<Value*> globalRoots;
 
@@ -84,8 +84,10 @@ namespace memory {
         // Start and end of stack pointer for every thread that's currently running
         ankerl::unordered_dense::map<std::thread::id, StackPtrEntry> threadsStack;
 
+        void resetMarkFlag();
 		void mark();
 		void markRoots();
+        bool isAllocedByMempools(object::Obj* ptr);
 		void sweep();
         // Pass in the lock that holds the pauseMtx
         void collect(std::unique_lock<std::mutex>& lk);
