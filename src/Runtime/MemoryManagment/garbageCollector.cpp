@@ -31,6 +31,7 @@ NOINLINE uintptr_t* getStackPointer(){
 static inline void runObjDestructor(object::Obj* obj){
     // Have to do this because we don't have access to virtual destructors,
     // however some objects allocate STL containers that need cleaning up
+    obj->GCdata &= GCDataMask;
     switch(obj->type){
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();break;
         case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;

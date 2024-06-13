@@ -1,6 +1,7 @@
 #include "memoryPool.h"
 #include <string.h>
 #include <cassert>
+#include <bit>
 
 using namespace memory;
 
