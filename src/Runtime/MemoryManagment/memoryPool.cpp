@@ -22,14 +22,22 @@ char* PageData::firstFreeBlock(){
     // Because this division floors we have some excess blocks that can never be allocated to, but that is a maximum of 7 objects
     // So it's fine really, maximum we lose is 7*256 bytes right now
     uint64_t * pbi = (uint64_t*) basePtr;
-    uint64_t* pbiUpper = ((uint64_t*) (((char*) basePtr) + bitmapSize)) - 1;
-    for (;pbi <= pbiUpper; pbi++) {
+    uint64_t* pbiUpper = (uint64_t*)blockStart - 1;
+    while(pbi + 2 < pbiUpper) {
         if (*pbi != i64Mask) {
             uint64_t freeBlocks = *pbi;
             uint64_t offset = ((char *) pbi - basePtr) * 8 + std::countr_one(freeBlocks);
             setAllocatedBit(offset);
             return blockStart + offset*blockSize;
         }
+        pbi++;
+        if (*pbi != i64Mask) {
+            uint64_t freeBlocks = *pbi;
+            uint64_t offset = ((char *) pbi - basePtr) * 8 + std::countr_one(freeBlocks);
+            setAllocatedBit(offset);
+            return blockStart + offset*blockSize;
+        }
+        pbi++;
     }
     for (char* p = (char*) pbi; p < ((char*) basePtr) + bitmapSize; p++) {
         if (*p != i8Mask) {
@@ -116,8 +124,7 @@ bool MemoryPool::isFree(uint32_t pageIdx, uintptr_t ptr){
 }
 
 void MemoryPool::allocNewPage(){
-    void* page = malloc(pageSize);
-    memset(page, 0, pageSize);
+    void* page = calloc(pageSize, 1);
     pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (blocksPerPage/8)%8, blockSize, blocksPerPage/8);
     firstNonFullPage = pages.size()-1;
 }

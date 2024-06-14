@@ -61,7 +61,7 @@ namespace memory {
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
 		std::scoped_lock<std::mutex> lk(allocMtx);
 		heapSize += size;
-        if (heapSize > heapSizeLimit) {
+        if (heapSize-size < heapSizeLimit && heapSize > heapSizeLimit) {
             active = 1;
         }
         byte* block = nullptr;

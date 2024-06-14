@@ -88,6 +88,10 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn = CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
     fn->addFnAttr("allockind", "alloc");
     fn->addFnAttr(llvm::Attribute::NoRecurse);
+    fn->addFnAttr(llvm::Attribute::NoCallback);
+    fn->addFnAttr(llvm::Attribute::NoFree);
+    fn->addFnAttr(llvm::Attribute::WillReturn);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
