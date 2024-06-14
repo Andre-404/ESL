@@ -85,7 +85,7 @@ namespace memory {
             if(obj->GCdata & shouldDestructFlagMask) runObjDestructor(obj);
             obj->allocType = idx;
             // Used to more efficiently set/test bit for objects
-            obj->GCdata = 1u<<31u | pageIdx;
+            obj->GCdata = shouldDestructFlagMask | pageIdx;
         }
 
 		return block;
@@ -120,7 +120,7 @@ namespace memory {
         }
         for(auto obj : largeObjects) obj->GCdata = 0;
     }
-
+    // Returns true if this object was already marked
     static inline bool markIfNotMarked(object::Obj* ptr, MemoryPool* mempools){
         if(ptr->allocType == GCAllocType::CONSTANT) return true;
         if(ptr->allocType == GCAllocType::MALLOC){
@@ -242,16 +242,7 @@ namespace memory {
         for(auto it = largeObjects.cbegin(); it !=  largeObjects.cend();){
             object::Obj* obj = *it;
             if (obj->GCdata == 0) {
-                // Have to do this because we don't have access to virtual destructors,
-                // however some objects allocate STL containers that need cleaning up
-                switch(obj->type){
-                    case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();break;
-                    case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
-                    case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
-                    case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;;
-                    case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
-                    default: obj->~Obj(); break;
-                }
+                runObjDestructor(obj);
                 delete reinterpret_cast<byte*>(obj);
                 it = largeObjects.erase(it);
                 continue;

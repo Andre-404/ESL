@@ -19,10 +19,10 @@ static constexpr char i8Mask = 0xff;
 
 // Finds first free block or returns nullptr
 char* PageData::firstFreeBlock(){
-    // Because this division floors we have some excess blocks that can never be allocated to, but that is a maximum of 7 objects
-    // So it's fine really, maximum we lose is 7*256 bytes right now
     uint64_t * pbi = (uint64_t*) basePtr;
+    // Last 8 bytes of a bitmap contain end of bitmap + padding for blockStart
     uint64_t* pbiUpper = (uint64_t*)blockStart - 1;
+    // Assumes little endian, doesn't work otherwise
     while(pbi + 2 < pbiUpper) {
         if (*pbi != i64Mask) {
             uint64_t freeBlocks = *pbi;
@@ -39,6 +39,7 @@ char* PageData::firstFreeBlock(){
         }
         pbi++;
     }
+    // Last few bytes of bitmap
     for (char* p = (char*) pbi; p < ((char*) basePtr) + bitmapSize; p++) {
         if (*p != i8Mask) {
             uint8_t freeBlocks = *p;
@@ -47,20 +48,24 @@ char* PageData::firstFreeBlock(){
             return blockStart + offset*blockSize;
         }
     }
+    // Returns 0 upon failure
     return nullptr;
 }
 
 void PageData::clearFreeBitmap(){
+    // TODO: optimize with custom(parallelized) memset?
     memset(basePtr, 0, bitmapSize);
 }
 
 void PageData::setAllocatedBit(uint64_t offset){
+    // Assumes little endian
     uint64_t byteOffset = offset / 8;
     uint8_t bitMask = 1 << (offset%8);
     *(basePtr+byteOffset) |= bitMask;
 }
 
 bool PageData::testAllocatedBit(uint64_t offset){
+    // Assumes little endian
     uint64_t byteOffset = offset / 8;
     uint8_t bitMask = 128 >> (offset&8);
     return (*(basePtr+offset)) & bitMask;
@@ -68,7 +73,6 @@ bool PageData::testAllocatedBit(uint64_t offset){
 
 MemoryPool::MemoryPool(uint64_t pageSize, uint64_t blockSize) : pageSize(pageSize), blockSize(blockSize) {
     // Calculates number of objects that can be allocated in a single page such that the page can still fit the bitmap info
-    // From formula: pageSize = n/8 + 1 + blockSize*n where n is number of blocks, and n/8 + 1 is number of bit marks needed
     blocksPerPage = (8*pageSize - 64) / (1+8*blockSize);
     firstNonFullPage = 0;
 }
@@ -86,7 +90,7 @@ void* MemoryPool::alloc(uint32_t* pageIdx) {
         allocNewPage();
     }
     if(!ptr) ptr = pages[firstNonFullPage].firstFreeBlock();
-    // if firstFreeBlock doesn't return nullptr it automatically sets the allocated bit
+    // If firstFreeBlock doesn't return nullptr it automatically sets the allocated bit
     while(!ptr) {
         firstNonFullPage++;
         ptr = pages[firstNonFullPage].firstFreeBlock();
@@ -108,6 +112,7 @@ void MemoryPool::clearFreeBitmap(){
     firstNonFullPage = 0;
 }
 
+// Page idx is stored in objects at ptr, but memory pools treat all pointers as being opaque so we pass this from outside
 void MemoryPool::markBlock(uint32_t pageIdx, uintptr_t ptr){
     PageData& page = pages[pageIdx];
     // Byte offset to start of blocks, divided by block size it gives the bit position
@@ -125,6 +130,8 @@ bool MemoryPool::isFree(uint32_t pageIdx, uintptr_t ptr){
 
 void MemoryPool::allocNewPage(){
     void* page = calloc(pageSize, 1);
+    // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
+    // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
     pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (blocksPerPage/8)%8, blockSize, blocksPerPage/8);
     firstNonFullPage = pages.size()-1;
 }

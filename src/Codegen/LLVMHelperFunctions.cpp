@@ -153,9 +153,8 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
         llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
         assert(ExprSymbol.getAddress() && "Function not found");
 
-        void (*FP)() = ExprSymbol.getAddress().toPtr < void(*)
-        () > ();
-        FP();
+        int (*FP)(int, char*) = ExprSymbol.getAddress().toPtr< int(*)(int, char*)>();
+        FP(0, nullptr);
         llvm::ExitOnError()(RT->remove());
     }else{
         auto Filename = "output.o";

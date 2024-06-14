@@ -45,7 +45,7 @@ Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> 
 }
 
 void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
-    llvm::FunctionType* FT = llvm::FunctionType::get(llvm::Type::getVoidTy(*ctx), false);
+    llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getInt8PtrTy()}, false);
     auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, mainFnName, curModule.get());
     tmpfn->setGC("statepoint-example");
     tmpfn->addFnAttr("frame-pointer", "all");
@@ -68,7 +68,7 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
     }
 
     // Ends the main function
-    builder.CreateRetVoid();
+    builder.CreateRet(builder.getInt32(0));
     llvm::verifyFunction(*tmpfn);
 #ifdef COMPILER_DEBUG
     curModule->print(llvm::errs(), nullptr);
