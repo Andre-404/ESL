@@ -62,7 +62,8 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
     // Get all string constants into gc
     llvm::IRBuilder<> tempBuilder(*ctx);
     tempBuilder.SetInsertPointPastAllocas(tmpfn);
-    tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
+    auto val = tempBuilder.CreateIntrinsic(tempBuilder.getInt8PtrTy(), llvm::Intrinsic::frameaddress, {tempBuilder.getInt32(0)});
+    tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag"), val});
     for(auto strObj : ESLStrings){
         tempBuilder.CreateCall(safeGetFunc("gcInternStr"), {strObj.second});
     }
@@ -514,7 +515,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     // Arbitrary GC that
     auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(2)});
     auto gcdata = builder.CreateLoad(namedTypes["Obj"], gcdataPtr);
-    builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), instSize);
+    builder.CreateMemCpyInline(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
     // Restore flag
     builder.CreateStore(flag, flagPtr);
     builder.CreateStore(gcdata, gcdataPtr);
@@ -2204,8 +2205,11 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
 }
 
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
-    return new llvm::GlobalVariable(*curModule, obj->getType(), false,
+
+    auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
+    gv->setAlignment(llvm::Align(8));
+    return gv;
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
     // 128 is a magic constant that tells the gc that this is a constant object

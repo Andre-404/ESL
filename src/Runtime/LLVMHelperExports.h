@@ -6,15 +6,20 @@
 #include <stdarg.h>
 #include "unwind.h"
 #include <any>
+
+#define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
+#define __READ_RSP() __asm__ volatile("movq %%rsp, %0" : "=r"(__rsp))
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
 
-EXPORT void stopThread(){
+EXPORT NOINLINE void stopThread(){
     if(!memory::gc) return;
     // Get stack end(lowest address) and then spill the registers to the stack
     jmp_buf jb;
     setjmp(jb);
-    uintptr_t* stackEnd = getStackPointer();
+    uintptr_t* stackEnd;
+    __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
+
     memory::gc->setStackEnd(std::this_thread::get_id(), stackEnd);
     memory::gc->suspendMe();
 }
@@ -101,10 +106,9 @@ EXPORT int64_t getArrSize(Value arr){
     return asArray(arr)->values.size();
 }
 
-EXPORT void gcInit(byte* gcFlag){
-    uintptr_t* mainThreadStackStart = getStackPointer();
+EXPORT void gcInit(byte* gcFlag, uintptr_t* frameAddr){
     memory::gc = new memory::GarbageCollector(*gcFlag);
-    memory::gc->addStackStart(std::this_thread::get_id(), mainThreadStackStart);
+    memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
 }
 
 // hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString

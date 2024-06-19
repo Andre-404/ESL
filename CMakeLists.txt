@@ -3,6 +3,7 @@ project(ESL)
 
 if(WIN32)
     set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
+    set(CMAKE_CXX_FLAGS "-march=native")
 else()
     set(LLVM_DIR "~/tools/llvm-project-17.x/build/lib/cmake/llvm/")
     set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic")

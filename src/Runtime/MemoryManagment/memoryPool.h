@@ -1,5 +1,7 @@
 #pragma once
 #include "../../common.h"
+#include <immintrin.h>
+#include <atomic>
 
 namespace memory{
     struct BlockHeader{
@@ -7,9 +9,14 @@ namespace memory{
     };
     struct PageData{
         int bitmapSize;
+
         char* basePtr;
         char* blockStart;
         uint64_t blockSize;
+        uint64_t* end64;
+        __m256i* end256;
+        uint8_t* lastBitmapPos;
+
 
         PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize);
         PageData();

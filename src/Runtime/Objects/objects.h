@@ -11,16 +11,16 @@ namespace object {
     enum class ObjType {
         THUNK,
         STRING,
-        ARRAY,
+        RANGE,
         CLOSURE,
         FREEVAR,
         CLASS,
         INSTANCE,
+        ARRAY,
         HASH_MAP,
         FILE,
         MUTEX,
         FUTURE,
-        RANGE
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 

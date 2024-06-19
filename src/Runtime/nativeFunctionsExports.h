@@ -18,4 +18,9 @@ EXPORT Value ms_since_epoch(ObjClosure* ptr){
     return encodeNumber(duration);
 }
 
+EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
+    asArray(arr)->values.push_back(top);
+    return arr;
+}
+
 #undef EXPORT

@@ -4,6 +4,7 @@
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
 #include <sys/stat.h>
+#include <execution>
 
 using namespace valueHelpers;
 
@@ -25,7 +26,6 @@ inline int szToIdx(uint64_t x){
 
 NOINLINE uintptr_t* getStackPointer(){
     return (uintptr_t*)(GET_FRAME_ADDRESS);
-
 }
 
 static inline void runObjDestructor(object::Obj* obj){
@@ -33,12 +33,12 @@ static inline void runObjDestructor(object::Obj* obj){
     // however some objects allocate STL containers that need cleaning up
     obj->GCdata &= GCDataMask;
     switch(obj->type){
-        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray();break;
-        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
-        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
-        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;;
-        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
-        default: obj->~Obj(); break;
+        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); return;
+        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); return;
+        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); return;
+        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); return;
+        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); return;
+        default: return;
     }
 }
 
@@ -59,9 +59,7 @@ namespace memory {
 	void* GarbageCollector::alloc(const uInt64 size) {
         // No thread is marked as suspended while allocating, even though they have to lock the allocMtx
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
-		std::scoped_lock<std::mutex> lk(allocMtx);
-		heapSize += size;
-        if (heapSize-size < heapSizeLimit && heapSize > heapSizeLimit) {
+        if (heapSize < heapSizeLimit && (heapSize+=size) > heapSizeLimit) {
             active = 1;
         }
         byte* block = nullptr;
@@ -87,7 +85,6 @@ namespace memory {
             // Used to more efficiently set/test bit for objects
             obj->GCdata = shouldDestructFlagMask | pageIdx;
         }
-
 		return block;
 	}
 
@@ -99,12 +96,18 @@ namespace memory {
         tmpAlloc.clear();
 
         heapSize = 0;
-        resetMarkFlag();
 		markRoots();
-		mark();
-		sweep();
         double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"GC took: "<<d2-d<<"\n";
+        std::cout<<"Root scanning took: "<<d2-d<<"\n";
+        resetMarkFlag();
+        double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"reseting flags took: "<<d3-d2<<"\n";
+		mark();
+        double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Tracing took: "<<d4-d3<<"\n";
+		sweep();
+        double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"sweeping took: "<<d5-d4<<"\n";
 		if (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
         // Tells all waiting threads that gc cycle is over
         active = 0;
@@ -214,8 +217,8 @@ namespace memory {
                     // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object
                     // Because of that before accessing the object first we check if 'object' really points to an allocated object
                     if (isValidPtr(object)) markObj(object);
-                }else if(isValidPtr(reinterpret_cast<Obj *>(end))){
-                    markObj(reinterpret_cast<Obj *>(end));
+                }else if(isValidPtr(*reinterpret_cast<Obj **>(end))){
+                    markObj(*reinterpret_cast<Obj **>(end));
                 }
                 end++;
             }
@@ -231,10 +234,9 @@ namespace memory {
     // TODO: can this be optimized? Running through every page of every mempool seems expensive?
     // Should work for now but might be a problem when the heap gets into GB teritory
     bool GarbageCollector::isAllocedByMempools(object::Obj* ptr){
-        for(MemoryPool& mempool : mempools) {
-            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
-        }
-        return false;
+        return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool& mempool){
+            return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
+        });
     }
 
 	void GarbageCollector::sweep() {

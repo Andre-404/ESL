@@ -12,6 +12,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Transforms/Scalar/PlaceSafepoints.h"
+#include "llvm/Support/ModRef.h"
 
 #include <unordered_set>
 #include <iostream>
@@ -63,9 +64,20 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
+    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
+    fn->addFnAttr(llvm::Attribute::NoCallback);
+    fn->addFnAttr(llvm::Attribute::NoFree);
+    fn->addFnAttr(llvm::Attribute::NoRecurse);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
     fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy, eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
+    fn->addFnAttr(llvm::Attribute::Memory);
+    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
+    fn->addFnAttr(llvm::Attribute::NoFree);
+    fn->addFnAttr(llvm::Attribute::NoRecurse);
+    fn->addFnAttr(llvm::Attribute::MustProgress);
+    fn->addFnAttr(llvm::Attribute::NoCallback);
     // Helper from C std lib
     CREATE_FUNC("printf", true, TYPE(Int32), TYPE(Int8Ptr));
     CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
@@ -81,17 +93,26 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
     CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
 
-    CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr));
+    CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr));
     CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
     fn = CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
-    fn->addFnAttr("allockind", "alloc");
+    fn->addFnAttr(llvm::Attribute::get(*ctx, "allockind", "alloc"));
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     fn->addFnAttr(llvm::Attribute::NoFree);
     fn->addFnAttr(llvm::Attribute::WillReturn);
     fn->addFnAttr(llvm::Attribute::MustProgress);
+    fn->addFnAttr(llvm::Attribute::NoCallback);
+    llvm::AttributeList a;
+    llvm::AttrBuilder b(*ctx);
+    b.addAlignmentAttr(8);
+    fn->addRetAttr(b.getAttribute(llvm::Attribute::Alignment));
+    b.addDereferenceableAttr(8);
+    fn->addRetAttr(b.getAttribute(llvm::Attribute::Dereferenceable));
+    fn->addRetAttr(llvm::Attribute::NonNull);
+    fn->addRetAttr(llvm::Attribute::NoUndef);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
     CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
@@ -300,7 +321,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        builder.CreateCall(module->getFunction("stopThread"));
+        auto call = builder.CreateCall(module->getFunction("stopThread"));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
