@@ -9,10 +9,9 @@ namespace memory{
     };
     struct PageData{
         int bitmapSize;
-
+        int blockSize;
         char* basePtr;
         char* blockStart;
-        uint64_t blockSize;
         uint64_t* end64;
         __m256i* end256;
         uint8_t* lastBitmapPos;
@@ -37,11 +36,11 @@ namespace memory{
         void markBlock(uint32_t pageIdx, uintptr_t ptr);
         bool isFree(uint32_t pageIdx, uintptr_t ptr);
     private:
+        int blockSize;
+        int blocksPerPage;
+        uint32_t firstNonFullPage;
         vector<PageData> pages;
         uint64_t pageSize;
-        uint64_t blockSize;
-        uint64_t blocksPerPage;
-        uint32_t firstNonFullPage;
         void allocNewPage();
         void freePage(int pageIdx);
     };

@@ -90,24 +90,24 @@ namespace memory {
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
-        double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        //double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         largeObjects.reserve(largeObjects.size() + tmpAlloc.size());
         largeObjects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
 
         heapSize = 0;
 		markRoots();
-        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Root scanning took: "<<d2-d<<"\n";
+        //double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        //std::cout<<"Root scanning took: "<<d2-d<<"\n";
         resetMarkFlag();
-        double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"reseting flags took: "<<d3-d2<<"\n";
+        //double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        //std::cout<<"reseting flags took: "<<d3-d2<<"\n";
 		mark();
-        double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Tracing took: "<<d4-d3<<"\n";
+        //double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        //std::cout<<"Tracing took: "<<d4-d3<<"\n";
 		sweep();
-        double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"sweeping took: "<<d5-d4<<"\n";
+        //double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        //std::cout<<"sweeping took: "<<d5-d4<<"\n";
 		if (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
         // Tells all waiting threads that gc cycle is over
         active = 0;

@@ -4,7 +4,12 @@
 #include <atomic>
 #include <algorithm>
 #include <execution>
-#include <unistd.h>
+#ifdef _WIN32
+#include <memoryapi.h>
+#else
+#include <sys/mman.h>
+#endif
+
 
 using namespace memory;
 
@@ -28,26 +33,11 @@ static constexpr uint8_t i8Mask = 0xff;
 
 // Finds first free block or returns nullptr
 char* PageData::firstFreeBlock(){
-    uint8_t* start8 = reinterpret_cast<uint8_t *>(lastBitmapPos);
-    while(*start8 == 0xFF && start8 != reinterpret_cast<uint8_t*>(basePtr + bitmapSize)){
-        start8++;
-    }
-    if (start8 != reinterpret_cast<uint8_t*>(basePtr + bitmapSize)) {
-        uint8_t before = *start8;
-        // Count trailing ones is first non 0xFF byte
-        uint8_t trones = std::countr_one(before);
-        // Update the bitmap
-        *start8 |= 1 << trones;
-        lastBitmapPos = start8;
-        return blockStart + (((char *) start8 - basePtr) * 8 + trones)*blockSize;
-    }
-    return nullptr;
-    /*
     // These 2 loops follow the same principle as the first one but use smaller granularity
     // Scan 256 bits at once, assumes little endian
     __m256i* start256 = reinterpret_cast<__m256i *>(lastBitmapPos);
     while(start256 != end256){
-        __m256i vec = _mm256_load_si256(start256);
+        __m256i vec = _mm256_loadu_si256(start256);
         // Compare each byte in parallel
         __m256i vnonzero = _mm256_cmpeq_epi8(vec, _mm256_set1_epi64x(0xFFFFFFFFFFFFFFFF));
         // One bit for each byte in ymm register that represents if that byte is equal to 0xFF(no free blocks)
@@ -98,14 +88,14 @@ char* PageData::firstFreeBlock(){
     }
 
     // Returns 0 upon failure
-    return nullptr;*/
+    return nullptr;
 }
 
 void PageData::clearFreeBitmap(){
     void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;
     asm volatile (
             "rep stosq"
-            : "=D"(junkVar1), "=c"(junkVar2), "=a"(junkVar3)// Have to use junk outputs to let gcc know there registers are clobbered
+            : "=D"(junkVar1), "=c"(junkVar2), "=a"(junkVar3) // Have to use junk outputs to let gcc know there registers are clobbered
             : "D"(basePtr), "c"((blockStart-basePtr)/8), "a"(0)
             : "memory"// Clobbered registers
             );
@@ -180,14 +170,12 @@ bool MemoryPool::isFree(uint32_t pageIdx, uintptr_t ptr){
 }
 
 void MemoryPool::allocNewPage(){
-    void* page = _aligned_malloc(pageSize, 32);
-    void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;
-    asm volatile (
-            "rep stosq"
-            : "=D"(junkVar1), "=c"(junkVar2), "=a"(junkVar3)// No output operands
-            : "D"(page), "c"(pageSize/8), "a"(0) // Input operands
-            : "memory"// Clobbered registers
-            );
+    // VirtualAlloc and mmap return zeroed memory
+    #ifdef _WIN32
+        void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    #else
+        void* page = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
+    #endif
     // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
     pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (8 - (blocksPerPage/8)%8), blockSize, blocksPerPage/8);
@@ -196,6 +184,10 @@ void MemoryPool::allocNewPage(){
 
 void MemoryPool::freePage(int pageIdx) {
     PageData& data = pages[pageIdx];
-    free(data.basePtr);
+#ifdef _WIN32
+    VirtualFree((void*)data.basePtr, 0, MEM_RELEASE);
+#else
+    munmap((void*)data.basePtr, pageSize);
+#endif
     pages.erase(pages.begin() + pageIdx);
 }
