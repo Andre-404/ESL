@@ -1,10 +1,15 @@
 #pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
+#include "LLVMHelperExports.h"
 #include "Values/valueHelpers.h"
 #include "Values/valueHelpersInline.cpp"
 #include <csetjmp>
+#include <iostream>
+#include <string>
 #include <stdarg.h>
+
+using namespace object;
 
 #define EXPORT extern "C" DLLEXPORT
 
@@ -21,6 +26,27 @@ EXPORT Value ms_since_epoch(ObjClosure* ptr){
 EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
     asArray(arr)->values.push_back(top);
     return arr;
+}
+
+EXPORT Value input(ObjClosure* ptr){
+    string in;
+    std::getline(std::cin, in);
+    return encodeObj(ObjString::createStr((char*)in.c_str()));
+}
+
+EXPORT Value as_number(ObjClosure* ptr, Value num){
+    if (isNumber(num)) { return num; }
+    if (!isString(num)){
+        std::cerr << "Cannot convert value to number.\n"; 
+        exit(64);
+    }
+    try {
+        return encodeNumber(std::stod(asString(num)->str));
+    }
+    catch (std::exception &e){
+        std::cerr << fmt::format("Cannot convert \"{}\" to Number.\n", asString(num)->str);
+        exit(64);
+    }
 }
 
 #undef EXPORT

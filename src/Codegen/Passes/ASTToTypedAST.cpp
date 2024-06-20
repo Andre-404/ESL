@@ -1491,5 +1491,7 @@ void ASTTransformer::declareNativeFunctions(){
     createNativeFn("print", 1, getBasicType(types::TypeFlag::NIL));
     createNativeFn("ms_since_epoch", 0, getBasicType(types::TypeFlag::NUMBER));
     createNativeFn("arr_push", 2, addType(std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY))));
+    createNativeFn("input", 0, getBasicType(types::TypeFlag::STRING));
+    createNativeFn("as_number", 1, getBasicType(types::TypeFlag::NUMBER));
 }
 #pragma endregion
