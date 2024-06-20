@@ -69,15 +69,13 @@ int main(int argc, char* argv[]) {
     passes::typedASTParser::ASTTransformer transformer;
     auto res = transformer.run(modules, finder.generateFreevarMap());
     errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
     auto env = transformer.getTypeEnv();
     auto classes = transformer.getClassHierarchy();
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
 
     compileCore::CompileType type = flag == "-jit" ? compileCore::CompileType::JIT : compileCore::CompileType::OBJECT_CODE;
     compileCore::Compiler compiler(type, res.first, res.second, env, classes, transformer.getNativeFuncTypes());
-
-    errorHandler::showCompileErrors();
-    if (errorHandler::hasErrors()) {
-        exit(64);
-    }
     return 0;
 }
