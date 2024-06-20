@@ -143,10 +143,20 @@ void* MemoryPool::alloc(uint32_t* pageIdx) {
 }
 
 bool MemoryPool::allocedByThisPool(uintptr_t ptr){
+    #ifdef GC_DEBUG
+    for(PageData& page : pages){
+        int64_t diff = (char*)ptr - (page.blockStart);
+        if(diff >= 0 && diff < pageSize-page.bitmapSize && diff%blockSize == 0 && page.testAllocatedBit(diff)) {
+            return true;
+        }
+    }
+    return false;
+    #else
     return std::any_of(std::execution::par_unseq, pages.begin(), pages.end(), [this, ptr](PageData& page){
         int64_t diff = (char*)ptr - (page.blockStart);
-        return diff >= 0 && diff < pageSize && diff%blockSize == 0 && page.testAllocatedBit(diff);
+        return diff >= 0 && diff < pageSize-page.bitmapSize && diff%blockSize == 0 && page.testAllocatedBit(diff);
     });
+    #endif
 }
 void MemoryPool::clearFreeBitmap(){
     for(PageData& page : pages) page.clearFreeBitmap();

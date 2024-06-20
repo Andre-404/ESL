@@ -234,9 +234,16 @@ namespace memory {
     // TODO: can this be optimized? Running through every page of every mempool seems expensive?
     // Should work for now but might be a problem when the heap gets into GB teritory
     bool GarbageCollector::isAllocedByMempools(object::Obj* ptr){
+        #ifdef GC_DEBUG
+        for(MemoryPool& mempool : mempools){
+            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
+        }
+        return false;
+        #else
         return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool& mempool){
             return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });
+        #endif
     }
 
 	void GarbageCollector::sweep() {

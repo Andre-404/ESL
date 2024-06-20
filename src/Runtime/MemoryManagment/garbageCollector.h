@@ -70,7 +70,7 @@ namespace memory {
         std::mutex pauseMtx;
 
         uInt64 heapSize;
-        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
+        std::unordered_map<std::string_view, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
 		uInt64 heapSizeLimit;

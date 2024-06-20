@@ -261,7 +261,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
             uInt64 val = get<bool>(expr->val) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
             return CastToESLVal(builder.getInt64(val));
         }
-        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
+        case 2: return CastToESLVal(builder.getInt64(MASK_SIGNATURE_NIL));
         case 3: {
             return createESLString(get<string>(expr->val));
         }
@@ -1401,7 +1401,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     auto c2 = builder.CreateCall(isnum, rhs);
 
     llvm::Value* icmptmp = builder.CreateICmpEQ(lhs, rhs, "icmptmp");
-    llvm::Value* fcmptmp = builder.CreateICmpEQ(ESLValTo(lhs, builder.getDoubleTy()),
+    llvm::Value* fcmptmp = builder.CreateFCmpOEQ(ESLValTo(lhs, builder.getDoubleTy()),
                                                  ESLValTo(rhs, builder.getDoubleTy()), "fcmptmp");
     if(neg){
         icmptmp = builder.CreateNot(icmptmp, "icmptmpneg");
