@@ -47,7 +47,7 @@ static constexpr uint8_t i8Mask = 0xff;
 }
 
 // Finds first free block or returns nullptr
-uint8_t* MemoryPool::firstFreeBlock(uint32_t pid){
+[[gnu::always_inline]] uint8_t* MemoryPool::firstFreeBlock(uint32_t pid){
     // Regenerate page details
     auto end64 = getPageEnd64(pid);
     auto end256 = getPageEnd256(pid);
@@ -216,7 +216,7 @@ bool MemoryPool::allocedByThisPool(uintptr_t ptr){
     int64_t pid = (ptr - reinterpret_cast<uintptr_t>(mpStart)) / pageSize; // raw dog?
     if (pid < 0 || pid >= pageCnt) { return false; }
     int64_t bid = (ptr - reinterpret_cast<uintptr_t>(getPageBlockStart(pid))) / blockSize;
-    if (bid < 0 || bid >= blocksPerPage) { return false; }
+    if (bid < 0 || bid >= blocksPerPage || reinterpret_cast<uintptr_t>(getPageBlockStart(pid) + bid * blockSize) != ptr) { return false; }
     return testAllocatedBit(pid, bid);
     // #endif
 }

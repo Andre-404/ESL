@@ -216,7 +216,9 @@ namespace memory {
                     Obj* object = decodeObj(address);
                     // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object
                     // Because of that before accessing the object first we check if 'object' really points to an allocated object
-                    if (isValidPtr(object)) markObj(object);
+                    if (isValidPtr(object)) {
+                        markObj(object);
+                    }
                 }else if(isValidPtr(*reinterpret_cast<Obj **>(end))){
                     markObj(*reinterpret_cast<Obj **>(end));
                 }
@@ -240,6 +242,10 @@ namespace memory {
         }
         return false;
         #else
+        /*for(MemoryPool& mempool : mempools){
+            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
+        }
+        return false;*/
         return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool& mempool){
             return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });
