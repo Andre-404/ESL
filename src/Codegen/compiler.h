@@ -195,7 +195,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
         llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
         llvm::Function* forwardDeclMethod(typedAST::ClassMethod& method);
-        void codegenMethod(typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd, llvm::Function* methodFn);
+        void codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd, llvm::Function* methodFn);
         llvm::Constant* createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr);
 
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);

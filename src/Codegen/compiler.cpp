@@ -797,7 +797,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
                                     stmt->classType, methodArr);
 
     for(auto p : stmt->methods){
-        codegenMethod(p.second.first, subClassIdxStart, subClassIdxEnd, methodDecl[p.first]);
+        codegenMethod(stmt->fullName, p.second.first, subClassIdxStart, subClassIdxEnd, methodDecl[p.first]);
     }
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -1832,14 +1832,14 @@ llvm::Function* Compiler::forwardDeclMethod(typedAST::ClassMethod& method){
     fn->setGC("statepoint-example");
     return fn;
 }
-void Compiler::codegenMethod(typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd,
+void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd,
                              llvm::Function* methodFn){
     inProgressFuncs.emplace(methodFn);
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", inProgressFuncs.top().fn);
     builder.SetInsertPoint(BB);
     declareFuncArgs(method.code->args);
     createRuntimeTypeCheck(safeGetFunc("isInstAndClass"),{inProgressFuncs.top().fn->getArg(1), subClassIdxStart, subClassIdxEnd},
-                           "isInst", "Expected instance of class, got '{}'.", method.dbg.name);
+                           "isInst", fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"), method.dbg.name);
 
     for(auto s : method.code->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it

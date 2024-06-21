@@ -57,7 +57,7 @@ EXPORT void tyErrSingle(const char* ptr, const char* fileName, const int line, V
     string type = valueHelpers::typeToStr(val);
 
     size_t pos = str.find("{}");
-    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
+    if(pos == str.npos) std::cout<< "Error formatting string for error output\n";
     str.replace(pos, 2, type);
 
     std::cout<<str<<std::endl;
