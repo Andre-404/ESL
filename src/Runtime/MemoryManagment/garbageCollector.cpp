@@ -79,7 +79,6 @@ namespace memory {
             uint32_t pageIdx;
             block = reinterpret_cast<byte*>(mempools[idx].alloc(pageIdx));
             Obj* obj = reinterpret_cast<Obj*>(block);
-            memset(obj, 0, mempoolBlockSizes[idx]);
             // Lazy sweeping
             if(obj->GCdata & shouldDestructFlagMask) runObjDestructor(obj);
             obj->allocType = idx;

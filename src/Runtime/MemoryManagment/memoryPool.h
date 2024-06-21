@@ -39,7 +39,7 @@ namespace memory{
         uint32_t blocksPerPage;
         size_t firstNonFullPage;
         size_t pageSize;
-        vector<uint8_t*> lastBitmapPoss;
+        uint8_t* lastBitmapPos;
         void allocNewPage();
         void freePage(uint32_t pid);
 

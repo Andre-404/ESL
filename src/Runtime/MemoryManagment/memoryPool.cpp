@@ -52,7 +52,6 @@ uint8_t* MemoryPool::firstFreeBlock(uint32_t pid){
     auto end64 = getPageEnd64(pid);
     auto end256 = getPageEnd256(pid);
     auto basePtr = getPageBasePtr(pid);
-    auto lastBitmapPos = lastBitmapPoss[pid];
     auto blockStart = getPageBlockStart(pid);
     
     // uint64_t * pbi = (uint64_t*) basePtr;
@@ -143,7 +142,6 @@ void MemoryPool::clearFreeBitmap(uint32_t pid){
             : "D"(basePtr), "c"((blockStart-basePtr)/8), "a"(0)
             : "memory"// Clobbered registers
             );
-    lastBitmapPoss[pid] = reinterpret_cast<uint8_t*>(basePtr);
 }
 
 void MemoryPool::setAllocatedBit(uint32_t pid, uint32_t offset){
@@ -176,6 +174,7 @@ MemoryPool::MemoryPool(uint64_t pageSize, uint64_t blockSize) : pageSize(pageSiz
     #else
         mpStart = reinterpret_cast<uint8_t*>(mmap(NULL, static_cast<int64_t>(pageSize) * MAX_PAGE_CNT, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
     #endif
+    lastBitmapPos = mpStart;
     allocNewPage();
 }
 
@@ -191,6 +190,7 @@ void* MemoryPool::alloc(uint32_t& pid) {
     void* ptr = nullptr;
     while(!(ptr = firstFreeBlock(firstNonFullPage))){
         firstNonFullPage++;
+        lastBitmapPos = getPageBasePtr(firstNonFullPage);
         if(firstNonFullPage == pageCnt){
             allocNewPage();
         }
@@ -222,6 +222,7 @@ bool MemoryPool::allocedByThisPool(uintptr_t ptr){
 }
 void MemoryPool::clearFreeBitmaps(){
     for(uint32_t pid = 0; pid < pageCnt; pid++) { clearFreeBitmap(pid); }
+    lastBitmapPos = getPageBasePtr(0);
     firstNonFullPage = 0;
 }
 
@@ -236,7 +237,7 @@ void MemoryPool::markBlock(uint32_t pid, uintptr_t ptr){
 bool MemoryPool::isFree(uint32_t pid, uintptr_t ptr){
     uint64_t offset = reinterpret_cast<uint8_t*>(ptr) - getPageBlockStart(pid);
     assert(offset%blockSize == 0 && "Offset isn't multiple of block size?");
-    return testAllocatedBit(pid, offset/blockSize);
+    return !testAllocatedBit(pid, offset/blockSize);
 }
 
 void MemoryPool::allocNewPage(){
@@ -246,7 +247,6 @@ void MemoryPool::allocNewPage(){
     #else
         mprotect(mpStart + static_cast<int64_t>(pageSize) * pageCnt, pageSize, PROT_READ | PROT_WRITE);
     #endif
-    lastBitmapPoss.emplace_back(getPageBasePtr(pageCnt));
     pageCnt++;
     firstNonFullPage = pageCnt - 1;
 }
@@ -255,5 +255,4 @@ void MemoryPool::allocNewPage(){
 void MemoryPool::freePage(uint32_t pid) {
     assert(0 <= pid && pid < pageCnt);
     pageCnt--;
-    lastBitmapPoss.erase(lastBitmapPoss.begin() + pid);
 }
