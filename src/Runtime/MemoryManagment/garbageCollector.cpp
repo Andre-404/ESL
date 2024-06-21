@@ -77,8 +77,9 @@ namespace memory {
             tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
         }else{
             uint32_t pageIdx;
-            block = reinterpret_cast<byte *>(mempools[idx].alloc(&pageIdx));
+            block = reinterpret_cast<byte*>(mempools[idx].alloc(pageIdx));
             Obj* obj = reinterpret_cast<Obj*>(block);
+            memset(obj, 0, mempoolBlockSizes[idx]);
             // Lazy sweeping
             if(obj->GCdata & shouldDestructFlagMask) runObjDestructor(obj);
             obj->allocType = idx;
@@ -119,7 +120,7 @@ namespace memory {
 
     void GarbageCollector::resetMarkFlag(){
         for(MemoryPool& mempool : mempools){
-            mempool.clearFreeBitmap();
+            mempool.clearFreeBitmaps();
         }
         for(auto obj : largeObjects) obj->GCdata = 0;
     }
