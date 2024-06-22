@@ -26,11 +26,12 @@ namespace object {
 
     class Obj{
     public:
+        // Used by GC
+        byte padding[2];
         byte type;
         byte allocType;
         // Arbitrary GC data that depends on allocType
-        // MSB is reserved for shouldDestruct flag
-        uint32_t GCdata;
+        byte GCData;
 
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);

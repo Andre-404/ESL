@@ -4,14 +4,13 @@
 #include <atomic>
 
 namespace memory{
-    struct BlockHeader{
-        BlockHeader* next;
-    };
     struct PageData{
         int bitmapSize;
         int blockSize;
         char* basePtr;
         char* blockStart;
+        int16_t head;
+
         uint64_t* end64;
         __m256i* end256;
         uint8_t* lastBitmapPos;
@@ -24,21 +23,25 @@ namespace memory{
         void clearFreeBitmap();
         void setAllocatedBit(uint64_t offset);
         bool testAllocatedBit(uint64_t offset);
+        void resetHead();
+        char* alloc();
     };
     class MemoryPool{
     public:
         MemoryPool(uint64_t pageSize, uint64_t blockSize);
         MemoryPool();
 
-        void* alloc(uint32_t* pageIdx);
+        void* alloc();
         bool allocedByThisPool(uintptr_t ptr);
         void clearFreeBitmap();
-        void markBlock(uint32_t pageIdx, uintptr_t ptr);
-        bool isFree(uint32_t pageIdx, uintptr_t ptr);
+        void markBlock(uintptr_t ptr);
+        bool isFree(uintptr_t ptr);
+        void resetHead();
     private:
         int blockSize;
         int blocksPerPage;
-        uint32_t firstNonFullPage;
+        int blockStartOffset;
+        PageData* firstNonFullPage;
         vector<PageData> pages;
         uint64_t pageSize;
         void allocNewPage();
