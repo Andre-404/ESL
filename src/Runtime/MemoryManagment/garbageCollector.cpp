@@ -138,7 +138,7 @@ namespace memory {
 
     void GarbageCollector::resetMarkFlag(){
         for(MemoryPool& mempool : mempools){
-            mempool.clearFreeBitmap();
+            mempool.clearFreeBitmaps();
         }
         for(auto obj : largeObjects) obj->GCData = 0;
     }
@@ -267,6 +267,10 @@ namespace memory {
         }
         return false;
         #else
+        /*for(MemoryPool& mempool : mempools){
+            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
+        }
+        return false;*/
         return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool& mempool){
             return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });

@@ -11,33 +11,48 @@
 #include <sys/mman.h>
 #endif
 
-
 using namespace memory;
 
-PageData::PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize)
-: basePtr(basePtr), blockStart(blockStart),blockSize(blockSize), bitmapSize(bitmapSize) {
-    end64 = reinterpret_cast<uint64_t *>(basePtr) + bitmapSize / 8;
-    end256 = reinterpret_cast<__m256i *>(basePtr) + bitmapSize / 32;
-    lastBitmapPos = reinterpret_cast<uint8_t *>(basePtr);
-}
-PageData::PageData(){
-    basePtr = nullptr;
-    blockStart = nullptr;
-    end64 = nullptr;
-    blockSize = 0;
-    bitmapSize = 0;
-    lastBitmapPos = nullptr;
-}
+// PageData::PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize)
+// : basePtr(basePtr), blockStart(blockStart),blockSize(blockSize), bitmapSize(bitmapSize) {
+//     end64 = reinterpret_cast<uint64_t *>(basePtr) + bitmapSize / 8;
+//     end256 = reinterpret_cast<__m256i *>(basePtr) + bitmapSize / 32;
+//     lastBitmapPos = reinterpret_cast<uint8_t *>(basePtr);
+// }
+// PageData::PageData(){
+//     basePtr = nullptr;
+//     blockStart = nullptr;
+//     end64 = nullptr;
+//     blockSize = 0;
+//     bitmapSize = 0;
+//     lastBitmapPos = nullptr;
+// }
 
 static constexpr uint64_t u64Mask = 0xffffffffffffffff;
 static constexpr uint16_t u16Mask = 0xffff;
 static constexpr uint8_t u8Mask = 0xff;
 
+[[gnu::always_inline]] uint8_t* MemoryPool::getPageBasePtr(uint32_t pid){
+    return mpStart + pageSize * pid;
+}
+
+[[gnu::always_inline]] uint8_t* MemoryPool::getPageBlockStart(uint32_t pid){
+    return getPageBasePtr(pid) + blockStartOffset;
+}
+
+[[gnu::always_inline]] uint64_t* MemoryPool::getPageEnd64(uint32_t pid){
+    return reinterpret_cast<uint64_t*>(getPageBasePtr(pid)) + (bitmapSize >> 3);
+}
+
+[[gnu::always_inline]] __m256i* MemoryPool::getPageEnd256(uint32_t pid){
+    return reinterpret_cast<__m256i*>(getPageBasePtr(pid)) + (bitmapSize >> 5);
+}
+
 // Finds first free block or returns nullptr
 [[gnu::always_inline]] char* PageData::firstFreeBlock(){
     // These 2 loops follow the same principle as the first one but use smaller granularity
     // Scan 256 bits at once, assumes little endian
-    __m256i* start256 = reinterpret_cast<__m256i *>(lastBitmapPos);
+    __m256i* start256 = reinterpret_cast<__m256i*>(lastBitmapPos);
     while(start256 != end256){
         __m256i vec = _mm256_loadu_si256(start256);
         // Compare each byte in parallel
@@ -48,7 +63,7 @@ static constexpr uint8_t u8Mask = 0xff;
         if(nzmask != 0){
             // Can safely call the builtin since we know that nazmask isn't 0
             unsigned tzbytes = __builtin_ctzl(nzmask);
-            uint8_t *nz_elem = (uint8_t *)start256 + tzbytes;
+            uint8_t *nz_elem = (uint8_t*)start256 + tzbytes;
             uint8_t before = *nz_elem;
 
             // Count trailing ones is first non 0xFF byte
@@ -58,24 +73,24 @@ static constexpr uint8_t u8Mask = 0xff;
             lastBitmapPos = reinterpret_cast<uint8_t *>(start256);
             // Calculate total number of trailing ones in the original register
             uint32_t trones = 8 * tzbytes + trailingOnes;
-            return blockStart + (((char *) start256 - basePtr) * 8 + trones)*blockSize;
+            return blockStart + (((uint8_t*) start256 - basePtr) * 8 + trones)*blockSize;
         }
         start256++;
     }
 
     // These 2 loops follow the same principle as the first one but use smaller granularity
-    uint64_t* start64 = reinterpret_cast<uint64_t *>(end256);
+    uint64_t* start64 = reinterpret_cast<uint64_t*>(end256);
     while(start64 != end64){
         if (*start64 != u64Mask) {
             uint64_t before = *start64;
             uint8_t trones = std::countr_one(before);
             // Update the bitmap
             *start64 |= 1 << trones;
-            return blockStart + (((char *) start64 - basePtr) * 8 + trones)*blockSize;
+            return blockStart + (((uint8_t*) start64 - basePtr) * 8 + trones)*blockSize;
         }
         start64++;
     }
-    uint8_t* start8 = reinterpret_cast<uint8_t *>(end64);
+    uint8_t* start8 = reinterpret_cast<uint8_t*>(end64);
     // Last few bytes of bitmap
     while(start8 != reinterpret_cast<uint8_t*>(basePtr + bitmapSize)){
         if (*start8 != u8Mask) {
@@ -84,7 +99,7 @@ static constexpr uint8_t u8Mask = 0xff;
             uint8_t trones = std::countr_one(before);
             // Update the bitmap
             *start8 |= 1 << trones;
-            return blockStart + (((char *) start8 - basePtr) * 8 + trones)*blockSize;
+            return blockStart + ((start8 - basePtr) * 8 + trones)*blockSize;
         }
         start8++;
     }
@@ -120,13 +135,12 @@ void PageData::clearFreeBitmap(){
             : "D"(basePtr), "c"((blockStart-basePtr)/8), "a"(0)
             : "memory"// Clobbered registers
             );
-    lastBitmapPos = reinterpret_cast<uint8_t *>(basePtr);
 }
 
 [[gnu::always_inline]] void PageData::setAllocatedBit(uint64_t offset){
     // Assumes little endian
-    uint64_t byteOffset = offset / 8;
-    uint8_t bitMask = 1 << (offset%8);
+    uint64_t byteOffset = offset >> 3;
+    uint8_t bitMask = 1 << (offset & 7);
     *(basePtr+byteOffset) |= bitMask;
 }
 
@@ -226,23 +240,20 @@ void MemoryPool::resetHead(){
 void MemoryPool::allocNewPage(){
     // VirtualAlloc and mmap return zeroed memory
     #ifdef _WIN32
-        void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        VirtualAlloc(mpStart + pageSize * pageCnt, pageSize, MEM_COMMIT, PAGE_READWRITE);
     #else
-        void* page = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        mprotect(mpStart + static_cast<int64_t>(pageSize) * pageCnt, pageSize, PROT_READ | PROT_WRITE);
     #endif
     // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
     pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (8 - (blocksPerPage/8)%8), blockSize, blocksPerPage/8);
     firstNonFullPage = &pages.back();
     firstNonFullPage->resetHead();
+
 }
 
-void MemoryPool::freePage(int pageIdx) {
-    PageData& data = pages[pageIdx];
-#ifdef _WIN32
-    VirtualFree((void*)data.basePtr, 0, MEM_RELEASE);
-#else
-    munmap((void*)data.basePtr, pageSize);
-#endif
-    pages.erase(pages.begin() + pageIdx);
+// TODO: Make this actually work?
+void MemoryPool::freePage(uint32_t pid) {
+    assert(0 <= pid && pid < pageCnt);
+    pageCnt--;
 }

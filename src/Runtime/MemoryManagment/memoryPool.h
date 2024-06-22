@@ -3,6 +3,9 @@
 #include <immintrin.h>
 #include <atomic>
 
+// Maximum number of pages in a memory pool. Note that maximum heap size = 6 * PAGE_SIZE * MAX_PAGE_CNT as we host 6 memory pools.
+#define MAX_PAGE_CNT 4096
+
 namespace memory{
     struct PageData{
         int bitmapSize;
@@ -30,7 +33,6 @@ namespace memory{
     public:
         MemoryPool(uint64_t pageSize, uint64_t blockSize);
         MemoryPool();
-
         void* alloc();
         bool allocedByThisPool(uintptr_t ptr);
         void clearFreeBitmap();
@@ -45,6 +47,16 @@ namespace memory{
         vector<PageData> pages;
         uint64_t pageSize;
         void allocNewPage();
-        void freePage(int pageIdx);
+        void freePage(uint32_t pid);
+
+        uint8_t* getPageBasePtr(uint32_t pid);
+        uint8_t* getPageBlockStart(uint32_t pid);
+        uint64_t* getPageEnd64(uint32_t pid); 
+        __m256i* getPageEnd256(uint32_t pid);
+
+        uint8_t* firstFreeBlock(uint32_t pid);
+        void clearFreeBitmap(uint32_t pid);
+        void setAllocatedBit(uint32_t pid, uint32_t offset);
+        bool testAllocatedBit(uint32_t pid, uint32_t offset);
     };
 }
