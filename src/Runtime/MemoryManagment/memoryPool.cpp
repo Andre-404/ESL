@@ -1,4 +1,5 @@
 #include "memoryPool.h"
+#include "../Objects/objects.h"
 #include <cassert>
 #include <bit>
 #include <atomic>
@@ -27,8 +28,9 @@ using namespace memory;
 //     lastBitmapPos = nullptr;
 // }
 
-static constexpr uint64_t i64Mask = 0xffffffffffffffff;
-static constexpr uint8_t i8Mask = 0xff;
+static constexpr uint64_t u64Mask = 0xffffffffffffffff;
+static constexpr uint16_t u16Mask = 0xffff;
+static constexpr uint8_t u8Mask = 0xff;
 
 [[gnu::always_inline]] uint8_t* MemoryPool::getPageBasePtr(uint32_t pid){
     return mpStart + pageSize * pid;
@@ -47,33 +49,7 @@ static constexpr uint8_t i8Mask = 0xff;
 }
 
 // Finds first free block or returns nullptr
-[[gnu::always_inline]] uint8_t* MemoryPool::firstFreeBlock(uint32_t pid){
-    // Regenerate page details
-    auto end64 = getPageEnd64(pid);
-    auto end256 = getPageEnd256(pid);
-    auto basePtr = getPageBasePtr(pid);
-    auto blockStart = getPageBlockStart(pid);
-    
-    // uint64_t * pbi = (uint64_t*) basePtr;
-    // uint64_t* pbiUpper = ((uint64_t*) (((char*) basePtr) + bitmapSize)) - 1;
-    // for (;pbi <= pbiUpper; pbi++) {
-    //     if (*pbi != i64Mask) {
-    //         uint64_t freeBlocks = *pbi;
-    //         uint64_t offset = ((char *) pbi - basePtr) * 8 + std::countr_one(freeBlocks);
-    //         setAllocatedBit(offset);
-    //         return blockStart + offset*blockSize;
-    //     }
-    // }
-    // for (char* p = (char*) pbi; p < ((char*) basePtr) + bitmapSize; p++) {
-    //     if (*p != i8Mask) {
-    //         uint8_t freeBlocks = *p;
-    //         uint64_t offset = ((char *) p - basePtr) * 8 + std::countr_one(freeBlocks);
-    //         setAllocatedBit(offset);
-    //         return blockStart + offset*blockSize;
-    //     }
-    // }
-    // return nullptr;
-
+[[gnu::always_inline]] char* PageData::firstFreeBlock(){
     // These 2 loops follow the same principle as the first one but use smaller granularity
     // Scan 256 bits at once, assumes little endian
     __m256i* start256 = reinterpret_cast<__m256i*>(lastBitmapPos);
@@ -105,7 +81,7 @@ static constexpr uint8_t i8Mask = 0xff;
     // These 2 loops follow the same principle as the first one but use smaller granularity
     uint64_t* start64 = reinterpret_cast<uint64_t*>(end256);
     while(start64 != end64){
-        if (*start64 != i64Mask) {
+        if (*start64 != u64Mask) {
             uint64_t before = *start64;
             uint8_t trones = std::countr_one(before);
             // Update the bitmap
@@ -117,7 +93,7 @@ static constexpr uint8_t i8Mask = 0xff;
     uint8_t* start8 = reinterpret_cast<uint8_t*>(end64);
     // Last few bytes of bitmap
     while(start8 != reinterpret_cast<uint8_t*>(basePtr + bitmapSize)){
-        if (*start8 != i8Mask) {
+        if (*start8 != u8Mask) {
             uint8_t before = *start8;
             // Count trailing ones is first non 0xFF byte
             uint8_t trones = std::countr_one(before);
@@ -132,9 +108,26 @@ static constexpr uint8_t i8Mask = 0xff;
     return nullptr;
 }
 
-void MemoryPool::clearFreeBitmap(uint32_t pid){
-    auto basePtr = getPageBasePtr(pid);
-    auto blockStart = getPageBlockStart(pid);
+[[gnu::always_inline]] void PageData::resetHead() {
+    head = -1;
+    char* obj = blockStart + bitmapSize * 8 * blockSize;
+    for(int16_t i = bitmapSize*8; i >= 0; i--){
+        if(!testAllocatedBit(i)) {
+            *reinterpret_cast<int64_t *>(obj) = head;
+            head = i;
+        }
+        obj-=blockSize;
+    }
+}
+[[gnu::always_inline]] char* PageData::alloc(){
+    if(head == -1) return nullptr;
+    int16_t * obj = reinterpret_cast<int16_t *>(blockStart + head * blockSize);
+    setAllocatedBit(head);
+    head = *obj;
+    return reinterpret_cast<char *>(obj);
+}
+
+void PageData::clearFreeBitmap(){
     void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;
     asm volatile (
             "rep stosq"
@@ -144,37 +137,25 @@ void MemoryPool::clearFreeBitmap(uint32_t pid){
             );
 }
 
-void MemoryPool::setAllocatedBit(uint32_t pid, uint32_t offset){
-    auto basePtr = getPageBasePtr(pid);
+[[gnu::always_inline]] void PageData::setAllocatedBit(uint64_t offset){
     // Assumes little endian
     uint64_t byteOffset = offset >> 3;
     uint8_t bitMask = 1 << (offset & 7);
     *(basePtr+byteOffset) |= bitMask;
 }
 
-bool MemoryPool::testAllocatedBit(uint32_t pid, uint32_t offset){
-    auto basePtr = getPageBasePtr(pid);
+[[gnu::always_inline]] bool PageData::testAllocatedBit(uint64_t offset){
     // Assumes little endian
-    uint64_t byteOffset = offset >> 3;
-    uint8_t bitMask = 1 << (offset & 7);
+    uint64_t byteOffset = offset / 8;
+    uint8_t bitMask = 1 << (offset%8);
     return (*(basePtr+byteOffset)) & bitMask;
 }
 
 MemoryPool::MemoryPool(uint64_t pageSize, uint64_t blockSize) : pageSize(pageSize), blockSize(blockSize) {
     // Calculates number of objects that can be allocated in a single page such that the page can still fit the bitmap info
-    blocksPerPage = ((pageSize << 3) - 64) / (1 + (blockSize << 3));
-    // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
-    // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
-    bitmapSize = blocksPerPage >> 3;
-    firstNonFullPage = 0;
-    blockStartOffset = bitmapSize + (8 - (bitmapSize & 7));
-    pageCnt = 0;
-    #ifdef _WIN32
-        mpStart = reinterpret_cast<uint8_t*>(VirtualAlloc(nullptr, static_cast<int64_t>(pageSize) * MAX_PAGE_CNT, MEM_RESERVE, PAGE_READWRITE));
-    #else
-        mpStart = reinterpret_cast<uint8_t*>(mmap(NULL, static_cast<int64_t>(pageSize) * MAX_PAGE_CNT, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
-    #endif
-    lastBitmapPos = mpStart;
+    blocksPerPage = (8*pageSize - 64) / (1+8*blockSize);
+    blockStartOffset = blocksPerPage/8 + (8 - (blocksPerPage/8)%8);
+    firstNonFullPage = nullptr;
     allocNewPage();
 }
 
@@ -183,61 +164,77 @@ MemoryPool::MemoryPool() {
     blockSize = 0;
     blocksPerPage = 0;
     firstNonFullPage = 0;
-    pageCnt = 0;
+    blockStartOffset = 0;
 }
 
-void* MemoryPool::alloc(uint32_t& pid) {
+void* MemoryPool::alloc() {
     void* ptr = nullptr;
-    while(!(ptr = firstFreeBlock(firstNonFullPage))){
-        firstNonFullPage++;
-        lastBitmapPos = getPageBasePtr(firstNonFullPage);
-        if(firstNonFullPage == pageCnt){
+    while(!(ptr = firstNonFullPage->alloc())){
+        if(firstNonFullPage == &pages.back()){
             allocNewPage();
-        }
+        }else firstNonFullPage++;
     }
-    pid = firstNonFullPage;
     return ptr;
 }
 
 bool MemoryPool::allocedByThisPool(uintptr_t ptr){
-    // #ifdef GC_DEBUG
-    // // for(PageData& page : pages){
-    // //     int64_t diff = (char*)ptr - (page.blockStart);
-    // //     if(diff >= 0 && diff < pageSize-page.bitmapSize && diff%blockSize == 0 && page.testAllocatedBit(diff)) {
-    // //         return true;
-    // //     }
-    // // }
-    // return false;
-    // #else
-    // return std::any_of(std::execution::par_unseq, pages.begin(), pages.end(), [this, ptr](PageData& page){
-    //     int64_t diff = (char*)ptr - (page.blockStart);
-    //     return diff >= 0 && diff < pageSize-page.bitmapSize && diff%blockSize == 0 && page.testAllocatedBit(diff);
-    // });
-    int64_t pid = (ptr - reinterpret_cast<uintptr_t>(mpStart)) / pageSize; // raw dog?
-    if (pid < 0 || pid >= pageCnt) { return false; }
-    int64_t bid = (ptr - reinterpret_cast<uintptr_t>(getPageBlockStart(pid))) / blockSize;
-    if (bid < 0 || bid >= blocksPerPage || reinterpret_cast<uintptr_t>(getPageBlockStart(pid) + bid * blockSize) != ptr) { return false; }
-    return testAllocatedBit(pid, bid);
-    // #endif
+    #ifdef GC_DEBUG
+    for(PageData& page : pages){
+        int64_t diff = (char*)ptr - (page.blockStart);
+        if(diff >= 0 && diff < pageSize-page.bitmapSize && diff%blockSize == 0 && page.testAllocatedBit(diff/blockSize)) {
+            return true;
+        }
+    }
+    return false;
+    #else
+    return std::any_of(std::execution::par_unseq, pages.begin(), pages.end(), [this, ptr](PageData& page){
+            int64_t diff = (char *) ptr - (page.blockStart);
+            return diff >= 0 && diff < pageSize-page.bitmapSize && diff % blockSize == 0 && page.testAllocatedBit(diff/blockSize);
+    });
+    #endif
 }
-void MemoryPool::clearFreeBitmaps(){
-    for(uint32_t pid = 0; pid < pageCnt; pid++) { clearFreeBitmap(pid); }
-    lastBitmapPos = getPageBasePtr(0);
-    firstNonFullPage = 0;
+void MemoryPool::clearFreeBitmap(){
+    for(PageData& page : pages) page.clearFreeBitmap();
+    #ifdef GC_DEBUG
+    if(pages.size() > 1) std::cout<<"N of cleared pages: "<<pages.size()<<"\n";
+    #endif
+    firstNonFullPage = &pages.front();
 }
 
 // Page idx is stored in objects at ptr, but memory pools treat all pointers as being opaque so we pass this from outside
-void MemoryPool::markBlock(uint32_t pid, uintptr_t ptr){
+void MemoryPool::markBlock(uintptr_t ptr){
+    uint8_t* basePtr = reinterpret_cast<uint8_t *>(ptr & (u64Mask << 16));
     // Byte offset to start of blocks, divided by block size it gives the bit position
-    uint64_t offset = reinterpret_cast<uint8_t*>(ptr) - getPageBlockStart(pid);
+    uint64_t offset = (uint8_t*)ptr - (basePtr + blockStartOffset);
     assert(offset%blockSize == 0 && "Offset isn't multiple of block size?");
-    setAllocatedBit(pid, offset / blockSize);
+    offset /= blockSize;
+    uint64_t byteOffset = offset / 8;
+    uint8_t bitMask = 1 << (offset%8);
+    *(basePtr+byteOffset) |= bitMask;
 }
 
-bool MemoryPool::isFree(uint32_t pid, uintptr_t ptr){
-    uint64_t offset = reinterpret_cast<uint8_t*>(ptr) - getPageBlockStart(pid);
+bool MemoryPool::isFree( uintptr_t ptr){
+    uint8_t* basePtr = reinterpret_cast<uint8_t *>(ptr & (u64Mask << 16));
+    // Byte offset to start of blocks, divided by block size it gives the bit position
+    uint64_t offset = (uint8_t*)ptr - (basePtr + blockStartOffset);
     assert(offset%blockSize == 0 && "Offset isn't multiple of block size?");
-    return !testAllocatedBit(pid, offset/blockSize);
+    offset /= blockSize;
+    // Assumes little endian
+    uint64_t byteOffset = offset / 8;
+    uint8_t bitMask = 1 << (offset%8);
+    return !((*(basePtr+byteOffset)) & bitMask);
+}
+
+void MemoryPool::resetHead(){
+    #ifdef GC_DEBUG
+    for(int i = 0; i < pages.size(); i++){
+        pages[i].resetHead();
+    }
+    #else
+    std::for_each(std::execution::par_unseq, pages.begin(), pages.end(), [](PageData& page){
+        page.resetHead();
+    });
+    #endif
 }
 
 void MemoryPool::allocNewPage(){
@@ -247,8 +244,12 @@ void MemoryPool::allocNewPage(){
     #else
         mprotect(mpStart + static_cast<int64_t>(pageSize) * pageCnt, pageSize, PROT_READ | PROT_WRITE);
     #endif
-    pageCnt++;
-    firstNonFullPage = pageCnt - 1;
+    // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
+    // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
+    pages.emplace_back((char*)page, (char*)page + blocksPerPage/8 + (8 - (blocksPerPage/8)%8), blockSize, blocksPerPage/8);
+    firstNonFullPage = &pages.back();
+    firstNonFullPage->resetHead();
+
 }
 
 // TODO: Make this actually work?

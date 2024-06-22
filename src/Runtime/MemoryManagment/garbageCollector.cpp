@@ -31,7 +31,7 @@ NOINLINE uintptr_t* getStackPointer(){
 static inline void runObjDestructor(object::Obj* obj){
     // Have to do this because we don't have access to virtual destructors,
     // however some objects allocate STL containers that need cleaning up
-    obj->GCdata &= GCDataMask;
+    obj->GCData &= GCDataMask;
     switch(obj->type){
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); return;
         case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); return;
@@ -41,7 +41,10 @@ static inline void runObjDestructor(object::Obj* obj){
         default: return;
     }
 }
-
+#ifdef GC_DEBUG
+static uint64_t numalloc = 0;
+static uint64_t marked = 0;
+#endif
 namespace memory {
 	GarbageCollector* gc= nullptr;
 
@@ -59,9 +62,12 @@ namespace memory {
 	void* GarbageCollector::alloc(const uInt64 size) {
         // No thread is marked as suspended while allocating, even though they have to lock the allocMtx
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
-        if (heapSize < heapSizeLimit && (heapSize+=size) > heapSizeLimit) {
+        if (heapSize <= heapSizeLimit && (heapSize+=size) >= heapSizeLimit) {
             active = 1;
         }
+        #ifdef GC_DEBUG
+        numalloc++;
+        #endif
         byte* block = nullptr;
         int idx = szToIdx(size);
         if(idx == -1){
@@ -73,42 +79,55 @@ namespace memory {
             }
             // Flags that this pointer was malloc-d
             reinterpret_cast<Obj*>(block)->allocType = GCAllocType::MALLOC;
-            reinterpret_cast<Obj*>(block)->GCdata = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
+            reinterpret_cast<Obj*>(block)->GCData = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
             tmpAlloc.push_back(reinterpret_cast<Obj*>(block));
         }else{
-            uint32_t pageIdx;
-            block = reinterpret_cast<byte*>(mempools[idx].alloc(pageIdx));
+            block = reinterpret_cast<byte *>(mempools[idx].alloc());
             Obj* obj = reinterpret_cast<Obj*>(block);
             // Lazy sweeping
-            if(obj->GCdata & shouldDestructFlagMask) runObjDestructor(obj);
+            if(obj->GCData) runObjDestructor(obj);
             obj->allocType = idx;
             // Used to more efficiently set/test bit for objects
-            obj->GCdata = shouldDestructFlagMask | pageIdx;
+            obj->GCData = 1;
         }
 		return block;
 	}
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
 	void GarbageCollector::collect(std::unique_lock<std::mutex>& lk) {
-        //double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        #ifdef GC_DEBUG
+        double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        #endif
         largeObjects.reserve(largeObjects.size() + tmpAlloc.size());
         largeObjects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
-
         heapSize = 0;
+        #ifdef GC_DEBUG
+        std::cout<<"alloced since last gc: "<<numalloc<<"\n";
+        numalloc = 0;
+        marked = 0;
+        #endif
 		markRoots();
-        //double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        //std::cout<<"Root scanning took: "<<d2-d<<"\n";
+        #ifdef GC_DEBUG
+        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Root scanning took: "<<d2-d<<"\n";
+        #endif
         resetMarkFlag();
-        //double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        //std::cout<<"reseting flags took: "<<d3-d2<<"\n";
+        #ifdef GC_DEBUG
+        double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"reseting flags took: "<<d3-d2<<"\n";
+        #endif
 		mark();
-        //double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        //std::cout<<"Tracing took: "<<d4-d3<<"\n";
+        #ifdef GC_DEBUG
+        double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Tracing took: "<<d4-d3<<"\n";
+        #endif
 		sweep();
-        //double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        //std::cout<<"sweeping took: "<<d5-d4<<"\n";
-		if (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
+        #ifdef GC_DEBUG
+        double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"sweeping took: "<<d5-d4<<"\n";
+        #endif
+		while (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
         // Tells all waiting threads that gc cycle is over
         active = 0;
         // This thread is no longer suspended
@@ -121,28 +140,28 @@ namespace memory {
         for(MemoryPool& mempool : mempools){
             mempool.clearFreeBitmaps();
         }
-        for(auto obj : largeObjects) obj->GCdata = 0;
+        for(auto obj : largeObjects) obj->GCData = 0;
     }
     // Returns true if this object was already marked
     static inline bool markIfNotMarked(object::Obj* ptr, MemoryPool* mempools){
-        if(ptr->allocType == GCAllocType::CONSTANT) return true;
+        uint8_t allocType = ptr->allocType & 0x7F;
         if(ptr->allocType == GCAllocType::MALLOC){
-            if (ptr->GCdata == 1) return true;
-            ptr->GCdata = true;
+            if (ptr->GCData == 1) return true;
+            ptr->GCData = true;
         }else{
             // This is mempool allocated
-            if(!mempools[ptr->allocType].isFree(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr))) return true;
-            mempools[ptr->allocType].markBlock(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr));
+            if(!mempools[ptr->allocType].isFree(reinterpret_cast<uintptr_t>(ptr))) return true;
+            mempools[ptr->allocType].markBlock(reinterpret_cast<uintptr_t>(ptr));
         }
         return false;
     }
     static inline bool isMarked(object::Obj* ptr, MemoryPool* mempools){
         if(ptr->allocType == GCAllocType::CONSTANT) return true;
         if(ptr->allocType == GCAllocType::MALLOC){
-            if (ptr->GCdata == 1) return true;
+            if (ptr->GCData == 1) return true;
         }else{
             // This is mempool allocated
-            if(!mempools[ptr->allocType].isFree(ptr->GCdata & GCDataMask, reinterpret_cast<uintptr_t>(ptr))) return true;
+            if(!mempools[ptr->allocType].isFree(reinterpret_cast<uintptr_t>(ptr))) return true;
         }
         return false;
     }
@@ -153,6 +172,9 @@ namespace memory {
 			object::Obj* ptr = markStack.back();
 			markStack.pop_back();
             if(markIfNotMarked(ptr, mempools.data())) continue;
+            #ifdef GC_DEBUG
+            marked++;
+            #endif
             heapSize += ptr->getSize();
             switch(ptr->type){
                 case +ObjType::ARRAY:{
@@ -201,6 +223,9 @@ namespace memory {
                 }
             }
 		}
+        #ifdef GC_DEBUG
+        std::cout<<"Objects marked: "<<marked<<"\n";
+        #endif
 	}
 
 	void GarbageCollector::markRoots() {
@@ -228,7 +253,7 @@ namespace memory {
         // Mark all globals
         for(int i = 0; i < globalRoots.size(); i++) {
             if(isObj(*globalRoots[i])) {
-                markObj(decodeObj(*globalRoots[i]));
+                markStack.push_back(decodeObj(*globalRoots[i]));
             }
         }
 	}
@@ -253,10 +278,14 @@ namespace memory {
     }
 
 	void GarbageCollector::sweep() {
+        for(auto it = interned.begin(); it != interned.end();){
+            if(!isMarked(it->second, mempools.data())) it = interned.erase(it);
+            it++;
+        }
 		// Sweeps large objects, small objects are swept lazily
         for(auto it = largeObjects.cbegin(); it !=  largeObjects.cend();){
             object::Obj* obj = *it;
-            if (obj->GCdata == 0) {
+            if (obj->GCData == 0) {
                 runObjDestructor(obj);
                 delete reinterpret_cast<byte*>(obj);
                 it = largeObjects.erase(it);
@@ -264,14 +293,20 @@ namespace memory {
             }
             it++;
         }
-        for(auto it = interned.begin(); it != interned.end();){
-            if(!isMarked(it->second, mempools.data())) it = interned.erase(it);
-            it++;
+
+        #ifdef GC_DEBUG
+        for(int i = 0; i < mempools.size(); i++){
+            mempools[i].resetHead();
         }
+        #else
+        std::for_each(std::execution::par_unseq, mempools.begin(), mempools.end(), [](MemoryPool& mempool){
+            mempool.resetHead();
+        });
+        #endif
 	}
 
-	void GarbageCollector::markObj(object::Obj* const object) {
-		markStack.push_back(object);
+    [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj* const ptr) {
+        markStack.push_back(ptr);
 	}
 
     void GarbageCollector::addStackStart(const std::thread::id thread, uintptr_t* stackStart){

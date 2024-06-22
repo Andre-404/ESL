@@ -510,12 +510,12 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     auto instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
     auto memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt32(instSize)});
     // This flag is used by the gc and needs to be updated since the template will not(and should not) have the same gc flag
-    auto flagPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(1)});
-    auto flag = builder.CreateLoad(namedTypes["Obj"], flagPtr);
+    auto flagPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0),  builder.getInt32(2)});
+    auto flag = builder.CreateLoad(builder.getInt8Ty(), flagPtr);
     // Arbitrary GC that
-    auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(2)});
-    auto gcdata = builder.CreateLoad(namedTypes["Obj"], gcdataPtr);
-    builder.CreateMemCpyInline(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
+    auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(3)});
+    auto gcdata = builder.CreateLoad(builder.getInt8Ty(), gcdataPtr);
+    builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
     // Restore flag
     builder.CreateStore(flag, flagPtr);
     builder.CreateStore(gcdata, gcdataPtr);
@@ -2208,13 +2208,13 @@ llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
 
     auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
-    gv->setAlignment(llvm::Align(8));
     return gv;
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
     // 128 is a magic constant that tells the gc that this is a constant object
-    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{builder.getInt8(type),
-                                         builder.getInt8(128),builder.getInt32(0)});
+    auto padding = llvm::ConstantArray::get(llvm::ArrayType::get(builder.getInt8Ty(), 2), {builder.getInt8(0), builder.getInt8(0)});
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{padding, builder.getInt8(type),
+                                         builder.getInt8(128),builder.getInt8(0)});
 }
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){
