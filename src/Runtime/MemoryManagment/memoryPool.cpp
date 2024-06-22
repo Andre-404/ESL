@@ -13,41 +13,25 @@
 
 using namespace memory;
 
-// PageData::PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize)
-// : basePtr(basePtr), blockStart(blockStart),blockSize(blockSize), bitmapSize(bitmapSize) {
-//     end64 = reinterpret_cast<uint64_t *>(basePtr) + bitmapSize / 8;
-//     end256 = reinterpret_cast<__m256i *>(basePtr) + bitmapSize / 32;
-//     lastBitmapPos = reinterpret_cast<uint8_t *>(basePtr);
-// }
-// PageData::PageData(){
-//     basePtr = nullptr;
-//     blockStart = nullptr;
-//     end64 = nullptr;
-//     blockSize = 0;
-//     bitmapSize = 0;
-//     lastBitmapPos = nullptr;
-// }
+PageData::PageData(char *basePtr, char* blockStart, uint64_t blockSize, int bitmapSize)
+: basePtr(basePtr), blockStart(blockStart),blockSize(blockSize), bitmapSize(bitmapSize) {
+    end64 = reinterpret_cast<uint64_t *>(basePtr) + bitmapSize / 8;
+    end256 = reinterpret_cast<__m256i *>(basePtr) + bitmapSize / 32;
+    lastBitmapPos = reinterpret_cast<uint8_t *>(basePtr);
+}
+PageData::PageData(){
+    basePtr = nullptr;
+    blockStart = nullptr;
+    end64 = nullptr;
+    blockSize = 0;
+    bitmapSize = 0;
+    lastBitmapPos = nullptr;
+}
 
 static constexpr uint64_t u64Mask = 0xffffffffffffffff;
 static constexpr uint16_t u16Mask = 0xffff;
 static constexpr uint8_t u8Mask = 0xff;
-
-[[gnu::always_inline]] uint8_t* MemoryPool::getPageBasePtr(uint32_t pid){
-    return mpStart + pageSize * pid;
-}
-
-[[gnu::always_inline]] uint8_t* MemoryPool::getPageBlockStart(uint32_t pid){
-    return getPageBasePtr(pid) + blockStartOffset;
-}
-
-[[gnu::always_inline]] uint64_t* MemoryPool::getPageEnd64(uint32_t pid){
-    return reinterpret_cast<uint64_t*>(getPageBasePtr(pid)) + (bitmapSize >> 3);
-}
-
-[[gnu::always_inline]] __m256i* MemoryPool::getPageEnd256(uint32_t pid){
-    return reinterpret_cast<__m256i*>(getPageBasePtr(pid)) + (bitmapSize >> 5);
-}
-
+/*
 // Finds first free block or returns nullptr
 [[gnu::always_inline]] char* PageData::firstFreeBlock(){
     // These 2 loops follow the same principle as the first one but use smaller granularity
@@ -106,7 +90,7 @@ static constexpr uint8_t u8Mask = 0xff;
 
     // Returns 0 upon failure
     return nullptr;
-}
+}*/
 
 [[gnu::always_inline]] void PageData::resetHead() {
     head = -1;
@@ -240,9 +224,9 @@ void MemoryPool::resetHead(){
 void MemoryPool::allocNewPage(){
     // VirtualAlloc and mmap return zeroed memory
     #ifdef _WIN32
-        VirtualAlloc(mpStart + pageSize * pageCnt, pageSize, MEM_COMMIT, PAGE_READWRITE);
+        void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT, PAGE_READWRITE);
     #else
-        mprotect(mpStart + static_cast<int64_t>(pageSize) * pageCnt, pageSize, PROT_READ | PROT_WRITE);
+        void* page = mprotect(NULL, pageSize, PROT_READ | PROT_WRITE);
     #endif
     // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
@@ -254,6 +238,11 @@ void MemoryPool::allocNewPage(){
 
 // TODO: Make this actually work?
 void MemoryPool::freePage(uint32_t pid) {
-    assert(0 <= pid && pid < pageCnt);
-    pageCnt--;
+    PageData& data = pages[pid];
+    #ifdef _WIN32
+    VirtualFree((void*)data.basePtr, 0, MEM_RELEASE);
+    #else
+    munmap((void*)data.basePtr, pageSize);
+    #endif
+    pages.erase(pages.begin() + pid);
 }

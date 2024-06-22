@@ -138,7 +138,7 @@ namespace memory {
 
     void GarbageCollector::resetMarkFlag(){
         for(MemoryPool& mempool : mempools){
-            mempool.clearFreeBitmaps();
+            mempool.clearFreeBitmap();
         }
         for(auto obj : largeObjects) obj->GCData = 0;
     }
