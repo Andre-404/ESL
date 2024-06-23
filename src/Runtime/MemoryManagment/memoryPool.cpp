@@ -112,6 +112,13 @@ void MemoryPool::allocNewPage(){
     #else
         void *page;
         posix_memalign(&page, PAGE_SIZE, PAGE_SIZE);
+        void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;
+        asm volatile (
+                "rep stosq"
+                : "=D"(junkVar1), "=c"(junkVar2), "=a"(junkVar3) // Have to use junk outputs to let gcc know there registers are clobbered
+                : "D"(page), "c"(PAGE_SIZE/8), "a"(0)
+                : "memory"// Clobbered registers
+                );
     #endif
     // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
