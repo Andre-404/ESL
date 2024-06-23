@@ -84,7 +84,7 @@ namespace memory {
         // Start and end of stack pointer for every thread that's currently running
         ankerl::unordered_dense::map<std::thread::id, StackPtrEntry> threadsStack;
 
-        void resetMarkFlag();
+        void resetMemPools();
 		void mark();
 		void markRoots();
         bool isAllocedByMempools(object::Obj* ptr);

@@ -35,9 +35,7 @@ public:
   MemoryPool();
   void *alloc();
   bool allocedByThisPool(uintptr_t ptr);
-  void clearFreeBitmap();
-  void markBlock(uintptr_t ptr);
-  bool isFree(uintptr_t ptr);
+  void resetPages();
   void resetHead();
 
 private:

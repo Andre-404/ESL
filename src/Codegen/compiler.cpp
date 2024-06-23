@@ -104,7 +104,9 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
                                                                   ConstCastToESLVal(builder.getInt64(MASK_SIGNATURE_NIL)),varName);
             gvar->setAlignment(llvm::Align::Of<Value>());
             // Globals aren't on the stack, so they need to be marked for GC collection separately
-            if(decl->varType == typedAST::VarType::GLOBAL) builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
+            if(decl->varType == typedAST::VarType::GLOBAL) {
+                builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
+            }
             variables.insert_or_assign(decl->uuid, gvar);
             break;
         }
@@ -515,10 +517,14 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     // Arbitrary GC that
     auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(3)});
     auto gcdata = builder.CreateLoad(builder.getInt8Ty(), gcdataPtr);
+
+    auto infoPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(0)});
+    auto info = builder.CreateLoad(builder.getInt16Ty(), infoPtr);
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
     // Restore flag
     builder.CreateStore(flag, flagPtr);
     builder.CreateStore(gcdata, gcdataPtr);
+    builder.CreateStore(info, infoPtr);
     // Fixes up pointers
     auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
     // Field arr ptr
