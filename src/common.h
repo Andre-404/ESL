@@ -43,4 +43,4 @@ typedef uint64_t Value;
 #define DEBUG_MODE
 // #define COMPILER_USE_LONG_INSTRUCTION
 // #define DEBUG_TRACE_EXECUTION
-/* #define GC_DEBUG */
+//#define GC_DEBUG

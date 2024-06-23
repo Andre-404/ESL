@@ -93,34 +93,34 @@ namespace memory {
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
     void GarbageCollector::collect(std::unique_lock<std::mutex> &lk) {
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-#endif
+        #endif
         largeObjects.reserve(largeObjects.size() + tmpAlloc.size());
         largeObjects.insert(tmpAlloc.begin(), tmpAlloc.end());
         tmpAlloc.clear();
         heapSize = 0;
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         std::cout<<"alloced since last gc: "<<numalloc<<"\n";
         numalloc = 0;
         marked = 0;
-#endif
+        #endif
         markRoots();
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::cout<<"Root scanning took: "<<d2-d<<"\n";
-#endif
+        #endif
         resetMemPools();
         mark();
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::cout<<"Tracing took: "<<d4-d2<<"\n";
-#endif
+        #endif
         sweep();
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::cout<<"sweeping took: "<<d5-d4<<"\n";
-#endif
+        #endif
         while (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
         // Tells all waiting threads that gc cycle is over
         active = 0;
@@ -169,9 +169,9 @@ namespace memory {
             object::Obj *ptr = markStack.back();
             markStack.pop_back();
             if (markIfNotMarked(ptr, mempools.data())) continue;
-#ifdef GC_DEBUG
+            #ifdef GC_DEBUG
             marked++;
-#endif
+            #endif
             heapSize += ptr->getSize();
             switch (ptr->type) {
                 case +ObjType::ARRAY: {
@@ -220,9 +220,9 @@ namespace memory {
                 }
             }
         }
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         std::cout<<"Objects marked: "<<marked<<"\n";
-#endif
+        #endif
     }
 
     void GarbageCollector::markRoots() {
@@ -258,12 +258,12 @@ namespace memory {
     // TODO: can this be optimized? Running through every page of every mempool seems expensive?
     // Should work for now but might be a problem when the heap gets into GB teritory
     bool GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         for(MemoryPool& mempool : mempools){
             if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
         }
         return false;
-#else
+        #else
         /*for(MemoryPool& mempool : mempools){
             if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
         }
@@ -271,7 +271,7 @@ namespace memory {
         return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool &mempool) {
             return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });
-#endif
+        #endif
     }
 
     void GarbageCollector::sweep() {
@@ -292,15 +292,15 @@ namespace memory {
             it++;
         }
 
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         for(int i = 0; i < mempools.size(); i++){
             mempools[i].resetHead();
         }
-#else
+        #else
         std::for_each(std::execution::par_unseq, mempools.begin(), mempools.end(), [](MemoryPool &mempool) {
             mempool.resetHead();
         });
-#endif
+        #endif
     }
 
     [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj *const ptr) {
