@@ -30,8 +30,6 @@ public:
 
 private:
   int blockSize;
-  int blocksPerPage;
-  int blockStartOffset;
   PageData *firstNonFullPage;
   vector<PageData> pages;
   void allocNewPage();

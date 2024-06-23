@@ -32,11 +32,10 @@ static constexpr int16_t blackBlock = -3;
     char* obj = basePtr + (PAGE_SIZE/blockSize)*blockSize - blockSize;
     for(int16_t i = PAGE_SIZE/blockSize-1; i >= 0; i--){
         int16_t* header = reinterpret_cast<int16_t *>(obj);
-        *header = whiteAndAllocatedBlock;
         if(*header != blackBlock) {
             *header = head;
             head = i;
-        }
+        }else *header = whiteAndAllocatedBlock;
         obj-=blockSize;
     }
 }
@@ -50,17 +49,13 @@ static constexpr int16_t blackBlock = -3;
 MemoryPool::MemoryPool(uint64_t blockSize) : blockSize(blockSize) {
   // Calculates number of objects that can be allocated in a single page such
   // that the page can still fit the bitmap info
-  blocksPerPage = (8 * PAGE_SIZE - 64) / (1 + 8 * blockSize);
-  blockStartOffset = blocksPerPage / 8 + (8 - (blocksPerPage / 8) % 8);
   firstNonFullPage = nullptr;
   allocNewPage();
 }
 
 MemoryPool::MemoryPool() {
   blockSize = 0;
-  blocksPerPage = 0;
-  firstNonFullPage = 0;
-  blockStartOffset = 0;
+  firstNonFullPage = nullptr;
 }
 
 void *MemoryPool::alloc() {

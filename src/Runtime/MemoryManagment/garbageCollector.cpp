@@ -64,9 +64,9 @@ namespace memory {
         if (heapSize <= heapSizeLimit && (heapSize += size) >= heapSizeLimit) {
             active = 1;
         }
-#ifdef GC_DEBUG
+        #ifdef GC_DEBUG
         numalloc++;
-#endif
+        #endif
         byte *block = nullptr;
         int idx = szToIdx(size);
         if (idx == -1) {
