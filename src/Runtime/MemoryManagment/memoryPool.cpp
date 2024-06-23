@@ -226,7 +226,7 @@ void MemoryPool::allocNewPage(){
     #ifdef _WIN32
         void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT, PAGE_READWRITE);
     #else
-        void* page = mprotect(NULL, pageSize, PROT_READ | PROT_WRITE);
+        void* page = mmap(NULL, pageSize, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     #endif
     // TODO: right now bitmapSize is not equal to the amount of blocks that can be placed but rather blocksPerPage - blocksPerPage mod 8, fix this
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
