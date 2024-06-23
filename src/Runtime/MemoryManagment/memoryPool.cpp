@@ -98,7 +98,7 @@ trones)*blockSize;
     return nullptr;
 }*/
 
-[[gnu::always_inline]] void PageData::resetHead() {
+[[gnu::always_inline]] inline void PageData::resetHead() {
   head = -1;
   char *obj = blockStart + bitmapSize * 8 * blockSize;
   for (int16_t i = bitmapSize * 8; i >= 0; i--) {
@@ -109,7 +109,7 @@ trones)*blockSize;
     obj -= blockSize;
   }
 }
-[[gnu::always_inline]] char *PageData::alloc() {
+[[gnu::always_inline]] inline char *PageData::alloc() {
   if (head == -1)
     return nullptr;
   int16_t *obj = reinterpret_cast<int16_t *>(blockStart + head * blockSize);
@@ -131,14 +131,14 @@ void PageData::clearFreeBitmap() {
   );
 }
 
-[[gnu::always_inline]] void PageData::setAllocatedBit(uint64_t offset) {
+[[gnu::always_inline]] inline void PageData::setAllocatedBit(uint64_t offset) {
   // Assumes little endian
   uint64_t byteOffset = offset >> 3;
   uint8_t bitMask = 1 << (offset & 7);
   *(basePtr + byteOffset) |= bitMask;
 }
 
-[[gnu::always_inline]] bool PageData::testAllocatedBit(uint64_t offset) {
+[[gnu::always_inline]] inline bool PageData::testAllocatedBit(uint64_t offset) {
   // Assumes little endian
   uint64_t byteOffset = offset / 8;
   uint8_t bitMask = 1 << (offset % 8);
@@ -243,7 +243,8 @@ void MemoryPool::resetHead() {
 void MemoryPool::allocNewPage() {
 // VirtualAlloc and mmap return zeroed memory
 #ifdef _WIN32
-  void *page = VirtualAlloc(nullptr, PAGE_SIZE, MEM_COMMIT, PAGE_READWRITE);
+  void *page = VirtualAlloc(nullptr, PAGE_SIZE, MEM_COMMIT | MEM_RESERVE,
+                            PAGE_READWRITE);
 #else
   void *page;
   posix_memalign(&page, PAGE_SIZE, PAGE_SIZE);
@@ -266,7 +267,7 @@ void MemoryPool::freePage(uint32_t pid) {
 #ifdef _WIN32
   VirtualFree((void *)data.basePtr, 0, MEM_RELEASE);
 #else
-  munmap((void *)data.basePtr, PAGE_SIZE);
+  free((void *)data.basePtr);
 #endif
   pages.erase(pages.begin() + pid);
 }
