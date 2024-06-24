@@ -352,7 +352,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         builder.SetInsertPoint(checkTypeBB);
         auto castPtr = builder.CreateCall(module->getFunction("decodeObj"), arg);
-        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
+        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(3)};
         auto ptr = builder.CreateInBoundsGEP(types["Obj"], castPtr, idxList);
         auto type = builder.CreateLoad(builder.getInt8Ty(), ptr);
         builder.CreateRet(builder.CreateICmpEQ(type, objTy));

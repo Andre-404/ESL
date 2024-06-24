@@ -511,20 +511,12 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     // benefit of this is the template already has all the fields nulled, so we don't have to do this at every instantiation
     auto instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
     auto memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt32(instSize)});
-    // This flag is used by the gc and needs to be updated since the template will not(and should not) have the same gc flag
-    auto flagPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0),  builder.getInt32(2)});
-    auto flag = builder.CreateLoad(builder.getInt8Ty(), flagPtr);
-    // Arbitrary GC that
-    auto gcdataPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(3)});
-    auto gcdata = builder.CreateLoad(builder.getInt8Ty(), gcdataPtr);
 
-    auto infoPtr = builder.CreateInBoundsGEP(namedTypes["Obj"], memptr, {builder.getInt32(0), builder.getInt32(0)});
-    auto info = builder.CreateLoad(builder.getInt16Ty(), infoPtr);
+    // All of the gc info about an object is stored in the first 32 bits of the object
+    auto objInfo = builder.CreateLoad(builder.getInt32Ty(), memptr);
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
     // Restore flag
-    builder.CreateStore(flag, flagPtr);
-    builder.CreateStore(gcdata, gcdataPtr);
-    builder.CreateStore(info, infoPtr);
+    builder.CreateStore(objInfo, memptr);
     // Fixes up pointers
     auto inst = builder.CreateBitCast(memptr, namedTypes["ObjInstancePtr"]);
     // Field arr ptr
@@ -2218,9 +2210,9 @@ llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
     // 128 is a magic constant that tells the gc that this is a constant object
-    auto padding = llvm::ConstantArray::get(llvm::ArrayType::get(builder.getInt8Ty(), 2), {builder.getInt8(0), builder.getInt8(0)});
-    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{padding, builder.getInt8(type),
-                                         builder.getInt8(128),builder.getInt8(0)});
+    auto padding = llvm::ConstantArray::get(llvm::ArrayType::get(builder.getInt8Ty(), 2),{builder.getInt8(0), builder.getInt8(0)});
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{padding, builder.getInt8(128),
+                                                                                   builder.getInt8(0), builder.getInt8(type)});
 }
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){

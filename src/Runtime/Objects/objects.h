@@ -28,10 +28,10 @@ namespace object {
     public:
         // Used by GC
         byte padding[2];
-        byte type;
         byte allocType;
         // Arbitrary GC data that depends on allocType
         byte GCData;
+        byte type;
 
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
