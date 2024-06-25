@@ -69,7 +69,7 @@ namespace memory {
         std::condition_variable STWcv;
         std::mutex pauseMtx;
 
-        uInt64 heapSize;
+        std::atomic<uint64_t> heapSize;
         std::unordered_map<std::string_view, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;

@@ -27,15 +27,14 @@ static constexpr uint8_t u8Mask = 0xff;
 static constexpr int16_t whiteAndAllocatedBlock = -2;
 static constexpr int16_t blackBlock = -3;
 
-[[gnu::always_inline]] void PageData::resetHead() {
+[[gnu::always_inline, gnu::hot]] void PageData::resetHead() {
     head = -1;
     char* obj = basePtr + (PAGE_SIZE/blockSize)*blockSize - blockSize;
     for(int16_t i = PAGE_SIZE/blockSize-1; i >= 0; i--){
         int16_t* header = reinterpret_cast<int16_t *>(obj);
-        if(*header != blackBlock) {
-            *header = head;
-            head = i;
-        }else *header = whiteAndAllocatedBlock;
+        bool isBlackObj = *header == blackBlock;
+        *header = isBlackObj ? whiteAndAllocatedBlock : head;
+        head = isBlackObj ? head : i;
         obj-=blockSize;
     }
 }
@@ -58,7 +57,7 @@ MemoryPool::MemoryPool() {
   firstNonFullPage = nullptr;
 }
 
-void *MemoryPool::alloc() {
+[[gnu::hot]] void *MemoryPool::alloc() {
   void *ptr = nullptr;
   while (!(ptr = firstNonFullPage->alloc())) {
     if (firstNonFullPage == &pages.back()) {
@@ -106,10 +105,11 @@ void MemoryPool::resetHead() {
 }
 
 void MemoryPool::allocNewPage(){
-    // VirtualAlloc and mmap return zeroed memory
+    // VirtualAlloc returns zeroed memory
     #ifdef _WIN32
         void* page = VirtualAlloc(nullptr, PAGE_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     #else
+        // posix_memalign can return non zeroed memory so we have to zero it first
         void *page;
         posix_memalign(&page, PAGE_SIZE, PAGE_SIZE);
         void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;

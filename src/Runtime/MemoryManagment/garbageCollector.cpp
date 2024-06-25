@@ -58,12 +58,14 @@ namespace memory {
         threadsSuspended = 0;
     }
 
-    void *GarbageCollector::alloc(const uInt64 size) {
+    [[gnu::hot]] void *GarbageCollector::alloc(const uInt64 size) {
         // No thread is marked as suspended while allocating, even though they have to lock the allocMtx
         // Every thread that enters this function is guaranteed to exit it or to crash the whole program
-        if (heapSize <= heapSizeLimit && (heapSize += size) >= heapSizeLimit) {
+        uint64_t tmpHeapSize = heapSize.load(std::memory_order_relaxed);
+        if (tmpHeapSize <= heapSizeLimit && (tmpHeapSize += size) >= heapSizeLimit) {
             active = 1;
         }
+        heapSize.store(tmpHeapSize, std::memory_order_relaxed);
         #ifdef GC_DEBUG
         numalloc++;
         #endif

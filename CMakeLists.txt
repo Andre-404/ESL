@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(ESL)
 
+# Hardcoded llvm paths
 if(WIN32)
     set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
     set(CMAKE_CXX_FLAGS "-march=native")
