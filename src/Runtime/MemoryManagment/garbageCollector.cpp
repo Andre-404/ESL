@@ -107,16 +107,20 @@ namespace memory {
         numalloc = 0;
         marked = 0;
         #endif
-        markRoots();
+        resetMemPools();
         #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Root scanning took: "<<d2-d<<"\n";
+        std::cout<<"Reseting pools took: "<<d2-d<<"\n";
         #endif
-        resetMemPools();
+        markRoots();
+        #ifdef GC_DEBUG
+        double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Root scanning took: "<<d3-d2<<"\n";
+        #endif
         mark();
         #ifdef GC_DEBUG
         double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Tracing took: "<<d4-d2<<"\n";
+        std::cout<<"Tracing took: "<<d4-d3<<"\n";
         #endif
         sweep();
         #ifdef GC_DEBUG
@@ -266,10 +270,6 @@ namespace memory {
         }
         return false;
         #else
-        /*for(MemoryPool& mempool : mempools){
-            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
-        }
-        return false;*/
         return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool &mempool) {
             return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });
@@ -293,16 +293,6 @@ namespace memory {
             obj->GCData = 0;
             it++;
         }
-
-        #ifdef GC_DEBUG
-        for(int i = 0; i < mempools.size(); i++){
-            mempools[i].resetHead();
-        }
-        #else
-        std::for_each(std::execution::par_unseq, mempools.begin(), mempools.end(), [](MemoryPool &mempool) {
-            mempool.resetHead();
-        });
-        #endif
     }
 
     [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj *const ptr) {

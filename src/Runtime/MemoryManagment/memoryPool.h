@@ -12,11 +12,12 @@ struct PageData {
   int blockSize;
   char *basePtr;
   int16_t head;
+  int16_t numBlocks;
 
   PageData(char *basePtr, uint64_t blockSize);
   PageData();
 
-  void resetHead();
+  void resetPage();
   char *alloc();
 };
 class MemoryPool {
@@ -26,16 +27,12 @@ public:
   void *alloc();
   bool allocedByThisPool(uintptr_t ptr);
   void resetPages();
-  void resetHead();
 
 private:
   int blockSize;
-  PageData *firstNonFullPage;
+  PageData* firstNonFullPage;
   vector<PageData> pages;
   void allocNewPage();
   void freePage(uint32_t pid);
-
-  uint8_t *firstFreeBlock(uint32_t pid);
-  void clearFreeBitmap(uint32_t pid);
 };
 } // namespace memory

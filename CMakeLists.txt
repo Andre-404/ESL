@@ -28,6 +28,8 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/nativeFunctionsExports.h
         src/Runtime/MemoryManagment/memoryPool.h
         src/Runtime/MemoryManagment/memoryPool.cpp
+        src/Runtime/MemoryManagment/threadArena.cpp
+        src/Runtime/MemoryManagment/threadArena.h
 )
 
 #execute_process(COMMAND llvm-config)

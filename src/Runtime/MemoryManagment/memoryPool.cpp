@@ -15,10 +15,14 @@ using namespace memory;
 
 PageData::PageData(char *basePtr, uint64_t blockSize)
     : basePtr(basePtr), blockSize(blockSize){
+    numBlocks = (PAGE_SIZE/blockSize);
+    head = 0;
 }
 PageData::PageData() {
   basePtr = nullptr;
   blockSize = 0;
+  numBlocks = 0;
+  head = 0;
 }
 
 static constexpr uint64_t u64Mask = 0xffffffffffffffff;
@@ -27,23 +31,31 @@ static constexpr uint8_t u8Mask = 0xff;
 static constexpr int16_t whiteAndAllocatedBlock = -2;
 static constexpr int16_t blackBlock = -3;
 
-[[gnu::always_inline, gnu::hot]] inline void PageData::resetHead() {
-    head = -1;
-    char* obj = basePtr + (PAGE_SIZE/blockSize)*blockSize - blockSize;
-    for(int16_t i = PAGE_SIZE/blockSize-1; i >= 0; i--){
-        int16_t* header = reinterpret_cast<int16_t *>(obj);
-        bool isBlackObj = *header == blackBlock;
-        *header = isBlackObj ? whiteAndAllocatedBlock : head;
-        head = isBlackObj ? head : i;
-        obj-=blockSize;
+[[gnu::always_inline, gnu::hot]] inline char* PageData::alloc(){
+    if(head == numBlocks) return nullptr;
+    // Go until you find and non-black block, only black blocks are not free after a gc
+    int16_t* obj = reinterpret_cast<int16_t *>(basePtr + head * blockSize);
+    while(head < numBlocks && *obj == blackBlock){
+        // If we find a black block reset its marked flag
+        *obj = whiteAndAllocatedBlock;
+        head++;
+        obj = reinterpret_cast<int16_t *>((char *) (obj) + blockSize);
     }
-}
-[[gnu::always_inline]] inline char* PageData::alloc(){
-    if(head == -1) return nullptr;
-    int16_t * obj = reinterpret_cast<int16_t *>(basePtr + head * blockSize);
-    head = *obj;
+    // If the loop exited because every block was taken, bail out
+    if(head == numBlocks) return nullptr;
     *obj = whiteAndAllocatedBlock;
+    head++;
     return reinterpret_cast<char *>(obj);
+}
+// Has to be run BEFORE main GC loop to finish the page resetting from previous GC invocation
+[[gnu::always_inline, gnu::hot]] void PageData::resetPage(){
+    int16_t* obj = reinterpret_cast<int16_t *>(basePtr);
+    int16_t* end = reinterpret_cast<int16_t *>(basePtr + numBlocks*blockSize);
+    while(obj != end){
+        if(*obj == blackBlock) *obj = whiteAndAllocatedBlock;
+        obj = reinterpret_cast<int16_t *>((char *) (obj) + blockSize);
+    }
+    head = 0;
 }
 MemoryPool::MemoryPool(uint64_t blockSize) : blockSize(blockSize) {
   // Calculates number of objects that can be allocated in a single page such
@@ -89,19 +101,30 @@ bool MemoryPool::allocedByThisPool(uintptr_t ptr){
 void MemoryPool::resetPages(){
     #ifdef GC_DEBUG
     if(pages.size() > 1) std::cout<<"N of cleared pages: "<<pages.size()<<"\n";
+    PageData* pg = &pages.front();
+    // Cheap reset
+    while(pg != firstNonFullPage){
+        pg->head = 0;
+        pg++;
+    }
+    // Expensive reset
+    while(pg <= &pages.back()){
+        pg->resetPage();
+        pg++;
+    }
+    #else
+    PageData* pg = &pages.front();
+    // Cheap reset
+    while(pg != firstNonFullPage){
+        pg->head = 0;
+        pg++;
+    }
+    // Expensive resets are done using multithreading
+    std::for_each(std::execution::par_unseq, pg, &pages.back()+1, [](PageData& page){
+        page.resetPage();
+    });
     #endif
     firstNonFullPage = &pages.front();
-}
-
-void MemoryPool::resetHead() {
-#ifdef GC_DEBUG
-  for (int i = 0; i < pages.size(); i++) {
-    pages[i].resetHead();
-  }
-#else
-  std::for_each(std::execution::par_unseq, pages.begin(), pages.end(),
-                [](PageData &page) { page.resetHead(); });
-#endif
 }
 
 void MemoryPool::allocNewPage(){
@@ -124,7 +147,6 @@ void MemoryPool::allocNewPage(){
     // There might be some unused bytes before block start, we do this to have 8 byte alignment for blocks
     pages.emplace_back((char*)page, blockSize);
     firstNonFullPage = &pages.back();
-    firstNonFullPage->resetHead();
 }
 
 // TODO: Make this actually work?
