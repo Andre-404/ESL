@@ -27,7 +27,7 @@ static constexpr uint8_t u8Mask = 0xff;
 static constexpr int16_t whiteAndAllocatedBlock = -2;
 static constexpr int16_t blackBlock = -3;
 
-[[gnu::always_inline, gnu::hot]] void PageData::resetHead() {
+[[gnu::always_inline, gnu::hot]] inline void PageData::resetHead() {
     head = -1;
     char* obj = basePtr + (PAGE_SIZE/blockSize)*blockSize - blockSize;
     for(int16_t i = PAGE_SIZE/blockSize-1; i >= 0; i--){
@@ -38,7 +38,7 @@ static constexpr int16_t blackBlock = -3;
         obj-=blockSize;
     }
 }
-[[gnu::always_inline]] char* PageData::alloc(){
+[[gnu::always_inline]] inline char* PageData::alloc(){
     if(head == -1) return nullptr;
     int16_t * obj = reinterpret_cast<int16_t *>(basePtr + head * blockSize);
     head = *obj;

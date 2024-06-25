@@ -110,6 +110,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             variables.insert_or_assign(decl->uuid, gvar);
             break;
         }
+        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
 
     return nullptr; // Stmts return nullptr on codegen
@@ -186,7 +187,8 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
             val = builder.CreateFDiv(tmp1, tmp2, "floordivtmp");
             break;
         }
-        case ArithmeticOp::ADD: assert(false && "Unreachable");
+        case ArithmeticOp::ADD:
+        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
 
     if(!isFloatingPointOp(expr->opType)) val = builder.CreateSIToFP(val, builder.getDoubleTy());
@@ -221,7 +223,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
         case ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "oletmp"); break;
         case ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogttmp"); break;
         case ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "ogetmp"); break;
-        default: assert(false && "Unreachable");
+        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
     return builder.CreateCall(safeGetFunc("encodeBool"), val);
 }
@@ -267,9 +269,11 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
         case 3: {
             return createESLString(get<string>(expr->val));
         }
+        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
-    assert(false && "Unreachable");
+    __builtin_unreachable();
 }
+
 llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
     vector<llvm::Value*> args;
     args.push_back(builder.getInt32(expr->fields.size()));
@@ -547,10 +551,12 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
 
 //TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
 llvm::Value* Compiler::visitAsyncExpr(typedAST::AsyncExpr* expr) {
-
+    errorHandler::addSystemError("Async isn't implemented :clown:");
+    __builtin_unreachable();
 }
 llvm::Value* Compiler::visitAwaitExpr(typedAST::AwaitExpr* expr) {
-
+    errorHandler::addSystemError("Await isn't implemented :clown:");
+    __builtin_unreachable();
 }
 
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
@@ -598,7 +604,8 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
 }
 
 llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
-
+    errorHandler::addSystemError("Ranges aren't implemented :clown:");
+    __builtin_unreachable();
 }
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     inProgressFuncs.emplace(createNewFunc(stmt->fn->name, stmt->fn->fnTy));
@@ -643,6 +650,7 @@ llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
         case typedAST::JumpType::BREAK: builder.CreateBr(breakJumpDest.top()); break;
         case typedAST::JumpType::CONTINUE: builder.CreateBr(continueJumpDest.top()); break;
         case typedAST::JumpType::ADVANCE: builder.CreateBr(advanceJumpDest.top()); break;
+        default: __builtin_unreachable();
     }
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -1443,6 +1451,8 @@ llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typed
         return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr));
     }
     // TODO: error
+    errorHandler::addSystemError("Unreachable code reached during compilation.");
+    __builtin_unreachable();
 }
 // Reuses var read and var store
 llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr) {
@@ -1656,6 +1666,7 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
             num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateUIToFP(builder.CreateXor(num1, num2), builder.getDoubleTy());
+        default: __builtin_unreachable();
     }
     // This will never be hit
 }
@@ -1751,8 +1762,10 @@ llvm::ConstantInt* Compiler::createSwitchConstantInt(std::variant<double, bool, 
         case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
         case 1: return builder.getInt64(get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE);
         case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
-        default: assert(false && "Unreachable");
+        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+
     }
+    __builtin_unreachable();
 }
 
 vector<llvm::BasicBlock*> Compiler::createNCaseBlocks(int n){
@@ -1906,7 +1919,9 @@ llvm::Value* Compiler::optimizeInstGet(llvm::Value* inst, string field, Class& k
         return builder.CreateLoad(getESLValType(), ptr);
     }else{
         // TODO: error
+        errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
+    __builtin_unreachable();
 }
 llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string fieldName){
     auto cmp1 = builder.CreateICmpSGT(fieldIdx, builder.getInt32(-1));
@@ -1994,9 +2009,10 @@ llvm::Value* Compiler::getOptInstFieldPtr(llvm::Value* inst, Class& klass, strin
         return ptr;
     }else{
         // TODO: error
+        errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
     // Unreachable (at least it should be)
-    return nullptr;
+    __builtin_unreachable();
 }
 
 llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg){
@@ -2077,7 +2093,9 @@ llvm::Value* Compiler::optimizeInvoke(llvm::Value* inst, string field, Class& kl
         return createFuncCall(closure, callArgs, dbg);
     }else{
         // TODO: error
+        errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
+    __builtin_unreachable();
 }
 
 llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
@@ -2199,7 +2217,8 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
             return ESLConstTo(createESLString(get<string>(constant)), builder.getInt64Ty());
         }
     }
-    assert(false && "Unreachable");
+    errorHandler::addSystemError("Unreachable code reached during compilation.");
+    __builtin_unreachable();
 }
 
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
@@ -2249,8 +2268,8 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr)
             return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "loadgvar");
         }
     }
-    assert(false && "Unreachable");
-    return nullptr;
+    errorHandler::addSystemError("Unreachable code reached during compilation.");
+    __builtin_unreachable();
 }
 
 llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore){
