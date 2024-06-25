@@ -49,4 +49,14 @@ EXPORT Value as_number(ObjClosure* ptr, Value num){
     }
 }
 
+// doggy?
+EXPORT Value cpu_clock(ObjClosure* ptr){
+    return encodeNumber(std::clock());
+}
+
+// doggy?
+EXPORT Value clocks_per_sec(ObjClosure* ptr){
+    return encodeNumber(CLOCKS_PER_SEC);
+}
+
 #undef EXPORT

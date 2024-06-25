@@ -1493,5 +1493,7 @@ void ASTTransformer::declareNativeFunctions(){
     createNativeFn("arr_push", 2, addType(std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY))));
     createNativeFn("input", 0, getBasicType(types::TypeFlag::STRING));
     createNativeFn("as_number", 1, getBasicType(types::TypeFlag::NUMBER));
+    createNativeFn("cpu_clock", 0, getBasicType(types::TypeFlag::NUMBER));
+    createNativeFn("clocks_per_sec", 0, getBasicType(types::TypeFlag::NUMBER));
 }
 #pragma endregion
