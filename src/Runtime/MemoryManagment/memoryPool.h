@@ -8,31 +8,31 @@
 #define MAX_PAGE_CNT 4096
 
 namespace memory {
-struct PageData {
-  int blockSize;
-  char *basePtr;
-  int16_t head;
-  int16_t numBlocks;
+    template<size_t blockSize>
+    struct PageData {
+        static constexpr uint16_t numBlocks = PAGE_SIZE / blockSize;
+        char *basePtr;
+        uint16_t head;
 
-  PageData(char *basePtr, uint64_t blockSize);
-  PageData();
+        PageData(char *basePtr);
+        PageData();
 
-  void resetPage();
-  char *alloc();
-};
-class MemoryPool {
-public:
-  MemoryPool(uint64_t blockSize);
-  MemoryPool();
-  void *alloc();
-  bool allocedByThisPool(uintptr_t ptr);
-  void resetPages();
+        void resetPage();
+        char *alloc();
+    };
 
-private:
-  int blockSize;
-  PageData* firstNonFullPage;
-  vector<PageData> pages;
-  void allocNewPage();
-  void freePage(uint32_t pid);
-};
+    template<size_t blockSize>
+    class MemoryPool {
+        public:
+            MemoryPool();
+            void *alloc();
+            bool allocedByThisPool(uintptr_t ptr);
+            void resetPages();
+
+        private:
+            PageData<blockSize>* firstNonFullPage;
+            vector<PageData<blockSize>> pages;
+            void allocNewPage();
+            void freePage(uint32_t pid);
+    };
 } // namespace memory
