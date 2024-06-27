@@ -20,48 +20,22 @@ namespace memory {
         PageData();
         void resetPage();
 
-
-        template<int bSize>
-        [[gnu::hot]] char *alloc(){
-            int16_t constNumBlocks = PAGE_SIZE / bSize;
-            if(head == constNumBlocks) return nullptr;
-            // Go until you find and non-black block, only black blocks are not free after a gc
-            int16_t* obj = reinterpret_cast<int16_t *>(basePtr + head * bSize);
-            while(head < constNumBlocks && *obj == blackBlock){
-                // If we find a black block reset its marked flag
-                *obj = whiteAndAllocatedBlock;
-                head++;
-                obj = reinterpret_cast<int16_t *>((char *) (obj) + bSize);
-            }
-            // If the loop exited because every block was taken, bail out
-            if(head == constNumBlocks) return nullptr;
-            *obj = whiteAndAllocatedBlock;
-            head++;
-            return reinterpret_cast<char *>(obj);
-        }
-};
-class MemoryPool {
-public:
-    MemoryPool(uint32_t blockSize);
-    MemoryPool();
-    template<int blockSize>
-    [[gnu::hot]] void *alloc(){
-      void *ptr = nullptr;
-      while (!(ptr = firstNonFullPage->alloc<blockSize>())) {
-          if (firstNonFullPage == &pages.back()) {
-              allocNewPage();
-          } else
-              firstNonFullPage++;
-      }
-      return ptr;
-    }
-    bool allocedByThisPool(uintptr_t ptr);
-    void resetPages();
-    private:
-        uint32_t blockSize;
-        PageData* firstNonFullPage;
-        vector<PageData> pages;
-        void allocNewPage();
-        void freePage(uint32_t pid);
+        template<size_t blockSize>
+            char* alloc();
+    };
+    class MemoryPool {
+        public:
+            MemoryPool(uint32_t blockSize);
+            MemoryPool();
+            template<size_t blockSize>
+                void* alloc();
+            bool allocedByThisPool(uintptr_t ptr);
+            void resetPages();
+        private:
+            uint32_t blockSize;
+            PageData* firstNonFullPage;
+            vector<PageData> pages;
+            void allocNewPage();
+            void freePage(uint32_t pid);
     };
 } // namespace memory

@@ -16,8 +16,7 @@ using namespace valueHelpers;
 static constexpr uint32_t GCDataMask = 0xfe;
 static constexpr uint32_t shouldDestructFlagMask = 1;
 static constexpr int16_t blackObj = -3;
-constexpr std::array<size_t, 6> mpBlockSizes = {48, 16, 32, 64, 128, 256};
-enum GCAllocType{ MALLOC = mpBlockSizes.size(), CONSTANT = 128 };
+enum GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
 inline int szToIdx(uint64_t x){
     if(x > 256) 
         return -1;
@@ -86,12 +85,10 @@ namespace memory {
             tmpAlloc.push_back(reinterpret_cast<Obj *>(block));
         } else {
             switch(idx){
-                case 0: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[0]>()); break;
-                case 1: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[1]>()); break;
-                case 2: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[2]>()); break;
-                case 3: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[3]>()); break;
-                case 4: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[4]>()); break;
-                case 5: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[5]>()); break;
+#define MP_SWITCH_CASE(X) case X: block = reinterpret_cast<byte*>(memPools[idx].alloc<mpBlockSizes[X]>()); break;
+                M_LOOP(MP_CNT, MP_SWITCH_CASE, 0)
+#undef MP_SWITCH_CASE
+                default: __builtin_unreachable();
             }
             Obj *obj = reinterpret_cast<Obj *>(block);
             // Lazy sweeping

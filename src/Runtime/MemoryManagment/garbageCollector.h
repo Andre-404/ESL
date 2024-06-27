@@ -28,6 +28,10 @@ NOINLINE uintptr_t* getStackPointer();
 
 // Non-moving, non-generational mark-sweep GC with support for multithreading
 namespace memory {
+    // We use this macro for metaprogramming related to memory pools.
+#define MP_CNT 6
+    constexpr std::array<size_t, MP_CNT> mpBlockSizes = {48, 16, 32, 64, 128, 256};
+
     struct StackPtrEntry{
         uintptr_t* start;
         uintptr_t* end;
