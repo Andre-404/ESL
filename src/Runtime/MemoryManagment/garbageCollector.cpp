@@ -16,7 +16,8 @@ using namespace valueHelpers;
 static constexpr uint32_t GCDataMask = 0xfe;
 static constexpr uint32_t shouldDestructFlagMask = 1;
 static constexpr int16_t blackObj = -3;
-enum GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
+constexpr std::array<size_t, 6> mpBlockSizes = {48, 16, 32, 64, 128, 256};
+enum GCAllocType{ MALLOC = mpBlockSizes.size(), CONSTANT = 128 };
 inline int szToIdx(uint64_t x){
     if(x > 256) 
         return -1;
@@ -53,8 +54,9 @@ namespace memory {
         heapSize = 0;
         heapSizeLimit = HEAP_START_SIZE * 1024;
         tmpAlloc.reserve(4096);
-#define MAKE_MP(X) memPools[X] = MemoryPool<mpBlockSizes[X]>();
-        M_LOOP(MP_CNT, MAKE_MP, 0)
+        for(int i = 0; i < mpBlockSizes.size(); i++){
+            memPools[i] = MemoryPool(mpBlockSizes[i]);
+        }
         threadsSuspended = 0;
     }
 
@@ -84,12 +86,12 @@ namespace memory {
             tmpAlloc.push_back(reinterpret_cast<Obj *>(block));
         } else {
             switch(idx){
-                case 0: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[0]>()); break;
-                case 1: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[1]>()); break;
-                case 2: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[2]>()); break;
-                case 3: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[3]>()); break;
-                case 4: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[4]>()); break;
-                case 5: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[5]>()); break;
+                case 0: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[0]>()); break;
+                case 1: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[1]>()); break;
+                case 2: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[2]>()); break;
+                case 3: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[3]>()); break;
+                case 4: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[4]>()); break;
+                case 5: block = reinterpret_cast<byte *>(memPools[idx].alloc<mpBlockSizes[5]>()); break;
             }
             Obj *obj = reinterpret_cast<Obj *>(block);
             // Lazy sweeping
@@ -145,8 +147,8 @@ namespace memory {
 
     void GarbageCollector::resetMemPools() {
         std::for_each(std::execution::par_unseq, memPools.begin(), memPools.end(), 
-                [](auto &&v){ 
-                    std::visit([](auto &&v){ v.resetPages(); }, v); 
+                [](MemoryPool& memoryPool){
+                    memoryPool.resetPages();
                 }
         );
     }
@@ -279,8 +281,8 @@ namespace memory {
         }
         return false;
         #else
-        return std::any_of(std::execution::par_unseq, memPools.begin(), memPools.end(), [ptr](auto &&memPool) {
-            return std::visit([ptr](auto &&v){ return v.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr)); }, memPool);
+        return std::any_of(std::execution::par_unseq, memPools.begin(), memPools.end(), [ptr](MemoryPool& memPool) {
+            return memPool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
         });
         #endif
     }
