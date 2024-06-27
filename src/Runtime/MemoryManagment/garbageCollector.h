@@ -28,8 +28,11 @@ NOINLINE uintptr_t* getStackPointer();
 
 // Non-moving, non-generational mark-sweep GC with support for multithreading
 namespace memory {
+// Change MP_CNT to reflect mpBlockSizes.size(). Required to make the macros work.
+// Also don't make MP_CNT >= 10 (or make more loop macros in common.h)
+#define MP_CNT 6
     constexpr std::array<size_t, 6> mpBlockSizes = {48, 16, 32, 64, 128, 256};
-    constexpr size_t mpCnt = mpBlockSizes.size();
+
     using MP = std::variant<MemoryPool<mpBlockSizes[0]>,
                             MemoryPool<mpBlockSizes[1]>,
                             MemoryPool<mpBlockSizes[2]>,
@@ -81,7 +84,7 @@ namespace memory {
 	private:
 		std::mutex allocMtx;
 		uInt64 heapSizeLimit;
-        std::array<MP, mpCnt> memPools;
+        std::array<MP, MP_CNT> memPools;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> largeObjects;
         vector<object::Obj*> tmpAlloc;

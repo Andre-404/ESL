@@ -155,9 +155,5 @@ void MemoryPool<blockSize>::freePage(uint32_t pid) {
     pages.erase(pages.begin() + pid);
 }
 
-template class memory::MemoryPool<mpBlockSizes[0]>;
-template class memory::MemoryPool<mpBlockSizes[1]>;
-template class memory::MemoryPool<mpBlockSizes[2]>;
-template class memory::MemoryPool<mpBlockSizes[3]>;
-template class memory::MemoryPool<mpBlockSizes[4]>;
-template class memory::MemoryPool<mpBlockSizes[5]>;
+#define MAKE_MP_TC(X) template class memory::MemoryPool<mpBlockSizes[X]>;
+M_LOOP(MP_CNT, MAKE_MP_TC, 0)

@@ -16,7 +16,7 @@ using namespace valueHelpers;
 static constexpr uint32_t GCDataMask = 0xfe;
 static constexpr uint32_t shouldDestructFlagMask = 1;
 static constexpr int16_t blackObj = -3;
-enum GCAllocType{ MALLOC = memory::mpCnt, CONSTANT = 128 };
+enum GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
 inline int szToIdx(uint64_t x){
     if(x > 256) 
         return -1;
@@ -53,13 +53,8 @@ namespace memory {
         heapSize = 0;
         heapSizeLimit = HEAP_START_SIZE * 1024;
         tmpAlloc.reserve(4096);
-        // ugly as shit
-        memPools[0] = MemoryPool<mpBlockSizes[0]>();
-        memPools[1] = MemoryPool<mpBlockSizes[1]>();
-        memPools[2] = MemoryPool<mpBlockSizes[2]>();
-        memPools[3] = MemoryPool<mpBlockSizes[3]>();
-        memPools[4] = MemoryPool<mpBlockSizes[4]>();
-        memPools[5] = MemoryPool<mpBlockSizes[5]>();
+#define MAKE_MP(X) memPools[X] = MemoryPool<mpBlockSizes[X]>();
+        M_LOOP(MP_CNT, MAKE_MP, 0)
         threadsSuspended = 0;
     }
 
@@ -90,12 +85,8 @@ namespace memory {
         } else {
             /* block = reinterpret_cast<byte *>(mempools[idx].alloc()); */
             switch (idx){
-                case 0: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[0]>>(&memPools[0])->alloc()); break;
-                case 1: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[1]>>(&memPools[1])->alloc()); break;
-                case 2: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[2]>>(&memPools[2])->alloc()); break;
-                case 3: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[3]>>(&memPools[3])->alloc()); break;
-                case 4: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[4]>>(&memPools[4])->alloc()); break;
-                case 5: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[5]>>(&memPools[5])->alloc()); break;
+#define MP_SWITCH_CASE(X) case X: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[X]>>(&memPools[X])->alloc()); break;
+                M_LOOP(MP_CNT, MP_SWITCH_CASE, 0)
                 default: __builtin_unreachable();
             }
             Obj *obj = reinterpret_cast<Obj *>(block);
