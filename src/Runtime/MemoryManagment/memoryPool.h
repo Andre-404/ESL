@@ -22,7 +22,7 @@ struct PageData {
   void resetPage();
 
   template<int bSize>
-  [[gnu::always_inline, gnu::hot]] char *alloc(){
+  [[gnu::hot]] char *alloc(){
       if(head == numBlocks) return nullptr;
       // Go until you find and non-black block, only black blocks are not free after a gc
       int16_t* obj = reinterpret_cast<int16_t *>(basePtr + head * bSize);
