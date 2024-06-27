@@ -30,7 +30,7 @@ static constexpr uint16_t u16Mask = 0xffff;
 static constexpr uint8_t u8Mask = 0xff;
 static constexpr int16_t whiteAndAllocatedBlock = -2;
 static constexpr int16_t blackBlock = -3;
-
+/*
 [[gnu::always_inline, gnu::hot]] inline char* PageData::alloc(){
     if(head == numBlocks) return nullptr;
     // Go until you find and non-black block, only black blocks are not free after a gc
@@ -46,7 +46,7 @@ static constexpr int16_t blackBlock = -3;
     *obj = whiteAndAllocatedBlock;
     head++;
     return reinterpret_cast<char *>(obj);
-}
+}*/
 // Has to be run BEFORE main GC loop to finish the page resetting from previous GC invocation
 [[gnu::always_inline, gnu::hot]] void PageData::resetPage(){
     int16_t* obj = reinterpret_cast<int16_t *>(basePtr);
@@ -68,7 +68,7 @@ MemoryPool::MemoryPool() {
   blockSize = 0;
   firstNonFullPage = nullptr;
 }
-
+/*
 [[gnu::hot]] void *MemoryPool::alloc() {
   void *ptr = nullptr;
   while (!(ptr = firstNonFullPage->alloc())) {
@@ -78,7 +78,7 @@ MemoryPool::MemoryPool() {
       firstNonFullPage++;
   }
   return ptr;
-}
+}*/
 
 bool MemoryPool::allocedByThisPool(uintptr_t ptr){
     #ifdef GC_DEBUG
