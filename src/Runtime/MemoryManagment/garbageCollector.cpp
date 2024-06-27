@@ -83,11 +83,13 @@ namespace memory {
             reinterpret_cast<Obj *>(block)->GCData = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
             tmpAlloc.push_back(reinterpret_cast<Obj *>(block));
         } else {
-            /* block = reinterpret_cast<byte *>(mempools[idx].alloc()); */
-            switch (idx){
-#define MP_SWITCH_CASE(X) case X: block = reinterpret_cast<byte*>(std::get_if<MemoryPool<mpBlockSizes[X]>>(&memPools[X])->alloc()); break;
-                M_LOOP(MP_CNT, MP_SWITCH_CASE, 0)
-                default: __builtin_unreachable();
+            switch(idx){
+                case 0: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[0]>()); break;
+                case 1: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[1]>()); break;
+                case 2: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[2]>()); break;
+                case 3: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[3]>()); break;
+                case 4: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[4]>()); break;
+                case 5: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[5]>()); break;
             }
             Obj *obj = reinterpret_cast<Obj *>(block);
             // Lazy sweeping
