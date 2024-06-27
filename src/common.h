@@ -26,6 +26,19 @@ typedef uint64_t Value;
 #define UPVAL_MAX 256
 #define PAGE_SIZE 64 * 1024
 
+// Oh yeah baby, the loops be looping
+#define M_LOOP_1(X, S)  X(S)
+#define M_LOOP_2(X, S)  X(S) M_LOOP_1(X, S+1)
+#define M_LOOP_3(X, S)  X(S) M_LOOP_2(X, S+1)
+#define M_LOOP_4(X, S)  X(S) M_LOOP_3(X, S+1)
+#define M_LOOP_5(X, S)  X(S) M_LOOP_4(X, S+1)
+#define M_LOOP_6(X, S)  X(S) M_LOOP_5(X, S+1)
+#define M_LOOP_7(X, S)  X(S) M_LOOP_6(X, S+1)
+#define M_LOOP_8(X, S)  X(S) M_LOOP_7(X, S+1)
+#define M_LOOP_9(X, S)  X(S) M_LOOP_8(X, S+1)
+#define M_LOOP_(N, X, S) M_LOOP_ ## N(X, S)
+#define M_LOOP(N, X, S) M_LOOP_(N, X, S)
+
 #ifdef _MSC_VER
 #define NOINLINE __declspec(noinline)
 #else

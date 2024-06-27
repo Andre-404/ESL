@@ -8,6 +8,7 @@
 #include <stack>
 #include <condition_variable>
 #include <array>
+#include <variant>
 
 namespace object {
 	class Obj;
@@ -25,11 +26,20 @@ namespace object {
 NOINLINE uintptr_t* getStackPointer();
 
 
-
-
-
 // Non-moving, non-generational mark-sweep GC with support for multithreading
 namespace memory {
+// Change MP_CNT to reflect mpBlockSizes.size(). Required to make the macros work.
+// Also don't make MP_CNT >= 10 (or make more loop macros in common.h)
+#define MP_CNT 6
+    constexpr std::array<size_t, 6> mpBlockSizes = {48, 16, 32, 64, 128, 256};
+
+    using MP = std::variant<MemoryPool<mpBlockSizes[0]>,
+                            MemoryPool<mpBlockSizes[1]>,
+                            MemoryPool<mpBlockSizes[2]>,
+                            MemoryPool<mpBlockSizes[3]>,
+                            MemoryPool<mpBlockSizes[4]>,
+                            MemoryPool<mpBlockSizes[5]>>;
+
     struct StackPtrEntry{
         uintptr_t* start;
         uintptr_t* end;
@@ -74,7 +84,7 @@ namespace memory {
 	private:
 		std::mutex allocMtx;
 		uInt64 heapSizeLimit;
-        std::array<MemoryPool, 6> mempools;
+        std::array<MP, MP_CNT> memPools;
 		// List of all allocated objects
         ankerl::unordered_dense::set<object::Obj*> largeObjects;
         vector<object::Obj*> tmpAlloc;

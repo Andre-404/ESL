@@ -16,9 +16,8 @@ struct PageData {
   int16_t head;
   int16_t numBlocks;
 
-  PageData(char *basePtr, uint64_t blockSize);
-  PageData();
-
+        PageData(char *basePtr);
+        PageData();
   void resetPage();
 
   template<int bSize>
@@ -57,11 +56,10 @@ public:
   bool allocedByThisPool(uintptr_t ptr);
   void resetPages();
 
-private:
-  int blockSize;
-  PageData* firstNonFullPage;
-  vector<PageData> pages;
-  void allocNewPage();
-  void freePage(uint32_t pid);
-};
+  private:
+      PageData<blockSize>* firstNonFullPage;
+      vector<PageData<blockSize>> pages;
+      void allocNewPage();
+      void freePage(uint32_t pid);
+    };
 } // namespace memory

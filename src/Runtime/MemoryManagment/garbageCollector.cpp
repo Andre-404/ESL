@@ -3,19 +3,20 @@
 #include "../../Includes/fmt/format.h"
 #include "../Objects/objects.h"
 #include "../Values/valueHelpersInline.cpp"
+#include <algorithm>
 #include <execution>
 #include <sys/stat.h>
+#include <variant>
 
 using namespace valueHelpers;
 
 // start size of heap in KB
 #define HEAP_START_SIZE 1024
 
-static constexpr std::array<int, 6> mempoolBlockSizes = {48, 16, 32, 64, 128, 256};
 static constexpr uint32_t GCDataMask = 0xfe;
 static constexpr uint32_t shouldDestructFlagMask = 1;
 static constexpr int16_t blackObj = -3;
-enum GCAllocType{ MALLOC = mempoolBlockSizes.size(), CONSTANT = 128 };
+enum GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
 inline int szToIdx(uint64_t x){
     if(x > 256) 
         return -1;
@@ -52,9 +53,8 @@ namespace memory {
         heapSize = 0;
         heapSizeLimit = HEAP_START_SIZE * 1024;
         tmpAlloc.reserve(4096);
-        for (int i = 0; i < mempools.size(); i++) {
-            mempools[i] = MemoryPool(mempoolBlockSizes[i]);
-        }
+#define MAKE_MP(X) memPools[X] = MemoryPool<mpBlockSizes[X]>();
+        M_LOOP(MP_CNT, MAKE_MP, 0)
         threadsSuspended = 0;
     }
 
@@ -91,7 +91,6 @@ namespace memory {
                 case 4: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[4]>()); break;
                 case 5: block = reinterpret_cast<byte *>(mempools[idx].alloc<mempoolBlockSizes[5]>()); break;
             }
-
             Obj *obj = reinterpret_cast<Obj *>(block);
             // Lazy sweeping
             if (obj->GCData) runObjDestructor(obj);
@@ -145,13 +144,15 @@ namespace memory {
     }
 
     void GarbageCollector::resetMemPools() {
-        for (MemoryPool &mempool: mempools) {
-            mempool.resetPages();
-        }
+        std::for_each(std::execution::par_unseq, memPools.begin(), memPools.end(), 
+                [](auto &&v){ 
+                    std::visit([](auto &&v){ v.resetPages(); }, v); 
+                }
+        );
     }
 
     // Returns true if this object was already marked
-    static inline bool markIfNotMarked(object::Obj *ptr, MemoryPool *mempools) {
+    static inline bool markIfNotMarked(object::Obj *ptr) {
         if (ptr->allocType == GCAllocType::CONSTANT) return true;
         if (ptr->allocType == GCAllocType::MALLOC) {
             if (ptr->GCData == 1) return true;
@@ -165,7 +166,7 @@ namespace memory {
         return false;
     }
 
-    static inline bool isMarked(object::Obj *ptr, MemoryPool *mempools) {
+    static inline bool isMarked(object::Obj *ptr) {
         if (ptr->allocType == GCAllocType::CONSTANT) return true;
         if (ptr->allocType == GCAllocType::MALLOC) {
             if (ptr->GCData == 1) return true;
@@ -182,7 +183,7 @@ namespace memory {
         while (!markStack.empty()) {
             object::Obj *ptr = markStack.back();
             markStack.pop_back();
-            if (markIfNotMarked(ptr, mempools.data())) continue;
+            if (markIfNotMarked(ptr)) continue;
             #ifdef GC_DEBUG
             marked++;
             #endif
@@ -273,20 +274,20 @@ namespace memory {
     // Should work for now but might be a problem when the heap gets into GB teritory
     bool GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
         #ifdef GC_DEBUG
-        for(MemoryPool& mempool : mempools){
-            if(mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr))) return true;
+        for(MP& memPool : memPools){
+            if(std::visit([ptr](auto &&v){ return v.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr)), memPool)) return true;
         }
         return false;
         #else
-        return std::any_of(std::execution::par_unseq, mempools.begin(), mempools.end(), [ptr](MemoryPool &mempool) {
-            return mempool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
+        return std::any_of(std::execution::par_unseq, memPools.begin(), memPools.end(), [ptr](auto &&memPool) {
+            return std::visit([ptr](auto &&v){ return v.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr)); }, memPool);
         });
         #endif
     }
 
     void GarbageCollector::sweep() {
         for (auto it = interned.begin(); it != interned.end();) {
-            if (!isMarked(it->second, mempools.data())) it = interned.erase(it);
+            if (!isMarked(it->second)) it = interned.erase(it);
             it++;
         }
         // Sweeps large objects, small objects are swept lazily
