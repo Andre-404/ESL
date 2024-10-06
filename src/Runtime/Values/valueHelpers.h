@@ -59,7 +59,5 @@ namespace valueHelpers {
 
     void print(Value x);
 
-    void mark(Value x);
-
     string typeToStr(Value x);
 }

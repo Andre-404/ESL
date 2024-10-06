@@ -34,6 +34,10 @@ EXPORT Value input(ObjClosure* ptr){
     return encodeObj(ObjString::createStr((char*)in.c_str()));
 }
 
+EXPORT Value random_num(ObjClosure* ptr){
+    return encodeNumber(rand());
+}
+
 EXPORT Value as_number(ObjClosure* ptr, Value num){
     if (isNumber(num)) { return num; }
     if (!isString(num)){

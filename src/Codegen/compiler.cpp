@@ -280,7 +280,7 @@ llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
     // For each field, compile it and get the constant of the field name
     for (auto entry : expr->fields) {
         // This gets rid of quotes, ""Hello world""->"Hello world"
-        args.push_back(builder.CreateCall(safeGetFunc("createStr"), createConstStr(entry.first)));
+        args.push_back(createESLString(entry.first));
         args.push_back(entry.second->codegen(this));
     }
 
@@ -1387,6 +1387,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
 
     // Optimizations if types are known, no need to do runtime checks
     const auto numTy = types::getBasicType(types::TypeFlag::NUMBER);
+    const auto stringTy = types::getBasicType(types::TypeFlag::STRING);
     const auto anyTy = types::getBasicType(types::TypeFlag::ANY);
     if(exprIsType(expr1, expr2, numTy)){
         // fcmp when both values are numbers
@@ -1396,7 +1397,12 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
         auto val = neg ? builder.CreateFCmpONE(lhs, rhs, "fcmpone") : builder.CreateFCmpOEQ(lhs, rhs, "fcmpoeq");
         return builder.CreateCall(safeGetFunc("encodeBool"), val);
     }
-    else if(!exprIsType(expr1, numTy) && !exprIsType(expr2, numTy) && !exprIsType(expr1, anyTy) && !exprIsType(expr2, anyTy)){
+    else if(exprIsType(expr1, expr2, stringTy)){
+        return builder.CreateCall(safeGetFunc("strCmp"), {lhs, rhs});
+    }
+    else if(!exprIsType(expr1, numTy) && !exprIsType(expr2, numTy) &&
+            !exprIsType(expr1, anyTy) && !exprIsType(expr2, anyTy) &&
+            !exprIsType(expr1, stringTy) && !exprIsType(expr2, stringTy)){
         auto val = neg ? builder.CreateICmpNE(lhs, rhs, "icmpne") : builder.CreateICmpEQ(lhs, rhs, "icmpeq");
         return builder.CreateCall(safeGetFunc("encodeBool"), val);
     }
@@ -1415,7 +1421,31 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     }
     // To reduce branching on a common operation, select instruction is used
     auto sel = builder.CreateSelect(builder.CreateAnd(c1, c2), fcmptmp, icmptmp);
-    return builder.CreateCall(safeGetFunc("encodeBool"), sel);
+    llvm::Value* cmpRes = builder.CreateCall(safeGetFunc("encodeBool"), sel);
+
+    // Strings need to be compared using strcmp because some of them are not interned
+    // TODO: maybe we should test if calling the function without branching is faster
+    llvm::Function* F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *originalBB = builder.GetInsertBlock();
+    llvm::BasicBlock *cmpStrBB = llvm::BasicBlock::Create(*ctx, "cmpstr", F);
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+
+    auto sc1 = builder.CreateCall(safeGetFunc("isObjType"), {lhs, builder.getInt8(+object::ObjType::STRING)});
+    auto sc2 = builder.CreateCall(safeGetFunc("isObjType"), {rhs, builder.getInt8(+object::ObjType::STRING)});
+
+    builder.CreateCondBr(builder.CreateAnd(sc1, sc2), cmpStrBB, mergeBB);
+    // String comparison block
+    builder.SetInsertPoint(cmpStrBB);
+    llvm::Value* strCmpRes = builder.CreateCall(safeGetFunc("strCmp"), {lhs, rhs});
+    builder.CreateBr(mergeBB);
+
+    F->insert(F->end(), mergeBB);
+    builder.SetInsertPoint(mergeBB);
+    // Resulting value depends on the block taken
+    llvm::PHINode *PN = builder.CreatePHI(getESLValType(), 2, "cmpres");
+    PN->addIncoming(cmpRes, originalBB);
+    PN->addIncoming(strCmpRes, cmpStrBB);
+    return PN;
 }
 llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op, Token dbg){
     llvm::Value* rhs = _rhs->codegen(this);
@@ -1782,7 +1812,7 @@ llvm::Value* Compiler::createSeqCmp(llvm::Value* compVal, vector<std::pair<std::
     llvm::Value* BBIdx = builder.getInt32(-1);
     for(auto c : constants){
         llvm::Value* val = createConstant(c.first);
-        // All constants(including strings because of interning) have a unique representation as I64, so ICmpEQ is sufficient
+        // All constants(constant strings are interned) have a unique representation as I64, so ICmpEQ is sufficient
         // compVal is i64
         llvm::Value* cmp = builder.CreateICmpEQ(compVal, val);
         // If comparison is successful BBIdx becomes the index of the block that the switch needs to jump to

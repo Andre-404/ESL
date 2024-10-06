@@ -1,10 +1,11 @@
 #pragma once
-#include "../MemoryManagment/garbageCollector.h"
 #include "../../Includes/unorderedDense.h"
+#include "../../common.h"
 #include <fstream>
 #include <stdio.h>
 #include <shared_mutex>
 #include <future>
+#include <thread>
 
 namespace object {
 
@@ -35,16 +36,11 @@ namespace object {
 
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
-        //this reroutes the new operator to take memory which the GC gives out
-        void* operator new(const size_t size) {
-            return memory::gc->alloc(size);
-        }
+        // This reroutes the new operator to take memory which the GC gives out
+        void* operator new(const size_t size);
     };
 
-
-    // Pointer to a compiled function
-    using Function = char*;
-    using CheckFieldFunc = int (*)(ObjString*);
+    void runObjDestructor(object::Obj* obj);
 
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
@@ -61,16 +57,15 @@ namespace object {
 
         static ObjString* createStr(char* str);
 
-        //this reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size, const int64_t strLen) {
-            return memory::gc->alloc(size+strLen);
-        }
+        // This reroutes the new operator to take memory which the GC gives out
+        void* operator new(size_t size, const int64_t strLen);
 
     };
 
     class ObjArray : public Obj {
     public:
         // Used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
+        // TODO: this doesnt work
         uInt numOfHeapPtr;
         vector<Value> values;
         ObjArray();
@@ -82,6 +77,10 @@ namespace object {
         Value val;
         ObjFreevar(const Value& _value);
     };
+
+    // Pointer to a compiled function
+    using Function = char*;
+    using CheckFieldFunc = int (*)(ObjString*);
 
     // Multiple closures with different freevars can point to the same function
     class ObjClosure : public Obj {
@@ -122,11 +121,6 @@ namespace object {
         Value* fields;
 
         ObjInstance(ObjClass* _klass, uInt _fieldsArrLen);
-
-        //this reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size, const int64_t fieldsN) {
-            return memory::gc->alloc(size+sizeof(Value)*fieldsN);
-        }
     };
 
     class ObjHashMap : public Obj{
@@ -173,4 +167,6 @@ namespace object {
 
         ObjRange(const double _start, const double _end, const bool _isEndInclusive);
     };
+
+
 }

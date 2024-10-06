@@ -61,7 +61,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     //CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
     // ret: Value, args: raw C string
     llvm::Type* eslValTy = getESLValType(*ctx);
-    CREATE_FUNC("createStr", false, eslValTy, TYPE(Int8Ptr));
     //
     auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
@@ -88,6 +87,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("strAdd", false, eslValTy, eslValTy, eslValTy);
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
     CREATE_FUNC("strTryAdd", false, eslValTy, eslValTy, eslValTy, TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("strCmp", false, eslValTy, eslValTy, eslValTy);
     // Invoked by gc.safepoint
     CREATE_FUNC("stopThread", false, TYPE(Void));
     // ret: Value, args: arr size
@@ -128,6 +128,8 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
+    // ret: Value
+    //CREATE_FUNC("random_num", false, eslValTy);
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }

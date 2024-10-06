@@ -26,10 +26,10 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/Passes/computeClassHierarchy.h
         src/Codegen/Passes/computeClassHierarchy.cpp
         src/Runtime/nativeFunctionsExports.h
-        src/Runtime/MemoryManagment/memoryPool.h
-        src/Runtime/MemoryManagment/memoryPool.cpp
         src/Runtime/MemoryManagment/threadArena.cpp
         src/Runtime/MemoryManagment/threadArena.h
+        src/Includes/rpmalloc/rpmalloc.h
+        src/Includes/rpmalloc/rpmalloc.c
 )
 
 #execute_process(COMMAND llvm-config)

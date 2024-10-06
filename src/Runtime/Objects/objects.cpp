@@ -1,6 +1,7 @@
 #include "objects.h"
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
+#include "../MemoryManagment/garbageCollector.h"
 
 using namespace object;
 using namespace memory;
@@ -9,17 +10,31 @@ using namespace valueHelpers;
 #pragma region Obj
 size_t Obj::getSize(){
     switch(type){
-        case +ObjType::STRING: return sizeof(ObjString);
+        case +ObjType::STRING: return sizeof(ObjString) + strlen(((ObjString*)this)->str);
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
         case +ObjType::FREEVAR: return sizeof(ObjFreevar);
         case +ObjType::CLASS: return sizeof(ObjClass);
-        case +ObjType::INSTANCE: return sizeof(ObjInstance);
+        case +ObjType::INSTANCE: return sizeof(ObjInstance) + ((ObjInstance*)this)->fieldArrLen*sizeof(Value);
         case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
         case +ObjType::FILE: return sizeof(ObjFile);
         case +ObjType::MUTEX: return sizeof(ObjMutex);
         case +ObjType::FUTURE: return sizeof(ObjFuture);
         case +ObjType::RANGE: return sizeof(ObjRange);
+    }
+}
+
+void object::runObjDestructor(object::Obj* obj){
+    // Have to do this because we don't have access to virtual destructors,
+    // however some objects allocate STL containers that need cleaning up
+    obj->GCData = 0;
+    switch(obj->type){
+        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); return;
+        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); return;
+        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); return;
+        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); return;
+        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); return;
+        default: return;
     }
 }
 
@@ -59,6 +74,10 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
     }
     return "cannot stringfy object";
 }
+
+void* Obj::operator new(const size_t size) {
+    return memory::getLocalArena().alloc(size);
+}
 #pragma endregion
 
 #pragma region ObjString
@@ -80,8 +99,8 @@ bool ObjString::compare(const string other) {
 
 ObjString* ObjString::concat(ObjString* other) {
 	string temp = string(str) + string(other->str);
-    // Gets rid of const, +1 for null terminator
-	return new(temp.size()+1) ObjString((char*)temp.c_str());
+    // +1 for null terminator
+	return createStr((char*)temp.c_str());
 }
 
 ObjString* ObjString::createStr(char* str){
@@ -90,9 +109,11 @@ ObjString* ObjString::createStr(char* str){
     if(it != memory::gc->interned.end()) return it->second;
     // +1 for null terminator
     ObjString* newStr = new(view.size()+1) ObjString(str);
-    // New string view that points to the char array managed by this string
-    memory::gc->interned[std::string_view(newStr->str)] = newStr;
     return newStr;
+}
+
+void* ObjString::operator new(size_t size, const int64_t strLen) {
+    return memory::getLocalArena().alloc(size+strLen);
 }
 
 #pragma endregion

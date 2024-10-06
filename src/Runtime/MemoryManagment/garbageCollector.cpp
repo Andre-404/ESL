@@ -3,6 +3,7 @@
 #include "../../Includes/fmt/format.h"
 #include "../Objects/objects.h"
 #include "../Values/valueHelpersInline.cpp"
+#include "../../Includes/rpmalloc/rpmalloc.h"
 #include <algorithm>
 #include <execution>
 #include <sys/stat.h>
@@ -13,34 +14,9 @@ using namespace valueHelpers;
 // start size of heap in KB
 #define HEAP_START_SIZE 1024
 
-static constexpr uint32_t GCDataMask = 0xfe;
-static constexpr uint32_t shouldDestructFlagMask = 1;
-static constexpr int16_t blackObj = -3;
-enum GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
-inline int szToIdx(uint64_t x){
-    if(x > 256) 
-        return -1;
-    if(x > 32 && x <= 48) 
-        return 0;
-    return std::bit_width(x-1) - 3;
-}
 
 NOINLINE uintptr_t *getStackPointer() {
   return (uintptr_t *)(GET_FRAME_ADDRESS);
-}
-
-static inline void runObjDestructor(object::Obj* obj){
-    // Have to do this because we don't have access to virtual destructors,
-    // however some objects allocate STL containers that need cleaning up
-    obj->GCData = 0;
-    switch(obj->type){
-        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); return;
-        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); return;
-        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); return;
-        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); return;
-        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); return;
-        default: return;
-    }
 }
 #ifdef GC_DEBUG
 static uint64_t numalloc = 0;
@@ -52,88 +28,57 @@ namespace memory {
     GarbageCollector::GarbageCollector(byte &active) : active(active) {
         heapSize = 0;
         heapSizeLimit = HEAP_START_SIZE * 1024;
-        tmpAlloc.reserve(4096);
-        for(int i = 0; i < mpBlockSizes.size(); i++){
-            memPools[i] = MemoryPool(mpBlockSizes[i]);
-        }
+        rpmalloc_initialize();
         threadsSuspended = 0;
     }
 
-    [[gnu::hot]] void *GarbageCollector::alloc(const uInt64 size) {
-        // No thread is marked as suspended while allocating, even though they have to lock the allocMtx
-        // Every thread that enters this function is guaranteed to exit it or to crash the whole program
+    void GarbageCollector::checkHeapSize(const size_t size){
         uint64_t tmpHeapSize = heapSize.load(std::memory_order_relaxed);
         if (tmpHeapSize <= heapSizeLimit && (tmpHeapSize += size) >= heapSizeLimit) {
+#ifdef GC_DEBUG
+            std::cout<<"Tmp heap size, limit: "<<tmpHeapSize<<", "<<heapSizeLimit<<"\n";
+#endif
             active = 1;
         }
         heapSize.store(tmpHeapSize, std::memory_order_relaxed);
-        #ifdef GC_DEBUG
+#ifdef GC_DEBUG
         numalloc++;
-        #endif
-        byte *block = nullptr;
-        int idx = szToIdx(size);
-        if (idx == -1) {
-            try {
-                block = new byte[size];
-            }
-            catch (const std::bad_alloc &e) {
-                errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
-            }
-            // Flags that this pointer was malloc-d
-            reinterpret_cast<Obj *>(block)->allocType = GCAllocType::MALLOC;
-            reinterpret_cast<Obj *>(block)->GCData = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
-            tmpAlloc.push_back(reinterpret_cast<Obj *>(block));
-        } else {
-            switch(idx){
-#define MP_SWITCH_CASE(X) case X: block = reinterpret_cast<byte*>(memPools[idx].alloc<mpBlockSizes[X]>()); break;
-                M_LOOP(MP_CNT, MP_SWITCH_CASE, 0)
-#undef MP_SWITCH_CASE
-                default: __builtin_unreachable();
-            }
-            Obj *obj = reinterpret_cast<Obj *>(block);
-            // Lazy sweeping
-            if (obj->GCData) runObjDestructor(obj);
-            obj->allocType = idx;
-            obj->GCData = 1;
-        }
-        return block;
+#endif
     }
 
     // Collect can freely read and modify data because pauseMtx is under lock by lk
     void GarbageCollector::collect(std::unique_lock<std::mutex> &lk) {
-        #ifdef GC_DEBUG
-        double d = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        #endif
-        largeObjects.reserve(largeObjects.size() + tmpAlloc.size());
-        largeObjects.insert(tmpAlloc.begin(), tmpAlloc.end());
-        tmpAlloc.clear();
         heapSize = 0;
         #ifdef GC_DEBUG
-        std::cout<<"alloced since last gc: "<<numalloc<<"\n";
-        numalloc = 0;
+        double d = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         marked = 0;
         #endif
-        resetMemPools();
+        // Sort pages by address to make searching for valid pointers easier
+        std::sort(pages.begin(), pages.end(), [](PageData* a, PageData* b){return a->basePtr < b->basePtr;});
         #ifdef GC_DEBUG
-        double d2 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Reseting pools took: "<<d2-d<<"\n";
+        double d2 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Sorting "<<pages.size()<<" pages took: "<<d2-d<<"\n";
         #endif
         markRoots();
         #ifdef GC_DEBUG
-        double d3 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Root scanning took: "<<d3-d2<<"\n";
+        double d3 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"Marking roots took: "<<d3-d2<<"\n";
         #endif
         mark();
         #ifdef GC_DEBUG
-        double d4 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        double d4 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::cout<<"Tracing took: "<<d4-d3<<"\n";
+        int numel = largeObjects.size();
         #endif
         sweep();
         #ifdef GC_DEBUG
-        double d5 = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"sweeping took: "<<d5-d4<<"\n";
+        double d5 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::cout<<"sweeping took: "<<d5-d4<<" objects swept: "<<numel - largeObjects.size()<<"\n";
+        numalloc = 0;
         #endif
         while (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
+        // Reset the pages vector
+        pages.clear();
         // Tells all waiting threads that gc cycle is over
         active = 0;
         // This thread is no longer suspended
@@ -142,43 +87,38 @@ namespace memory {
         STWcv.notify_all();
     }
 
-    void GarbageCollector::resetMemPools() {
-        std::for_each(std::execution::par_unseq, memPools.begin(), memPools.end(), 
-                [](MemoryPool& memoryPool){
-                    memoryPool.resetPages();
-                }
-        );
-    }
-
     // Returns true if this object was already marked
+    static inline bool isMarked(object::Obj *ptr) {
+        if (ptr->allocType == +GCAllocType::CONSTANT) return true;
+        if (ptr->allocType == +GCAllocType::MALLOC) {
+            if (ptr->GCData == 1) return true;
+        } else {
+            // This is mempool allocated
+            int16_t *info = reinterpret_cast<int16_t *>(&ptr->padding);
+            if (*info == +GCBlockColor::BLACK) return true;
+        }
+        return false;
+    }
+    // Additionally marks the not already marked object
     static inline bool markIfNotMarked(object::Obj *ptr) {
-        if (ptr->allocType == GCAllocType::CONSTANT) return true;
-        if (ptr->allocType == GCAllocType::MALLOC) {
+        if (ptr->allocType == +GCAllocType::CONSTANT) return true;
+        if (ptr->allocType == +GCAllocType::MALLOC) {
             if (ptr->GCData == 1) return true;
             ptr->GCData = true;
         } else {
             // This is mempool allocated
             int16_t *info = reinterpret_cast<int16_t *>(&ptr->padding);
-            if (*info == blackObj) return true;
-            *info = blackObj;
+            if (*info == +GCBlockColor::BLACK) return true;
+            *info = +GCBlockColor::BLACK;
         }
         return false;
     }
-
-    static inline bool isMarked(object::Obj *ptr) {
-        if (ptr->allocType == GCAllocType::CONSTANT) return true;
-        if (ptr->allocType == GCAllocType::MALLOC) {
-            if (ptr->GCData == 1) return true;
-        } else {
-            // This is mempool allocated
-            int16_t *info = reinterpret_cast<int16_t *>(&ptr->padding);
-            if (*info == blackObj) return true;
-        }
-        return false;
+    static inline void markVal(Value x){
+        if (isObj(x)) memory::gc->markObj(decodeObj(x));
     }
 
     void GarbageCollector::mark() {
-        //we use a stack to avoid going into a deep recursion(which might fail)
+        // We use a stack to avoid going into a deep recursion(which might fail)
         while (!markStack.empty()) {
             object::Obj *ptr = markStack.back();
             markStack.pop_back();
@@ -190,13 +130,13 @@ namespace memory {
             switch (ptr->type) {
                 case +ObjType::ARRAY: {
                     ObjArray *arr = reinterpret_cast<ObjArray *>(ptr);
-                    //small optimization: if numOfHeapPtrs is 0 then we don't even scan the array for objects
-                    //and if there are objects we only scan until we find all objects
+                    // Small optimization: if numOfHeapPtrs is 0 then we don't even scan the array for objects
+                    // and if there are objects we only scan until we find all objects
                     int temp = 0;
                     int i = 0;
                     uInt64 arrSize = arr->values.size();
                     while (i < arrSize && temp < arr->numOfHeapPtr) {
-                        valueHelpers::mark(arr->values[i]);
+                        markVal(arr->values[i]);
                         if (isObj(arr->values[i])) temp++;
                     }
                     break;
@@ -210,32 +150,33 @@ namespace memory {
                 }
                 case +ObjType::FREEVAR: {
                     ObjFreevar *upval = reinterpret_cast<ObjFreevar *>(ptr);
-                    valueHelpers::mark(upval->val);
+                    markVal(upval->val);
                     break;
                 }
                 case +ObjType::INSTANCE: {
                     ObjInstance *inst = reinterpret_cast<ObjInstance *>(ptr);
-                    for (int i = 0; i < inst->fieldArrLen; i++) valueHelpers::mark(inst->fields[i]);
+                    for (int i = 0; i < inst->fieldArrLen; i++) markVal(inst->fields[i]);
                     break;
                 }
                 case +ObjType::HASH_MAP: {
                     ObjHashMap *map = reinterpret_cast<ObjHashMap *>(ptr);
                     for (auto &field: map->fields) {
                         markObj(field.first);
-                        valueHelpers::mark(field.second);
+                        markVal(field.second);
                     }
                     break;
                 }
                 case +ObjType::FUTURE: {
                     ObjFuture *fut = reinterpret_cast<ObjFuture *>(ptr);
                     // When tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-                    valueHelpers::mark(fut->val);
+                    markVal(fut->val);
                     break;
                 }
             }
         }
         #ifdef GC_DEBUG
-        std::cout<<"Objects marked: "<<marked<<"\n";
+        std::cout<<"Object allocated: "<<numalloc<<"\n";
+        std::cout<<"Objects marked: "<<marked<<"\n" << "Heap size, limit: "<<heapSize<<", "<<heapSizeLimit<<"\n";
         #endif
     }
 
@@ -269,32 +210,61 @@ namespace memory {
         }
     }
 
-    // TODO: can this be optimized? Running through every page of every mempool seems expensive?
-    // Should work for now but might be a problem when the heap gets into GB teritory
-    bool GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
-        #ifdef GC_DEBUG
-        for(MP& memPool : memPools){
-            if(std::visit([ptr](auto &&v){ return v.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr)), memPool)) return true;
+    // Pushing to pages and adding to largeObjects is ok because this function is only ran in suspendThread and setStackEnd
+    // which both lock pauseMty before doing work
+    void GarbageCollector::accumulatePages(ThreadArena& arena){
+        for(auto i = 0; i < MP_CNT; i++){
+            vector<PageData>& pool = arena.getMemoryPool(i);
+            PageData* firstFreePage = arena.getFirstFreePage(i);
+            pages.reserve(pages.size() + pool.size());
+            for (PageData& page: pool){
+                if(&page < firstFreePage){
+                    // Pages that come before firstFreePage have had all their block colors reverted to the correct one lazily
+                    page.head = 0;
+                }else{
+                    // Expensive reset
+                    revertBlockColor(page);
+                }
+                pages.push_back(&page);
+            }
+            arena.resetFirstFreePage(i);
         }
-        return false;
-        #else
-        return std::any_of(std::execution::par_unseq, memPools.begin(), memPools.end(), [ptr](MemoryPool& memPool) {
-            return memPool.allocedByThisPool(reinterpret_cast<uintptr_t>(ptr));
+
+        vector<object::Obj*>& tempLargeObjects = arena.getTempStorage();
+        largeObjects.reserve(largeObjects.size() + tempLargeObjects.size());
+        largeObjects.insert(tempLargeObjects.begin(), tempLargeObjects.end());
+        tempLargeObjects.clear();
+    }
+    void GarbageCollector::revertBlockColor(PageData& page){
+        int16_t* obj = reinterpret_cast<int16_t *>(page.basePtr);
+        int16_t* end = reinterpret_cast<int16_t *>(page.basePtr + page.numBlocks*page.blockSize);
+        while(obj != end){
+            if(*obj == +GCBlockColor::BLACK) *obj = +GCBlockColor::WHITE;
+            obj = reinterpret_cast<int16_t *>((char *) (obj) + page.blockSize);
+        }
+        page.head = 0;
+    }
+
+    // Should work for now but might be a problem when the heap gets into GB teritory
+    // O(log(n)) i dont think it can get better than this
+    bool GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
+        auto it = std::lower_bound(pages.begin(), pages.end(), ptr, [](PageData* page, object::Obj* ptr){
+            return page->basePtr < (char*)ptr;
         });
-        #endif
+        if(it == pages.end()) return false;
+        if((*it)->basePtr != (char*)ptr && it != pages.begin()) it--;
+        int64_t diff = (char *) ptr - ((*it)->basePtr);
+        int16_t* castPtr = reinterpret_cast<int16_t *>(ptr);
+        return diff >= 0 && diff < PAGE_SIZE && diff % (*it)->blockSize == 0 && *castPtr == +GCBlockColor::WHITE;
     }
 
     void GarbageCollector::sweep() {
-        for (auto it = interned.begin(); it != interned.end();) {
-            if (!isMarked(it->second)) it = interned.erase(it);
-            it++;
-        }
         // Sweeps large objects, small objects are swept lazily
         for (auto it = largeObjects.cbegin(); it != largeObjects.cend();) {
             object::Obj *obj = *it;
             if (obj->GCData == 0) {
                 runObjDestructor(obj);
-                delete reinterpret_cast<byte *>(obj);
+                rpfree(obj);
                 it = largeObjects.erase(it);
                 continue;
             }
@@ -314,28 +284,33 @@ namespace memory {
         }
     }
 
-    void GarbageCollector::setStackEnd(const std::thread::id thread, uintptr_t *stackEnd) {
-        {
-            std::scoped_lock<std::mutex> lk(pauseMtx);
-            threadsStack[thread].end = stackEnd;
-        }
-    }
-
-    // Make sure to run this AFTER setting the val field in ObjFuture
     void GarbageCollector::removeStackStart(const std::thread::id thread) {
         {
             std::scoped_lock<std::mutex> lk(pauseMtx);
+            // TODO: put giving pages here
             threadsStack.erase(thread);
         }
         // Only notify on deletion
         STWcv.notify_one();
     }
+    void GarbageCollector::setStackEnd(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena){
+        {
+            std::scoped_lock<std::mutex> lk(pauseMtx);
+            // Sets stack end for this thread
+            threadsStack[thread].end = stackEnd;
+            // Accumulates pages and large objects from this threads arena
+            accumulatePages(arena);
+        }
+    }
 
-    void GarbageCollector::suspendMe() {
-        // Mark this thread as suspended
-        threadsSuspended.fetch_add(1);
+    void GarbageCollector::suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena) {
         // First lock the mutex so that we certainly enter the wait queue of the cv
         std::unique_lock<std::mutex> lk(pauseMtx);
+        // Mark this thread as suspended
+        threadsSuspended.fetch_add(1);
+        // Same stuff as in setStackEnd but doing it like this save us 1 mutex locking
+        threadsStack[thread].end = stackEnd;
+        accumulatePages(arena);
         // If this is the last running thread, run the GC, if not enter the wait queue
         if (threadsStack.size() == threadsSuspended) {
             // Execute the gc cycle, we hold the lock to pauseMtx right now so no other thread can alter things
@@ -343,13 +318,13 @@ namespace memory {
             return;
         }
         // The rhs condition is because (threadsStack - 1) threads could be suspended and the last thread is finishing execution
-        // In that case the last thread will never enter suspendMe,
+        // In that case the last thread will never enter suspendThread,
         // but will notify a random thread waiting on STWcv when it gets deleted via removeStackStart()
         STWcv.wait(lk, [&] { return active == 0 || threadsStack.size() == threadsSuspended; });
         // Wait is over, either the gc cycle is over(active == 0) or this thread has been selected to run the gc cycle
         if (active == 0) {
-            // All waiting that are waiting because of suspendMe need to decrement threadsSuspended on their own
-            // Some threads might be waiting on a use defined mutex and are thus suspended,
+            // All threads that are waiting because of suspendThread need to decrement threadsSuspended on their own
+            // Some threads might be waiting on a user defined mutex and are thus suspended,
             // because of that simply setting threadsSuspended to 0 after a gc cycle is not possible
             threadsSuspended--;
             return;

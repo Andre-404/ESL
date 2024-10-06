@@ -34,10 +34,6 @@ void valueHelpers::print(Value x) {
     std::cout << valueHelpers::toString(x);
 }
 
-void valueHelpers::mark(Value x){
-    if (isObj(x)) memory::gc->markObj(decodeObj(x));
-}
-
 string valueHelpers::typeToStr(Value x) {
     switch (getType(x)) {
         case ValueType::NUMBER: return "<number>";

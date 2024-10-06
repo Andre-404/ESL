@@ -2,6 +2,7 @@
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include "Values/valueHelpersInline.cpp"
+#include "MemoryManagment/garbageCollector.h"
 #include <csetjmp>
 #include <stdarg.h>
 #include "unwind.h"
@@ -12,6 +13,7 @@
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
 
+
 EXPORT NOINLINE void stopThread(){
     if(!memory::gc) return;
     // Get stack end(lowest address) and then spill the registers to the stack
@@ -20,8 +22,7 @@ EXPORT NOINLINE void stopThread(){
     uintptr_t* stackEnd;
     __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
 
-    memory::gc->setStackEnd(std::this_thread::get_id(), stackEnd);
-    memory::gc->suspendMe();
+    memory::gc->suspendThread(std::this_thread::get_id(), stackEnd, memory::getLocalArena());
 }
 
 EXPORT double asNum(Value x){
@@ -29,10 +30,6 @@ EXPORT double asNum(Value x){
         return decodeNumber(x);
     }
     exit(64);
-}
-
-EXPORT Value createStr(char* ptr){
-    return encodeObj(ObjString::createStr(ptr));
 }
 
 EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
@@ -92,6 +89,10 @@ EXPORT Value strAdd(Value lhs, Value rhs){
 EXPORT Value strTryAdd(Value lhs, Value rhs, const char* fileName, const int line){
     if(!isString(lhs) || !isString(rhs)) tyErrDouble("Operands must be numbers or strings, got '{}' and '{}'.", fileName, line, lhs, rhs);
     return encodeObj(asString(lhs)->concat(asString(rhs)));
+}
+
+EXPORT Value strCmp(Value lhs, Value rhs){
+    return encodeBool(asString(lhs)->compare(asString(rhs)));
 }
 
 EXPORT Value createArr(uint32_t arrSize){
@@ -179,7 +180,7 @@ EXPORT void arraySetV(ObjArray* arr, Value num, Value v){
 }
 
 EXPORT Obj* gcAlloc(int bytes){
-    Obj* ptr = (Obj*)memory::gc->alloc(bytes);
+    Obj* ptr = (Obj*)memory::getLocalArena().alloc(bytes);
     ptr->type = +object::ObjType::THUNK;
     return ptr;
 }
