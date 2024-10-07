@@ -181,7 +181,7 @@ EXPORT void arraySetV(ObjArray* arr, Value num, Value v){
 
 EXPORT Obj* gcAlloc(int bytes){
     Obj* ptr = (Obj*)memory::getLocalArena().alloc(bytes);
-    ptr->type = +object::ObjType::THUNK;
+    ptr->type = +object::ObjType::DEALLOCATED;
     return ptr;
 }
 

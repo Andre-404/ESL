@@ -25,7 +25,7 @@ typedef uint64_t Value;
 #define LOCAL_MAX 256
 #define UPVAL_MAX 256
 // We use this macro for metaprogramming related to memory pools.
-#define MP_CNT 6
+#define MP_CNT 48
 #define PAGE_SIZE (64 * 1024)
 
 // Oh yeah baby, the loops be looping
@@ -58,4 +58,4 @@ typedef uint64_t Value;
 #define DEBUG_MODE
 // #define COMPILER_USE_LONG_INSTRUCTION
 // #define DEBUG_TRACE_EXECUTION
-#define GC_DEBUG
+//#define GC_DEBUG

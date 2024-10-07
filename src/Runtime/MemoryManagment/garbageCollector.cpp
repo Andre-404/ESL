@@ -35,9 +35,6 @@ namespace memory {
     void GarbageCollector::checkHeapSize(const size_t size){
         uint64_t tmpHeapSize = heapSize.load(std::memory_order_relaxed);
         if (tmpHeapSize <= heapSizeLimit && (tmpHeapSize += size) >= heapSizeLimit) {
-#ifdef GC_DEBUG
-            std::cout<<"Tmp heap size, limit: "<<tmpHeapSize<<", "<<heapSizeLimit<<"\n";
-#endif
             active = 1;
         }
         heapSize.store(tmpHeapSize, std::memory_order_relaxed);
@@ -90,27 +87,16 @@ namespace memory {
     // Returns true if this object was already marked
     static inline bool isMarked(object::Obj *ptr) {
         if (ptr->allocType == +GCAllocType::CONSTANT) return true;
-        if (ptr->allocType == +GCAllocType::MALLOC) {
-            if (ptr->GCData == 1) return true;
-        } else {
-            // This is mempool allocated
-            int16_t *info = reinterpret_cast<int16_t *>(&ptr->padding);
-            if (*info == +GCBlockColor::BLACK) return true;
-        }
+        int8_t *info = &ptr->padding[0];
+        if(*info == +GCBlockColor::WHITE) return true;
         return false;
     }
     // Additionally marks the not already marked object
     static inline bool markIfNotMarked(object::Obj *ptr) {
         if (ptr->allocType == +GCAllocType::CONSTANT) return true;
-        if (ptr->allocType == +GCAllocType::MALLOC) {
-            if (ptr->GCData == 1) return true;
-            ptr->GCData = true;
-        } else {
-            // This is mempool allocated
-            int16_t *info = reinterpret_cast<int16_t *>(&ptr->padding);
-            if (*info == +GCBlockColor::BLACK) return true;
-            *info = +GCBlockColor::BLACK;
-        }
+        int8_t *info = &ptr->padding[0];
+        if(*info == +GCBlockColor::WHITE) return true;
+        *info = +GCBlockColor::WHITE;
         return false;
     }
     static inline void markVal(Value x){
@@ -235,12 +221,13 @@ namespace memory {
         largeObjects.insert(tempLargeObjects.begin(), tempLargeObjects.end());
         tempLargeObjects.clear();
     }
+
     void GarbageCollector::revertBlockColor(PageData& page){
-        int16_t* obj = reinterpret_cast<int16_t *>(page.basePtr);
-        int16_t* end = reinterpret_cast<int16_t *>(page.basePtr + page.numBlocks*page.blockSize);
+        int8_t* obj = reinterpret_cast<int8_t *>(page.basePtr + page.head*page.blockSize);
+        int8_t* end = reinterpret_cast<int8_t *>(page.basePtr + page.numBlocks*page.blockSize);
         while(obj != end){
-            if(*obj == +GCBlockColor::BLACK) *obj = +GCBlockColor::WHITE;
-            obj = reinterpret_cast<int16_t *>((char *) (obj) + page.blockSize);
+            if(*obj == +GCBlockColor::WHITE) *obj = +GCBlockColor::BLACK;
+            obj += page.blockSize;
         }
         page.head = 0;
     }
@@ -254,21 +241,20 @@ namespace memory {
         if(it == pages.end()) return false;
         if((*it)->basePtr != (char*)ptr && it != pages.begin()) it--;
         int64_t diff = (char *) ptr - ((*it)->basePtr);
-        int16_t* castPtr = reinterpret_cast<int16_t *>(ptr);
-        return diff >= 0 && diff < PAGE_SIZE && diff % (*it)->blockSize == 0 && *castPtr == +GCBlockColor::WHITE;
+        return diff >= 0 && diff < PAGE_SIZE && diff % (*it)->blockSize == 0 && ptr->padding[1] == 1;
     }
 
     void GarbageCollector::sweep() {
         // Sweeps large objects, small objects are swept lazily
         for (auto it = largeObjects.cbegin(); it != largeObjects.cend();) {
             object::Obj *obj = *it;
-            if (obj->GCData == 0) {
+            if (obj->padding[0] == +GCBlockColor::BLACK) {
                 runObjDestructor(obj);
                 rpfree(obj);
                 it = largeObjects.erase(it);
                 continue;
             }
-            obj->GCData = 0;
+            obj->padding[0] = +GCBlockColor::BLACK;
             it++;
         }
     }

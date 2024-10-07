@@ -21,21 +21,24 @@ size_t Obj::getSize(){
         case +ObjType::MUTEX: return sizeof(ObjMutex);
         case +ObjType::FUTURE: return sizeof(ObjFuture);
         case +ObjType::RANGE: return sizeof(ObjRange);
+        default: std::cout<<"getsize called with nonvalid obj type\n";
     }
 }
 
 void object::runObjDestructor(object::Obj* obj){
     // Have to do this because we don't have access to virtual destructors,
     // however some objects allocate STL containers that need cleaning up
-    obj->GCData = 0;
+    obj->padding[1] = 0;
     switch(obj->type){
-        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); return;
-        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); return;
-        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); return;
-        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); return;
-        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); return;
-        default: return;
+        case +object::ObjType::DEALLOCATED: return;
+        case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); break;
+        case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
+        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
+        case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;
+        case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
+        default: break;
     }
+    obj->type = +object::ObjType::DEALLOCATED;
 }
 
 string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){

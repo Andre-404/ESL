@@ -10,7 +10,7 @@
 namespace object {
 
     enum class ObjType {
-        THUNK,
+        DEALLOCATED,
         STRING,
         RANGE,
         CLOSURE,
@@ -28,7 +28,7 @@ namespace object {
     class Obj{
     public:
         // Used by GC
-        byte padding[2];
+        int8_t padding[2];
         byte allocType;
         // Arbitrary GC data that depends on allocType
         byte GCData;

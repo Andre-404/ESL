@@ -17,13 +17,36 @@ thread_local ThreadArena threadArena;
 ThreadArena& memory::getLocalArena(){
     return threadArena;
 }
+#define SMALL_GRANULARITY 16u
+#define SMALL_SIZE_CLASSES 32u
+#define MEDIUM_GRANULARITY 128u
+#define MEDIUM_SIZE_CLASSES (MP_CNT - SMALL_SIZE_CLASSES)
 
-inline int szToIdx(uint64_t x){
-    if(x > 256)
-        return -1;
-    if(x > 32 && x <= 48)
-        return 0;
-    return std::bit_width(x-1) - 3;
+constexpr std::array<size_t, MP_CNT> generateBlockSizes(size_t shift1, size_t n1, size_t shift2, size_t n2){
+    std::array<size_t, MP_CNT> arr;
+    for(int i = 0; i < n1; i++){
+        arr[i] = (i+1)*shift1;
+    }
+    for(int i = 0; i < n2; i++){
+        arr[n1+i] = (i+1)*shift2 + n1*shift1;
+    }
+
+    return arr;
+}
+
+constexpr std::array<size_t, MP_CNT> mpBlockSizes = generateBlockSizes(SMALL_GRANULARITY, SMALL_SIZE_CLASSES,
+                                                                       MEDIUM_GRANULARITY, MEDIUM_SIZE_CLASSES);
+
+inline int szToIdx(size_t x){
+    // Rounds up to the nearest multiple of GRANULARITY and divides by GRANULARITY to get position in mpBlockSizes
+    int smallclassIdx = (x + (SMALL_GRANULARITY - 1)) >> std::countr_zero(SMALL_GRANULARITY);
+    // For medium class subtract the highest small granularity block to get relative position from start of medium granularity
+    int mediumclassIdx = (x - SMALL_GRANULARITY*SMALL_SIZE_CLASSES + (MEDIUM_GRANULARITY - 1)) >> std::countr_zero(MEDIUM_GRANULARITY);
+    int smallCondition = (x <= mpBlockSizes[SMALL_SIZE_CLASSES-1]); // If x is below small class size return this index
+    int mediumCondition = (x <= mpBlockSizes.back() && (1 - smallCondition));
+    return smallclassIdx*smallCondition  +
+           (SMALL_SIZE_CLASSES + mediumclassIdx)*mediumCondition // For medium blocks since idx is relative add SMALL_SIZE_CLASSES
+           - 1; // Sub 1 since array starts with size 16 so for eg. x = 15 this returns 1(but index is 0)
 }
 
 ThreadArena::ThreadArena(){
@@ -38,33 +61,20 @@ ThreadArena::~ThreadArena(){
     // Allocating is lockless, each arena does its own thing
     // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
     gc->checkHeapSize(size);
-
     byte *block = nullptr;
     int idx = szToIdx(size);
     if (idx == -1) {
-        try {
-            block = static_cast<byte *>(rpmalloc(size));
-        }
-        catch (const std::bad_alloc &e) {
-            errorHandler::addSystemError(fmt::format("Failed allocation, tried to allocate {} bytes", size));
-        }
+        block = static_cast<byte *>(rpmalloc(size));
         // Flags that this pointer was malloc-d
         reinterpret_cast<object::Obj *>(block)->allocType = +GCAllocType::MALLOC;
-        reinterpret_cast<object::Obj *>(block)->GCData = 1; // When alloc type == MALLOC GC data serves as a "marked" flag
+        reinterpret_cast<object::Obj *>(block)->padding[0] = +GCBlockColor::BLACK;
         tempLargeObjectStorage.push_back(reinterpret_cast<object::Obj *>(block));
     } else {
-        // Each fastAlloc needs to have the correct block size, using macro loop for convenience
-        switch(idx){
-            #define MP_SWITCH_CASE(X) case X: block = reinterpret_cast<byte*>(fastAlloc<X>()); break;
-            M_LOOP(MP_CNT, MP_SWITCH_CASE, 0)
-            #undef MP_SWITCH_CASE
-            default: __builtin_unreachable();
-        }
+        block = reinterpret_cast<byte*>(fastAlloc(idx));
         object::Obj *obj = reinterpret_cast<object::Obj *>(block);
         // Lazy sweeping, some "free" blocks are dead objects that have not been destructed properly
-        if (obj->GCData) runObjDestructor(obj);
+        runObjDestructor(obj);
         obj->allocType = idx;
-        obj->GCData = 1;
     }
     return block;
 }
@@ -85,36 +95,36 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
     return tempLargeObjectStorage;
 }
 
-template<size_t blockSize>
+//template<size_t blockSize>
 [[gnu::hot]] static void* pageTryAlloc(PageData* page){
-    constexpr int16_t constNumBlocks = PAGE_SIZE / blockSize;
-    int16_t* obj = reinterpret_cast<int16_t *>(page->basePtr + page->head * blockSize);
+    int16_t numBlocks = PAGE_SIZE / page->blockSize;
+    int8_t* obj = reinterpret_cast<int8_t *>(page->basePtr + page->head * page->blockSize);
     // After a GC collection colors are reversed: free blocks are white, and occupied ones are black
     // While looking for a free slot we mark the black blocks as occupied again(white)
     // This works because page->head never moves backwards
-    while(page->head < constNumBlocks && *obj == +GCBlockColor::BLACK){
+    while(page->head < numBlocks && *obj == +GCBlockColor::WHITE){
         // If we find a black block reset its marked flag
-        *obj = +GCBlockColor::WHITE;
+        *obj = +GCBlockColor::BLACK;
         page->head++;
-        obj = reinterpret_cast<int16_t *>((char *) (obj) + blockSize);
+        obj += page->blockSize;
     }
     // If the loop exited because every block was taken, bail out
-    if(page->head == constNumBlocks) return nullptr;
-    *obj = +GCBlockColor::WHITE;
+    if(page->head == numBlocks) return nullptr;
+    *obj = +GCBlockColor::BLACK;
+    obj[1] = 1;// Mark as allocated
     page->head++;
     return reinterpret_cast<char *>(obj);
 }
 
 // Function is templated to (hopefully) speed up pageTryAlloc and array access
-template<size_t poolIdx>
-[[gnu::hot]] void* ThreadArena::fastAlloc(){
+//template<size_t poolIdx>
+[[gnu::hot]] void* ThreadArena::fastAlloc(size_t poolIdx){
     void *ptr = nullptr;
     if(!firstFreePage[poolIdx]) allocNewPage(poolIdx);
-    while (!(ptr = pageTryAlloc<mpBlockSizes[poolIdx]>(firstFreePage[poolIdx]))) {
+    while (!(ptr = pageTryAlloc(firstFreePage[poolIdx]))) {
         if (firstFreePage[poolIdx] == &pools[poolIdx].back()) {
             allocNewPage(poolIdx);
-        } else
-            firstFreePage[poolIdx]++;
+        } else firstFreePage[poolIdx]++;
     }
     return ptr;
 }

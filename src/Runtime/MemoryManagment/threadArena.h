@@ -7,7 +7,6 @@ namespace object{
 }
 
 namespace memory {
-    constexpr std::array<size_t, MP_CNT> mpBlockSizes = {48, 16, 32, 64, 128, 256};
     enum class GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
     inline constexpr byte operator+ (GCAllocType const val) { return static_cast<byte>(val); }
     enum GCBlockColor{ WHITE = -2, BLACK = -3 };
@@ -41,8 +40,8 @@ namespace memory {
 
         void freePage(uint32_t pid);
 
-        template<size_t poolIdx>
-        void* fastAlloc();
+        //template<size_t poolIdx>
+        void* fastAlloc(size_t poolIdx);
     };
     ThreadArena& getLocalArena();
 }
