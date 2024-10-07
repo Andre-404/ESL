@@ -289,6 +289,18 @@ namespace memory {
         }
     }
 
+    void GarbageCollector::tryLockUserMutex(std::mutex& mtx){
+        // Let GC know this thread will now try to lock mtx and could block
+        threadsSuspended++;
+        mtx.lock();
+        // Makes sure that this thread doesn't start executing code while GC is running after it locks mtx
+        // Even though threadSuspended is atomic pauseMtx is needed because its taken while GC is running
+        // (so locking it here will block until GC finishes)
+        std::unique_lock<std::mutex> lk(pauseMtx);
+        threadsSuspended--;
+        lk.unlock();
+    }
+
     void GarbageCollector::suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena) {
         // First lock the mutex so that we certainly enter the wait queue of the cv
         std::unique_lock<std::mutex> lk(pauseMtx);
