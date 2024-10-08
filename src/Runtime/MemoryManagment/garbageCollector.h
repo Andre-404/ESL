@@ -71,7 +71,7 @@ namespace memory {
         ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
 	private:
 		std::mutex allocMtx;
-		uInt64 heapSizeLimit;
+        std::atomic<uint64_t> heapSizeLimit;
         std::atomic<uint64_t> heapSize;
         ankerl::unordered_dense::set<object::Obj*> largeObjects;
         vector<Value*> globalRoots;

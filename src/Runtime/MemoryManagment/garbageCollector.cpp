@@ -8,6 +8,7 @@
 #include <execution>
 #include <sys/stat.h>
 #include <variant>
+#include <csetjmp>
 
 using namespace valueHelpers;
 
@@ -290,6 +291,12 @@ namespace memory {
     }
 
     void GarbageCollector::tryLockUserMutex(std::mutex& mtx){
+        // Get stack end(lowest address) and then spill the registers to the stack
+        jmp_buf jb;
+        setjmp(jb);
+        uintptr_t* stackEnd;
+        __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
+        setStackEnd(std::this_thread::get_id(), stackEnd, memory::getLocalArena());
         // Let GC know this thread will now try to lock mtx and could block
         threadsSuspended++;
         mtx.lock();
