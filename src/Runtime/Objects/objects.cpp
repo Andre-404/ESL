@@ -28,7 +28,7 @@ size_t Obj::getSize(){
 void object::runObjDestructor(object::Obj* obj){
     // Have to do this because we don't have access to virtual destructors,
     // however some objects allocate STL containers that need cleaning up
-    obj->padding[1] = 0;
+    obj->GCInfo[1] = 0;
     switch(obj->type){
         case +object::ObjType::DEALLOCATED: return;
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); break;

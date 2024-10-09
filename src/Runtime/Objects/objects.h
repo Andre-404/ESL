@@ -27,11 +27,7 @@ namespace object {
 
     class Obj{
     public:
-        // Used by GC
-        int8_t padding[2];
-        byte allocType;
-        // Arbitrary GC data that depends on allocType
-        byte GCData;
+        int8_t GCInfo[2];
         byte type;
 
         size_t getSize();

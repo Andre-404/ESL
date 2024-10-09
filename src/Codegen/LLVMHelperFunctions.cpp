@@ -32,9 +32,9 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    // First 2 bytes are padding
+    // First 2 bytes are GC info
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
-    types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8), TYPE(Int8), TYPE(Int8)}, "Obj");
+    types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
@@ -354,7 +354,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         builder.SetInsertPoint(checkTypeBB);
         auto castPtr = builder.CreateCall(module->getFunction("decodeObj"), arg);
-        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(3)};
+        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
         auto ptr = builder.CreateInBoundsGEP(types["Obj"], castPtr, idxList);
         auto type = builder.CreateLoad(builder.getInt8Ty(), ptr);
         builder.CreateRet(builder.CreateICmpEQ(type, objTy));

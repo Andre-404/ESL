@@ -65,18 +65,15 @@ ThreadArena::~ThreadArena(){
     int idx = szToIdx(size);
     if (idx == -1) {
         block = static_cast<byte *>(rpmalloc(size));
-        // Flags that this pointer was malloc-d
-        reinterpret_cast<object::Obj *>(block)->allocType = +GCAllocType::MALLOC;
-        reinterpret_cast<object::Obj *>(block)->padding[0] = +GCBlockColor::BLACK;
+        reinterpret_cast<object::Obj *>(block)->GCInfo[0] = +GCBlockColor::BLACK;
         tempLargeObjectStorage.push_back(reinterpret_cast<object::Obj *>(block));
     } else {
         block = reinterpret_cast<byte*>(fastAlloc(idx));
         object::Obj *obj = reinterpret_cast<object::Obj *>(block);
         // Lazy sweeping, some "free" blocks are dead objects that have not been destructed properly
         runObjDestructor(obj);
-        obj->padding[0] = +GCBlockColor::BLACK;
-        obj->padding[1] = 1;
-        obj->allocType = idx;
+        obj->GCInfo[0] = +GCBlockColor::BLACK;
+        obj->GCInfo[1] = 1;
     }
     return block;
 }
@@ -106,6 +103,7 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
     // This works because page->head never moves backwards
     while(page->head < numBlocks && *obj == +GCBlockColor::WHITE){
         // If we find a black block reset its marked flag
+        __builtin_prefetch(obj + page->blockSize);
         *obj = +GCBlockColor::BLACK;
         page->head++;
         obj += page->blockSize;
@@ -116,8 +114,6 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
     return reinterpret_cast<char *>(obj);
 }
 
-// Function is templated to (hopefully) speed up pageTryAlloc and array access
-//template<size_t poolIdx>
 [[gnu::hot]] void* ThreadArena::fastAlloc(size_t poolIdx){
     void *ptr = nullptr;
     if(!firstFreePage[poolIdx]) allocNewPage(poolIdx);

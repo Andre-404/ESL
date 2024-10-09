@@ -88,16 +88,14 @@ namespace memory {
 
     // Returns true if this object was already marked
     static inline bool isMarked(object::Obj *ptr) {
-        if (ptr->allocType == +GCAllocType::CONSTANT) return true;
-        int8_t *info = &ptr->padding[0];
-        if(*info == +GCBlockColor::WHITE) return true;
+        int8_t *info = &ptr->GCInfo[0];
+        return *info == +GCBlockColor::CONSTANT || *info == +GCBlockColor::WHITE;
         return false;
     }
     // Additionally marks the not already marked object
     static inline bool markIfNotMarked(object::Obj *ptr) {
-        if (ptr->allocType == +GCAllocType::CONSTANT) return true;
-        int8_t *info = &ptr->padding[0];
-        if(*info == +GCBlockColor::WHITE) return true;
+        int8_t *info = &ptr->GCInfo[0];
+        if (*info == +GCBlockColor::CONSTANT || *info == +GCBlockColor::WHITE) return true;
         *info = +GCBlockColor::WHITE;
         return false;
     }
@@ -242,25 +240,25 @@ namespace memory {
         auto it = std::lower_bound(pages.begin(), pages.end(), ptr, [](PageData* page, object::Obj* ptr){
             return page->basePtr < (char*)ptr;
         });
-        if(it == pages.end()) return NULL;
-        if((*it)->basePtr != (char*)ptr && it != pages.begin()) it--;
+        if(it == pages.end()) return nullptr;
+        if(it != pages.begin()) it--;
         int64_t diff = (char *) ptr - ((*it)->basePtr);
         // If ptr is an interior pointer this gets the base address of the object it points to
         object::Obj* baseObjPtr = reinterpret_cast<Obj *>((char *) ptr - diff % (*it)->blockSize);
         // Objects is accessed only after we've confirmed that its within page bounds
-        return reinterpret_cast<Obj *>((size_t) baseObjPtr * (diff >= 0 && diff < PAGE_SIZE && baseObjPtr->padding[1] == 1));
+        return reinterpret_cast<Obj *>((size_t) baseObjPtr * (diff >= 0 && diff < PAGE_SIZE && baseObjPtr->GCInfo[1] == 1));
     }
 
     void GarbageCollector::sweep() {
         int j = 0;
         for(int i = 0; i < largeObjects.size(); i++){
             object::Obj *obj = largeObjects[i];
-            if (obj->padding[0] == +GCBlockColor::BLACK) {
+            if (obj->GCInfo[0] == +GCBlockColor::BLACK) {
                 runObjDestructor(obj);
                 rpfree(obj);
                 continue;
             }
-            obj->padding[0] = +GCBlockColor::BLACK;
+            obj->GCInfo[0] = +GCBlockColor::BLACK;
             largeObjects[j] = largeObjects[i];
             j++;
         }
