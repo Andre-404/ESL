@@ -74,6 +74,8 @@ ThreadArena::~ThreadArena(){
         object::Obj *obj = reinterpret_cast<object::Obj *>(block);
         // Lazy sweeping, some "free" blocks are dead objects that have not been destructed properly
         runObjDestructor(obj);
+        obj->padding[0] = +GCBlockColor::BLACK;
+        obj->padding[1] = 1;
         obj->allocType = idx;
     }
     return block;
@@ -110,8 +112,6 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
     }
     // If the loop exited because every block was taken, bail out
     if(page->head == numBlocks) return nullptr;
-    *obj = +GCBlockColor::BLACK;
-    obj[1] = 1;// Mark as allocated
     page->head++;
     return reinterpret_cast<char *>(obj);
 }

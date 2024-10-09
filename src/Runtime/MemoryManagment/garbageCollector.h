@@ -57,7 +57,7 @@ namespace memory {
         // If a thread is considered suspended its stack start and end must be valid pointers
         void suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena);
         // Checks if the provided ptr is a live object allocated by the gc
-        bool isValidPtr(object::Obj* const ptr);
+        object::Obj* isValidPtr(object::Obj* const ptr);
         void addGlobalRoot(Value* ptr);
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
         std::atomic<int64_t> threadsSuspended;
@@ -73,7 +73,7 @@ namespace memory {
 		std::mutex allocMtx;
         std::atomic<uint64_t> heapSizeLimit;
         std::atomic<uint64_t> heapSize;
-        ankerl::unordered_dense::set<object::Obj*> largeObjects;
+        vector<object::Obj*> largeObjects;
         vector<Value*> globalRoots;
 
 		vector<object::Obj*> markStack;
@@ -86,7 +86,7 @@ namespace memory {
         // Reverts black objects that are alive back to white objects
         void revertBlockColor(PageData& page);
         // Binary search through pages
-        bool isAllocedByMempools(object::Obj* ptr);
+        object::Obj* isAllocedByMempools(object::Obj* ptr);
 
 		void mark();
 		void markRoots();

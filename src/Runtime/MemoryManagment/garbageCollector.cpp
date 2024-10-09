@@ -53,6 +53,7 @@ namespace memory {
         #endif
         // Sort pages by address to make searching for valid pointers easier
         std::sort(pages.begin(), pages.end(), [](PageData* a, PageData* b){return a->basePtr < b->basePtr;});
+        std::sort(largeObjects.begin(), largeObjects.end());
         #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::cout<<"Sorting "<<pages.size()<<" pages took: "<<d2-d<<"\n";
@@ -166,7 +167,9 @@ namespace memory {
         std::cout<<"Objects marked: "<<marked<<"\n" << "Heap size, limit: "<<heapSize<<", "<<heapSizeLimit<<"\n";
         #endif
     }
-
+    // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object or a direct pointer
+    // Because of that before accessing the object first we check if 'object' really points to an allocated object
+    // This function also recognizes interior pointers that point to valid objects
     void GarbageCollector::markRoots() {
         // Have to mark the stack of each thread
         for (auto it = threadsStack.begin(); it != threadsStack.end(); it++) {
@@ -176,15 +179,15 @@ namespace memory {
             while (end < start) {
                 // Cast pointer to int64, check for the object flag, if it's present try to mark the object and push to mark stack
                 Value address = *reinterpret_cast<Value *>(end);
+                // isValidPtr returns the pointer to the base address of the object that we then put in the mark stack
+                // (needed in case of interior pointers)
                 if (isObj(address)) {
                     Obj *object = decodeObj(address);
-                    // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object
-                    // Because of that before accessing the object first we check if 'object' really points to an allocated object
-                    if (isValidPtr(object)) {
+                    if (object = isValidPtr(object)) {
                         markObj(object);
                     }
-                } else if (isValidPtr(*reinterpret_cast<Obj **>(end))) {
-                    markObj(*reinterpret_cast<Obj **>(end));
+                } else if (Obj *basePtr = isValidPtr(*reinterpret_cast<Obj **>(end))) {
+                    markObj(basePtr);
                 }
                 end++;
             }
@@ -219,7 +222,7 @@ namespace memory {
 
         vector<object::Obj*>& tempLargeObjects = arena.getTempStorage();
         largeObjects.reserve(largeObjects.size() + tempLargeObjects.size());
-        largeObjects.insert(tempLargeObjects.begin(), tempLargeObjects.end());
+        largeObjects.insert(largeObjects.end(), tempLargeObjects.begin(), tempLargeObjects.end());
         tempLargeObjects.clear();
     }
 
@@ -235,29 +238,34 @@ namespace memory {
 
     // Should work for now but might be a problem when the heap gets into GB teritory
     // O(log(n)) i dont think it can get better than this
-    bool GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
+    object::Obj* GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
         auto it = std::lower_bound(pages.begin(), pages.end(), ptr, [](PageData* page, object::Obj* ptr){
             return page->basePtr < (char*)ptr;
         });
-        if(it == pages.end()) return false;
+        if(it == pages.end()) return NULL;
         if((*it)->basePtr != (char*)ptr && it != pages.begin()) it--;
         int64_t diff = (char *) ptr - ((*it)->basePtr);
-        return diff >= 0 && diff < PAGE_SIZE && diff % (*it)->blockSize == 0 && ptr->padding[1] == 1;
+        // If ptr is an interior pointer this gets the base address of the object it points to
+        object::Obj* baseObjPtr = reinterpret_cast<Obj *>((char *) ptr - diff % (*it)->blockSize);
+        // Objects is accessed only after we've confirmed that its within page bounds
+        return reinterpret_cast<Obj *>((size_t) baseObjPtr * (diff >= 0 && diff < PAGE_SIZE && baseObjPtr->padding[1] == 1));
     }
 
     void GarbageCollector::sweep() {
-        // Sweeps large objects, small objects are swept lazily
-        for (auto it = largeObjects.cbegin(); it != largeObjects.cend();) {
-            object::Obj *obj = *it;
+        int j = 0;
+        for(int i = 0; i < largeObjects.size(); i++){
+            object::Obj *obj = largeObjects[i];
             if (obj->padding[0] == +GCBlockColor::BLACK) {
                 runObjDestructor(obj);
                 rpfree(obj);
-                it = largeObjects.erase(it);
                 continue;
             }
             obj->padding[0] = +GCBlockColor::BLACK;
-            it++;
+            largeObjects[j] = largeObjects[i];
+            j++;
         }
+        // TODO: optimize
+        largeObjects.resize(j);
     }
 
     [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj *const ptr) {
@@ -337,9 +345,26 @@ namespace memory {
         // Execute the gc cycle
         collect(lk);
     }
-
-    bool GarbageCollector::isValidPtr(object::Obj *const ptr) {
-        return largeObjects.contains(ptr) || isAllocedByMempools(ptr);
+    // O(log n)
+    // Credit for faster binary search: https://en.algorithmica.org/hpc/data-structures/binary-search/
+    static object::Obj* isLargeObject(vector<object::Obj*>& objects, object::Obj *const ptr){
+        if(objects.empty()) return nullptr;
+        object::Obj** base = objects.data();
+        size_t len = objects.size();
+        while(len > 1){
+            size_t half = len / 2;
+            len -= half;
+            __builtin_prefetch(&base[len / 2 - 1]);
+            __builtin_prefetch(&base[half + len / 2 - 1]);
+            base += (base[half - 1] < ptr) * half;
+        }
+        object::Obj* potentialObj = *base;
+        // This check handles interior pointers(if difference is less than the object size than this is surely an interior pointer)
+        return reinterpret_cast<Obj *>((size_t)potentialObj * (ptr - potentialObj < potentialObj->getSize()));
+    }
+    // Returns null if ptr is not a valid pointer, if it is then return the base address of the objects ptr points to
+    object::Obj* GarbageCollector::isValidPtr(object::Obj *const ptr) {
+        return reinterpret_cast<Obj *>((size_t) isLargeObject(largeObjects, ptr) + (size_t) isAllocedByMempools(ptr));
     }
 
     void GarbageCollector::addGlobalRoot(Value *ptr) {
