@@ -22,7 +22,7 @@ using namespace valueHelpers;
 #define INLINE_PEEK(depth) t->stackTop[-1 - depth]
 #define INLINE_POP() (*(--t->stackTop))
 // When pushing/popping from arrays and such, have to take care of memory
-#define MEM_ADD(size) memory::gc.heapSize += size
+#define MEM_ADD(size) memory::gc.currentHeapSize += size
 
 static void isNumAndInt(runtime::Thread* t, Value val, uInt argNum){
     if(!isNumber(val)) TYPE_ERROR("number", argNum, val);

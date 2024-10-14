@@ -29,6 +29,7 @@ Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> 
     llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
     gvar->setInitializer(builder.getInt8(0));
+    gvar->setAlignment(llvm::Align::Of<uint64_t>());
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
     implementNativeFunctions(natives);
 

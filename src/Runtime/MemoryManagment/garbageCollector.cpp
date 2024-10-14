@@ -26,33 +26,50 @@ static uint64_t marked = 0;
 namespace memory {
     GarbageCollector *gc = nullptr;
 
+    HeapStatistics::HeapStatistics(){
+        currentHeapSize = 0;
+        collectionThreshold = HEAP_START_SIZE * 1024;
+        heapVer = 0;
+        prevHeapSize = 0;
+    }
+
+    void HeapStatistics::monitor(){
+
+    }
+    void HeapStatistics::adjustGCParams(){
+        // TODO: right now these are just some magic numbers, work on that
+        if(currentHeapSize > collectionThreshold) collectionThreshold = currentHeapSize * 1.75;
+        else if(currentHeapSize * 0.5 < collectionThreshold) {
+            //collectionThreshold = std::min(collectionThreshold / 2, HEAP_START_SIZE * 1024ull);
+        }
+    }
+
     GarbageCollector::GarbageCollector(byte &active) : active(active) {
-        heapSize = 0;
-        heapSizeLimit = HEAP_START_SIZE * 1024;
         rpmalloc_initialize();
         threadsSuspended = 0;
     }
 
     void GarbageCollector::checkHeapSize(const size_t size){
-        uint64_t tmpHeapSize = heapSize.load(std::memory_order_relaxed);
-        if (tmpHeapSize <= heapSizeLimit && (tmpHeapSize += size) >= heapSizeLimit) {
+        // Eases up on atomicity
+        uint64_t tmpHeapSize = statistics.currentHeapSize.fetch_add(size, std::memory_order_relaxed);
+        uint64_t tmpHeapSizeLimit = statistics.collectionThreshold.load(std::memory_order_relaxed);
+        if(tmpHeapSize-size <= tmpHeapSizeLimit && tmpHeapSize >= tmpHeapSizeLimit) [[unlikely]]{
             active = 1;
         }
-        heapSize.store(tmpHeapSize, std::memory_order_relaxed);
 #ifdef GC_DEBUG
         numalloc++;
 #endif
     }
 
+
     // Collect can freely read and modify data because pauseMtx is under lock by lk
     void GarbageCollector::collect(std::unique_lock<std::mutex> &lk) {
-        heapSize = 0;
+        statistics.currentHeapSize = 0;
         #ifdef GC_DEBUG
         double d = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         marked = 0;
         #endif
-        // Sort pages by address to make searching for valid pointers easier
-        std::sort(pages.begin(), pages.end(), [](PageData* a, PageData* b){return a->basePtr < b->basePtr;});
+        pageManager.prepForCollection();
         std::sort(largeObjects.begin(), largeObjects.end());
         #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -75,9 +92,9 @@ namespace memory {
         std::cout<<"sweeping took: "<<d5-d4<<" objects swept: "<<numel - largeObjects.size()<<"\n";
         numalloc = 0;
         #endif
-        while (heapSize > heapSizeLimit) heapSizeLimit = heapSizeLimit << 1;
-        // Reset the pages vector
-        pages.clear();
+        statistics.adjustGCParams();
+        // A change in empty buffer means some pages in arenas are no longer available, so update heap version to let arenas know
+        if(pageManager.updateEmptyBuffer() > 0) statistics.heapVer++;
         // Tells all waiting threads that gc cycle is over
         active = 0;
         // This thread is no longer suspended
@@ -90,13 +107,18 @@ namespace memory {
     static inline bool isMarked(object::Obj *ptr) {
         int8_t *info = &ptr->GCInfo[0];
         return *info == +GCBlockColor::CONSTANT || *info == +GCBlockColor::WHITE;
-        return false;
     }
     // Additionally marks the not already marked object
     static inline bool markIfNotMarked(object::Obj *ptr) {
         int8_t *info = &ptr->GCInfo[0];
         if (*info == +GCBlockColor::CONSTANT || *info == +GCBlockColor::WHITE) return true;
         *info = +GCBlockColor::WHITE;
+        // If info[1] is == 2 then this is a big object
+        if(info[1] != 2){
+            // Get the header of page, pages are 64kb aligned
+            PageData* page = reinterpret_cast<PageData *>((uint64_t) ptr & 0xffffffffffff0000);
+            page->numAllocBlocks++;
+        }
         return false;
     }
     static inline void markVal(Value x){
@@ -105,6 +127,8 @@ namespace memory {
 
     void GarbageCollector::mark() {
         // We use a stack to avoid going into a deep recursion(which might fail)
+        // Use a local non atomic instead of currentHeapSize to speed things up
+        uint64_t heapSize = 0;
         while (!markStack.empty()) {
             object::Obj *ptr = markStack.back();
             markStack.pop_back();
@@ -160,9 +184,10 @@ namespace memory {
                 }
             }
         }
+        statistics.currentHeapSize = heapSize;
         #ifdef GC_DEBUG
         std::cout<<"Object allocated: "<<numalloc<<"\n";
-        std::cout<<"Objects marked: "<<marked<<"\n" << "Heap size, limit: "<<heapSize<<", "<<heapSizeLimit<<"\n";
+        std::cout<<"Objects marked: "<<marked<<"\n" << "Heap size, limit: "<<statistics.currentHeapSize<<", "<<statistics.collectionThreshold<<"\n";
         #endif
     }
     // There is a small chance that some random 64 bits of data on the stack appear as a NaN boxed object or a direct pointer
@@ -200,55 +225,30 @@ namespace memory {
 
     // Pushing to pages and adding to largeObjects is ok because this function is only ran in suspendThread and setStackEnd
     // which both lock pauseMty before doing work
-    void GarbageCollector::accumulatePages(ThreadArena& arena){
+    void GarbageCollector::finishSweep(ThreadArena& arena){
         for(auto i = 0; i < MP_CNT; i++){
-            vector<PageData>& pool = arena.getMemoryPool(i);
+            PageData* pool = arena.getMemoryPool(i);
             PageData* firstFreePage = arena.getFirstFreePage(i);
-            pages.reserve(pages.size() + pool.size());
-            for (PageData& page: pool){
-                if(&page < firstFreePage){
-                    // Pages that come before firstFreePage have had all their block colors reverted to the correct one lazily
-                    page.head = 0;
-                }else{
-                    // Expensive reset
-                    revertBlockColor(page);
-                }
-                pages.push_back(&page);
+            // Pages that come before firstFreePage have had all their block colors reverted to the correct one lazily
+            while(pool != nullptr && pool != firstFreePage){
+                pool->head = 0;
+                pool = pool->next;
+            }
+            while(pool != nullptr){
+                // Finish sweep phase for pages which haven't been swept lazily
+                sweepPage(*pool);
+                pool = pool->next;
             }
             arena.resetFirstFreePage(i);
         }
-
+        // Arenas use tempLargeObjects to avoid locking when allocating large objects, but GC should manage these objects
         vector<object::Obj*>& tempLargeObjects = arena.getTempStorage();
         largeObjects.reserve(largeObjects.size() + tempLargeObjects.size());
         largeObjects.insert(largeObjects.end(), tempLargeObjects.begin(), tempLargeObjects.end());
         tempLargeObjects.clear();
     }
 
-    void GarbageCollector::revertBlockColor(PageData& page){
-        int8_t* obj = reinterpret_cast<int8_t *>(page.basePtr + page.head*page.blockSize);
-        int8_t* end = reinterpret_cast<int8_t *>(page.basePtr + page.numBlocks*page.blockSize);
-        while(obj != end){
-            if(*obj == +GCBlockColor::WHITE) *obj = +GCBlockColor::BLACK;
-            obj += page.blockSize;
-        }
-        page.head = 0;
-    }
-
-    // Should work for now but might be a problem when the heap gets into GB teritory
-    // O(log(n)) i dont think it can get better than this
-    object::Obj* GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
-        auto it = std::lower_bound(pages.begin(), pages.end(), ptr, [](PageData* page, object::Obj* ptr){
-            return page->basePtr < (char*)ptr;
-        });
-        if(it == pages.end()) return nullptr;
-        if(it != pages.begin()) it--;
-        int64_t diff = (char *) ptr - ((*it)->basePtr);
-        // If ptr is an interior pointer this gets the base address of the object it points to
-        object::Obj* baseObjPtr = reinterpret_cast<Obj *>((char *) ptr - diff % (*it)->blockSize);
-        // Objects is accessed only after we've confirmed that its within page bounds
-        return reinterpret_cast<Obj *>((size_t) baseObjPtr * (diff >= 0 && diff < PAGE_SIZE && baseObjPtr->GCInfo[1] == 1));
-    }
-
+    // Large objects are eagerly swept to reclaim memory
     void GarbageCollector::sweep() {
         int j = 0;
         for(int i = 0; i < largeObjects.size(); i++){
@@ -262,12 +262,7 @@ namespace memory {
             largeObjects[j] = largeObjects[i];
             j++;
         }
-        // TODO: optimize
         largeObjects.resize(j);
-    }
-
-    [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj *const ptr) {
-        markStack.push_back(ptr);
     }
 
     void GarbageCollector::addStackStart(const std::thread::id thread, uintptr_t *stackStart) {
@@ -292,7 +287,7 @@ namespace memory {
             // Sets stack end for this thread
             threadsStack[thread].end = stackEnd;
             // Accumulates pages and large objects from this threads arena
-            accumulatePages(arena);
+            finishSweep(arena);
         }
     }
 
@@ -302,30 +297,31 @@ namespace memory {
         setjmp(jb);
         uintptr_t* stackEnd;
         __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
-        setStackEnd(std::this_thread::get_id(), stackEnd, memory::getLocalArena());
+        setStackEnd(std::this_thread::get_id(), stackEnd, getLocalArena());
         // Let GC know this thread will now try to lock mtx and could block
         threadsSuspended++;
         mtx.lock();
         // Makes sure that this thread doesn't start executing code while GC is running after it locks mtx
-        // Even though threadSuspended is atomic pauseMtx is needed because its taken while GC is running
+        // Even though threadSuspended is atomic pauseMtx is needed because it's taken while GC is running
         // (so locking it here will block until GC finishes)
-        std::unique_lock<std::mutex> lk(pauseMtx);
+        std::scoped_lock<std::mutex> lk(pauseMtx);
         threadsSuspended--;
-        lk.unlock();
+        getLocalArena().updateMemoryPools(statistics.heapVer);
     }
 
     void GarbageCollector::suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena) {
         // First lock the mutex so that we certainly enter the wait queue of the cv
         std::unique_lock<std::mutex> lk(pauseMtx);
         // Mark this thread as suspended
-        threadsSuspended.fetch_add(1);
+        threadsSuspended++;
         // Same stuff as in setStackEnd but doing it like this save us 1 mutex locking
         threadsStack[thread].end = stackEnd;
-        accumulatePages(arena);
+        finishSweep(arena);
         // If this is the last running thread, run the GC, if not enter the wait queue
         if (threadsStack.size() == threadsSuspended) {
             // Execute the gc cycle, we hold the lock to pauseMtx right now so no other thread can alter things
             collect(lk);
+            arena.updateMemoryPools(statistics.heapVer);
             return;
         }
         // The rhs condition is because (threadsStack - 1) threads could be suspended and the last thread is finishing execution
@@ -338,10 +334,12 @@ namespace memory {
             // Some threads might be waiting on a user defined mutex and are thus suspended,
             // because of that simply setting threadsSuspended to 0 after a gc cycle is not possible
             threadsSuspended--;
+            arena.updateMemoryPools(statistics.heapVer);
             return;
         }
         // Execute the gc cycle
         collect(lk);
+        arena.updateMemoryPools(statistics.heapVer);
     }
     // O(log n)
     // Credit for faster binary search: https://en.algorithmica.org/hpc/data-structures/binary-search/
@@ -360,13 +358,31 @@ namespace memory {
         // This check handles interior pointers(if difference is less than the object size than this is surely an interior pointer)
         return reinterpret_cast<Obj *>((size_t)potentialObj * (ptr - potentialObj < potentialObj->getSize()));
     }
+    // Should work for now but might be a problem when the heap gets into GB teritory
+    // getPageFromPtr is O(log(n)), i dont think it can get better than this
+    object::Obj* GarbageCollector::isAllocedByMempools(object::Obj *ptr) {
+        PageData* page = pageManager.getPageFromPtr((char*)ptr);
+        if(page == nullptr) return nullptr;
+        int64_t diff = (char *) ptr - (page->basePtr);
+        // If ptr is an interior pointer this gets the base address of the object it points to
+        object::Obj* baseObjPtr = reinterpret_cast<Obj *>((char *) ptr - diff % page->blockSize);
+        // Objects is accessed only after we've confirmed that its within page bounds
+        if((diff >= 0 && diff < (PAGE_SIZE - sizeof(PageData)) && baseObjPtr->GCInfo[1] == 1)){
+            page->numAllocBlocks++; // Lets the page manager know this page shouldn't be put into the free list
+            return baseObjPtr;
+        }
+        return nullptr;
+    }
     // Returns null if ptr is not a valid pointer, if it is then return the base address of the objects ptr points to
     object::Obj* GarbageCollector::isValidPtr(object::Obj *const ptr) {
         return reinterpret_cast<Obj *>((size_t) isLargeObject(largeObjects, ptr) + (size_t) isAllocedByMempools(ptr));
     }
 
-    void GarbageCollector::addGlobalRoot(Value *ptr) {
+    [[gnu::always_inline]] void GarbageCollector::addGlobalRoot(Value *ptr) {
         globalRoots.push_back(ptr);
+    }
+    [[gnu::always_inline]] void GarbageCollector::markObj(object::Obj *const ptr) {
+        markStack.push_back(ptr);
     }
 }
 

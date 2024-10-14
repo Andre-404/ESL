@@ -26,7 +26,7 @@ typedef uint64_t Value;
 #define UPVAL_MAX 256
 // We use this macro for metaprogramming related to memory pools.
 #define MP_CNT 48
-#define PAGE_SIZE (64 * 1024)
+#define PAGE_SIZE (64 * 1024ull)
 
 // Oh yeah baby, the loops be looping
 #define M_LOOP_1(X, S)  X(S)

@@ -319,7 +319,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         // Atomically load the value, volatile because LLVM would otherwise optimize this away
         auto load = builder.CreateLoad(builder.getInt8Ty(), module->getNamedGlobal("gcFlag"), true);
-        load->setAtomic(llvm::AtomicOrdering::Monotonic);
+        //load->setAtomic(llvm::AtomicOrdering::Monotonic);
+        load->setAlignment(llvm::Align(8));
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
         // Run gc if flag is true

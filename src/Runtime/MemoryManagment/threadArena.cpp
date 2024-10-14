@@ -13,30 +13,13 @@
 using namespace memory;
 
 // Have to instantiate thread arena here because linker complains if you put a thread_local variable in .h file
-thread_local ThreadArena threadArena;
-ThreadArena& memory::getLocalArena(){
+// thread_local slows down the program because of accessing tls data uses a lock, but i can't imagine a better way of doing this
+[[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
+    static thread_local ThreadArena threadArena [[gnu::tls_model("initial-exec")]];
     return threadArena;
 }
-#define SMALL_GRANULARITY 16u
-#define SMALL_SIZE_CLASSES 32u
-#define MEDIUM_GRANULARITY 128u
-#define MEDIUM_SIZE_CLASSES (MP_CNT - SMALL_SIZE_CLASSES)
 
-constexpr std::array<size_t, MP_CNT> generateBlockSizes(size_t shift1, size_t n1, size_t shift2, size_t n2){
-    std::array<size_t, MP_CNT> arr;
-    for(int i = 0; i < n1; i++){
-        arr[i] = (i+1)*shift1;
-    }
-    for(int i = 0; i < n2; i++){
-        arr[n1+i] = (i+1)*shift2 + n1*shift1;
-    }
-
-    return arr;
-}
-
-constexpr std::array<size_t, MP_CNT> mpBlockSizes = generateBlockSizes(SMALL_GRANULARITY, SMALL_SIZE_CLASSES,
-                                                                       MEDIUM_GRANULARITY, MEDIUM_SIZE_CLASSES);
-
+// Branchless szToIdx,
 inline int szToIdx(size_t x){
     // Rounds up to the nearest multiple of GRANULARITY and divides by GRANULARITY to get position in mpBlockSizes
     int smallclassIdx = (x + (SMALL_GRANULARITY - 1)) >> std::countr_zero(SMALL_GRANULARITY);
@@ -50,11 +33,12 @@ inline int szToIdx(size_t x){
 }
 
 ThreadArena::ThreadArena(){
-    firstFreePage.fill(nullptr);
+    std::fill(firstFreePage.begin(), firstFreePage.end(), nullptr);
+    std::fill(pools.begin(), pools.end(), nullptr);
+    heapVersion = 0;
 }
-
 ThreadArena::~ThreadArena(){
-    // TODO: do this
+
 }
 
 [[gnu::hot]] void *ThreadArena::alloc(const size_t size) {
@@ -66,6 +50,7 @@ ThreadArena::~ThreadArena(){
     if (idx == -1) {
         block = static_cast<byte *>(rpmalloc(size));
         reinterpret_cast<object::Obj *>(block)->GCInfo[0] = +GCBlockColor::BLACK;
+        reinterpret_cast<object::Obj *>(block)->GCInfo[1] = 2;
         tempLargeObjectStorage.push_back(reinterpret_cast<object::Obj *>(block));
     } else {
         block = reinterpret_cast<byte*>(fastAlloc(idx));
@@ -78,75 +63,85 @@ ThreadArena::~ThreadArena(){
     return block;
 }
 
-vector<PageData>& ThreadArena::getMemoryPool(size_t idx){
+PageData* ThreadArena::getMemoryPool(size_t idx){
     return pools[idx];
 }
-
 PageData* ThreadArena::getFirstFreePage(size_t idx){
     return firstFreePage[idx];
 }
-
 void ThreadArena::resetFirstFreePage(size_t idx){
-    firstFreePage[idx] = &pools[idx].front();
+    firstFreePage[idx] = pools[idx];
 }
-
 vector<object::Obj*>& ThreadArena::getTempStorage(){
     return tempLargeObjectStorage;
 }
 
-//template<size_t blockSize>
 [[gnu::hot]] static void* pageTryAlloc(PageData* page){
-    int16_t numBlocks = PAGE_SIZE / page->blockSize;
+    // Optimize for extreme cases
+    // Having a full page is rare, and even if we hit a string of full pages, marking this branch as unlikely is still better overall
+    if(page->numAllocBlocks == page->numBlocks) [[unlikely]]{
+        sweepPage(*page);
+        return nullptr;
+    }else if(page->numAllocBlocks == 0 && page->head != page->numBlocks){
+        return page->basePtr + (page->head++)*page->blockSize;
+    }
     int8_t* obj = reinterpret_cast<int8_t *>(page->basePtr + page->head * page->blockSize);
-    // After a GC collection colors are reversed: free blocks are white, and occupied ones are black
-    // While looking for a free slot we mark the black blocks as occupied again(white)
+    // Go until you find a free block, reverting marking bytes in the process
     // This works because page->head never moves backwards
-    while(page->head < numBlocks && *obj == +GCBlockColor::WHITE){
-        // If we find a black block reset its marked flag
-        __builtin_prefetch(obj + page->blockSize);
+    while(page->head < page->numBlocks && *obj == +GCBlockColor::WHITE){
         *obj = +GCBlockColor::BLACK;
         page->head++;
         obj += page->blockSize;
     }
     // If the loop exited because every block was taken, bail out
-    if(page->head == numBlocks) return nullptr;
+    if(page->head == page->numBlocks) return nullptr;
     page->head++;
     return reinterpret_cast<char *>(obj);
 }
 
 [[gnu::hot]] void* ThreadArena::fastAlloc(size_t poolIdx){
     void *ptr = nullptr;
-    if(!firstFreePage[poolIdx]) allocNewPage(poolIdx);
+    // This only happens at the start of a thread or when literally all the objects of a single size class get swept
+    if(!firstFreePage[poolIdx]) [[unlikely]] {
+        pools[poolIdx] = gc->pageManager.allocatePage(poolIdx);
+        firstFreePage[poolIdx] = pools[poolIdx];
+    }
     while (!(ptr = pageTryAlloc(firstFreePage[poolIdx]))) {
-        if (firstFreePage[poolIdx] == &pools[poolIdx].back()) {
-            allocNewPage(poolIdx);
-        } else firstFreePage[poolIdx]++;
+        if (!firstFreePage[poolIdx]->next){
+            firstFreePage[poolIdx]->next = gc->pageManager.allocatePage(poolIdx);
+        }
+        firstFreePage[poolIdx] = firstFreePage[poolIdx]->next;
     }
     return ptr;
 }
-
-
-void ThreadArena::allocNewPage(size_t poolIdx){
-    // VirtualAlloc returns zeroed memory
-#ifdef _WIN32
-    void* page = VirtualAlloc(nullptr, PAGE_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
-    // posix_memalign can return non zeroed memory so we have to zero it first
-    void *page;
-    posix_memalign(&page, PAGE_SIZE, PAGE_SIZE);
-    // In most cases this should be faster than memset and calloc
-    void* junkVar1; uint64_t junkVar2; uint64_t junkVar3;
-    asm volatile (
-            "rep stosq"
-            : "=D"(junkVar1), "=c"(junkVar2), "=a"(junkVar3) // Have to use junk outputs to let gcc know there registers are clobbered
-            : "D"(page), "c"(PAGE_SIZE/8), "a"(0)
-            : "memory"// Clobbered registers
-            );
-#endif
-    pools[poolIdx].emplace_back((char*)page, mpBlockSizes[poolIdx]);
-    firstFreePage[poolIdx] = &pools[poolIdx].back();
+// If the heap version of GC changed then there is a chance some pages are no longer available to this arena
+void ThreadArena::updateMemoryPools(uint32_t gcHeapVer){
+    if(heapVersion == gcHeapVer) return;
+    heapVersion = gcHeapVer;
+    for(int i = 0; i < MP_CNT; i++){
+        // First adjust tail
+        while(pools[i] && pools[i]->numAllocBlocks == 0) pools[i] = pools[i]->next;
+        if(pools[i] == nullptr) continue;
+        // If there are pages left set the "head" of the list to the first page, head will advance over time
+        firstFreePage[i] = pools[i];
+        PageData* page = pools[i];
+        while(page){
+            PageData* pn = page->next;
+            while(pn && pn->numAllocBlocks == 0){
+                pn = pn->next;
+            }
+            page->next = pn;
+            page = pn;
+        }
+    }
 }
-
-void ThreadArena::freePage(uint32_t pid){
-    // TODO:
+// Called before starting a GC collection, makes sure that the mark flag for all blocks has been reset
+void memory::sweepPage(PageData& page){
+    int8_t* obj = reinterpret_cast<int8_t *>(page.basePtr + page.head*page.blockSize);
+    int8_t* end = reinterpret_cast<int8_t *>(page.basePtr + page.numBlocks*page.blockSize);
+    while(obj != end){
+        *obj = +GCBlockColor::BLACK;
+        obj += page.blockSize;
+    }
+    page.head = 0;
 }

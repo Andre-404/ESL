@@ -2,6 +2,7 @@
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
 #include "../MemoryManagment/garbageCollector.h"
+#include "../../Includes/rpmalloc/rpmalloc.h"
 
 using namespace object;
 using namespace memory;
@@ -28,7 +29,7 @@ size_t Obj::getSize(){
 void object::runObjDestructor(object::Obj* obj){
     // Have to do this because we don't have access to virtual destructors,
     // however some objects allocate STL containers that need cleaning up
-    obj->GCInfo[1] = 0;
+    obj->GCInfo[1] = 0; // Reset allocated bit
     switch(obj->type){
         case +object::ObjType::DEALLOCATED: return;
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); break;
@@ -38,6 +39,7 @@ void object::runObjDestructor(object::Obj* obj){
         case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
         default: break;
     }
+    // Makes sure to not dealloc twice by setting the type
     obj->type = +object::ObjType::DEALLOCATED;
 }
 
@@ -101,9 +103,20 @@ bool ObjString::compare(const string other) {
 }
 
 ObjString* ObjString::concat(ObjString* other) {
-	string temp = string(str) + string(other->str);
-    // +1 for null terminator
-	return createStr((char*)temp.c_str());
+    uint64_t strlen1 = std::strlen(str);
+    uint64_t strlen2 = std::strlen(other->str);
+    ObjString* newStr = static_cast<ObjString *>(
+            memory::getLocalArena().alloc(sizeof(ObjString) + strlen1 + strlen2 +1));
+    newStr->str = ((char*)newStr)+sizeof(ObjString);
+    newStr->type = +ObjType::STRING;
+
+    std::memcpy(newStr->str, str, strlen1);
+    std::strcpy(newStr->str + strlen2, other->str);
+
+    auto view = std::string_view(newStr->str);
+    auto it = memory::gc->interned.find(view);
+    if(it != memory::gc->interned.end()) return it->second;
+    return newStr;
 }
 
 ObjString* ObjString::createStr(char* str){
@@ -214,11 +227,6 @@ void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
         case 10: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]); break;
         case 11: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]); break;
         case 12: val = reinterpret_cast<Value(*)(Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value)>(closure->func)(encodedFunc, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]); break;
-    }
-    // If the future is deallocated, then the user doesn't care about the return value of this function
-    if(memory::gc->isValidPtr(fut)){
-        fut->val = val;
-        fut->done = true;
     }
     // Calling this AFTER setting val, since a gc cycle could potentially be in progress and waiting on this thread to suspend
     // In such a case the gc cycle kicks of immediately after calling removeStackStart

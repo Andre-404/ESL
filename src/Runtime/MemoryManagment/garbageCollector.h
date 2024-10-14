@@ -2,6 +2,7 @@
 #include "../../common.h"
 #include "../../Includes/unorderedDense.h"
 #include "threadArena.h"
+#include "heapPageManager.h"
 #include <mutex>
 #include <atomic>
 #include <thread>
@@ -41,12 +42,35 @@ namespace memory {
             end = nullptr;
         }
     };
+    enum class GCAllocRate{
+        LOW,
+        LOW_LONG,
+        MEDIUM,
+        HIGH
+    };
+    class HeapStatistics{
+    public:
+        uint32_t heapVer;
+        std::atomic<uint64_t> collectionThreshold;
+        std::atomic<uint64_t> currentHeapSize;
+        GCAllocRate allocRate;
+        static constexpr uint32_t allocRateThreshold = 16 * 1024; // 16Kb
+        static constexpr uint32_t interval = 200; // In ms
+        static constexpr uint64_t heapMaxSize = 1024ull * 1024ull * 1024ull * 8ull; // max size of heap is 8GB
+
+        HeapStatistics();
+        void monitor();
+        void adjustGCParams();
+    private:
+        uint64_t prevHeapSize;
+    };
+
+
 
 	class GarbageCollector {
 	public:
         GarbageCollector(byte& active);
         void checkHeapSize(const size_t size);
-        void markObj(object::Obj* const object);
 
         void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
         void removeStackStart(const std::thread::id thread);
@@ -56,39 +80,36 @@ namespace memory {
         // Note: any place where threadsSuspended is incremented should have a defined stack end before it
         // If a thread is considered suspended its stack start and end must be valid pointers
         void suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena);
-        // Checks if the provided ptr is a live object allocated by the gc
-        object::Obj* isValidPtr(object::Obj* const ptr);
         void addGlobalRoot(Value* ptr);
-        // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
-        std::atomic<int64_t> threadsSuspended;
-        // 0 means gc is off, 1 means it's waiting to collect, and all threads should pause
-        std::atomic_ref<byte> active;
+        void markObj(object::Obj* const object);
 
+        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
+        HeapPageManager pageManager;
+	private:
         // Notify threads to wake up, or notify a single random thread to run the gc cycle
         std::condition_variable STWcv;
         std::mutex pauseMtx;
+        // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
+        std::atomic<uint64_t> threadsSuspended;
+        // 0 means gc is off, 1 means it's waiting to collect, and all threads should pause
+        std::atomic_ref<byte> active;
 
-        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
-	private:
-		std::mutex allocMtx;
-        std::atomic<uint64_t> heapSizeLimit;
-        std::atomic<uint64_t> heapSize;
-        vector<object::Obj*> largeObjects;
         vector<Value*> globalRoots;
-
+        vector<object::Obj*> largeObjects;
 		vector<object::Obj*> markStack;
         // Start and end of stack pointer for every thread that's currently running
         ankerl::unordered_dense::map<std::thread::id, StackPtrEntry> threadsStack;
 
-        vector<PageData*> pages;
-        // Gets all pages from an arena and puts them into vector
-        void accumulatePages(ThreadArena& arena);
-        // Reverts black objects that are alive back to white objects
-        void revertBlockColor(PageData& page);
+        HeapStatistics statistics;
+
         // Binary search through pages
         object::Obj* isAllocedByMempools(object::Obj* ptr);
+        // Also gets large objects from arena to gc
+        void finishSweep(ThreadArena& arena);
 
 		void mark();
+        // Checks if the provided ptr is a live object allocated by the gc
+        object::Obj* isValidPtr(object::Obj* const ptr);
 		void markRoots();
 		void sweep();
         // Pass in the lock that holds the pauseMtx
