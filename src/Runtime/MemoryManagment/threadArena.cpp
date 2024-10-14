@@ -91,6 +91,7 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
     while(page->head < page->numBlocks && *obj == +GCBlockColor::WHITE){
         *obj = +GCBlockColor::BLACK;
         page->head++;
+        page->numAllocBlocks--;
         obj += page->blockSize;
     }
     // If the loop exited because every block was taken, bail out
@@ -144,4 +145,5 @@ void memory::sweepPage(PageData& page){
         obj += page.blockSize;
     }
     page.head = 0;
+    page.numAllocBlocks = 0;
 }

@@ -1,5 +1,6 @@
 #include "heapPageManager.h"
 #include "../Objects/objects.h"
+#include "threadArena.h"
 #include <algorithm>
 #ifdef _WIN32
 #include <memoryapi.h>
@@ -85,7 +86,14 @@ uint32_t HeapPageManager::updateEmptyBuffer(){
 void HeapPageManager::prepForCollection(){
     // Sort pages by address to make searching for valid pointers easier
     std::sort(inUse.begin(), inUse.end());
-    std::for_each(inUse.begin(), inUse.end(), [](PageData* page){ page->numAllocBlocks = 0;});
+    for(int i = 0; i < MP_CNT; i++){
+        PageData* page = graveyard[i];
+        while(page != nullptr){
+            // Finish sweep phase for pages which haven't been swept lazily
+            sweepPage(*page);
+            page = page->next;
+        }
+    }
 }
 
 void HeapPageManager::cleanUpPage(PageData* page, uint32_t newSizeClass){
