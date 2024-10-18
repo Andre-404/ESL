@@ -239,7 +239,6 @@ namespace memory {
                 sweepPage(*pool);
                 pool = pool->next;
             }
-            arena.resetFirstFreePage(i);
         }
         // Arenas use tempLargeObjects to avoid locking when allocating large objects, but GC should manage these objects
         vector<object::Obj*>& tempLargeObjects = arena.getTempStorage();

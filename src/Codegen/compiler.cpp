@@ -46,7 +46,7 @@ Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> 
 }
 
 void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
-    llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getInt8PtrTy()}, false);
+    llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);
     auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, mainFnName, curModule.get());
     tmpfn->setGC("statepoint-example");
     tmpfn->addFnAttr("frame-pointer", "all");
@@ -63,7 +63,7 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
     // Get all string constants into gc
     llvm::IRBuilder<> tempBuilder(*ctx);
     tempBuilder.SetInsertPointPastAllocas(tmpfn);
-    auto val = tempBuilder.CreateIntrinsic(tempBuilder.getInt8PtrTy(), llvm::Intrinsic::frameaddress, {tempBuilder.getInt32(0)});
+    auto val = tempBuilder.CreateIntrinsic(tempBuilder.getPtrTy(), llvm::Intrinsic::frameaddress, {tempBuilder.getInt32(0)});
     tempBuilder.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag"), val});
     for(auto strObj : ESLStrings){
         tempBuilder.CreateCall(safeGetFunc("gcInternStr"), {strObj.second});
@@ -584,7 +584,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
-    auto typeErasedFn = llvm::ConstantExpr::getBitCast(lambda, builder.getInt8PtrTy());
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(lambda, builder.getPtrTy());
     auto arity = builder.getInt8(expr->fn->args.size());
     auto name = createConstStr(expr->fn->name);
 
@@ -625,7 +625,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
     // Every function is converted to a closure(even if it has 0 freevars) for ease of use when calling
     // Since this is a global function declaration number of freevars is always going to be 0
-    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getInt8PtrTy());
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(fn, builder.getPtrTy());
     auto arity = builder.getInt8(stmt->fn->args.size());
     auto name = createConstStr(stmt->fn->name);
     auto freeVarCnt = builder.getInt8(0);
@@ -1609,7 +1609,7 @@ std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Valu
     // Index for accessing the fn ptr is at 3, not 2, because we have a Obj struct at index 0
     vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(3)};
     auto fnPtrAddr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], closurePtr, idxList);
-    llvm::Value* fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrAddr);
+    llvm::Value* fnPtr = builder.CreateLoad(builder.getPtrTy(), fnPtrAddr);
     auto fnTy = getFuncType(argc);
     auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
     fnPtr = builder.CreateBitCast(fnPtr, fnPtrTy);
@@ -1898,7 +1898,7 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
 llvm::Constant* Compiler::createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr){
     // Every function is converted to a closure(if even it has 0 freevars) for ease of use when calling
     // Methods can't have freevars
-    auto typeErasedFn = llvm::ConstantExpr::getBitCast(methodPtr, builder.getInt8PtrTy());
+    auto typeErasedFn = llvm::ConstantExpr::getBitCast(methodPtr, builder.getPtrTy());
     auto arity = builder.getInt8(method.code->args.size());
     auto name = createConstStr(method.code->name);
     auto freeVarCnt = builder.getInt8(0);
@@ -2333,7 +2333,7 @@ void Compiler::implementNativeFunctions(fastMap<string, types::tyVarIdx>& native
         auto func = llvm::Function::Create(llvm::FunctionType::get(getESLValType(), args, false),
                                          llvm::Function::ExternalLinkage, name, curModule.get());
         functions[type] = func;
-        auto typeErasedFn = llvm::ConstantExpr::getBitCast(func, builder.getInt8PtrTy());
+        auto typeErasedFn = llvm::ConstantExpr::getBitCast(func, builder.getPtrTy());
         auto arity = builder.getInt8(argc);
         auto cname = createConstStr(name);
         auto freeVarCnt = builder.getInt8(0);

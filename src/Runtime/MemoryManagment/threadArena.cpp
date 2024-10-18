@@ -69,9 +69,6 @@ PageData* ThreadArena::getMemoryPool(size_t idx){
 PageData* ThreadArena::getFirstFreePage(size_t idx){
     return firstFreePage[idx];
 }
-void ThreadArena::resetFirstFreePage(size_t idx){
-    firstFreePage[idx] = pools[idx];
-}
 vector<object::Obj*>& ThreadArena::getTempStorage(){
     return tempLargeObjectStorage;
 }
@@ -117,6 +114,7 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
 }
 // If the heap version of GC changed then there is a chance some pages are no longer available to this arena
 void ThreadArena::updateMemoryPools(uint32_t gcHeapVer){
+    for(int i = 0; i < MP_CNT; i++) firstFreePage[i] = pools[i];
     if(heapVersion == gcHeapVer) return;
     heapVersion = gcHeapVer;
     for(int i = 0; i < MP_CNT; i++){

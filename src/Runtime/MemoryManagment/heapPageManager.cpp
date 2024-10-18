@@ -69,7 +69,6 @@ PageData* HeapPageManager::getPageFromPtr(char* ptr){
 uint32_t HeapPageManager::updateEmptyBuffer(){
     int j = 0;
     int nEmpty = 0;
-    // Overwrites empty pages in the vector and stores it in a list
     for(int i = 0; i < inUse.size(); i++){
         if(inUse[i]->numAllocBlocks == 0){
             empty.push_back(inUse[i]);

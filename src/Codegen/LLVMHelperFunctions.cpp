@@ -36,20 +36,22 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
     types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
-    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8Ptr)}, "ObjString");
+    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], PTR_TY(TYPE(Int8))}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], getESLValType(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     // Pointer to pointer
     auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
-    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int8Ptr), tmpFreevarArr}, "ObjClosure");
+    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
+                                                                     PTR_TY(TYPE(Int8)), tmpFreevarArr}, "ObjClosure");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
 
 
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
-    classType->setBody({types["Obj"], TYPE(Int8Ptr), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    classType->setBody({types["Obj"], PTR_TY(TYPE(Int8)), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy),
+                                TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
 
     types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(getESLValType(*ctx))}, "ObjInstance");
@@ -62,7 +64,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: Value, args: raw C string
     llvm::Type* eslValTy = getESLValType(*ctx);
     //
-    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy);
+    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
@@ -70,7 +72,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::NoFree);
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::MustProgress);
-    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr), TYPE(Int32), eslValTy, eslValTy);
+    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy, eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     fn->addFnAttr(llvm::Attribute::Memory);
@@ -80,13 +82,13 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::MustProgress);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     // Helper from C std lib
-    CREATE_FUNC("printf", true, TYPE(Int32), TYPE(Int8Ptr));
+    CREATE_FUNC("printf", true, TYPE(Int32), PTR_TY(TYPE(Int8)));
     CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
 
     // ret: Value, args: lhs, rhs - both are known to be strings
     CREATE_FUNC("strAdd", false, eslValTy, eslValTy, eslValTy);
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
-    CREATE_FUNC("strTryAdd", false, eslValTy, eslValTy, eslValTy, TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("strTryAdd", false, eslValTy, eslValTy, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int32));
     CREATE_FUNC("strCmp", false, eslValTy, eslValTy, eslValTy);
     // Invoked by gc.safepoint
     CREATE_FUNC("stopThread", false, TYPE(Void));
@@ -95,7 +97,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
     CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
 
-    CREATE_FUNC("gcInit", false, TYPE(Void), TYPE(Int8Ptr), TYPE(Int8Ptr));
+    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)));
     CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
@@ -123,7 +125,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // Gets a freevar from closure, args: closure structure, index to which freevar to use
     CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], eslValTy, TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
-    CREATE_FUNC("createClosure", true, eslValTy, TYPE(Int8Ptr), TYPE(Int8), TYPE(Int8Ptr), TYPE(Int32));
+    CREATE_FUNC("createClosure", true, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
     CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
@@ -182,7 +184,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
         FP(0, nullptr);
         llvm::ExitOnError()(RT->remove());
     }else{
-        auto Filename = "output.o";
+        /*auto Filename = "output.o";
         std::error_code EC;
         llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
 
@@ -200,7 +202,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
         }
 
         pass.run(*module);
-        dest.flush();
+        dest.flush();*/
     }
 }
 

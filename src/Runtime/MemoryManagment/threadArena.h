@@ -21,7 +21,6 @@ namespace memory {
 
         PageData* getMemoryPool(size_t idx);
         PageData* getFirstFreePage(size_t idx);
-        void resetFirstFreePage(size_t idx);
         vector<object::Obj*>& getTempStorage();
         void updateMemoryPools(uint32_t gcHeapVer);
     private:
