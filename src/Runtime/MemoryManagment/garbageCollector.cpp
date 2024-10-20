@@ -33,9 +33,6 @@ namespace memory {
         prevHeapSize = 0;
     }
 
-    void HeapStatistics::monitor(){
-
-    }
     void HeapStatistics::adjustGCParams(){
         // TODO: right now these are just some magic numbers, work on that
         if(currentHeapSize > collectionThreshold) collectionThreshold = currentHeapSize * 1.75;
@@ -206,7 +203,7 @@ namespace memory {
                 // (needed in case of interior pointers)
                 if (isObj(address)) {
                     Obj *object = decodeObj(address);
-                    if (object = isValidPtr(object)) {
+                    if ((object = isValidPtr(object))) {
                         markObj(object);
                     }
                 } else if (Obj *basePtr = isValidPtr(*reinterpret_cast<Obj **>(end))) {
@@ -224,7 +221,7 @@ namespace memory {
     }
 
     // Pushing to pages and adding to largeObjects is ok because this function is only ran in suspendThread and setStackEnd
-    // which both lock pauseMty before doing work
+    // which both lock pauseMtx before doing work
     void GarbageCollector::finishSweep(ThreadArena& arena){
         for(auto i = 0; i < MP_CNT; i++){
             PageData* pool = arena.getMemoryPool(i);

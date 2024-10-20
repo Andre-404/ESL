@@ -1633,6 +1633,7 @@ llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
     // Every function contains the closure struct as the first argument
     args.push_back(closurePtr);
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
+    // TODO: this should be done in a separate pass
     if(funcType->argCount != expr->args.size()){
         errorHandler::addCompileError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
                                       expr->dbgInfo.paren1);

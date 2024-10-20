@@ -59,7 +59,6 @@ namespace memory {
         static constexpr uint64_t heapMaxSize = 1024ull * 1024ull * 1024ull * 8ull; // max size of heap is 8GB
 
         HeapStatistics();
-        void monitor();
         void adjustGCParams();
     private:
         uint64_t prevHeapSize;

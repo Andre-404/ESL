@@ -130,8 +130,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
-    // ret: Value
-    //CREATE_FUNC("random_num", false, eslValTy);
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
