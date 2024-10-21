@@ -172,6 +172,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
+        void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
 
 
         // Tries to optimize a function call if possible, otherwise returns nullptr
