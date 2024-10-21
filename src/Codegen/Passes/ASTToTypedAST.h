@@ -104,9 +104,9 @@ namespace typedASTParser{
         vector<File*> sourceFiles;
         bool hadError;
 
-        ASTTransformer();
+        ASTTransformer(vector<AST::ASTModule> &_units);
         std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
-        run(vector<ESLModule*>& units, std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
+        run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
 
         vector<types::tyPtr> getTypeEnv();
 
@@ -117,14 +117,11 @@ namespace typedASTParser{
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
         void visitConditionalExpr(AST::ConditionalExpr* expr) override;
-        void visitRangeExpr(AST::RangeExpr* expr) override;
         void visitBinaryExpr(AST::BinaryExpr* expr) override;
         void visitUnaryExpr(AST::UnaryExpr* expr) override;
         void visitCallExpr(AST::CallExpr* expr) override;
         void visitNewExpr(AST::NewExpr* expr) override;
         void visitFieldAccessExpr(AST::FieldAccessExpr* expr) override;
-        void visitAsyncExpr(AST::AsyncExpr* expr) override;
-        void visitAwaitExpr(AST::AwaitExpr* expr) override;
         void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
         void visitStructLiteralExpr(AST::StructLiteral* expr) override;
         void visitLiteralExpr(AST::LiteralExpr* expr) override;
@@ -137,6 +134,7 @@ namespace typedASTParser{
         void visitClassDecl(AST::ClassDecl* decl) override;
 
         void visitExprStmt(AST::ExprStmt* stmt) override;
+        void visitSpawnStmt(AST::SpawnStmt* stmt) override;
         void visitBlockStmt(AST::BlockStmt* stmt) override;
         void visitIfStmt(AST::IfStmt* stmt) override;
         void visitWhileStmt(AST::WhileStmt* stmt) override;
@@ -154,9 +152,8 @@ namespace typedASTParser{
         CurrentChunkInfo* current;
         std::shared_ptr<ClassChunkInfo> currentClass;
 
-        ESLModule* curUnit;
+        vector<AST::ASTModule>& units;
         int curUnitIndex;
-        vector<ESLModule*> units;
 
         std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap;
         ankerl::unordered_dense::map<string, Globalvar> globals;
@@ -227,10 +224,10 @@ namespace typedASTParser{
 
         // Misc
         Token syntheticToken(const string& str);
-        void updateLine(const Token token);
         void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
         vector<std::variant<double, bool, void*, string>> getCaseConstants(vector<Token> constants);
+        string computeFullSymbol(string symbol, int moduleIndex);
 
         typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);

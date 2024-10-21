@@ -44,12 +44,6 @@ namespace AST {
         explicit LiteralDebugInfo(const Token &literal) : literal(literal) {}
     };
 
-    struct RangeExprDebugInfo{
-        Token op;
-
-        explicit RangeExprDebugInfo(const Token &op) : op(op) {}
-    };
-
     struct ArrayLiteralDebugInfo{
         Token bracket1;
         Token bracket2;
@@ -121,19 +115,10 @@ namespace AST {
             : keyword(keyword), className(className), paren1(paren1), paren2(paren2) {}
     };
 
-    struct AsyncExprDebugInfo{
-        Token keyword;
-        Token paren1;
-        Token paren2;
-
-        AsyncExprDebugInfo(const Token &keyword, const Token &paren1, const Token &paren2)
-                : keyword(keyword), paren1(paren1), paren2(paren2) {}
-    };
-
-    struct AwaitExprDebugInfo{
+    struct SpawnStmtDebugInfo{
         Token keyword;
 
-        explicit AwaitExprDebugInfo(const Token &keyword) : keyword(keyword) {}
+        SpawnStmtDebugInfo(const Token& keyword) : keyword(keyword) {}
     };
 
     struct FuncLiteralDebugInfo{

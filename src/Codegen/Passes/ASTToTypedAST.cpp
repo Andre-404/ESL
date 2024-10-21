@@ -7,7 +7,7 @@
 using namespace passes;
 using namespace typedASTParser;
 
-ASTTransformer::ASTTransformer() {
+ASTTransformer::ASTTransformer(vector<AST::ASTModule> &_units) : units(_units) {
     curUnitIndex = 0;
     hadError = false;
     current = nullptr;
@@ -18,18 +18,16 @@ ASTTransformer::ASTTransformer() {
 }
 
 std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
-ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> _freevarMap){
-    units = _units;
+ASTTransformer::run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> _freevarMap){
     freevarMap = _freevarMap;
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, "func.main");
     declareNativeFunctions();
-    for (ESLModule* unit : units) {
-        curUnit = unit;
-        sourceFiles.push_back(unit->file);
-        for (int i = 0; i < unit->stmts.size(); i++) {
+    for (AST::ASTModule& unit : units) {
+        sourceFiles.push_back(unit.file);
+        for (int i = 0; i < unit.stmts.size(); i++) {
             // Doing this here so that even if an error is detected, we go on and possibly catch other(valid) errors
             try {
-                auto stmts = evalASTStmt(unit->stmts[i]);
+                auto stmts = evalASTStmt(unit.stmts[i]);
                 current->func->block.stmts.insert(current->func->block.stmts.end(), stmts.begin(), stmts.end());
             }
             catch (TransformerException e) {
@@ -40,7 +38,6 @@ ASTTransformer::run(vector<ESLModule *> &_units, std::unordered_map<AST::FuncLit
     }
     auto fn = current->func;
     delete current;
-    for(auto unit : units) delete unit;
 
     transformedAST = true;
     return std::make_pair(fn, sourceFiles);
@@ -176,14 +173,6 @@ void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
 
     returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch, ty, dbg);
 }
-void ASTTransformer::visitRangeExpr(AST::RangeExpr* expr) {
-    auto lhs = evalASTExpr(expr->start);
-    auto rhs = evalASTExpr(expr->end);
-
-    auto dbg = AST::RangeExprDebugInfo(expr->op);
-
-    returnedExpr = std::make_shared<typedAST::RangeExpr>(lhs, rhs, expr->endInclusive, getBasicType(types::TypeFlag::RANGE), dbg);
-}
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
 
@@ -311,30 +300,6 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto varDbg = AST::VarReadDebugInfo(className);
 
     returnedExpr = std::make_shared<typedAST::NewExpr>(klass->mangledName, args, instTy, dbg);
-}
-
-void ASTTransformer::visitAsyncExpr(AST::AsyncExpr* expr) {
-    auto callee = evalASTExpr(expr->callee);
-    vector<typedAST::exprPtr> args;
-    vector<types::tyVarIdx> argTypes;
-    for(auto arg : expr->args){
-        args.push_back(evalASTExpr(arg));
-        argTypes.push_back(args.back()->exprType);
-    }
-    auto futTy = std::make_shared<types::FutureType>(callee->exprType);
-
-    auto dbg = AST::AsyncExprDebugInfo(expr->keyword, expr->paren1, expr->paren2);
-
-    returnedExpr = std::make_shared<typedAST::AsyncExpr>(callee, args, addType(futTy), dbg);
-}
-void ASTTransformer::visitAwaitExpr(AST::AwaitExpr* expr) {
-    auto val = evalASTExpr(expr->expr);
-    auto furAwaitTy = createEmptyTy();
-    addTypeConstraint(furAwaitTy, std::make_shared<types::AwaitTyConstraint>(val->exprType));
-
-    auto dbg = AST::AwaitExprDebugInfo(expr->keyword);
-
-    returnedExpr = std::make_shared<typedAST::AwaitExpr>(val, furAwaitTy, dbg);
 }
 
 void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
@@ -485,29 +450,29 @@ void ASTTransformer::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
     Token moduleAlias = expr->moduleName;
     Token symbol = expr->ident;
     // First find the module with the correct alias
-    Dependency* depPtr = nullptr;
-    for (Dependency dep : curUnit->deps) {
-        if (dep.alias.equals(moduleAlias)) {
-            depPtr = &dep;
+    int module = -1;
+    for (auto [alias, depIndex] : units[curUnitIndex].importedModules) {
+        if (alias.equals(moduleAlias)) {
+            module = depIndex;
             break;
         }
     }
-    if (depPtr == nullptr) {
+    if (module == -1) {
         error(moduleAlias, "Module alias doesn't exist.");
     }
 
-    ESLModule* unit = depPtr->module;
-    string fullSymbol = unit->file->name + std::to_string(unit->id) + symbol.getLexeme();
+    AST::ASTModule& unit = units[module];
+    string fullSymbol = computeFullSymbol(symbol.getLexeme(), module);
     if(globals.contains(fullSymbol)){
         auto ptr = globals.at(fullSymbol).valPtr;
         auto dbg = AST::VarReadDebugInfo(expr->ident);
         returnedExpr = std::make_shared<typedAST::VarRead>(ptr, dbg);
         return;
     }else if(globalClasses.contains(fullSymbol)){
-        error(symbol, fmt::format("Classes aren't first class values.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
+        error(symbol, fmt::format("Classes aren't first class values."));
     }
 
-    error(symbol, fmt::format("Module '{}' with alias '{}' doesn't export this symbol.", depPtr->pathString.getLexeme(), depPtr->alias.getLexeme()));
+    error(symbol, fmt::format("Module '{}' with alias '{}' doesn't export this symbol.", unit.file->path, moduleAlias.getLexeme()));
 }
 // This shouldn't ever be visited as every macro should be expanded after AST is generatefd
 void ASTTransformer::visitMacroExpr(AST::MacroExpr* expr) {
@@ -515,8 +480,7 @@ void ASTTransformer::visitMacroExpr(AST::MacroExpr* expr) {
 }
 
 void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
-    updateLine(decl->var.name);
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->var.name.getLexeme();
+    string fullGlobalSymbol = computeFullSymbol(decl->var.name.getLexeme(), curUnitIndex);
 
     varPtr var;
     if(decl->var.type == AST::ASTVarType::GLOBAL){
@@ -542,9 +506,7 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 }
 
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
-    updateLine(decl->getName());
-
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
+    string fullGlobalSymbol = computeFullSymbol(decl->getName().getLexeme(), curUnitIndex);
     auto ty = createNewFunc("func." + fullGlobalSymbol, decl->args.size(), FuncType::TYPE_FUNC, false);
 
     varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, ty);
@@ -567,13 +529,11 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     nodesToReturn = {name, std::make_shared<typedAST::FuncDecl>(func, dbg, name->uuid)};
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
-    updateLine(decl->getName());
-
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
 
     auto classTyIdx = addType(classTy);
 
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + decl->getName().getLexeme();
+    string fullGlobalSymbol = computeFullSymbol(decl->getName().getLexeme(), curUnitIndex);
 
     classTy->name = fullGlobalSymbol;
 
@@ -665,6 +625,14 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 
 void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
     nodesToReturn= {evalASTExpr(stmt->expr)};
+}
+void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
+    if(stmt->callExpr->type != AST::ASTType::CALL){
+        error(stmt->keyword, "Expected a function call following keyword 'spawn'.");
+    }
+    auto call = evalASTExpr(stmt->callExpr);
+    nodesToReturn = {std::make_shared<typedAST::SpawnStmt>(call, call->type == typedAST::NodeType::INVOKE,
+                                                    AST::SpawnStmtDebugInfo(stmt->keyword))};
 }
 void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
     vector<typedAST::nodePtr> nodes = {beginScope()};
@@ -836,15 +804,15 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
 // Variables
 // Checks all imports to see if the symbol 'token' is imported
 varPtr ASTTransformer::checkSymbol(const Token symbol){
-    for (Dependency& dep : curUnit->deps) {
-        string fullSymbol = dep.module->file->name + std::to_string(dep.module->id) + "." + symbol.getLexeme();
-        if (dep.alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
+    for (auto [alias, depIndex] : units[curUnitIndex].importedModules) {
+        string fullSymbol = computeFullSymbol(symbol.getLexeme(), depIndex);
+        if (alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
             Globalvar& gvar = globals.at(fullSymbol);
             if(!gvar.isDefined){
                 error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
             }
             return gvar.valPtr;
-        }else if(dep.alias.type == TokenType::NONE && globalClasses.contains(fullSymbol)){
+        }else if(alias.type == TokenType::NONE && globalClasses.contains(fullSymbol)){
             error(symbol, "Classes aren't first class values.");
         }
     }
@@ -852,7 +820,7 @@ varPtr ASTTransformer::checkSymbol(const Token symbol){
 }
 // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
 varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
-    string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." +symbol.getLexeme();
+    string fullSymbol = computeFullSymbol(symbol.getLexeme(), curUnitIndex);
     auto it = globals.find(fullSymbol);
     if (canAssign) {
         // Global is in this module
@@ -913,8 +881,6 @@ void ASTTransformer::defineGlobalVar(const string& name, AST::VarDeclDebugInfo d
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
 varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var, const types::tyVarIdx defaultTy) {
-    updateLine(var.name);
-
     for(int i = current->locals.size() - 1; i >= 0; i--){
         Local& local = current->locals[i];
         if (local.depth != -1 && local.depth < current->scopeDepth) {
@@ -932,7 +898,6 @@ void ASTTransformer::defineLocalVar(AST::VarDeclDebugInfo dbgInfo){
     current->locals.back().ptr->dbgInfo = dbgInfo;
 }
 varPtr ASTTransformer::addLocal(const AST::ASTVar& var, const types::tyVarIdx defaultTy){
-    updateLine(var.name);
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
     auto varTy = defaultTy == -1 ? createEmptyTy() : defaultTy;
@@ -946,7 +911,6 @@ varPtr ASTTransformer::addLocal(const AST::ASTVar& var, const types::tyVarIdx de
 
 int ASTTransformer::resolveLocal(const Token name){
     // Checks to see if there is a local variable with a provided name, if there is return the index of the stack slot of the var
-    updateLine(name);
     for (int i  = current->locals.size() - 1; i >= 0; i--) {
         Local& local = current->locals[i];
         string str = name.getLexeme();
@@ -971,7 +935,6 @@ int ASTTransformer::resolveUpvalue(const Token name){
 // Order of checking:
 // locals->freevars->implicit object fields->globals->natives
 typedAST::exprPtr ASTTransformer::readVar(const Token name){
-    updateLine(name);
     auto dbg = AST::VarReadDebugInfo(name);
     int argIndex = resolveLocal(name);
     if (argIndex != -1) {
@@ -1002,7 +965,6 @@ typedAST::exprPtr ASTTransformer::readVar(const Token name){
 }
 
 typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, typedAST::exprPtr toStore){
-    updateLine(name);
     int argIndex = resolveLocal(name);
     auto dbg = AST::VarStoreDebugInfo(name, op);
 
@@ -1124,9 +1086,8 @@ types::tyVarIdx ASTTransformer::createNewFunc(const string name, const int arity
 // Class name is for recognizing constructor
 typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
                                                    std::shared_ptr<types::FunctionType> fnTy){
-    updateLine(_method->getName());
 
-    string fullGlobalSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + className;
+    string fullGlobalSymbol = computeFullSymbol(className, curUnitIndex);
     FuncType type = FuncType::TYPE_METHOD;
     // Constructors are treated separately, but are still methods
     if (_method->getName().getLexeme() == className) type = FuncType::TYPE_CONSTRUCTOR;
@@ -1156,7 +1117,6 @@ std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAS
         addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
         auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.field, paren1, paren2);
         return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy, dbg);
-
     }
     return nullptr;
 }
@@ -1276,13 +1236,13 @@ std::shared_ptr<ClassChunkInfo> ASTTransformer::getClassInfoFromExpr(AST::ASTNod
     if (expr->type == AST::ASTType::LITERAL) {
         Token symbol = probeToken(expr);
         // First check this module
-        string fullSymbol = curUnit->file->name + std::to_string(curUnit->id) + "." + symbol.getLexeme();
+        string fullSymbol = computeFullSymbol(symbol.getLexeme(), curUnitIndex);
         auto it = globalClasses.find(fullSymbol);
         if (it != globalClasses.end()) return it->second;
         // Then check imported modules
-        for (Dependency& dep : curUnit->deps) {
-            fullSymbol = dep.module->file->name + std::to_string(dep.module->id) + symbol.getLexeme();
-            if (dep.alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
+        for (auto [alias, depIndex] : units[curUnitIndex].importedModules) {
+            fullSymbol = computeFullSymbol(symbol.getLexeme(), depIndex);
+            if (alias.type == TokenType::NONE && globals.contains(fullSymbol)) {
                 return globalClasses.at(fullSymbol);
             }
         }
@@ -1292,19 +1252,18 @@ std::shared_ptr<ClassChunkInfo> ASTTransformer::getClassInfoFromExpr(AST::ASTNod
         auto moduleExpr = std::static_pointer_cast<AST::ModuleAccessExpr>(expr);
 
         // First find the module with the correct alias
-        Dependency* depPtr = nullptr;
-        for (Dependency dep : curUnit->deps) {
-            if (dep.alias.equals(moduleExpr->moduleName)) {
-                depPtr = &dep;
+        int module = -1;
+        for (auto [alias, depIndex] : units[curUnitIndex].importedModules) {
+            if (alias.equals(moduleExpr->moduleName)) {
+                module = depIndex;
                 break;
             }
         }
-        if (depPtr == nullptr) {
+        if (module == -1) {
             error(moduleExpr->moduleName, "Module alias doesn't exist.");
         }
 
-        ESLModule* unit = depPtr->module;
-        string fullSymbol = unit->file->name + std::to_string(unit->id) + moduleExpr->ident.getLexeme();
+        string fullSymbol = computeFullSymbol(moduleExpr->ident.getLexeme(), module);
         if(globalClasses.contains(fullSymbol)) return globalClasses.at(fullSymbol);
         error(moduleExpr->ident, fmt::format("Symbol doesn't exist in module '{}'.", moduleExpr->moduleName.getLexeme()));
     }
@@ -1370,18 +1329,19 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
 Token ASTTransformer::syntheticToken(const string& str){
     return Token(TokenType::IDENTIFIER, str);
 }
-void ASTTransformer::updateLine(const Token token){
-    current->line = token.str.line;
-}
 void ASTTransformer::error(const Token token, const string& msg) noexcept(false){
     errorHandler::addCompileError(msg, token);
     hadError = true;
     throw TransformerException();
 }
 void ASTTransformer::error(const string& message) noexcept(false){
-    errorHandler::addSystemError("System compile error [line " + std::to_string(current->line) + "] in '" + curUnit->file->name + "': \n" + message + "\n");
+    errorHandler::addSystemError("System compile error in '" + units[curUnitIndex].file->name + "': \n" + message + "\n");
     hadError = true;
     throw TransformerException();
+}
+
+string ASTTransformer::computeFullSymbol(string symbol, int moduleIndex){
+    return units[moduleIndex].file->name + std::to_string(moduleIndex) + "." + symbol;
 }
 
 typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){

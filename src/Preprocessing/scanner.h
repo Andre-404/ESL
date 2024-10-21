@@ -10,11 +10,9 @@ class Scanner {
 		Scanner();
 	private:
 		File* curFile;
-		int line;
 		int start;
 		int current;
 		bool hadError;
-		vector<Token> tokens;
 
 		Token scanToken();
 		Token makeToken(const TokenType type);
@@ -34,7 +32,5 @@ class Scanner {
 
 		Token identifier();
 		TokenType identifierType();
-
-		void reset();
 	};
 }

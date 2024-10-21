@@ -19,9 +19,7 @@ enum class TokenType {
     LESS, LESS_EQUAL,
     BITSHIFT_LEFT, BITSHIFT_RIGHT,
     INCREMENT, DECREMENT, DOUBLE_COLON, ARROW,
-    DOUBLE_DOT, DOUBLE_QUESTIONMARK, DOT_QUESTIONMARK, DOUBLE_BANG,
-    // Three character tokens
-    DOUBLE_DOT_EQUAL,
+    DOUBLE_QUESTIONMARK, DOT_QUESTIONMARK, DOUBLE_BANG,
     // Literals.
     IDENTIFIER, STRING, NUMBER,
     // Keywords.
@@ -29,68 +27,77 @@ enum class TokenType {
     NIL, FALSE, TRUE,
     IF, ELSE,
     FN, RETURN,
-    WHILE, FOR, CONTINUE, BREAK, ADVANCE, IN,
+    WHILE, FOR, CONTINUE, BREAK, ADVANCE,
     CLASS, THIS,
     SWITCH, CASE, DEFAULT,
     LET, STATIC,
-    IMPORT, PUB, AS, INSTANCEOF, NEW, OVERRIDE,
-    AWAIT, ASYNC, ADDMACRO, EXPR, TT,
+    IMPORT, PUB, INSTANCEOF, NEW, OVERRIDE, AS,
+    SPAWN,
+    ADDMACRO, EXPR, TT,
 
     NEWLINE, ERROR, NONE
 };
 
 struct File {
-    //file name
     string name;
+    // Raw src
     string sourceFile;
     string path;
-    //number that represents start of each line in the source string
-    std::vector<uInt> lines;
     File(const string _sourceFile, const string& _name, const string _path) : sourceFile(_sourceFile), name(_name), path(_path) {};
     File() = default;
 };
 
-//span of characters in a source file of code
+// Span of characters in a source file of code
 struct Span {
     //sourceFile.lines[line - 1] + column is the start of the string
-    int line = 0;
-    int column = 0;
-    int length = 0;
+    int start;
+    int end;
 
     File* sourceFile = nullptr;
 
-    Span() = default;
-    Span(int _line, int _column, int _len, File* _src) : line(_line), column(_column), length(_len), sourceFile(_src) {};
+    Span() : start(0), end(0) {};
+    Span(int _start, int _end, File* _src) : start(_start), end(_end), sourceFile(_src) {};
 
     // Get string corresponding to this Span
     [[nodiscard]] string getStr() const {
-        int start = sourceFile->lines[line] + column;
-        return sourceFile->sourceFile.substr(start, length);
+        return sourceFile->sourceFile.substr(start, end - start);
     }
 
     // Get the entire line this span is in.
-    string getLine() const {
-        int start = sourceFile->lines[line];
-        // If this Span is located on the last line of the file, then the line ends at the end of the file.
-        int end = (line + 1 >= sourceFile->lines.size()) ? sourceFile->sourceFile.size() : sourceFile->lines[line + 1];
+    std::string_view getLine() const {
+        int lineStart = start;
+        while(lineStart >= 0 && sourceFile->sourceFile[lineStart] != '\n') lineStart--;
+        lineStart++;
+        int lineEnd = end;
+        while(lineEnd < sourceFile->sourceFile.size() && sourceFile->sourceFile[lineEnd] != '\n') lineEnd++;
+        lineEnd--;
 
-        string ln = sourceFile->sourceFile.substr(start, end - start);
-
-        // Remove the '\n' at the end of the line.
-        if (ln.back() == '\n') ln.pop_back();
-
-        return ln;
+        return std::string_view(sourceFile->sourceFile.data(), lineEnd - lineStart);
+    }
+    int computeLine(){
+        int i = start;
+        int line = 0;
+        while(i >= 0){
+            if(sourceFile->sourceFile[i] == '\n') line++;
+            i--;
+        }
+        return line;
+    }
+    int computeColumn(){
+        int lineStart = start;
+        while(lineStart >= 0 && sourceFile->sourceFile[lineStart] != '\n') lineStart--;
+        lineStart++;
+        return start - lineStart;
     }
 };
 
 struct Token {
+    // For things like synthetic tokens and expanded macros
+    bool isSynthetic;
+    bool isPartOfMacro;
     TokenType type;
     Span str;
-
-    //for things like synthetic tokens and expanded macros
-    bool isSynthetic;
     string syntheticStr;
-    bool isPartOfMacro;
     //default constructor
     Token() {
         isSynthetic = false;
@@ -111,9 +118,14 @@ struct Token {
         syntheticStr = str;
     }
     string getLexeme() const {
-        if (type == TokenType::ERROR) { return "Unexpected character."; }
-        else if (isSynthetic) { return syntheticStr; }
+        if (type == TokenType::ERROR) return "Unexpected character.";
+        else if (isSynthetic) return syntheticStr;
         return str.getStr();
+    }
+    int getLength(){
+        if (type == TokenType::ERROR) return 0;
+        else if (isSynthetic) return syntheticStr.size();
+        return str.end - str.start;
     }
 
     bool equals(const Token& token) const {
@@ -155,9 +167,8 @@ struct ESLModule {
     // Used by the compiler to look up if a global variable exists since globals are late bound
     vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
 
-    static int count;
-
     ESLModule(vector<Token> _tokens, File* _file) {
+        static int count = 0;
         tokens = _tokens;
         file = _file;
         resolvedDeps = false;

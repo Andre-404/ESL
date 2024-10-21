@@ -94,10 +94,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* visitCallExpr(typedAST::CallExpr* expr) override;
         llvm::Value* visitInvokeExpr(typedAST::InvokeExpr* expr) override;
         llvm::Value* visitNewExpr(typedAST::NewExpr* expr) override;
-        llvm::Value* visitAsyncExpr(typedAST::AsyncExpr* expr) override;
-        llvm::Value* visitAwaitExpr(typedAST::AwaitExpr* expr) override;
+        llvm::Value* visitSpawnStmt(typedAST::SpawnStmt* stmt) override;
         llvm::Value* visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) override;
-        llvm::Value* visitRangeExpr(typedAST::RangeExpr* expr) override;
         llvm::Value* visitFuncDecl(typedAST::FuncDecl* stmt) override;
         llvm::Value* visitReturnStmt(typedAST::ReturnStmt* stmt) override;
         llvm::Value* visitUncondJump(typedAST::UncondJump* stmt) override;
@@ -149,8 +147,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         bool exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag);
 
         // Runtime type checking
-        void createTyErr(const string err, llvm::Value* const val, const Token token);
-        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token);
+        void createTyErr(const string err, llvm::Value* const val, Token token);
+        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, Token token);
         void createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> val,
                 string executeBBName, string errMsg, Token dbg);
         void createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
@@ -158,7 +156,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         // Codegen functions(take in a typedAST expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
-        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, const Token op);
+        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);

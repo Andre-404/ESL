@@ -38,13 +38,12 @@ namespace closureConversion{
         CurrentChunkInfo* current;
         bool hadError;
 
-        ClosureConverter(vector<ESLModule*>& units);
+        ClosureConverter();
 
-        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> generateFreevarMap();
+        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> generateFreevarMap(vector<AST::ASTModule>& units);
 
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
-        void visitRangeExpr(AST::RangeExpr *expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
         void visitConditionalExpr(AST::ConditionalExpr* expr) override;
         void visitBinaryExpr(AST::BinaryExpr* expr) override;
@@ -52,8 +51,6 @@ namespace closureConversion{
         void visitCallExpr(AST::CallExpr* expr) override;
         void visitNewExpr(AST::NewExpr* expr) override;
         void visitFieldAccessExpr(AST::FieldAccessExpr* expr) override;
-        void visitAsyncExpr(AST::AsyncExpr* expr) override;
-        void visitAwaitExpr(AST::AwaitExpr* expr) override;
         void visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) override;
         void visitStructLiteralExpr(AST::StructLiteral* expr) override;
         void visitLiteralExpr(AST::LiteralExpr* expr) override;
@@ -66,6 +63,7 @@ namespace closureConversion{
         void visitClassDecl(AST::ClassDecl* decl) override;
 
         void visitExprStmt(AST::ExprStmt* stmt) override;
+        void visitSpawnStmt(AST::SpawnStmt* stmt) override;
         void visitBlockStmt(AST::BlockStmt* stmt) override;
         void visitIfStmt(AST::IfStmt* stmt) override;
         void visitWhileStmt(AST::WhileStmt* stmt) override;

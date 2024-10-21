@@ -551,14 +551,10 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
 }
 
 //TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
-llvm::Value* Compiler::visitAsyncExpr(typedAST::AsyncExpr* expr) {
-    errorHandler::addSystemError("Async isn't implemented :clown:");
-    __builtin_unreachable();
+llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
+
 }
-llvm::Value* Compiler::visitAwaitExpr(typedAST::AwaitExpr* expr) {
-    errorHandler::addSystemError("Await isn't implemented :clown:");
-    __builtin_unreachable();
-}
+
 
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
@@ -604,10 +600,6 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     return builder.CreateCall(safeGetFunc("createClosure"), closureConstructorArgs);
 }
 
-llvm::Value* Compiler::visitRangeExpr(typedAST::RangeExpr* expr) {
-    errorHandler::addSystemError("Ranges aren't implemented :clown:");
-    __builtin_unreachable();
-}
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     inProgressFuncs.emplace(createNewFunc(stmt->fn->name, stmt->fn->fnTy));
 
@@ -1252,16 +1244,16 @@ bool Compiler::exprIsComplexType(const typedExprPtr expr, const types::TypeFlag 
 
 
 // Runtime type checking
-void Compiler::createTyErr(const string err, llvm::Value* const val, const Token token){
+void Compiler::createTyErr(const string err, llvm::Value* const val, Token token){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(token.str.line);
+    llvm::Constant* line = builder.getInt32(token.str.computeLine());
     builder.CreateCall(safeGetFunc("tyErrSingle"), {str, file, line, val});
 }
-void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token){
+void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, Token token){
     llvm::Constant* str = createConstStr(err);
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(token.str.line);
+    llvm::Constant* line = builder.getInt32(token.str.computeLine());
     builder.CreateCall(safeGetFunc("tyErrDouble"), {str, file, line, lhs, rhs});
 }
 void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> args, string executeBBName,
@@ -1302,7 +1294,7 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lh
 }
 
 // Codegen functions
-llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, const Token op){
+llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If both are a number go to addNum, if not try adding as string
     // If both aren't strings, throw error(error is thrown inside strTryAdd C++ function)
@@ -1328,7 +1320,7 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, cons
     builder.SetInsertPoint(addStringBB);
     // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
     llvm::Constant* file = createConstStr(op.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(op.str.line);
+    llvm::Constant* line = builder.getInt32(op.str.computeLine());
     // Returns Value
     auto stringAddRes = builder.CreateCall(safeGetFunc("strTryAdd"), {lhs, rhs, file, line});
     builder.CreateBr(mergeBB);
@@ -2227,7 +2219,7 @@ llvm::Function* Compiler::safeGetFunc(const string& name){
 void Compiler::argCntError(Token token, llvm::Value* expected, const int got){
     llvm::Constant* str = createConstStr(fmt::format("Expected %d arguments but got {}.", got));
     llvm::Constant* file = createConstStr(token.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(token.str.line);
+    llvm::Constant* line = builder.getInt32(token.str.computeLine());
 
     builder.CreateCall(safeGetFunc("printf"), {str, expected});
     builder.CreateCall(safeGetFunc("exit"), builder.getInt32(64));

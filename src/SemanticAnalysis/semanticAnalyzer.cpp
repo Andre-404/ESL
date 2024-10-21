@@ -153,11 +153,6 @@ void SemanticAnalyzer::visitConditionalExpr(AST::ConditionalExpr* expr) {
     if (expr->rhs) expr->rhs->accept(this);
 }
 
-void SemanticAnalyzer::visitRangeExpr(AST::RangeExpr *expr) {
-    if(expr->start) expr->start->accept(this);
-    if(expr->end) expr->end->accept(this);
-}
-
 void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
     expr->left->accept(this);
     uint8_t op = 0;
@@ -187,7 +182,6 @@ void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER_EQUAL:
         case TokenType::LESS:
         case TokenType::LESS_EQUAL:
-        case TokenType::IN: break;
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
     expr->right->accept(this);
@@ -340,23 +334,6 @@ void SemanticAnalyzer::visitMacroExpr(AST::MacroExpr* expr) {
     createSemanticToken(expr->macroName, "macro");
 }
 
-void SemanticAnalyzer::visitAsyncExpr(AST::AsyncExpr* expr) {
-    if (invoke(expr)) return;
-    if(expr->callee->type == AST::ASTType::LITERAL){
-        Token token = probeToken(expr->callee);
-        createSemanticToken(token, "function");
-    }else expr->callee->accept(this);
-    expr->callee->accept(this);
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-}
-
-void SemanticAnalyzer::visitAwaitExpr(AST::AwaitExpr* expr) {
-    expr->expr->accept(this);
-}
-
-
 void SemanticAnalyzer::visitVarDecl(AST::VarDecl* decl) {
     uint16_t global;
     if(current->scopeDepth == 0){
@@ -443,6 +420,10 @@ void SemanticAnalyzer::visitClassDecl(AST::ClassDecl* decl) {
 
 void SemanticAnalyzer::visitExprStmt(AST::ExprStmt* stmt) {
     stmt->expr->accept(this);
+}
+
+void SemanticAnalyzer::visitSpawnStmt(AST::SpawnStmt* stmt){
+
 }
 
 void SemanticAnalyzer::visitBlockStmt(AST::BlockStmt* stmt) {
@@ -717,32 +698,6 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
     return resolveImplicitObjectField(expr);
 }
 
-bool SemanticAnalyzer::invoke(AST::AsyncExpr* expr) {
-    if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
-        //currently we only optimizes field invoking(struct.field() or array[field]())
-        auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
-        if (call->accessor.type == TokenType::LEFT_BRACKET) return false;
-
-        call->callee->accept(this);
-        uint16_t constant;
-        Token name = probeToken(call->field);
-        // If invoking a method inside another method, make sure to get the right(public/private) name
-        if (isLiteralThis(call->callee)) {
-            string res = resolveClassField(name, false);
-            if (res == "") error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(),
-                                                   currentClass->name.getLexeme()));
-            createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-        } else createSemanticToken(name, "method");
-
-        for (AST::ASTNodePtr arg: expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
-    // Class methods can be accessed without 'this' keyword inside of methods and called
-    return resolveImplicitObjectField(expr);
-}
-
 // Turns a hash map lookup into an array linear search, but still faster than allocating memory using ObjString::createStr
 // First bool in pair is if the search was successful, second is if the field found was public or private
 static std::pair<bool, bool> classContainsField(string& publicField, std::unordered_map<string, bool>& map){
@@ -813,20 +768,6 @@ bool SemanticAnalyzer::resolveThis(AST::FieldAccessExpr *expr) {
 // Recognizes object_field() as an invoke operation
 // If object_field() is encountered inside a closure which is inside a method, throw an error since only this.object_field() is allowed in closures
 bool SemanticAnalyzer::resolveImplicitObjectField(AST::CallExpr *expr) {
-    if(expr->callee->type != AST::ASTType::LITERAL) return false;
-    Token name = probeToken(expr->callee);
-    string res = resolveClassField(name, false);
-    if(res == "") return false;
-    if(current->type == FuncType::TYPE_FUNC) error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
-    createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-
-    return true;
-}
-
-bool SemanticAnalyzer::resolveImplicitObjectField(AST::AsyncExpr *expr) {
     if(expr->callee->type != AST::ASTType::LITERAL) return false;
     Token name = probeToken(expr->callee);
     string res = resolveClassField(name, false);

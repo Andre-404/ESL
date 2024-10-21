@@ -21,13 +21,11 @@ namespace types{
         HASHMAP,
         INSTANCE,
         CLASS,
-        FUTURE
     };
 
     enum class TypeConstraintFlag{
         ADD_TY,
         GET_RETURN_TY,
-        GET_AWAIT_TY,
         INST_GET_FIELD_TY,
         COMPUTE_ADD_TYS,
     };
@@ -66,16 +64,6 @@ namespace types{
         CallResTyConstraint(const tyVarIdx _calleeType){
             calleeType = _calleeType;
             type = TypeConstraintFlag::GET_RETURN_TY;
-        }
-    };
-
-    class AwaitTyConstraint : public TypeConstraint{
-    public:
-        tyVarIdx potentialFuture;
-
-        AwaitTyConstraint(const tyVarIdx _potentialFuture){
-            potentialFuture = _potentialFuture;
-            type = TypeConstraintFlag::GET_AWAIT_TY;
         }
     };
 
@@ -162,16 +150,6 @@ namespace types{
         void inherit(const std::shared_ptr<ClassType> parent){
             methods = parent->methods;
             fields = parent->fields;
-        }
-    };
-
-    class FutureType : public Type{
-    public:
-        tyVarIdx calleeType;
-
-        FutureType(const tyVarIdx _calleeType){
-            calleeType = _calleeType;
-            type = TypeFlag::FUTURE;
         }
     };
 

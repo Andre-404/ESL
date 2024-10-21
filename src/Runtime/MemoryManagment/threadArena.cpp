@@ -19,7 +19,7 @@ using namespace memory;
     return threadArena;
 }
 
-// Branchless szToIdx,
+// Branchless
 inline int szToIdx(size_t x){
     // Rounds up to the nearest multiple of GRANULARITY and divides by GRANULARITY to get position in mpBlockSizes
     int smallclassIdx = (x + (SMALL_GRANULARITY - 1)) >> std::countr_zero(SMALL_GRANULARITY);

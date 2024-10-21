@@ -17,25 +17,9 @@ namespace AST {
                 Token metaVar = parser->consume(TokenType::IDENTIFIER, "Expected identifier after '$'.");
                 return parser->exprMetaVars[metaVar.getLexeme()]->get();
             }
-            case TokenType::AWAIT: {
-                // Syntax is await <expr>
-                ASTNodePtr expr = parser->expression();
-                return make_shared<AwaitExpr>(token, expr);
-            }
-            case TokenType::DOUBLE_DOT:{
-                if(!parser->prefixParselets.contains(parser->peek().type)) return make_shared<RangeExpr>(token, nullptr, nullptr, false);
-                auto expr = parser->expression(+Precedence::RANGE);
-                return make_shared<RangeExpr>(token, nullptr, expr, false);
-            }
-            case TokenType::DOUBLE_DOT_EQUAL:{
-                auto expr = parser->expression(+Precedence::RANGE);
-                return make_shared<RangeExpr>(token, nullptr, expr, true);
-            }
-            case TokenType::ASYNC: {
-                ASTNodePtr expr = parser->expression();
-                if (expr->type != ASTType::CALL) throw parser->error(token, "Expected a call after 'async'.");
-                auto call = std::static_pointer_cast<CallExpr>(expr);
-                return make_shared<AsyncExpr>(token, call->callee, call->args, call->paren1, call->paren2);
+            case TokenType::INCREMENT:
+            case TokenType::DECREMENT:{
+                throw parser->error(token, "Prefix incrementing/decrementing is not supported.");
             }
             default: {
                 ASTNodePtr expr = parser->expression(parser->prefixPrecLevel(token.type));
@@ -262,24 +246,7 @@ namespace AST {
     }
 
     ASTNodePtr parsePostfix(Parser* parser, ASTNodePtr left, const Token token){
-        switch(token.type){
-            // Handles both infix and postfix range ops
-            case TokenType::DOUBLE_DOT_EQUAL:{
-                if(+Precedence::RANGE < parser->prefixPrecLevel(parser->peek().type)){
-                    auto expr = parser->expression(parser->infixPrecLevel(token.type));
-                    return make_shared<RangeExpr>(token, left, expr, true);
-                }
-                throw parser->error(token, "End inclusive range operator used without end of range.");
-            }
-            case TokenType::DOUBLE_DOT:{
-                if(+Precedence::RANGE < parser->prefixPrecLevel(parser->peek().type)){
-                    auto expr = parser->expression(parser->infixPrecLevel(token.type));
-                    return make_shared<RangeExpr>(token, left, expr, false);
-                }
-                return make_shared<RangeExpr>(token, left, nullptr, false);
-            }
-            default: return make_shared<UnaryExpr>(token, left, false);
-        }
+        return make_shared<UnaryExpr>(token, left, false);
     }
 
     ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, const Token token){
@@ -313,16 +280,12 @@ Parser::Parser() {
 
     loopDepth = 0;
     switchDepth = 0;
-    parsedUnit = nullptr;
 
     currentContainer = nullptr;
     currentPtr = 0;
 
 #pragma region Parselets
     // Prefix
-    addPrefix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePrefix);
-    addPrefix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePrefix);
-
     addPrefix(TokenType::BANG, Precedence::UNARY_PREFIX, parsePrefix);
     addPrefix(TokenType::MINUS, Precedence::UNARY_PREFIX, parsePrefix);
     addPrefix(TokenType::TILDA, Precedence::UNARY_PREFIX, parsePrefix);
@@ -344,8 +307,6 @@ Parser::Parser() {
     addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::NEW, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::THIS, Precedence::PRIMARY, parseLiteral);
-    addPrefix(TokenType::ASYNC, Precedence::PRIMARY, parsePrefix);
-    addPrefix(TokenType::AWAIT, Precedence::PRIMARY, parsePrefix);
 
     // Infix and mix-fix
     addInfix(TokenType::EQUAL, Precedence::ASSIGNMENT, parseAssignment);
@@ -366,8 +327,6 @@ Parser::Parser() {
     addInfix(TokenType::BITWISE_OR, Precedence::BIN_OR, parseBinary);
     addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
     addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
-
-    addInfix(TokenType::IN, Precedence::COMPARISON, parseBinary);
 
     addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
     addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
@@ -396,61 +355,80 @@ Parser::Parser() {
     addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
 
     // Postfix
-    addPostfix(TokenType::DOUBLE_DOT, Precedence::RANGE, parsePostfix);
-    addPostfix(TokenType::DOUBLE_DOT_EQUAL, Precedence::RANGE, parsePostfix);
-
     addPostfix(TokenType::INCREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
     addPostfix(TokenType::DECREMENT, Precedence::UNARY_POSTFIX, parsePostfix);
 #pragma endregion
 }
 
-void Parser::parse(vector<ESLModule*>& modules) {
+vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
     // Modules are already sorted using topsort
-    for (ESLModule* unit : modules) {
-        parsedUnit = unit;
-
+    vector<ASTModule> parsedModules;
+    vector<vector<Token>> importDebugTokens;
+    parsedModules.resize(modules.size());
+    for (int i = 0; i < modules.size(); i++) {
         // Parse tokenized source into AST
         loopDepth = 0;
         switchDepth = 0;
-        currentContainer = &parsedUnit->tokens;
+        currentContainer = &modules[i]->tokens;
         currentPtr = 0;
+        parsedModules[i].file = modules[i]->file;
+        // Converts dependencies from ESLModules to alias + ASTModule(referenced by pos in array)
+        for(Dependency dep : modules[i]->deps){
+            parsedModules[i].importedModules.emplace_back(dep.alias, dep.module->id);
+            importDebugTokens[i].push_back(dep.pathString);
+        }
         while (!isAtEnd()) {
             try {
                 if (match(TokenType::ADDMACRO)) {
                     defineMacro();
                     continue;
                 }
-                unit->stmts.push_back(topLevelDeclaration());
+                parsedModules[i].stmts.push_back(topLevelDeclaration(parsedModules[i]));
             }
             catch (ParserException& e) {
                 sync();
             }
         }
-        expandMacros();
+        expandMacros(parsedModules[i]);
     }
-    verifySymbolImports(modules);
+    verifySymbolImports(parsedModules, importDebugTokens);
+    for(ESLModule* module : modules) delete module;
+    return parsedModules;
 }
 
-void Parser::verifySymbolImports(vector<ESLModule*>& modules){
-    // 2 units being imported using the same alias is illegal
-    // Units imported without an alias must abide by the rule that every symbol must be unique
-    for (ESLModule* unit : modules) {
-        std::unordered_map<string, Dependency*> symbols;
+void Parser::verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& importTokenDebug){
+    for(int i = 0; i < modules.size(); i++){
+        // 2 units being imported using the same alias is illegal
+        // Units imported without an alias must abide by the rule that every symbol must be unique
+        std::unordered_map<string, int> symbols;
+        std::unordered_map<string, int> aliases;
         // Symbols of this unit are also taken into account when checking uniqueness
-        for(auto decl : unit->topDeclarations){
-            symbols[decl->getName().getLexeme()] = nullptr;
+        for(auto decl : modules[i].topDeclarations){
+            symbols[decl->getName().getLexeme()] = i;
         }
-        std::unordered_map<string, Dependency*> aliases;
-
-        for (Dependency& dep : unit->deps) {
-            checkDependency(unit, dep, symbols, aliases);
+        vector<Token>& curModuleDebug = importTokenDebug[i];
+        int j = 0;
+        for (auto& [alias, dependencyIndex] : modules[i].importedModules) {
+            if(alias.type == TokenType::NONE) {
+                namespaceConflict(modules, i, dependencyIndex, curModuleDebug[j], symbols, aliases);
+                j++;
+                continue;
+            }
+            // Check if any imported dependencies share the same alias
+            if (aliases.count(alias.getLexeme()) > 0) {
+                int secondAliasModule = aliases[alias.getLexeme()];
+                error(modules[i].importedModules[secondAliasModule].first, "Cannot use the same alias for 2 module imports.");
+                error(alias, "Cannot use the same alias for 2 module imports.");
+            }
+            aliases[alias.getLexeme()] = dependencyIndex;
+            j++;
         }
     }
 }
 
 void Parser::highlight(vector<ESLModule*>& modules, string moduleToHighlight){
     // Modules are already sorted using topsort
-    for (ESLModule* unit : modules) {
+    /*for (ESLModule* unit : modules) {
         parsedUnit = unit;
 
         // Parse tokenized source into AST
@@ -476,7 +454,7 @@ void Parser::highlight(vector<ESLModule*>& modules, string moduleToHighlight){
             return;
         }
         expandMacros();
-    }
+    }*/
 }
 
 void Parser::defineMacro() {
@@ -509,7 +487,7 @@ ASTNodePtr Parser::expression(const int prec) {
     // Check if the token has a prefix function associated with it, and if it does, parse with it
     if (prefixParselets.count(token.type) == 0) {
         // TODO: Fix hackyness
-        if (token.str.length == 0) token = currentContainer->at(currentPtr - 2);
+        if (token.str.end == 0) token = currentContainer->at(currentPtr - 2);
         throw error(token, "Expected expression.");
     }
     if (token.type == TokenType::DOLLAR && parseMode != ParseMode::Macro){
@@ -556,7 +534,7 @@ static bool stmtIsTerminator(const ASTNodePtr stmt){
     return stmt->type == ASTType::BREAK || stmt->type == ASTType::CONTINUE || stmt->type == ASTType::ADVANCE || stmt->type == ASTType::RETURN;
 }
 // Module level variables are put in a list to help with error reporting in compiler
-ASTNodePtr Parser::topLevelDeclaration() {
+ASTNodePtr Parser::topLevelDeclaration(ASTModule& module) {
     // Export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
     bool isExported = false;
@@ -564,17 +542,17 @@ ASTNodePtr Parser::topLevelDeclaration() {
     if (match(TokenType::LET)) node = varDecl();
     else if (match(TokenType::CLASS)) node = classDecl();
     else if (match(TokenType::FN)) node = funcDecl();
-    else if(isExported) throw error(previous(), "Only declarations are allowed after 'pub'");
+    else if(isExported) throw error(previous(), "Only declarations are allowed after keyword 'pub'");
     if(node){
-        for(const auto decl : parsedUnit->topDeclarations){
+        for(const auto decl : module.topDeclarations){
             if (node->getName().equals(decl->getName())) {
                 error(node->getName(), fmt::format("Error, {} already defined.", node->getName().getLexeme()));
                 throw error(decl->getName(), fmt::format("Error, redefinition of {}.", decl->getName().getLexeme()));
             }
         }
         // Passing in the actual AST node, not just the name, because it also contains info about declaration type(var, func, class)
-        parsedUnit->topDeclarations.push_back(node);
-        if(isExported) parsedUnit->exports.push_back(node);
+        module.topDeclarations.push_back(node);
+        if(isExported) module.exports.push_back(node);
         return node;
     }
     return statement();
@@ -720,7 +698,7 @@ shared_ptr<ClassDecl> Parser::classDecl() {
 ASTNodePtr Parser::statement() {
     if (match({ TokenType::LEFT_BRACE, TokenType::IF, TokenType::WHILE,
                 TokenType::FOR, TokenType::BREAK, TokenType::SWITCH,
-                TokenType::RETURN, TokenType::CONTINUE, TokenType::ADVANCE })) {
+                TokenType::RETURN, TokenType::CONTINUE, TokenType::ADVANCE, TokenType::SPAWN })) {
 
         switch (previous().type) {
             case TokenType::LEFT_BRACE: return blockStmt();
@@ -732,6 +710,7 @@ ASTNodePtr Parser::statement() {
             case TokenType::ADVANCE: return advanceStmt();
             case TokenType::SWITCH: return switchStmt();
             case TokenType::RETURN: return returnStmt();
+            case TokenType::SPAWN: return spawnStmt();
             default: assert(false && "Unreachable");
         }
     }
@@ -742,6 +721,14 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
     ASTNodePtr expr = expression();
     consume(TokenType::SEMICOLON, "Expected ';' after expression.");
     return make_shared<ExprStmt>(expr);
+}
+
+shared_ptr<SpawnStmt> Parser::spawnStmt(){
+    Token keyword = previous();
+    ASTNodePtr expr = expression();
+    if (expr->type != ASTType::CALL) throw error(keyword, "Expected a call after 'spawn'.");
+    auto call = std::static_pointer_cast<CallExpr>(expr);
+    return make_shared<SpawnStmt>(call, keyword);
 }
 
 shared_ptr<BlockStmt> Parser::blockStmt() {
@@ -1027,8 +1014,8 @@ vector<Token> Parser::readTokenTree(bool isNonLeaf){
     return tokenTree;
 }
 
-void Parser::expandMacros(){
-    for (ASTNodePtr stmt : parsedUnit->stmts) {
+void Parser::expandMacros(ASTModule& module){
+    for (ASTNodePtr stmt : module.stmts) {
         try {
             macroExpander->expand(stmt);
         }
@@ -1091,41 +1078,31 @@ int Parser::postfixPrecLevel(const TokenType type){
     return postfixParselets[type].first;
 }
 
-void Parser::checkDependency(ESLModule* unit, Dependency& dep, std::unordered_map<string, Dependency*>& symbols,
-                             std::unordered_map<string, Dependency*>& aliases){
+void Parser::namespaceConflict(vector<ASTModule>& modules, int importer, int dependency, Token importerDebug,
+                               std::unordered_map<string, int>& symbols, std::unordered_map<string, int>& aliases){
+    for (const auto decl : modules[dependency].exports) {
+        string lexeme = decl->getName().getLexeme();
 
-    if (dep.alias.type == TokenType::NONE) {
-        for (const auto decl : dep.module->exports) {
-            string lexeme = decl->getName().getLexeme();
-
-            if (symbols.count(lexeme) == 0) {
-                symbols[lexeme] = &dep;
-                continue;
-            }
-            // If there are 2 or more declaration which use the same symbol,
-            // throw an error and tell the user exactly which dependencies caused the error
-            string firstPath = "this file";
-            if(symbols[lexeme]){
-                firstPath = symbols[lexeme]->pathString.getLexeme().substr(1, symbols[lexeme]->pathString.getLexeme().length() - 2);
-            }
-            string secondPath = dep.pathString.getLexeme();
-            string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and '{}'.",
-                                     lexeme, firstPath, secondPath.substr(1, secondPath.length() - 2));
-            if(!symbols[lexeme]){
-                for(auto thisFileDecl : unit->topDeclarations){
-                    if(thisFileDecl->getName().getLexeme() != lexeme) continue;
-                    error(thisFileDecl->getName(), str);
-                }
-            }else error(dep.pathString, str);
+        if (symbols.count(lexeme) == 0) {
+            symbols[lexeme] = dependency;
+            continue;
         }
-    }
-    else {
-        // Check if any imported dependencies share the same alias
-        if (aliases.count(dep.alias.getLexeme()) > 0) {
-            error(aliases[dep.alias.getLexeme()]->alias, "Cannot use the same alias for 2 module imports.");
-            error(dep.alias, "Cannot use the same alias for 2 module imports.");
+        string dependencyPath = modules[dependency].file->path;
+        string conflictModulePath = modules[symbols[lexeme]].file->path;
+        string importerModulePath = modules[importer].file->path;
+        // Module importing dependency contains a redefinition of lexeme
+        if(symbols[lexeme] == importer){
+            string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and redefined in '{}', consider using an alias when importing.",
+                                     lexeme, dependencyPath, conflictModulePath);
+            for(auto importerDecl : modules[importer].topDeclarations){
+                if(importerDecl->getName().getLexeme() != lexeme) continue;
+                error(importerDecl->getName(), str);
+            }
+            return;
         }
-        aliases[dep.alias.getLexeme()] = &dep;
+        string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and '{}', which are both imported in {}.",
+                                 lexeme, dependencyPath, conflictModulePath, importerModulePath);
+        error(importerDebug, str);
     }
 }
 #pragma endregion
