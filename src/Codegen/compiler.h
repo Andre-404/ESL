@@ -173,11 +173,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
         void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
-
-
-        // Tries to optimize a function call if possible, otherwise returns nullptr
-        llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
+
         // Array optimization
         void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg);
@@ -201,8 +198,10 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
         llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
         std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
+
         llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
         llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
+
         llvm::Value* optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
         llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
                                        string field, vector<llvm::Value*> args, Token dbg);
@@ -224,7 +223,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        void replaceGV(uInt64 uuid, llvm::Constant* newInit);
         void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
 
 

@@ -94,7 +94,6 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             // Creates a heap allocated free variable
             auto tmp = tempBuilder.CreateCall(safeGetFunc("createFreevar"), std::nullopt, decl->dbgInfo.varName.getLexeme());
             variables.insert_or_assign(decl->uuid, tmp);
-
             break;
         }
         case typedAST::VarType::GLOBAL_FUNC:
@@ -159,7 +158,7 @@ static llvm::Value* compileArithmeticOp(typedAST::ArithmeticOp op, llvm::IRBuild
         case ArithmeticOp::IDIV: {
             auto tmp1 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, lhs);
             auto tmp2 = builder.CreateUnaryIntrinsic(llvm::Intrinsic::floor, rhs);
-            val = builder.CreateFDiv(tmp1, tmp2, "floordivtmp");
+            val = builder.CreateFDiv(tmp1, tmp2, "floordiv.tmp");
             break;
         }
         // Add is handles separately because of string concatenating
@@ -189,7 +188,7 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error since all other ops work only on numbers
-        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binopexecute",
+        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binop.execute",
                                "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
     }
 
@@ -216,7 +215,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
-        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binopexecute",
+        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binop.execute",
                                "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
     }
 
@@ -225,10 +224,10 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     llvm::Value* val;
 
     switch(expr->opType){
-        case ComparisonOp::LESS: val = builder.CreateFCmpOLT(lhs, rhs, "olttmp"); break;
-        case ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "oletmp"); break;
-        case ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogttmp"); break;
-        case ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "ogetmp"); break;
+        case ComparisonOp::LESS: val = builder.CreateFCmpOLT(lhs, rhs, "olt.tmp"); break;
+        case ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "ole.tmp"); break;
+        case ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogt.tmp"); break;
+        case ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "oge.tmp"); break;
         default: errorHandler::addSystemError("Unreachable code reached during compilation.");
     }
     return builder.CreateCall(safeGetFunc("encodeBool"), val);
@@ -250,9 +249,8 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
 
         createRuntimeTypeCheck(safeGetFunc("isBool"), {rhs},
                                "Operand must be a boolean, got '{}'.", "negbool", expr->dbgInfo.op);
-        // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
-        // Since that's just a single bit flag that's flipped on when true and off when false
-        // This does rely on the fact that true and false are the first flags and are thus represented with 00 and 01
+        // Instead of decoding bool, negating and encoding, we just XOR with the true flag
+        // This relies on the fact that true and false are the first flags and are thus represented with 00 and 01
         return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), builder.getInt64(MASK_TYPE_TRUE)));
     }else if(expr->opType == UnaryOp::FNEG || expr->opType == UnaryOp::BIN_NEG){
         return codegenNeg(expr->rhs, expr->opType, expr->dbgInfo.op);
@@ -300,7 +298,7 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
     auto arrNum = builder.getInt32(vals.size());
     auto arr = builder.CreateCall(safeGetFunc("createArr"), arrNum, "array");
     // I think this should be faster than passing everything to "createArr", but I could be wrong
-    auto arrPtr = builder.CreateCall(safeGetFunc("getArrPtr"), arr, "arrptr");
+    auto arrPtr = builder.CreateCall(safeGetFunc("getArrPtr"), arr, "arr.ptr");
     for(int i = 0; i < vals.size(); i++){
         auto gep = builder.CreateInBoundsGEP(getESLValType(), arrPtr, builder.getInt32(i));
         builder.CreateStore(vals[i], gep);
@@ -337,8 +335,8 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     }
     // Uses switch instead of chained comparisons, this should be faster?
     llvm::Function *F = builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "isArr", F);
-    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "isMap");
+    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "is.arr", F);
+    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "is.map");
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
@@ -367,7 +365,7 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
 
-    auto phi = builder.CreatePHI(getESLValType(), 2, "collectionget");
+    auto phi = builder.CreatePHI(getESLValType(), 2, "collection.get");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
     return phi;
@@ -392,8 +390,8 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     }
     // Uses switch instead of chained comparisons, this should be faster?
     llvm::Function *F = builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "isArr", F);
-    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "isMap");
+    llvm::BasicBlock *isArray = llvm::BasicBlock::Create(*ctx, "is.arr", F);
+    llvm::BasicBlock *isHashmap = llvm::BasicBlock::Create(*ctx, "is.map");
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
@@ -424,7 +422,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
 
-    auto phi = builder.CreatePHI(getESLValType(), 2, "collectionset");
+    auto phi = builder.CreatePHI(getESLValType(), 2, "collection.set");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
     return phi;
@@ -491,11 +489,11 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     if(functions.contains(funcType)) {
         // Function might not be codegen-ed at this point,
         // if it is then use its signature instead of casting the char ptr in ObjClosure to a function
-        return builder.CreateCall(functions[funcType], args, "callres");
+        return builder.CreateCall(functions[funcType], args, "call.res");
     }
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
     std::pair<llvm::Value *, llvm::FunctionType *> func = getBitcastFunc(closurePtr, args.size());
-    return builder.CreateCall(func.second, func.first, args, "callres");
+    return builder.CreateCall(func.second, func.first, args, "call.res");
 }
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     auto inst = expr->inst->codegen(this);
@@ -510,7 +508,7 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 
     auto field = createESLString(expr->field);
     createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
-                           "isInst", "Expected an instance, got '{}'", expr->dbgInfo.accessor);
+                           "is.inst", "Expected an instance, got '{}'", expr->dbgInfo.accessor);
 
     inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
@@ -654,7 +652,8 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
                                           arity, freeVarCnt, typeErasedFn, name, freeVarArr});
     // Creates a place in memory for the function and stores it there
     llvm::Constant* fnLoc = storeConstObj(fnC);
-    replaceGV(stmt->globalVarUuid, constObjToVal(fnLoc));
+    auto gv = (llvm::dyn_cast<llvm::GlobalVariable>(variables.at(stmt->globalVarUuid)));
+    gv->setInitializer(constObjToVal(fnLoc));
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -833,7 +832,7 @@ llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     }
     auto field = createESLString(expr->field);
     createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
-                           "isInst", "Expected an instance, got '{}'", expr->dbgInfo.accessor);
+                           "is.inst", "Expected an instance, got '{}'", expr->dbgInfo.accessor);
 
     inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
@@ -873,10 +872,10 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     auto storedField = builder.CreateLoad(getESLValType(), fieldPtr);
     if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
         createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "valIsNum", "Expected a number, got {}", expr->dbgInfo.op);
+                               "val.is.num", "Expected a number, got {}", expr->dbgInfo.op);
     }
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
-                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.field);
+                           "val.is.num", "Expected a number, got {}", expr->dbgInfo.field);
 
     val = CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
     builder.CreateStore(val, fieldPtr);
@@ -924,334 +923,6 @@ void Compiler::setupModule(CompileType compileFlag){
     }
     curModule->setTargetTriple(targetTriple);
 }
-
-#pragma region old stuff
-/*
-void Compiler::visitUnaryExpr(AST::UnaryExpr* expr) {
-    updateLine(expr->op);
-    //incrementing and decrementing a variable or an object field is optimized using INCREMENT opcode
-    //the value from a variable is fetched, incremented/decremented and put into back into the variable in a single dispatch iteration
-    /*if (expr->op.type == TokenType::INCREMENT || expr->op.type == TokenType::DECREMENT) {
-        int arg = -1;
-        //type definition and arg size
-        //0: local(8bit index), 1: local upvalue(8bit index), 2: upvalue(8bit index), 3: global(8bit constant), 4: global(16bit constant)
-        //5: dot access(8bit constant), 6: dot access(16bit constant), 7: field access(none, field is compiled to stack)
-        byte type = 0;
-        if (expr->right->type == AST::ASTType::LITERAL) {
-            //if a variable is being incremented, first get what kind of variable it is(local, upvalue or global)
-            //also get argument(local: stack position, upvalue: upval position in func, global: name constant index)
-            Token token = probeToken(expr->right);
-
-            updateLine(token);
-            arg = resolveLocal(token);
-            if (arg != -1) {
-                type = 0;
-                if(current->locals[arg].isLocalUpvalue) type = 1;
-            }
-            else if ((arg = resolveUpvalue(current, token)) != -1) type = 2;
-            else if((arg = resolveClassField(token, true)) != -1){
-                if(current->type == FuncType::TYPE_FUNC) error(token, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", token.getLexeme()));
-                namedVar(syntheticToken("this"), false);
-                type = arg > SHORT_CONSTANT_LIMIT ? 6 : 5;
-            }
-            else if((arg = resolveGlobal(token, true)) != -1){
-                if(arg == -2) error(token, fmt::format("Trying to access variable '{}' before it's initialized.", token.getLexeme()));
-                if(!definedGlobals[arg]) error(token, fmt::format("Use of undefined variable '{}'.", token.getLexeme()));
-                type = arg > SHORT_CONSTANT_LIMIT ? 4 : 3;
-            }
-            else error(token, fmt::format("Variable '{}' isn't declared.", token.getLexeme()));
-        }
-        else if (expr->right->type == AST::ASTType::FIELD_ACCESS) {
-            // If a field is being incremented, compile the object, and then if it's not a dot access also compile the field
-            auto left = std::static_pointer_cast<AST::FieldAccessExpr>(expr->right);
-            updateLine(left->accessor);
-            left->callee->accept(this);
-
-            if (left->accessor.type == TokenType::DOT) {
-                // Little check to see if field access is to 'this', in which case the correct(public/private) name must be chosen
-                if(isLiteralThis(left->callee)){
-                    Token name = probeToken(left->field);
-                    int res = resolveClassField(name, true);
-                    if(res != -1) {
-                        namedVar(syntheticToken("this"), false);
-                        arg = res;
-                    }
-                }
-                else arg = identifierConstant(probeToken(left->field));
-                type = arg > SHORT_CONSTANT_LIMIT ? 6 : 5;
-            }
-            else {
-                left->field->accept(this);
-                type = 7;
-            }
-        }
-        else error(expr->op, "Left side is not incrementable.");
-
-        //0b00000001: increment or decrement
-        //0b00000010: prefix or postfix increment/decrement
-        //0b00011100: type
-        byte args = 0;
-        args = (expr->op.type == TokenType::INCREMENT ? 1 : 0) |
-               ((expr->isPrefix ? 1 : 0) << 1) |
-               (type << 2);
-        emitBytes(+OpCode::INCREMENT, args);
-
-        if (arg != -1) arg > SHORT_CONSTANT_LIMIT ? emit16Bit(arg) : emitByte(arg);
-
-        return;
-    }
-
-    // Regular unary operations
-    if (expr->isPrefix) {
-        llvm::Value* rhs = evalASTExpr(expr->right);
-        llvm::Function *F = builder.GetInsertBlock()->getParent();
-        // If rhs isn't of the correct type, go to error, otherwise proceed as normal
-        llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-        // Name is set in the switch
-        llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx);
-
-        switch (expr->op.type) {
-            case TokenType::TILDA:
-            case TokenType::MINUS: {
-                if(expr->op.type == TokenType::TILDA) executeOpBB->setName("binnegnum");
-                else executeOpBB->setName("negnum");
-
-                builder.CreateCondBr(builder.CreateNot(builder.CreateCall(curModule->getFunction("isNum"), rhs)), errorBB, executeOpBB);
-                // Calls the type error function which throws
-                builder.SetInsertPoint(errorBB);
-                createTyErr("Operand must be a number, got '{}'.", rhs);
-                // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-                builder.CreateBr(executeOpBB);
-
-                F->insert(F->end(), executeOpBB);
-                builder.SetInsertPoint(executeOpBB);
-                // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
-                if(expr->op.type == TokenType::TILDA){
-                    auto tmp = builder.CreateBitCast(rhs, builder.getDoubleTy());
-                    auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, builder.getInt64Ty()),"binnegtmp");
-                    retVal(builder.CreateSIToFP(negated, llvm::Type::getDoubleTy(*ctx)));
-                }else{
-                    auto tmp = builder.CreateBitCast(rhs, builder.getDoubleTy());
-                    retVal(builder.CreateFNeg(tmp, "fnegtmp"));
-                }
-                break;
-            }
-            case TokenType::BANG: {
-                executeOpBB->setName("negbool");
-
-                builder.CreateCondBr(builder.CreateNot(builder.CreateCall(curModule->getFunction("isBool"), rhs)), errorBB, executeOpBB);
-                // Calls the type error function which throws
-                builder.SetInsertPoint(errorBB);
-                createTyErr("Operand must be a boolean, got '{}'.", rhs);
-                // Is never actually hit since tyErr throws, but LLVM requires every block have a terminator
-                builder.CreateBr(executeOpBB);
-
-                F->insert(F->end(), executeOpBB);
-                builder.SetInsertPoint(executeOpBB);
-                // Quick optimization, instead of decoding bool, negating and encoding, we just XOR with the true flag
-                // Since that's just a single bit flag that's flipped on when true and off when false
-                // This does rely on the fact that true and false are the first flags and are thus represented with 00 and 01
-                returnValue = builder.CreateXor(rhs, builder.getInt64(MASK_TYPE_TRUE));
-                break;
-            }
-
-        }
-        return;
-    }
-
-    error(expr->op, "Unexpected operator.");
-}
-
-void Compiler::visitCallExpr(AST::CallExpr* expr) {
-    // Invoking is field access + call, when the compiler recognizes this pattern it optimizes
-    /*if (invoke(expr)) return;
-    //todo: tail recursion optimization
-    expr->callee->accept(this);
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-    emitBytes(+OpCode::CALL, expr->args.size());
-    auto callee = evalASTExpr(expr->callee);
-    vector<llvm::Value*> args;
-    for (AST::ASTNodePtr arg : expr->args) {
-        args.push_back(evalASTExpr(arg));
-    }
-    auto objFnTy = llvm::PointerType::getUnqual(namedTypes["ObjFunc"]);
-    auto tmp = builder.CreateCall(curModule->getFunction("decodeObj"), callee);
-    auto objFnPtr = builder.CreatePointerCast(tmp, objFnTy);
-    auto fnPtrPtr = builder.CreateInBoundsGEP(namedTypes["ObjFunc"], objFnPtr, {builder.getInt32(0), builder.getInt32(1)});
-    auto fnPtr = builder.CreateLoad(builder.getInt8PtrTy(), fnPtrPtr);
-    auto fnTy = llvm::FunctionType::get(builder.getInt64Ty(), vector<llvm::Type*>(expr->args.size(), builder.getInt64Ty()), false);
-    returnValue = builder.CreateCall(fnTy, fnPtr, args);
-    builder.CreateCall(curModule->getFunction("print"), args);
-}
-
-void Compiler::visitNewExpr(AST::NewExpr* expr){
-    // Parser guarantees that expr->call->callee is either a literal or a module access
-    /*auto klass = getClassFromExpr(expr->call->callee);
-
-    emitConstant(encodeObj(klass));
-
-    for (AST::ASTNodePtr arg : expr->call->args) {
-        arg->accept(this);
-    }
-    emitBytes(+OpCode::CALL, expr->call->args.size());
-}
-
-void Compiler::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
-    /*updateLine(expr->accessor);
-    //array[index] or object["propertyAsString"]
-    if(expr->accessor.type == TokenType::LEFT_BRACKET){
-        expr->callee->accept(this);
-        expr->field->accept(this);
-        emitByte(+OpCode::GET);
-        return;
-    }
-
-    if(tryResolveThis(expr)) return;
-    expr->callee->accept(this);
-    uint16_t name = identifierConstant(probeToken(expr->field));
-    if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_PROPERTY, name);
-    else emitByteAnd16Bit(+OpCode::GET_PROPERTY_LONG, name);
-    return;
-}
-
-void Compiler::visitSuperExpr(AST::SuperExpr* expr) {
-    /*int name = identifierConstant(expr->methodName);
-    if (currentClass == nullptr) {
-        error(expr->methodName, "Can't use 'super' outside of a class.");
-    }
-    else if (!currentClass->klass->superclass) {
-        error(expr->methodName, "Can't use 'super' in a class with no superclass.");
-    }
-    string fieldName = expr->methodName.getLexeme();
-    auto res = classContainsMethod(fieldName, currentClass->klass->superclass->methods);
-    if(!res.first){
-        error(expr->methodName, fmt::format("Superclass '{}' doesn't contain method '{}'.", currentClass->klass->superclass->name->str, expr->methodName.getLexeme()));
-    }
-    // We use a synthetic token since 'this' is defined if we're currently compiling a class method
-    namedVar(syntheticToken("this"), false);
-    emitConstant(encodeObj(currentClass->klass->superclass));
-    if (name <= SHORT_CONSTANT_LIMIT) emitBytes(+OpCode::GET_SUPER, name);
-    else emitByteAnd16Bit(+OpCode::GET_SUPER_LONG, name);
-}
-
-void Compiler::visitFuncLiteral(AST::FuncLiteral* expr) {
-    // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
-    // is stored in parserCurrent->enclosing
-    auto upvalsToCapture = upvalueMap.at(expr);
-    createNewFunc(expr->arity + (upvalsToCapture.size() > 0 ? 1 : 0), "Anonymous function", FuncType::TYPE_FUNC);
-    // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
-    for(int i = 0; i < upvalsToCapture.size(); i++){
-        auto& upval = upvalsToCapture[i];
-        auto tmp = builder.CreateCall(curModule->getFunction("getUpvalue"), {current->func->getArg(0), builder.getInt32(i)});
-        current->freevars.emplace_back(upval.name, tmp);
-    }
-
-    // No need for a endScope, since returning from the function discards the entire callstack
-    beginScope();
-    // We define the args as locals, when the function is called, the args will be sitting on the stack in order
-    // We just assign those positions to each arg
-    // If a closure is passed(as the first arg), skip over it
-    int argIndex = upvalsToCapture.size() > 0 ? 1 : 0;
-    for (AST::ASTVar& var : expr->args) {
-        declareLocalVar(var);
-        defineLocalVar(current->func->getArg(argIndex++));
-    }
-    for(auto stmt : expr->body->statements){
-        try {
-            stmt->accept(this);
-        }catch(CompilerException e){
-
-        }
-    }
-    llvm::Value* func = endFuncDecl(expr->args.size(), "Anonymous function");
-    // If this lambda doesn't use any freevars bail early and don't convert it to a closure
-    if(upvalsToCapture.size() == 0) {
-        returnValue = func;
-        return;
-    }
-    vector<llvm::Value*> closureConstructorArgs = {func, builder.getInt32(upvalsToCapture.size())};
-
-    // Upvalues are gathered after calling endFuncDecl because it returns to the enclosing function
-    for(int i = 0; i < upvalsToCapture.size(); i++){
-        auto& upval = upvalsToCapture[i];
-        if(upval.isLocal) {
-            closureConstructorArgs.push_back(current->locals[upval.index].val);
-        }else{
-            closureConstructorArgs.push_back(current->freevars[upval.index].val);
-        }
-    }
-    // Create the closure and stuff the freevars in it
-    returnValue = builder.CreateCall(curModule->getFunction("createClosure"), closureConstructorArgs);
-
-
-void Compiler::visitAsyncExpr(AST::AsyncExpr* expr) {
-   /*updateLine(expr->token);
-    expr->callee->accept(this);
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-    emitBytes(+OpCode::LAUNCH_ASYNC, expr->args.size());
-}
-
-void Compiler::visitAwaitExpr(AST::AwaitExpr* expr) {
-    updateLine(expr->token);
-    expr->expr->accept(this);
-    emitByte(+OpCode::AWAIT);
-}
-
-void Compiler::visitClassDecl(AST::ClassDecl* decl) {
-    /*Token className = decl->getName();
-    uInt16 index = declareGlobalVar(className);
-    auto klass = new object::ObjClass(className.getLexeme(), nullptr);
-
-
-    currentClass = std::make_unique<ClassChunkInfo>(klass);
-
-    if (decl->inheritedClass) {
-        //if the class inherits from some other class, load the parent class and declare 'super' as a local variable which holds the superclass
-        //decl->inheritedClass is always either a LiteralExpr with an identifier token or a ModuleAccessExpr
-
-        //if a class wants to inherit from a class in another file of the same name, the import has to use an alias, otherwise we get
-        //undefined behavior (eg. class a : a)
-        try {
-            auto superclass = getClassFromExpr(decl->inheritedClass);
-            klass->superclass = superclass;
-            //Copies methods and fields from superclass
-            klass->methods = superclass->methods;
-            klass->fieldsInit = superclass->fieldsInit;
-        }catch(CompilerException& e){
-
-        }
-    }else{
-        // If no superclass is defined, paste the base class methods into this class, but don't make it the superclass
-        // as far as the user is concerned, methods of "baseClass" get implicitly defined for each class
-    }
-
-    // Put field and method names into the class
-    for(auto& field : decl->fields){
-        klass->fieldsInit.insert_or_assign(ObjString::createStr((field.isPublic ? "" : "!") + field.field.getLexeme()), encodeNil());
-    }
-    // First put the method names into the class, then compiled the methods later to be able to correctly detect the methods when
-    // resolveClassField is called
-    for(auto& method : decl->methods){
-        klass->methods.insert_or_assign(ObjString::createStr((method.isPublic ? "" : "!") + method.method->getName().getLexeme()), nullptr);
-    }
-
-    // Define the class here, so that it can be called inside its own methods
-    // Defining after inheriting so that a class can't be used as its own parent
-    defineGlobalVar(index);
-    // Assigning at compile time to save on bytecode, also to get access to the class in getClassFromExpr
-    globals[index].val = encodeObj(klass);
-
-    for (auto& _method : decl->methods) {
-        //At this point the name is guaranteed to exist as a string, so createStr just returns the already created string
-        klass->methods[ObjString::createStr((_method.isPublic ? "" : "!") + _method.method->getName().getLexeme())] = method(_method.method.get(), className);
-    }
-    currentClass = nullptr;
-}*/
-#pragma endregion
 
 #pragma region helpers
 
@@ -1322,8 +993,8 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Toke
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If both are a number go to addNum, if not try adding as string
     // If both aren't strings, throw error(error is thrown inside strTryAdd C++ function)
-    llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "addnum", F);
-    llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "addstring");
+    llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "add.num", F);
+    llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "add.string");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
     // Call isNum on both values and && the results
@@ -1411,7 +1082,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
         lhs = ESLValTo(lhs, builder.getDoubleTy());
         rhs = ESLValTo(rhs, builder.getDoubleTy());
 
-        auto val = neg ? builder.CreateFCmpONE(lhs, rhs, "fcmpone") : builder.CreateFCmpOEQ(lhs, rhs, "fcmpoeq");
+        auto val = neg ? builder.CreateFCmpONE(lhs, rhs, "fcmp.one") : builder.CreateFCmpOEQ(lhs, rhs, "fcmp.oeq");
         return builder.CreateCall(safeGetFunc("encodeBool"), val);
     }
     else if(exprIsType(expr1, expr2, stringTy)){
@@ -1420,7 +1091,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     else if(!exprIsType(expr1, numTy) && !exprIsType(expr2, numTy) &&
             !exprIsType(expr1, anyTy) && !exprIsType(expr2, anyTy) &&
             !exprIsType(expr1, stringTy) && !exprIsType(expr2, stringTy)){
-        auto val = neg ? builder.CreateICmpNE(lhs, rhs, "icmpne") : builder.CreateICmpEQ(lhs, rhs, "icmpeq");
+        auto val = neg ? builder.CreateICmpNE(lhs, rhs, "icmpne") : builder.CreateICmpEQ(lhs, rhs, "icmp.eq");
         return builder.CreateCall(safeGetFunc("encodeBool"), val);
     }
 
@@ -1429,12 +1100,12 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     auto c1 = builder.CreateCall(isnum, lhs);
     auto c2 = builder.CreateCall(isnum, rhs);
 
-    llvm::Value* icmptmp = builder.CreateICmpEQ(lhs, rhs, "icmptmp");
+    llvm::Value* icmptmp = builder.CreateICmpEQ(lhs, rhs, "icmp.tmp");
     llvm::Value* fcmptmp = builder.CreateFCmpOEQ(ESLValTo(lhs, builder.getDoubleTy()),
-                                                 ESLValTo(rhs, builder.getDoubleTy()), "fcmptmp");
+                                                 ESLValTo(rhs, builder.getDoubleTy()), "fcmp.tmp");
     if(neg){
-        icmptmp = builder.CreateNot(icmptmp, "icmptmpneg");
-        fcmptmp = builder.CreateNot(fcmptmp, "fcmptmpneg");
+        icmptmp = builder.CreateNot(icmptmp, "icmp.neg.tmp");
+        fcmptmp = builder.CreateNot(fcmptmp, "fcmp.neg.tmp");
     }
     // To reduce branching on a common operation, select instruction is used
     auto sel = builder.CreateSelect(builder.CreateAnd(c1, c2), fcmptmp, icmptmp);
@@ -1444,7 +1115,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     // TODO: maybe we should test if calling the function without branching is faster
     llvm::Function* F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *originalBB = builder.GetInsertBlock();
-    llvm::BasicBlock *cmpStrBB = llvm::BasicBlock::Create(*ctx, "cmpstr", F);
+    llvm::BasicBlock *cmpStrBB = llvm::BasicBlock::Create(*ctx, "cmp.str", F);
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
     auto sc1 = builder.CreateCall(safeGetFunc("isObjType"), {lhs, builder.getInt8(+object::ObjType::STRING)});
@@ -1459,7 +1130,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     F->insert(F->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
     // Resulting value depends on the block taken
-    llvm::PHINode *PN = builder.CreatePHI(getESLValType(), 2, "cmpres");
+    llvm::PHINode *PN = builder.CreatePHI(getESLValType(), 2, "cmp.res");
     PN->addIncoming(cmpRes, originalBB);
     PN->addIncoming(strCmpRes, cmpStrBB);
     return PN;
@@ -1470,19 +1141,19 @@ llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op,
     // If rhs is known to be a number, no need for the type check
     if(!exprIsType(_rhs, types::getBasicType(types::TypeFlag::NUMBER))){
         createRuntimeTypeCheck(safeGetFunc("isNum"), {rhs},
-                               "Operand must be a number, got '{}'.", "numneg", dbg);
+                               "Operand must be a number, got '{}'.", "num.neg", dbg);
     }
     // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
     if(op == typedAST::UnaryOp::BIN_NEG){
         // Cast value to double, then convert to signed 64bit integer and negate
         auto tmp = ESLValTo(rhs, builder.getDoubleTy());
-        auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, builder.getInt64Ty()),"binnegtmp");
+        auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, builder.getInt64Ty()),"bin.neg.tmp");
         // Cast back to double and then to 64bit int
         auto castToDouble = builder.CreateSIToFP(negated, llvm::Type::getDoubleTy(*ctx));
         return CastToESLVal(castToDouble);
     }else{
         auto tmp = ESLValTo(rhs, builder.getDoubleTy());
-        return CastToESLVal(builder.CreateFNeg(tmp, "fnegtmp"));
+        return CastToESLVal(builder.CreateFNeg(tmp, "fneg.tmp"));
     }
 }
 void Compiler::codegenBlock(const typedAST::Block& block){
@@ -1506,7 +1177,7 @@ llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const st
     llvm::Value* val = codegenVarRead(expr->varPtr);
     // Right now we can only increment numbers, maybe change this when adding iterators?
     if(!exprIsType(expr, types::getBasicType(types::TypeFlag::NUMBER))){
-        createRuntimeTypeCheck(safeGetFunc("isNum"), {val}, "isNum",
+        createRuntimeTypeCheck(safeGetFunc("isNum"), {val}, "is.num",
                                "Expected a number, got '{}'.", expr->dbgInfo.varName);
     }
     llvm::Value* res = ESLValTo(val, builder.getDoubleTy());
@@ -1530,7 +1201,7 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
     }
     llvm::Value* storedField = builder.CreateLoad(getESLValType(), fieldPtr);
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
-                           "valIsNum", "Expected a number, got {}", expr->dbgInfo.field);
+                           "val.is.num", "Expected a number, got {}", expr->dbgInfo.field);
 
     llvm::Value* res = ESLValTo(storedField, builder.getDoubleTy());
     if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
@@ -1582,7 +1253,7 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
             // first index: access to the structure that's being pointed to,
             // second index: access to the second field(64bit field for the value)
             vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevarAddr");
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevar.addr");
             builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), tmpEle);
         }
         // Insert the argument into the pool of variables
@@ -1592,14 +1263,14 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
 
 llvm::Value* Compiler::createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg){
     createRuntimeTypeCheck(safeGetFunc("isObjType"), {closureVal, builder.getInt8(+object::ObjType::CLOSURE)},
-                           "call","Expected a function for a callee, got '{}'.", dbg);
+                           "call.exec","Expected a function for a callee, got '{}'.", dbg);
 
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
     createRuntimeFuncArgCheck(closurePtr, args.size(), dbg);
     std::pair<llvm::Value*, llvm::FunctionType*> func = getBitcastFunc(closurePtr, args.size());
     // Inserts tagged closure since that is what functions expect
     args.insert(args.begin(), closureVal);
-    return builder.CreateCall(func.second, func.first, args, "callres");
+    return builder.CreateCall(func.second, func.first, args, "call.res");
 }
 
 void Compiler::createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg){
@@ -1634,39 +1305,6 @@ std::pair<llvm::Value*, llvm::FunctionType*> Compiler::getBitcastFunc(llvm::Valu
     fnPtr = builder.CreateBitCast(fnPtr, fnPtrTy);
     return std::make_pair(fnPtr, fnTy);
 }
-llvm::Value* Compiler::optimizedFuncCall(const typedAST::CallExpr* expr){
-    if(!exprIsComplexType(expr->callee, types::TypeFlag::FUNCTION)) return nullptr;
-
-    llvm::Function* fn = nullptr;
-    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
-    if(functions.contains(funcType)) {
-        // Function might not be codegen-ed at this point,
-        // but if it is then use its signature instead of casting the char ptr in ObjClosure to a function
-        fn = functions[funcType];
-    }
-    // Have to codegen closurePtr even if function is known because of side effects
-    llvm::Value* closurePtr =  closurePtr = expr->callee->codegen(this);
-    llvm::Value* castClosurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closurePtr);
-
-    vector<llvm::Value*> args;
-    // Every function contains the closure struct as the first argument
-    args.push_back(closurePtr);
-    for(auto arg : expr->args) args.push_back(arg->codegen(this));
-    // TODO: this should be done in a separate pass
-    if(funcType->argCount != expr->args.size()){
-        errorHandler::addCompileError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
-                                      expr->dbgInfo.paren1);
-        throw CompilerError("Incorrect number of arguments passed");
-    }
-
-    // If function is known and codegen-ed, call it
-    if(fn) return builder.CreateCall(fn, args, "callres");
-
-    // If a functions type is known, but it hasn't been codegen-ed yet use the object to get the func ptr
-    // TODO: this can be optimized by reordering compilation order of functions(maybe)
-    std::pair<llvm::Value*, llvm::FunctionType*> func = getBitcastFunc(castClosurePtr, funcType->argCount);
-    return builder.CreateCall(func.second, func.first, args, "callres");
-}
 
 // Array bounds checking
 void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg){
@@ -1680,7 +1318,7 @@ void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string
 
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "executeBBName");
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "exec.arr.op");
 
     builder.CreateCondBr(cond, errorBB, executeOpBB);
     // Calls the type error function which throws
@@ -1725,7 +1363,7 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
 
 llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool opt, Token dbg){
     if(!opt) createRuntimeTypeCheck(safeGetFunc("isNum"), {field},
-                                    "getArrAddr", "Expected a number, got {}", dbg);
+                                    "get.arr.addr", "Expected a number, got {}", dbg);
     // Check the index first because we need the untagged version of the index for error reporting
     createArrBoundsCheck(arr, field, "Index {} outside of array range.", dbg);
     field = ESLValTo(field, builder.getDoubleTy());
@@ -1734,21 +1372,21 @@ llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool 
 
     arr = builder.CreateCall(safeGetFunc("getArrPtr"), arr);
     auto ptr = builder.CreateGEP(getESLValType(), arr, field);
-    return builder.CreateLoad(getESLValType(), ptr);
+    return builder.CreateLoad(getESLValType(), ptr, "arr.elem");
 }
 
 llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg){
     if(!opt) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
-                               "getHashmapV", "Expected a string, got {}", dbg);
+                               "get.map.val", "Expected a string, got {}", dbg);
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
-    return builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
+    return builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field}, "map.elem");
 }
 
 llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
     if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isNum"), {index},
-                                    "getArrAddr", "Expected a number, got {}", dbg);
+                                    "get.arr.addr", "Expected a number, got {}", dbg);
 
     createArrBoundsCheck(arr, index, "Index {} outside of array range.", dbg);
     index = ESLValTo(index, builder.getDoubleTy());
@@ -1768,10 +1406,10 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     }
     auto storedVal = builder.CreateLoad(getESLValType(), ptr);
     if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "valIsNum", "Expected a number, got {}", dbg);
+                               "val.is.num", "Expected a number, got {}", dbg);
     // Since the type system assumes all collections store "any" datatype this runtime check can't be skipped
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
-                           "valIsNum", "Expected a number, got {}", dbg);
+                           "val.is.num", "Expected a number, got {}", dbg);
 
     val = CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     builder.CreateStore(val, ptr);
@@ -1780,7 +1418,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
 llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
     if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
-                               "setHashmapV", "Expected a string, got {}", dbg);
+                               "set.map.val", "Expected a string, got {}", dbg);
 
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
@@ -1797,10 +1435,10 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
     }
     auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
     if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "valIsNum", "Expected a number, got {}", dbg);
+                               "val.is.num", "Expected a number, got {}", dbg);
     // Since the type system assumes all collections store "any" datatype this runtime check can't be skipped
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
-                           "valIsNum", "Expected a number, got {}", dbg);
+                           "val.is.num", "Expected a number, got {}", dbg);
 
     val = CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
@@ -1823,7 +1461,7 @@ llvm::ConstantInt* Compiler::createSwitchConstantInt(std::variant<double, bool, 
 vector<llvm::BasicBlock*> Compiler::createNCaseBlocks(int n){
     vector<llvm::BasicBlock*> blocks;
     for(int i = 0; i < n; i++){
-        auto caseBB = llvm::BasicBlock::Create(*ctx, fmt::format("case{}", i));
+        auto caseBB = llvm::BasicBlock::Create(*ctx, fmt::format("case.{}", i));
         blocks.emplace_back(caseBB);
     }
     return blocks;
@@ -1902,7 +1540,7 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
     builder.SetInsertPoint(BB);
     declareFuncArgs(method.code->args);
     createRuntimeTypeCheck(safeGetFunc("isInstAndClass"),{inProgressFuncs.top().fn->getArg(1), subClassIdxStart, subClassIdxEnd},
-                           "isInst", fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"), method.dbg.name);
+                           "is.inst", fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"), method.dbg.name);
 
     for(auto s : method.code->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -2069,7 +1707,7 @@ llvm::Value* Compiler::getOptInstFieldPtr(llvm::Value* inst, Class& klass, strin
 
 llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg){
     createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
-                           "isInst", "Expected an instance, got '{}'", dbg);
+                           "is.inst", "Expected an instance, got '{}'", dbg);
 
     inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
@@ -2219,7 +1857,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
 // Misc
 llvm::Constant* Compiler::createConstStr(const string& str){
     if(CStrings.contains(str)) return CStrings[str];
-    auto constant = builder.CreateGlobalStringPtr(str, "internalString", 0, curModule.get());
+    auto constant = builder.CreateGlobalStringPtr(str, "internal.string", 0, curModule.get());
 
     CStrings[str] = constant;
     return constant;
@@ -2273,9 +1911,8 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
 }
 
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
-
     auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), false,
-                                    llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internalConstObj");
+                                    llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internal.const.obj");
     return gv;
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
@@ -2289,33 +1926,22 @@ llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){
     return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_OBJ)));
 }
 
-void Compiler::replaceGV(uInt64 uuid, llvm::Constant* newInit){
-    auto gv = (llvm::dyn_cast<llvm::GlobalVariable>(variables.at(uuid)));
-    llvm::GlobalVariable* newgv = new llvm::GlobalVariable(*curModule, getESLValType(), false,
-                                                           llvm::GlobalVariable::PrivateLinkage,
-                                                           newInit, gv->getName());
-    newgv->setAlignment(llvm::Align::Of<Value>());
-    gv->replaceAllUsesWith(newgv);
-    variables.insert_or_assign(uuid, newgv);
-    gv->eraseFromParent();
-}
-
 llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr){
     switch(varPtr->varType){
         case typedAST::VarType::LOCAL:{
-            return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "loadlocal");
+            return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.local");
         }
         case typedAST::VarType::FREEVAR:{
             llvm::Value* upvalPtr = variables.at(varPtr->uuid);
             // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
             // second index: gets the second element of the ObjFreevar struct
             vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevarAddr");
-            return builder.CreateLoad(getESLValType(), tmpEle, "loadfreevar");
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevar.addr");
+            return builder.CreateLoad(getESLValType(), tmpEle, "load.freevar");
         }
         case typedAST::VarType::GLOBAL:
         case typedAST::VarType::GLOBAL_FUNC:{
-            return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "loadgvar");
+            return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.gvar");
         }
     }
     errorHandler::addSystemError("Unreachable code reached during compilation.");
@@ -2333,7 +1959,7 @@ llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr
             // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
             // second index: gets the ref to the second element of the ObjFreevar struct
             vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], freevarPtr, idxList, "freevarAddr");
+            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], freevarPtr, idxList, "freevar.addr");
             builder.CreateStore(toStore, tmpEle);
             break;
         }
