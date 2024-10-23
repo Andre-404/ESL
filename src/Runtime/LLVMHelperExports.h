@@ -107,7 +107,7 @@ EXPORT int64_t getArrSize(Value arr){
     return asArray(arr)->values.size();
 }
 
-EXPORT void gcInit(byte* gcFlag, uintptr_t* frameAddr){
+EXPORT void gcInit(uint64_t* gcFlag, uintptr_t* frameAddr){
     memory::gc = new memory::GarbageCollector(*gcFlag);
     memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
 }

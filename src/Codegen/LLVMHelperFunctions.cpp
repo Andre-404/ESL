@@ -97,7 +97,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
     CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
 
-    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)));
+    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int64)), PTR_TY(TYPE(Int8)));
     CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
@@ -149,7 +149,6 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
     // customization, e.g. specifying a TargetMachine or various debugging
     // options.
     llvm::PassBuilder PB;
-    llvm::Type::getIntNTy(*ctx, 64);
 
     // Register all the basic analyses with the managers.
     PB.registerModuleAnalyses(MAM);
@@ -163,6 +162,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
     for(auto& it : module->functions()) {
         SafepointPass.run(it, FAM);
     }
+
 
     #ifdef COMPILER_DEBUG
     llvm::errs()<<"-------------- Optimized module --------------\n";
@@ -318,8 +318,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
         // Atomically load the value, volatile because LLVM would otherwise optimize this away
-        auto load = builder.CreateLoad(builder.getInt8Ty(), module->getNamedGlobal("gcFlag"), true);
-        //load->setAtomic(llvm::AtomicOrdering::Monotonic);
+        auto load = builder.CreateLoad(builder.getInt64Ty(), module->getNamedGlobal("gcFlag"), true);
+        load->setAtomic(llvm::AtomicOrdering::Monotonic);
         load->setAlignment(llvm::Align(8));
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});

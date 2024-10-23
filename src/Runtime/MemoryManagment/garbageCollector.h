@@ -68,7 +68,7 @@ namespace memory {
 
 	class GarbageCollector {
 	public:
-        GarbageCollector(byte& active);
+        GarbageCollector(uint64_t& active);
         void checkHeapSize(const size_t size);
 
         void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
@@ -91,7 +91,7 @@ namespace memory {
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
         std::atomic<uint64_t> threadsSuspended;
         // 0 means gc is off, 1 means it's waiting to collect, and all threads should pause
-        std::atomic_ref<byte> active;
+        std::atomic_ref<uint64_t> active;
 
         vector<Value*> globalRoots;
         vector<object::Obj*> largeObjects;

@@ -41,7 +41,7 @@ namespace memory {
         }
     }
 
-    GarbageCollector::GarbageCollector(byte &active) : active(active) {
+    GarbageCollector::GarbageCollector(uint64_t &active) : active(active) {
         rpmalloc_initialize();
         threadsSuspended = 0;
     }

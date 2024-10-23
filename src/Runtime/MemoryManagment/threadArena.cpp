@@ -9,15 +9,20 @@
 #else
 #include <sys/mman.h>
 #endif
+#include <pthread.h>
 
 using namespace memory;
 
 // Have to instantiate thread arena here because linker complains if you put a thread_local variable in .h file
 // thread_local slows down the program because of accessing tls data uses a lock, but i can't imagine a better way of doing this
+static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nullptr;
 [[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
-    static thread_local ThreadArena threadArena [[gnu::tls_model("initial-exec")]];
-    return threadArena;
+    if(!threadArena)[[unlikely]]{
+        threadArena = new ThreadArena();
+    }
+    return *threadArena;
 }
+
 
 // Branchless
 inline int szToIdx(size_t x){

@@ -25,7 +25,7 @@ Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> 
 
     setupModule(compileFlag);
 
-    curModule->getOrInsertGlobal("gcFlag", builder.getInt8Ty());
+    curModule->getOrInsertGlobal("gcFlag", builder.getInt64Ty());
     llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
     gvar->setInitializer(builder.getInt8(0));
@@ -341,9 +341,7 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
     auto num = collectionTypeCheck(builder, collection, safeGetFunc("isObjType"));
-    auto _switch = builder.CreateSwitch(num, errorBB, 3);
-    _switch->addCase(builder.getInt8(1), isArray);
-    _switch->addCase(builder.getInt8(2), isHashmap);
+    createWeightedSwitch(num, {{1, isArray}, {2, isHashmap}}, errorBB, {0, 1<<31, 1<<31});
 
     // Reuses getArrElement and getMapElement
     builder.SetInsertPoint(isArray);
@@ -396,9 +394,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
     auto num = collectionTypeCheck(builder, collection, safeGetFunc("isObjType"));
-    auto _switch = builder.CreateSwitch(num, errorBB, 3);
-    _switch->addCase(builder.getInt8(1), isArray);
-    _switch->addCase(builder.getInt8(2), isHashmap);
+    createWeightedSwitch(num, {{1, isArray}, {2, isHashmap}}, errorBB, {0, 1<<31, 1<<31});
 
     // Reuses setArrElement and setMapElelent
     builder.SetInsertPoint(isArray);
@@ -706,14 +702,14 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
 
     llvm::Function* func = builder.GetInsertBlock()->getParent();
 
-    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(*ctx, "while.cond", func);
+    llvm::BasicBlock* headerBB = llvm::BasicBlock::Create(*ctx, "while.header", func);
     llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*ctx, "while.loop");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
 
-    continueJumpDest.push(condBB);
+    continueJumpDest.push(headerBB);
     breakJumpDest.push(mergeBB);
-    builder.CreateBr(condBB);
-    builder.SetInsertPoint(condBB);
+    builder.CreateBr(headerBB);
+    builder.SetInsertPoint(headerBB);
     // stmt->cond might be null if the for statement that got transformed into while stmt didn't have a condition
     llvm::Value* cond = builder.getInt1(true);
     if(stmt->cond) cond = builder.CreateCall(decodeFn, stmt->cond->codegen(this));
@@ -727,7 +723,7 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     if(stmt->afterLoopExpr) stmt->afterLoopExpr->codegen(this);
     // Only jump to condition if the main body doesn't terminate already(eg. an unconditional break stmt at the end of loop)
     if(!stmt->loopBody.terminates){
-        builder.CreateBr(condBB);
+        builder.CreateBr(headerBB);
     }
 
     func->insert(func->end(), mergeBB);
@@ -1617,9 +1613,11 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
     auto cmp1 = builder.CreateICmpSGT(fieldIdx, builder.getInt32(-1));
     auto cmp2 = builder.CreateICmpSGT(methodIdx, builder.getInt32(-1));
 
+    cmp1 = builder.CreateZExt(cmp1, builder.getInt32Ty());
+    cmp2 = builder.CreateZExt(cmp2, builder.getInt32Ty());
+
     llvm::Value* dest = builder.getInt32(0);
-    dest = builder.CreateSelect(cmp1, builder.getInt32(1), dest);
-    dest = builder.CreateSelect(cmp2, builder.getInt32(2), dest);
+    dest = builder.CreateOr(cmp1, builder.CreateShl(cmp2, 1));
 
     llvm::Function *F = builder.GetInsertBlock()->getParent();
 
@@ -1629,16 +1627,13 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
 
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-    auto sw = builder.CreateSwitch(dest, errorBB);
-    sw->addCase(builder.getInt32(1), fieldBB);
-    sw->addCase(builder.getInt32(2), methodBB);
+    createWeightedSwitch(dest, {{1, fieldBB}, {2, methodBB}}, errorBB, {0, 1<<31, 1<<31});
 
     F->insert(F->end(), fieldBB);
     builder.SetInsertPoint(fieldBB);
 
-    // Loads the pointer to fields array
-    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(0), builder.getInt32(3)});
-    ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
+    // Fields are stored just behind the instance
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst, {builder.getInt32(1)});
     // Loads the field
     ptr = builder.CreateInBoundsGEP(getESLValType(), ptr, fieldIdx);
     auto field =  builder.CreateLoad(getESLValType(), ptr);
@@ -1805,9 +1800,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
     llvm::BasicBlock *methodBB = llvm::BasicBlock::Create(*ctx, "methods");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-    auto sw = builder.CreateSwitch(dest, errorBB);
-    sw->addCase(builder.getInt32(1), fieldBB);
-    sw->addCase(builder.getInt32(2), methodBB);
+    createWeightedSwitch(dest, {{1, fieldBB}, {2, methodBB}}, errorBB, {0, 1<<31, 1<<31});
 
     F->insert(F->end(), fieldBB);
     builder.SetInsertPoint(fieldBB);
@@ -1911,7 +1904,7 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
 }
 
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
-    auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), false,
+    auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), true,
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internal.const.obj");
     return gv;
 }
@@ -1998,6 +1991,24 @@ void Compiler::implementNativeFunctions(fastMap<string, types::tyVarIdx>& native
         auto fnTy = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[p.second]);
         nativeFunctions[p.first] = addNativeFn(p.first, fnTy->argCount, fnTy);
     }
+}
+// Assumes first weight is for default case
+void Compiler::createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights){
+    auto sw = builder.CreateSwitch(cond, defaultBB);
+    for(auto [_case, BB] : cases){
+        sw->addCase(builder.getInt32(_case), BB);
+    }
+    // Convert weights to LLVM constants
+    std::vector<llvm::Metadata*> Vals;
+    Vals.push_back(llvm::MDString::get(*ctx, "branch_weights"));
+    for (int w : weights) {
+        Vals.push_back(llvm::ConstantAsMetadata::get(builder.getInt32(w)));
+    }
+    // Create the metadata node
+    llvm::MDNode* WeightsNode = llvm::MDNode::get(*ctx, Vals);
+
+    // Add the metadata to the switch instruction
+    sw->setMetadata(llvm::LLVMContext::MD_prof, WeightsNode);
 }
 
 // All of these functions are noops but are needed because of llvms type system

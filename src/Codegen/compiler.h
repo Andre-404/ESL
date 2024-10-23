@@ -224,6 +224,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+        void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
 
 
         #pragma endregion
