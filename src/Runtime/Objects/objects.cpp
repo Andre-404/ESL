@@ -91,11 +91,12 @@ ObjString::ObjString(char* _str) {
     auto view = std::string_view(_str);
     view.copy(str, view.size());
     str[view.size()] = '\0';
+    size = view.size();
 	type = +ObjType::STRING;
 }
 
 bool ObjString::compare(ObjString* other) {
-	return std::strcmp(str, other->str) == 0;
+	return size == other->size && std::strcmp(str, other->str) == 0;
 }
 
 bool ObjString::compare(const string other) {
@@ -103,15 +104,14 @@ bool ObjString::compare(const string other) {
 }
 
 ObjString* ObjString::concat(ObjString* other) {
-    uint64_t strlen1 = std::strlen(str);
-    uint64_t strlen2 = std::strlen(other->str);
     ObjString* newStr = static_cast<ObjString *>(
-            memory::getLocalArena().alloc(sizeof(ObjString) + strlen1 + strlen2 +1));
+            memory::getLocalArena().alloc(sizeof(ObjString) + size + other->size +1));
     newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
+    newStr->size = size + other->size;
 
-    std::memcpy(newStr->str, str, strlen1);
-    std::strcpy(newStr->str + strlen2, other->str);
+    std::memcpy(newStr->str, str, size);
+    std::strcpy(newStr->str + size, other->str);
 
     auto view = std::string_view(newStr->str);
     auto it = memory::gc->interned.find(view);

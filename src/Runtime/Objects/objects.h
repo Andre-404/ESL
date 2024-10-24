@@ -41,6 +41,7 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
+        uint32_t size;
         char* str;
 
         ObjString(char* _str);
