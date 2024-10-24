@@ -188,7 +188,7 @@ EXPORT Obj* gcAlloc(int bytes){
 EXPORT void gcInternStr(Value val){
     // Known to be an ObjString
     ObjString* ptr = reinterpret_cast<ObjString*>(decodeObj(val));
-    memory::gc->interned[ptr->str] = ptr;
+    memory::gc->interned.insert(ptr);
 }
 
 

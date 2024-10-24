@@ -317,8 +317,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-        // Atomically load the value, volatile because LLVM would otherwise optimize this away
-        auto load = builder.CreateLoad(builder.getInt64Ty(), module->getNamedGlobal("gcFlag"), true);
+        // Atomically load the value
+        auto load = builder.CreateLoad(builder.getInt64Ty(), module->getNamedGlobal("gcFlag"), false);
         load->setAtomic(llvm::AtomicOrdering::Monotonic);
         load->setAlignment(llvm::Align(8));
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);

@@ -3,6 +3,7 @@
 #include "../../Includes/unorderedDense.h"
 #include "threadArena.h"
 #include "heapPageManager.h"
+#include "../Objects/objects.h"
 #include <mutex>
 #include <atomic>
 #include <thread>
@@ -10,12 +11,6 @@
 #include <condition_variable>
 #include <array>
 #include <variant>
-
-namespace object {
-	class Obj;
-    class ObjString;
-    class ObjFuture;
-}
 
 #ifdef _MSC_VER
 // When getStackPointer is called the return address is rsp
@@ -25,7 +20,6 @@ namespace object {
 #endif
 // NOINLINE is just in case
 NOINLINE uintptr_t* getStackPointer();
-
 
 // Non-moving, non-generational mark-sweep GC with support for multithreading
 namespace memory {
@@ -82,7 +76,7 @@ namespace memory {
         void addGlobalRoot(Value* ptr);
         void markObj(object::Obj* const object);
 
-        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
+        ankerl::unordered_dense::set<object::ObjString*, object::stringHash, object::stringEQ> interned;
         HeapPageManager pageManager;
 	private:
         // Notify threads to wake up, or notify a single random thread to run the gc cycle

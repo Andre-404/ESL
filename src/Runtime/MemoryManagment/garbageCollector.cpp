@@ -70,7 +70,7 @@ namespace memory {
         std::sort(largeObjects.begin(), largeObjects.end());
         #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Sorting "<<pages.size()<<" pages took: "<<d2-d<<"\n";
+        std::cout<<"Sorting pages took: "<<d2-d<<"\n";
         #endif
         markRoots();
         #ifdef GC_DEBUG

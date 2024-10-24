@@ -44,7 +44,7 @@ namespace object {
         uint32_t size;
         char* str;
 
-        ObjString(char* _str);
+        ObjString();
 
         bool compare(ObjString* other);
 
@@ -54,10 +54,19 @@ namespace object {
 
         static ObjString* createStr(char* str);
 
-        // This reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size, const int64_t strLen);
-
     };
+
+    struct stringHash {
+        uint64_t operator()(object::ObjString* str) const noexcept;
+    };
+
+    struct stringEQ
+    {
+        bool operator()(object::ObjString* x, object::ObjString* y) const {
+            return x->compare(y);
+        }
+    };
+
 
     class ObjArray : public Obj {
     public:

@@ -723,6 +723,7 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     if(stmt->afterLoopExpr) stmt->afterLoopExpr->codegen(this);
     // Only jump to condition if the main body doesn't terminate already(eg. an unconditional break stmt at the end of loop)
     if(!stmt->loopBody.terminates){
+        builder.CreateCall(safeGetFunc("gc.safepoint_poll"));
         builder.CreateBr(headerBB);
     }
 

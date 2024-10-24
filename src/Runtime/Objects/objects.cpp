@@ -2,7 +2,7 @@
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
 #include "../MemoryManagment/garbageCollector.h"
-#include "../../Includes/rpmalloc/rpmalloc.h"
+#include "../../Includes/rapidhash.h"
 
 using namespace object;
 using namespace memory;
@@ -11,7 +11,7 @@ using namespace valueHelpers;
 #pragma region Obj
 size_t Obj::getSize(){
     switch(type){
-        case +ObjType::STRING: return sizeof(ObjString) + strlen(((ObjString*)this)->str);
+        case +ObjType::STRING: return sizeof(ObjString) + ((ObjString*)this)->size;
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
         case +ObjType::FREEVAR: return sizeof(ObjFreevar);
@@ -86,12 +86,8 @@ void* Obj::operator new(const size_t size) {
 #pragma endregion
 
 #pragma region ObjString
-ObjString::ObjString(char* _str) {
-    str = ((char*)this)+sizeof(ObjString);
-    auto view = std::string_view(_str);
-    view.copy(str, view.size());
-    str[view.size()] = '\0';
-    size = view.size();
+// Never called
+ObjString::ObjString() {
 	type = +ObjType::STRING;
 }
 
@@ -111,27 +107,28 @@ ObjString* ObjString::concat(ObjString* other) {
     newStr->size = size + other->size;
 
     std::memcpy(newStr->str, str, size);
-    std::strcpy(newStr->str + size, other->str);
+    std::memcpy(newStr->str + size, other->str, other->size+1);
 
-    auto view = std::string_view(newStr->str);
-    auto it = memory::gc->interned.find(view);
-    if(it != memory::gc->interned.end()) return it->second;
+    auto it = memory::gc->interned.find(newStr);
+    if(it != memory::gc->interned.end()) return *it;
     return newStr;
 }
 
 ObjString* ObjString::createStr(char* str){
-    auto view = std::string_view(str);
-    auto it = memory::gc->interned.find(view);
-    if(it != memory::gc->interned.end()) return it->second;
-    // +1 for null terminator
-    ObjString* newStr = new(view.size()+1) ObjString(str);
+    ObjString* newStr = static_cast<ObjString *>(
+            memory::getLocalArena().alloc(sizeof(ObjString) + std::strlen(str) +1));
+    newStr->str = ((char*)newStr)+sizeof(ObjString);
+    newStr->type = +ObjType::STRING;
+    newStr->size = std::strlen(str);
+    strcpy(newStr->str, str);
+    auto it = memory::gc->interned.find(newStr);
+    if(it != memory::gc->interned.end()) return *it;
     return newStr;
 }
 
-void* ObjString::operator new(size_t size, const int64_t strLen) {
-    return memory::getLocalArena().alloc(size+strLen);
+uint64_t stringHash::operator()(object::ObjString* str) const noexcept{
+    return rapidhash(str->str, str->size);
 }
-
 #pragma endregion
 
 #pragma region ObjClosure

@@ -125,9 +125,9 @@ void ThreadArena::updateMemoryPools(uint32_t gcHeapVer){
     for(int i = 0; i < MP_CNT; i++){
         // First adjust tail
         while(pools[i] && pools[i]->numAllocBlocks == 0) pools[i] = pools[i]->next;
-        if(pools[i] == nullptr) continue;
         // If there are pages left set the "head" of the list to the first page, head will advance over time
         firstFreePage[i] = pools[i];
+        if(pools[i] == nullptr) continue;
         PageData* page = pools[i];
         while(page){
             PageData* pn = page->next;
