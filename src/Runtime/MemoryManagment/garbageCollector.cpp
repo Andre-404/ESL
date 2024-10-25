@@ -41,6 +41,17 @@ namespace memory {
         }
     }
 
+    void StringInterning::internString(object::ObjString* str){
+        interned.insert(str);
+        if(str->size > largestStrSize) largestStrSize = str->size;
+    }
+    object::ObjString* StringInterning::checkInterned(object::ObjString* str){
+        if(str->size > largestStrSize) return str;
+        auto it = interned.find(str);
+        if(it != interned.end()) return *it;
+        return str;
+    }
+
     GarbageCollector::GarbageCollector(uint64_t &active) : active(active) {
         rpmalloc_initialize();
         threadsSuspended = 0;

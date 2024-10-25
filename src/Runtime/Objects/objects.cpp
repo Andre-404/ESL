@@ -109,9 +109,7 @@ ObjString* ObjString::concat(ObjString* other) {
     std::memcpy(newStr->str, str, size);
     std::memcpy(newStr->str + size, other->str, other->size+1);
 
-    auto it = memory::gc->interned.find(newStr);
-    if(it != memory::gc->interned.end()) return *it;
-    return newStr;
+    return memory::gc->interned.checkInterned(newStr);
 }
 
 ObjString* ObjString::createStr(char* str){
@@ -121,9 +119,7 @@ ObjString* ObjString::createStr(char* str){
     newStr->type = +ObjType::STRING;
     newStr->size = std::strlen(str);
     strcpy(newStr->str, str);
-    auto it = memory::gc->interned.find(newStr);
-    if(it != memory::gc->interned.end()) return *it;
-    return newStr;
+    return memory::gc->interned.checkInterned(newStr);
 }
 
 uint64_t stringHash::operator()(object::ObjString* str) const noexcept{

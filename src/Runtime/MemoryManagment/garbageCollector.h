@@ -58,6 +58,15 @@ namespace memory {
         uint64_t prevHeapSize;
     };
 
+    class StringInterning{
+    public:
+        void internString(object::ObjString* str);
+        object::ObjString* checkInterned(object::ObjString* str);
+    private:
+        uint64_t largestStrSize = 0;
+        ankerl::unordered_dense::set<object::ObjString*, object::stringHash, object::stringEQ> interned;
+    };
+
 
 
 	class GarbageCollector {
@@ -76,8 +85,8 @@ namespace memory {
         void addGlobalRoot(Value* ptr);
         void markObj(object::Obj* const object);
 
-        ankerl::unordered_dense::set<object::ObjString*, object::stringHash, object::stringEQ> interned;
         HeapPageManager pageManager;
+        StringInterning interned;
 	private:
         // Notify threads to wake up, or notify a single random thread to run the gc cycle
         std::condition_variable STWcv;
