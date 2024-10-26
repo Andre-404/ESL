@@ -28,8 +28,6 @@ llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
     // Opaque pointer
     return llvm::PointerType::get(ctx, 1);
 }
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
-                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     // First 2 bytes are GC info
@@ -54,16 +52,18 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
                                 TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
     types["ObjClass"] = classType;
 
-    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(getESLValType(*ctx))}, "ObjInstance");
+    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 }
 
-void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
+
+void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
-    //CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
-    // ret: Value, args: raw C string
     llvm::Type* eslValTy = getESLValType(*ctx);
-    //
+
     auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);

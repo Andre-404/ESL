@@ -173,7 +173,8 @@ namespace memory {
                 }
                 case +ObjType::INSTANCE: {
                     ObjInstance *inst = reinterpret_cast<ObjInstance *>(ptr);
-                    for (int i = 0; i < inst->fieldArrLen; i++) markVal(inst->fields[i]);
+                    Value* fields = inst->getFields();
+                    for (int i = 0; i < inst->fieldArrLen; i++) markVal(fields[i]);
                     break;
                 }
                 case +ObjType::HASH_MAP: {

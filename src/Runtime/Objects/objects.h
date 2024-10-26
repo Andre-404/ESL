@@ -116,7 +116,6 @@ namespace object {
         ObjClosure* methods;
 
         ObjClass(string _name);
-
     };
 
     // ObjInstance is a header followed by array of values(fields)
@@ -124,9 +123,10 @@ namespace object {
     public:
         uInt fieldArrLen;
         ObjClass* klass;
-        Value* fields;
 
         ObjInstance(ObjClass* _klass, uInt _fieldsArrLen);
+
+        Value* getFields();
     };
 
     class ObjHashMap : public Obj{

@@ -521,18 +521,6 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     return unoptimizedInvoke(inst, indicies.first, indicies.second, klass, expr->field, args, expr->dbgInfo.method);
 }
 
-llvm::Value* initalizeNewObject(llvm::IRBuilder<>& builder, llvm::CallInst* memptr, llvm::Type* instPtrTy, llvm::Type* instTy){
-    // Fixes up pointers
-    auto inst = builder.CreateBitCast(memptr, instPtrTy);
-    // Field arr ptr
-    auto address = builder.CreateInBoundsGEP(instTy, inst, {builder.getInt32(0), builder.getInt32(3)});
-    // Fields are stored in place right after the instance, so a gep that accesses the "second" instance is just the beginning of the fields arr
-    auto nextaddr = builder.CreateInBoundsGEP(instTy, inst, {builder.getInt32(1)});
-    nextaddr = builder.CreateBitCast(nextaddr, llvm::PointerType::getUnqual(llvmHelpers::getESLValType(builder.getContext())));
-    builder.CreateStore(nextaddr, address);
-    return inst;
-}
-
 llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     Class& klass = classes[expr->className];
     string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
@@ -546,10 +534,8 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
     // Restore flag
     builder.CreateStore(objInfo, memptr);
-    // Fix up pointers in template
-    llvm::Value* inst = initalizeNewObject(builder, memptr, namedTypes["ObjInstancePtr"], namedTypes["ObjInstance"]);
 
-    inst = builder.CreateBitCast(inst, namedTypes["ObjPtr"]);
+    llvm::Value* inst = builder.CreateBitCast(memptr, namedTypes["ObjPtr"]);
     inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst});
     // If there is a constructor declared in this class, call it
     if(klass.ty->methods.contains(name)){
@@ -1573,13 +1559,11 @@ llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, in
     // Template array that is already nulled
     llvm::Constant* fieldArr = llvm::ConstantArray::get(llvm::ArrayType::get(getESLValType(), fieldN), fields);
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjInstance"), {
-            createConstObjHeader(+object::ObjType::INSTANCE), builder.getInt32(fieldN), klass,
-            llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(getESLValType()))
-    });
+            createConstObjHeader(+object::ObjType::INSTANCE), builder.getInt32(fieldN), klass });
     // Struct and array should be one after another without any padding(?)
-    auto inst =  llvm::ConstantStruct::get(llvm::StructType::create(*ctx,{namedTypes["ObjInstance"],
-                                                                    llvm::ArrayType::get(getESLValType(), fieldN)}),
-                                     {obj, fieldArr});
+    auto inst =  llvm::ConstantStruct::get(llvm::StructType::create(*ctx,
+                                     {namedTypes["ObjInstance"], llvm::ArrayType::get(getESLValType(), fieldN)}),
+                                           {obj, fieldArr});
     return storeConstObj(inst);
 }
 
@@ -1597,11 +1581,9 @@ llvm::Value* Compiler::optimizeInstGet(llvm::Value* inst, string field, Class& k
 
         inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
         inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
-        // TODO: maybe just use 2 GEPs without load in between? since first load just loads the pointer at the end of ObjInstance
+        // Fields are stored just behind instance, using GEP with idx 1 points just past the object and into the start of the fields
         auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                             {builder.getInt32(0), builder.getInt32(3)});
-        ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
-
+                                             {builder.getInt32(1)});
         ptr = builder.CreateInBoundsGEP(getESLValType(), ptr, {arrIdx});
         return builder.CreateLoad(getESLValType(), ptr);
     }else{
@@ -1685,12 +1667,9 @@ llvm::Value* Compiler::getOptInstFieldPtr(llvm::Value* inst, Class& klass, strin
 
         inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
         inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
-        // TODO: maybe just use 2 GEPs without load in between? since first load just loads the pointer at the end of ObjInstance
-        // Loads the pointer to array from instance
+        // Fields are stored just behind instance, using GEP with idx 1 points just past the object and into the start of the fields
         auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                             {builder.getInt32(0), builder.getInt32(3)});
-        ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
-
+                                             {builder.getInt32(1)});
         ptr = builder.CreateInBoundsGEP(getESLValType(), ptr, {arrIdx});
         return ptr;
     }else{
@@ -1739,10 +1718,8 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Tok
 
     F->insert(F->end(), fieldBB);
     builder.SetInsertPoint(fieldBB);
-    // Get fields array
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(0), builder.getInt32(3)});
-    ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
-    // Get field pointer
+    // Fields are stored just behind instance, using GEP with idx 1 points just past the object and into the start of the fields
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(1)});
     ptr = builder.CreateInBoundsGEP(getESLValType(), ptr, fieldIdx);
 
     return ptr;
@@ -1768,12 +1745,9 @@ llvm::Value* Compiler::optimizeInvoke(llvm::Value* inst, string field, Class& kl
 
         inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
         inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
-        // TODO: maybe just use 2 GEPs without load in between? since first load just loads the pointer at the end of ObjInstance
-        // Get and load pointer to fields
+        // Fields are stored just behind instance, using GEP with idx 1 points just past the object and into the start of the fields
         auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,
-                                             {builder.getInt32(0), builder.getInt32(3)});
-        ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
-        // Actually get the field
+                                             {builder.getInt32(1)});
         llvm::Value* fieldPtr = builder.CreateInBoundsGEP(getESLValType(), ptr, {arrIdx});
         auto closure = builder.CreateLoad(getESLValType(), fieldPtr);
         return createFuncCall(closure, callArgs, dbg);
@@ -1805,11 +1779,8 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
 
     F->insert(F->end(), fieldBB);
     builder.SetInsertPoint(fieldBB);
-    // If this is a field get the fields arr ptr first
-    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(0), builder.getInt32(3)});
-    // Loads the arr ptr
-    ptr = builder.CreateLoad(llvm::PointerType::getUnqual(getESLValType()), ptr);
-    // Gets and loads the actual field
+    // Fields are stored just behind instance, using GEP with idx 1 points just past the object and into the start of the fields
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjInstance"], inst,{builder.getInt32(1)});
     auto fieldPtr = builder.CreateInBoundsGEP(getESLValType(), ptr, fieldIdx);
     auto field =  builder.CreateLoad(getESLValType(), fieldPtr);
     auto callres1 = createFuncCall(field, args, dbg);

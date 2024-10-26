@@ -169,8 +169,11 @@ ObjClass::ObjClass(string _name) {
 ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
 	klass = _klass;
     fieldArrLen = _fieldArrLen;
-    fields = (Value*)(((char*)this)+sizeof(ObjInstance));
 	type = +ObjType::INSTANCE;
+}
+
+Value* ObjInstance::getFields(){
+    return (Value*)(((char*)this)+sizeof(ObjInstance));
 }
 #pragma endregion
 
