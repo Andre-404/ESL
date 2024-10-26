@@ -35,7 +35,9 @@ namespace memory {
 
     void HeapStatistics::adjustGCParams(){
         // TODO: right now these are just some magic numbers, work on that
-        if(currentHeapSize > collectionThreshold) collectionThreshold = currentHeapSize * 1.75;
+        if(currentHeapSize > collectionThreshold) {
+            collectionThreshold = currentHeapSize * 1.75;
+        }
         else if(currentHeapSize * 0.5 < collectionThreshold) {
             //collectionThreshold = std::min(collectionThreshold / 2, HEAP_START_SIZE * 1024ull);
         }
@@ -56,12 +58,11 @@ namespace memory {
         rpmalloc_initialize();
         threadsSuspended = 0;
     }
-
     void GarbageCollector::checkHeapSize(const size_t size){
         // Eases up on atomicity
         uint64_t tmpHeapSize = statistics.currentHeapSize.fetch_add(size, std::memory_order_relaxed);
         uint64_t tmpHeapSizeLimit = statistics.collectionThreshold.load(std::memory_order_relaxed);
-        if(tmpHeapSize-size <= tmpHeapSizeLimit && tmpHeapSize >= tmpHeapSizeLimit) [[unlikely]]{
+        if(tmpHeapSize <= tmpHeapSizeLimit && tmpHeapSize+size >= tmpHeapSizeLimit) [[unlikely]]{
             active = 1;
         }
 #ifdef GC_DEBUG
