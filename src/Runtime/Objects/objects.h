@@ -12,7 +12,6 @@ namespace object {
     enum class ObjType {
         DEALLOCATED,
         STRING,
-        RANGE,
         CLOSURE,
         FREEVAR,
         CLASS,
@@ -21,7 +20,6 @@ namespace object {
         HASH_MAP,
         FILE,
         MUTEX,
-        FUTURE,
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
@@ -43,8 +41,6 @@ namespace object {
     public:
         uint32_t size;
         char* str;
-
-        ObjString();
 
         bool compare(ObjString* other);
 
@@ -80,8 +76,8 @@ namespace object {
 
     class ObjFreevar : public Obj {
     public:
+        ObjFreevar(Value val);
         Value val;
-        ObjFreevar(const Value& _value);
     };
 
     // Pointer to a compiled function
@@ -92,13 +88,12 @@ namespace object {
     class ObjClosure : public Obj {
     public:
         // A function can have a maximum of 255 parameters and 255 upvalues
-        const byte arity;
-        const byte freevarCount;
-        const Function func;
-        const char* name;
-        ObjFreevar** freevars;
-        ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount);
-        ~ObjClosure();
+        byte arity;
+        byte freevarCount;
+        Function func;
+        char* name;
+
+        ObjFreevar** getFreevarArr();
     };
 
     class ObjClass : public Obj {
@@ -121,10 +116,8 @@ namespace object {
     // ObjInstance is a header followed by array of values(fields)
     class ObjInstance : public Obj {
     public:
-        uInt fieldArrLen;
+        uint32_t fieldArrLen;
         ObjClass* klass;
-
-        ObjInstance(ObjClass* _klass, uInt _fieldsArrLen);
 
         Value* getFields();
     };
@@ -152,26 +145,6 @@ namespace object {
         std::shared_mutex mtx;
 
         ObjMutex();
-    };
-
-    // Returned by "async func()" call, when the thread finishes it will populate returnVal and delete the vm
-    class ObjFuture : public Obj {
-    public:
-        std::jthread thread;
-        std::atomic<bool> done;
-        Value val;
-
-        ObjFuture(ObjClosure* func, int argc, Value* args);
-        ~ObjFuture();
-    };
-
-    class ObjRange : public Obj{
-    public:
-        const double start;
-        const double end;
-        const bool isEndInclusive;
-
-        ObjRange(const double _start, const double _end, const bool _isEndInclusive);
     };
 
 

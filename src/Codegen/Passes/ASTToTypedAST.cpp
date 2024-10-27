@@ -1423,7 +1423,6 @@ void ASTTransformer::addBasicTypes(){
     addType(types::getBasicType(types::TypeFlag::NUMBER));
     addType(types::getBasicType(types::TypeFlag::STRING));
     addType(types::getBasicType(types::TypeFlag::MUTEX));
-    addType(types::getBasicType(types::TypeFlag::RANGE));
     addType(types::getBasicType(types::TypeFlag::FILE));
     addType(types::getBasicType(types::TypeFlag::ANY));
 }

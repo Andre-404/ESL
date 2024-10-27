@@ -566,9 +566,12 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     inProgressFuncs.emplace(createNewFunc(expr->fn->name, expr->fn->fnTy));
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
+    llvm::Value* cl = builder.CreateCall(safeGetFunc("decodeClosure"), inProgressFuncs.top().fn->getArg(0), "closure");
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
-        auto tmp = builder.CreateCall(safeGetFunc("getFreevar"), {inProgressFuncs.top().fn->getArg(0), builder.getInt32(i)});
+        llvm::Value* freevarPtr = builder.CreateGEP(namedTypes["ObjClosure"], cl, builder.getInt32(1));
+        freevarPtr = builder.CreateInBoundsGEP(namedTypes["ObjFreevarPtr"], freevarPtr, builder.getInt32(i));
+        llvm::Value* tmp = builder.CreateLoad(namedTypes["ObjFreevarPtr"], freevarPtr);
         variables.insert_or_assign(freevar.second->uuid, tmp);
     }
 
@@ -626,12 +629,11 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     auto name = createConstStr(stmt->fn->name);
     auto freeVarCnt = builder.getInt8(0);
     auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
-    auto freeVarArr = llvm::ConstantPointerNull::get(ty);
 
     // Create function constant
     llvm::Constant* fnC = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
                                          {createConstObjHeader(+object::ObjType::CLOSURE),
-                                          arity, freeVarCnt, typeErasedFn, name, freeVarArr});
+                                          arity, freeVarCnt, typeErasedFn, name});
     // Creates a place in memory for the function and stores it there
     llvm::Constant* fnLoc = storeConstObj(fnC);
     auto gv = (llvm::dyn_cast<llvm::GlobalVariable>(variables.at(stmt->globalVarUuid)));
@@ -1544,13 +1546,11 @@ llvm::Constant* Compiler::createMethodObj(typedAST::ClassMethod& method, llvm::F
     auto arity = builder.getInt8(method.code->args.size());
     auto name = createConstStr(method.code->name);
     auto freeVarCnt = builder.getInt8(0);
-    auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
-    auto freeVarArr = llvm::ConstantPointerNull::get(ty);
 
     // Create method constant
     return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
                                      {createConstObjHeader(+object::ObjType::CLOSURE),
-                                      arity, freeVarCnt, typeErasedFn, name, freeVarArr});
+                                      arity, freeVarCnt, typeErasedFn, name});
 }
 // Creates an instance template with already nulled fields that is memcpy-ed when using new
 llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, int fieldN){
@@ -1948,13 +1948,11 @@ void Compiler::implementNativeFunctions(fastMap<string, types::tyVarIdx>& native
         auto arity = builder.getInt8(argc);
         auto cname = createConstStr(name);
         auto freeVarCnt = builder.getInt8(0);
-        auto ty = llvm::PointerType::getUnqual(namedTypes["ObjFreevarPtr"]);
-        auto freeVarArr = llvm::ConstantPointerNull::get(ty);
 
         // Create function constant
         llvm::Constant* fnC = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
                                                         {createConstObjHeader(+object::ObjType::CLOSURE),
-                                                         arity, freeVarCnt, typeErasedFn, cname, freeVarArr});
+                                                         arity, freeVarCnt, typeErasedFn, cname});
         // Creates a place in memory for the function and stores it there
         llvm::Constant* fnLoc = storeConstObj(fnC);
         return constObjToVal(fnLoc);

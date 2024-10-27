@@ -20,8 +20,6 @@ size_t Obj::getSize(){
         case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
         case +ObjType::FILE: return sizeof(ObjFile);
         case +ObjType::MUTEX: return sizeof(ObjMutex);
-        case +ObjType::FUTURE: return sizeof(ObjFuture);
-        case +ObjType::RANGE: return sizeof(ObjRange);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
 }
@@ -34,7 +32,6 @@ void object::runObjDestructor(object::Obj* obj){
         case +object::ObjType::DEALLOCATED: return;
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); break;
         case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
-        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
         case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;
         case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
         default: break;
@@ -71,11 +68,6 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
         }
         case +ObjType::FILE: return "<file>";
         case +ObjType::MUTEX: return "<mutex>";;
-        case +ObjType::FUTURE: return "<future>";
-        case +ObjType::RANGE: {
-            ObjRange* range = reinterpret_cast<ObjRange*>(this);
-            return fmt::format("{}..{}{}", range->start, range->isEndInclusive ? "=" : "", range->end);
-        }
     }
     return "cannot stringfy object";
 }
@@ -86,11 +78,6 @@ void* Obj::operator new(const size_t size) {
 #pragma endregion
 
 #pragma region ObjString
-// Never called
-ObjString::ObjString() {
-	type = +ObjType::STRING;
-}
-
 bool ObjString::compare(ObjString* other) {
 	return size == other->size && std::strcmp(str, other->str) == 0;
 }
@@ -128,21 +115,8 @@ uint64_t stringHash::operator()(object::ObjString* str) const noexcept{
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount)
-    : func(_func), arity(_arity), name(_name), freevarCount(_freevarCount){
-    freevars = freevarCount > 0 ? new object::ObjFreevar*[freevarCount] : nullptr;
-	type = +ObjType::CLOSURE;
-}
-
-ObjClosure::~ObjClosure(){
-    delete freevars;
-}
-#pragma endregion
-
-#pragma region ObjUpval
-ObjFreevar::ObjFreevar(const Value& _val) {
-	val = _val;
-	type = +ObjType::FREEVAR;
+ObjFreevar** ObjClosure::getFreevarArr(){
+    return (ObjFreevar**)(((char*)this)+sizeof(ObjClosure));
 }
 #pragma endregion
 
@@ -158,6 +132,11 @@ ObjArray::ObjArray(const size_t size) {
 }
 #pragma endregion
 
+ObjFreevar::ObjFreevar(Value val){
+    this->val = val;
+    type = +ObjType::FREEVAR;
+}
+
 #pragma region ObjClass
 ObjClass::ObjClass(string _name) {
 	name = nullptr;
@@ -166,12 +145,6 @@ ObjClass::ObjClass(string _name) {
 #pragma endregion
 
 #pragma region ObjInstance
-ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
-	klass = _klass;
-    fieldArrLen = _fieldArrLen;
-	type = +ObjType::INSTANCE;
-}
-
 Value* ObjInstance::getFields(){
     return (Value*)(((char*)this)+sizeof(ObjInstance));
 }
@@ -199,10 +172,8 @@ ObjMutex::ObjMutex() {
 	type = +ObjType::MUTEX;
 }
 #pragma endregion
-
-#pragma region ObjFuture
 // Function that executes on a newly started thread, handles initialization of thread data and cleanup after execution is finished
-void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
+void threadWrapper(void* fut, ObjClosure* closure, int argc, Value* args) {
     uintptr_t* stackStart = getStackPointer();
     memory::gc->addStackStart(std::this_thread::get_id(), stackStart);
 
@@ -228,24 +199,3 @@ void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
     // In such a case the gc cycle kicks of immediately after calling removeStackStart
     memory::gc->removeStackStart(std::this_thread::get_id());
 }
-
-ObjFuture::ObjFuture(ObjClosure* closure, int argc, Value* args) {
-    done = false;
-	val = encodeNil();
-	type = +ObjType::FUTURE;
-    thread = std::jthread(&threadWrapper, this, closure, argc, args);
-}
-ObjFuture::~ObjFuture() {
-    // If this future is deleted and the thread is still active detach the thread and have it run its course
-    // joinable check is because the user might have joined this thread using await
-    if(thread.joinable()) thread.detach();
-}
-
-#pragma endregion
-
-#pragma region ObjRange
-ObjRange::ObjRange(const double _start, const double _end, const bool _isEndInclusive)
-    : start(_start), end(_end), isEndInclusive(_isEndInclusive){
-    type = +ObjType::RANGE;
-}
-#pragma endregion

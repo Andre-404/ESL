@@ -11,7 +11,6 @@ namespace types{
         NUMBER,
         STRING,
         MUTEX,
-        RANGE,
         FILE,
         // Base type
         ANY,

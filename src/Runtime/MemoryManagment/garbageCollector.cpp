@@ -163,7 +163,7 @@ namespace memory {
                 case +ObjType::CLOSURE: {
                     ObjClosure *cl = reinterpret_cast<ObjClosure *>(ptr);
                     for (int i = 0; i < cl->freevarCount; i++) {
-                        markObj(cl->freevars[i]);
+                        markObj(cl->getFreevarArr()[i]);
                     }
                     break;
                 }
@@ -184,12 +184,6 @@ namespace memory {
                         markObj(field.first);
                         markVal(field.second);
                     }
-                    break;
-                }
-                case +ObjType::FUTURE: {
-                    ObjFuture *fut = reinterpret_cast<ObjFuture *>(ptr);
-                    // When tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-                    markVal(fut->val);
                     break;
                 }
             }

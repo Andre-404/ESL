@@ -38,10 +38,8 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], getESLValType(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
-    // Pointer to pointer
-    auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
-                                                                     PTR_TY(TYPE(Int8)), tmpFreevarArr}, "ObjClosure");
+                                                                     PTR_TY(TYPE(Int8))}, "ObjClosure");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
 
 
@@ -122,8 +120,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
     // Creates a freevar(no args needed, its initialized to nil)
     CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
-    // Gets a freevar from closure, args: closure structure, index to which freevar to use
-    CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], eslValTy, TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
     CREATE_FUNC("createClosure", true, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map

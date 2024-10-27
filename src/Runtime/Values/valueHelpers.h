@@ -22,8 +22,6 @@ namespace object {
 	class ObjFile;
 
 	class ObjMutex;
-
-	class ObjFuture;
 }
 
 enum class ValueType {
