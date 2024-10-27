@@ -773,8 +773,8 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
 
 llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     auto name = createConstStr(stmt->fullName);
-    auto fieldsLen = builder.getInt64(stmt->fields.size());
-    auto methodsLen = builder.getInt64(stmt->methods.size());
+    auto fieldsLen = builder.getInt16(stmt->fields.size());
+    auto methodsLen = builder.getInt16(stmt->methods.size());
     // Generates functions to call when type of instance is not known at compile time to get the index into the field/method array
     auto fieldsFunc = createFieldChooseFunc(stmt->fullName, stmt->fields);
     auto methodsFunc = createMethodChooseFunc(stmt->fullName, stmt->methods);
@@ -791,12 +791,13 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
         // Creates an ObjClosure associated with this method
         methods[p.second.second] = createMethodObj(p.second.first, methodFn);
     }
-    llvm::GlobalVariable* methodArr = storeConstObj(llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosure"],
-                                                                   methods.size()), methods));
+    llvm::Constant* methodArr = llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosure"],
+                                                                   methods.size()), methods);
 
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClass"), {
-            createConstObjHeader(+object::ObjType::CLASS), name, subClassIdxStart, subClassIdxEnd, methodsFunc,
-            fieldsFunc, methodsLen, fieldsLen, methodArr});
+            createConstObjHeader(+object::ObjType::CLASS), methodsLen, fieldsLen, subClassIdxStart, subClassIdxEnd, name, methodsFunc,
+            fieldsFunc});
+    obj = llvm::ConstantStruct::getAnon({obj, methodArr});
     llvm::GlobalVariable* klass = new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
     // Associates a full class name with the class object and instance template
@@ -1624,10 +1625,9 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
 
     F->insert(F->end(), methodBB);
     builder.SetInsertPoint(methodBB);
-    // Loads the pointer to the methods array
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(8)});
-    llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
-    val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, methodIdx);
+    // Methods are just behind class
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(1)});
+    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], ptr, methodIdx);
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val});
     builder.CreateBr(mergeBB);
 
@@ -1650,9 +1650,9 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldI
 std::pair<llvm::Value*, llvm::Value*> Compiler::instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field){
     auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {getESLValType()}, false);
     auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
-    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(4)});
+    auto ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(6)});
     auto methodFunc = builder.CreateLoad(fnPtrTy, ptr);
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(5)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(7)});
     auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
 
     llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, field);
@@ -1694,7 +1694,7 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* inst, string field, Tok
     // Gets the function which determines index of field given a string
     auto fnTy = llvm::FunctionType::get(builder.getInt32Ty(), {getESLValType()}, false);
     auto fnPtrTy = llvm::PointerType::getUnqual(fnTy);
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(5)});
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(7)});
     auto fieldsFunc = builder.CreateLoad(fnPtrTy, ptr);
 
     llvm::Value* fieldIdx = builder.CreateCall(fnTy, fieldsFunc, createESLString(field));
@@ -1790,9 +1790,8 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldId
     F->insert(F->end(), methodBB);
     builder.SetInsertPoint(methodBB);
     // First load the ObjClosurePtr(we treat the offset into the ObjClosure array that the class has as a standalone pointer to that closure)
-    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(0), builder.getInt32(8)});
-    llvm::Value* val = builder.CreateLoad(namedTypes["ObjClosurePtr"], ptr);
-    val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], val, methodIdx);
+    ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(1)});
+    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], ptr, methodIdx);
     // Since this is a raw ObjClosure pointer we tag it first
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), val);
     // Inst passed to this function is decoded so it also needs to be tagged again

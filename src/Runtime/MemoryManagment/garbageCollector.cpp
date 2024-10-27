@@ -200,8 +200,8 @@ namespace memory {
     void GarbageCollector::markRoots() {
         // Have to mark the stack of each thread
         for (auto it = threadsStack.begin(); it != threadsStack.end(); it++) {
-            byte *start = reinterpret_cast<byte *>(it->second.start);
-            byte *end = reinterpret_cast<byte *>(it->second.end);
+            Value *start = reinterpret_cast<Value *>(it->second.start);
+            Value *end = reinterpret_cast<Value *>(it->second.end);
             // The stack grows downward, so stack end is a smaller address than stack start
             while (end < start) {
                 // Cast pointer to int64, check for the object flag, if it's present try to mark the object and push to mark stack
@@ -358,8 +358,9 @@ namespace memory {
             base += (base[half - 1] < ptr) * half;
         }
         object::Obj* potentialObj = *base;
+        uint64_t diff = ptr-potentialObj;
         // This check handles interior pointers(if difference is less than the object size than this is surely an interior pointer)
-        return reinterpret_cast<Obj *>((size_t)potentialObj * (ptr - potentialObj < potentialObj->getSize()));
+        return reinterpret_cast<Obj *>((size_t)potentialObj * (diff>= 0 && diff < potentialObj->getSize()));
     }
     // Should work for now but might be a problem when the heap gets into GB teritory
     // getPageFromPtr is O(log(n)), i dont think it can get better than this

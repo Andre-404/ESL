@@ -46,8 +46,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
-    classType->setBody({types["Obj"], PTR_TY(TYPE(Int8)), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy),
-                                TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy)});
     types["ObjClass"] = classType;
 
     types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
@@ -384,8 +383,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                                              {builder.getInt32(0), builder.getInt32(2)});
         ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);
 
-        llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(2)});
-        llvm::Value* idxEnd = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(3)});
+        llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(3)});
+        llvm::Value* idxEnd = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(4)});
         idxStart = builder.CreateLoad(TYPE(Int32), idxStart, "idxStart");
         idxEnd = builder.CreateLoad(TYPE(Int32), idxEnd, "idxEnd");
 

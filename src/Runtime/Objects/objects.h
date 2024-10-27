@@ -98,17 +98,17 @@ namespace object {
 
     class ObjClass : public Obj {
     public:
-        const char* name;
         // Uses copy down inheritance, superclass ptr is still here for instanceof operator
-        int classHierarchyStart;
-        int classHierarchyEnd;
+        uint16_t methodArrLen;
+        uint16_t fieldsArrLen;
+        uint32_t classHierarchyStart;
+        uint32_t classHierarchyEnd;
+        const char* name;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
-        uInt64 methodArrLen;
-        uInt64 fieldsArrLen;
         // We use ObjClosure* instead of ObjClosure** for optimization purposes to avoid having to allocate
         // each ObjClosure individually and scatter it in memory
-        ObjClosure* methods;
+        //ObjClosure* methods;
 
         ObjClass(string _name);
     };

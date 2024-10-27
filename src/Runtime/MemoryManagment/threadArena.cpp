@@ -11,16 +11,28 @@
 #endif
 #include <pthread.h>
 
+#define LOCAL_BYTE_CACHE 1024*16 //16Kb
+
 using namespace memory;
 
-// Have to instantiate thread arena here because linker complains if you put a thread_local variable in .h file
-// thread_local slows down the program because of accessing tls data uses a lock, but i can't imagine a better way of doing this
 static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nullptr;
 [[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
-    if(!threadArena)[[unlikely]]{
-        threadArena = new ThreadArena();
+    // Reading from TLS block is expensive in JIT mode since this is linked dynamically
+    // To combat this we use a function local cache of thread id and pointer to arena
+    // Calling pthread_self is much less expensive than reading from TLS block(no mutex locking)
+    static pthread_t local_tid = pthread_self();
+    static ThreadArena* cachedArena = threadArena;
+    // Standard recommends not to do this since pthread_t can be implemented as a struct, but on GCC its uintptr_t
+    // This could cause problems when compiling with other compilers
+    if(local_tid != pthread_self()){
+        cachedArena = threadArena;
+        local_tid = pthread_self();
     }
-    return *threadArena;
+    if(!cachedArena)[[unlikely]]{
+        threadArena = new ThreadArena();
+        cachedArena = threadArena;
+    }
+    return *cachedArena;
 }
 
 
@@ -41,6 +53,7 @@ ThreadArena::ThreadArena(){
     std::fill(firstFreePage.begin(), firstFreePage.end(), nullptr);
     std::fill(pools.begin(), pools.end(), nullptr);
     heapVersion = 0;
+    localBytesAllocated = 0;
 }
 ThreadArena::~ThreadArena(){
 
@@ -49,7 +62,11 @@ ThreadArena::~ThreadArena(){
 [[gnu::hot]] void *ThreadArena::alloc(const size_t size) {
     // Allocating is lockless, each arena does its own thing
     // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
-    gc->checkHeapSize(size);
+    localBytesAllocated += size;
+    if(localBytesAllocated >= LOCAL_BYTE_CACHE){
+        gc->checkHeapSize(localBytesAllocated);
+        localBytesAllocated = 0;
+    }
     byte *block = nullptr;
     int idx = szToIdx(size);
     if (idx == -1) {
