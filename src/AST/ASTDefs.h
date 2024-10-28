@@ -14,18 +14,17 @@ namespace AST {
 		CALL,
         NEW,
 		FIELD_ACCESS,
-		ASYNC,
-		AWAIT,
 		STRUCT,
 		LITERAL,
 		FUNC_LITERAL,
 		MODULE_ACCESS,
         MACRO,
-        RANGE,
 
 		VAR,
 		FUNC,
 		CLASS,
+
+        SPAWN,
 
 		EXPR_STMT,
 		BLOCK,
@@ -48,19 +47,17 @@ namespace AST {
 	class CallExpr;
     class NewExpr;
 	class FieldAccessExpr;
-	class AsyncExpr;
-	class AwaitExpr;
 	class StructLiteral;
 	class LiteralExpr;
 	class FuncLiteral;
 	class ModuleAccessExpr;
     class MacroExpr;
-    class RangeExpr;
 
 	class VarDecl;
 	class FuncDecl;
 	class ClassDecl;
 
+    class SpawnStmt;
 	class ExprStmt;
 	class BlockStmt;
 	class IfStmt;
@@ -79,14 +76,11 @@ namespace AST {
 		virtual void visitAssignmentExpr(AssignmentExpr* expr) = 0;
 		virtual void visitSetExpr(SetExpr* expr) = 0;
 		virtual void visitConditionalExpr(ConditionalExpr* expr) = 0;
-        virtual void visitRangeExpr(RangeExpr* expr) = 0;
 		virtual void visitBinaryExpr(BinaryExpr* expr) = 0;
 		virtual void visitUnaryExpr(UnaryExpr* expr) = 0;
 		virtual void visitCallExpr(CallExpr* expr) = 0;
         virtual void visitNewExpr(NewExpr* expr) = 0;
 		virtual void visitFieldAccessExpr(FieldAccessExpr* expr) = 0;
-		virtual void visitAsyncExpr(AsyncExpr* expr) = 0;
-		virtual void visitAwaitExpr(AwaitExpr* expr) = 0;
 		virtual void visitArrayLiteralExpr(ArrayLiteralExpr* expr) = 0;
 		virtual void visitStructLiteralExpr(StructLiteral* expr) = 0;
 		virtual void visitLiteralExpr(LiteralExpr* expr) = 0;
@@ -98,6 +92,7 @@ namespace AST {
 		virtual void visitFuncDecl(FuncDecl* decl) = 0;
 		virtual void visitClassDecl(ClassDecl* decl) = 0;
 
+        virtual void visitSpawnStmt(SpawnStmt* stmt) = 0;
 		virtual void visitExprStmt(ExprStmt* stmt) = 0;
 		virtual void visitBlockStmt(BlockStmt* stmt) = 0;
 		virtual void visitIfStmt(IfStmt* stmt) = 0;
@@ -131,6 +126,17 @@ namespace AST {
 		virtual Token getName() = 0;
         virtual ASTDeclType getType() = 0;
 	};
+
+    struct ASTModule{
+        File* file;
+        vector<std::pair<Token,int>> importedModules;
+        // AST of this file
+        vector<std::shared_ptr<AST::ASTNode>> stmts;
+        // Exported declarations
+        vector<std::shared_ptr<AST::ASTDecl>> exports;
+        // Used by the compiler to look up if a global variable exists since globals are late bound
+        vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
+    };
 
     enum class ASTVarType{
         LOCAL,
@@ -316,42 +322,6 @@ namespace AST {
 		}
 	};
 
-	class AsyncExpr : public ASTNode {
-	public:
-		ASTNodePtr callee;
-		vector<ASTNodePtr> args;
-		Token keyword;
-        Token paren1;
-        Token paren2;
-
-		AsyncExpr(Token _keyword, ASTNodePtr _callee, vector<ASTNodePtr>& _args, Token _paren1, Token _paren2) {
-			callee = _callee;
-			args = _args;
-			type = ASTType::ASYNC;
-            keyword = _keyword;
-            paren1 = _paren1;
-            paren2 = _paren2;
-		}
-		void accept(Visitor* vis) override {
-			vis->visitAsyncExpr(this);
-		}
-	};
-
-	class AwaitExpr : public ASTNode {
-	public:
-		ASTNodePtr expr;
-		Token keyword;
-
-		AwaitExpr(Token _keyword, ASTNodePtr _expr) {
-			expr = _expr;
-			type = ASTType::AWAIT;
-            keyword = _keyword;
-		}
-		void accept(Visitor* vis) override {
-			vis->visitAwaitExpr(this);
-		}
-	};
-
 	class LiteralExpr : public ASTNode {
 	public:
 		Token token;
@@ -444,29 +414,25 @@ namespace AST {
         }
     };
 
-    class RangeExpr : public ASTNode{
-    public:
-        Token op;
-        ASTNodePtr start;
-        ASTNodePtr end;
-        bool endInclusive;
-
-        RangeExpr(Token _op, ASTNodePtr _start, ASTNodePtr _end, bool _endInclusive) {
-            op = _op;
-            start = _start;
-            end = _end;
-            endInclusive = _endInclusive;
-            type = ASTType::RANGE;
-        }
-
-        void accept(Visitor* vis) {
-            vis->visitRangeExpr(this);
-        }
-    };
-
     #pragma endregion
 
 	#pragma region Statements
+
+    class SpawnStmt : public ASTNode{
+    public:
+        ASTNodePtr callExpr;
+        Token keyword;
+
+        SpawnStmt(ASTNodePtr _callExpr, Token _keyword) {
+            callExpr = _callExpr;
+            keyword = _keyword;
+            type = ASTType::SPAWN;
+        }
+        void accept(Visitor* vis) {
+            vis->visitSpawnStmt(this);
+        }
+
+    };
 
 	class ExprStmt : public ASTNode {
 	public:

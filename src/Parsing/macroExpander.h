@@ -116,14 +116,11 @@ namespace AST {
         void visitAssignmentExpr(AssignmentExpr* expr) override;
         void visitSetExpr(SetExpr* expr) override;
         void visitConditionalExpr(ConditionalExpr* expr) override;
-        void visitRangeExpr(RangeExpr* expr) override;
         void visitBinaryExpr(BinaryExpr* expr) override;
         void visitUnaryExpr(UnaryExpr* expr) override;
         void visitCallExpr(CallExpr* expr) override;
         void visitNewExpr(NewExpr* expr) override;
         void visitFieldAccessExpr(FieldAccessExpr* expr) override;
-        void visitAsyncExpr(AsyncExpr* expr) override;
-        void visitAwaitExpr(AwaitExpr* expr) override;
         void visitArrayLiteralExpr(ArrayLiteralExpr* expr) override;
         void visitStructLiteralExpr(StructLiteral* expr) override;
         void visitLiteralExpr(LiteralExpr* expr) override;
@@ -136,6 +133,7 @@ namespace AST {
         void visitClassDecl(ClassDecl* decl) override;
 
         void visitExprStmt(ExprStmt* stmt) override;
+        void visitSpawnStmt(SpawnStmt* stmt) override;
         void visitBlockStmt(BlockStmt* stmt) override;
         void visitIfStmt(IfStmt* stmt) override;
         void visitWhileStmt(WhileStmt* stmt) override;

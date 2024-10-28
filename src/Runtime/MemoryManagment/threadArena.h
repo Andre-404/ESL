@@ -32,6 +32,7 @@ namespace memory {
         // At any point in time during the program run, except for during GC collection,
         // this heapVersion and GC heapVersion need to match
         uint32_t heapVersion;
+        uint32_t localBytesAllocated;
 
         void* fastAlloc(size_t poolIdx);
     };

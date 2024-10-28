@@ -22,8 +22,6 @@ namespace object {
 	class ObjFile;
 
 	class ObjMutex;
-
-	class ObjFuture;
 }
 
 enum class ValueType {
@@ -37,6 +35,7 @@ inline constexpr unsigned operator+ (ValueType const val) { return static_cast<b
 // Masks for important segments of a float value
 #define MASK_SIGNATURE   0xffff000000000000
 #define MASK_PAYLOAD_OBJ 0x0000ffffffffffff
+// 51st bit is set to 1 to avoid Intels “QNaN Floating-Point Indefinite”
 #define MASK_QNAN        0x7ffc000000000000
 
 // Types

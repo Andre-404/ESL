@@ -9,17 +9,34 @@
 #else
 #include <sys/mman.h>
 #endif
+#include <pthread.h>
+
+#define LOCAL_BYTE_CACHE 1024*16 //16Kb
 
 using namespace memory;
 
-// Have to instantiate thread arena here because linker complains if you put a thread_local variable in .h file
-// thread_local slows down the program because of accessing tls data uses a lock, but i can't imagine a better way of doing this
+static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nullptr;
 [[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
-    static thread_local ThreadArena threadArena [[gnu::tls_model("initial-exec")]];
-    return threadArena;
+    // Reading from TLS block is expensive in JIT mode since this is linked dynamically
+    // To combat this we use a function local cache of thread id and pointer to arena
+    // Calling pthread_self is much less expensive than reading from TLS block(no mutex locking)
+    static pthread_t local_tid = pthread_self();
+    static ThreadArena* cachedArena = threadArena;
+    // Standard recommends not to do this since pthread_t can be implemented as a struct, but on GCC its uintptr_t
+    // This could cause problems when compiling with other compilers
+    if(local_tid != pthread_self()){
+        cachedArena = threadArena;
+        local_tid = pthread_self();
+    }
+    if(!cachedArena)[[unlikely]]{
+        threadArena = new ThreadArena();
+        cachedArena = threadArena;
+    }
+    return *cachedArena;
 }
 
-// Branchless szToIdx,
+
+// Branchless
 inline int szToIdx(size_t x){
     // Rounds up to the nearest multiple of GRANULARITY and divides by GRANULARITY to get position in mpBlockSizes
     int smallclassIdx = (x + (SMALL_GRANULARITY - 1)) >> std::countr_zero(SMALL_GRANULARITY);
@@ -36,15 +53,21 @@ ThreadArena::ThreadArena(){
     std::fill(firstFreePage.begin(), firstFreePage.end(), nullptr);
     std::fill(pools.begin(), pools.end(), nullptr);
     heapVersion = 0;
+    localBytesAllocated = 0;
 }
 ThreadArena::~ThreadArena(){
 
 }
 
 [[gnu::hot]] void *ThreadArena::alloc(const size_t size) {
-    // Allocating is lockless, each arena does its own thing
-    // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
-    gc->checkHeapSize(size);
+    // Only update gc after LOCAL_BYTE_CACHE bytes have been allocated,
+    // removes pressure from atomic add instruction in checkHeapSize
+    localBytesAllocated += size;
+    if(localBytesAllocated >= LOCAL_BYTE_CACHE){
+        // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
+        gc->checkHeapSize(localBytesAllocated);
+        localBytesAllocated = 0;
+    }
     byte *block = nullptr;
     int idx = szToIdx(size);
     if (idx == -1) {
@@ -114,15 +137,18 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
 }
 // If the heap version of GC changed then there is a chance some pages are no longer available to this arena
 void ThreadArena::updateMemoryPools(uint32_t gcHeapVer){
+    // Always reset roving pointer
     for(int i = 0; i < MP_CNT; i++) firstFreePage[i] = pools[i];
+    // GC finds out how much live memory it has during mark phase, reset localBytesAllocated to avoid overreporting
+    localBytesAllocated = 0;
     if(heapVersion == gcHeapVer) return;
     heapVersion = gcHeapVer;
     for(int i = 0; i < MP_CNT; i++){
         // First adjust tail
         while(pools[i] && pools[i]->numAllocBlocks == 0) pools[i] = pools[i]->next;
-        if(pools[i] == nullptr) continue;
         // If there are pages left set the "head" of the list to the first page, head will advance over time
         firstFreePage[i] = pools[i];
+        if(pools[i] == nullptr) continue;
         PageData* page = pools[i];
         while(page){
             PageData* pn = page->next;

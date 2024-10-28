@@ -31,12 +31,7 @@ namespace passes {
             pair<types::tyPtr, vector<constraint>> processConstraint(shared_ptr<types::AddTyConstraint> addConstraint);
             pair<types::tyPtr, vector<constraint>> processConstraint(shared_ptr<types::CallResTyConstraint> callConstraint);
             pair<types::tyPtr, vector<constraint>> processConstraint(shared_ptr<types::InstGetFieldTyConstraint> instGetConstraint);
-            pair<types::tyPtr, vector<constraint>> processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint);
             pair<types::tyPtr, vector<constraint>> processConstraint(shared_ptr<types::ComputeAddTysConstraint> computeAddConstraint);
-
-            // Helpers
-            types::tyPtr getPossibleFuncFromFut(shared_ptr<types::AwaitTyConstraint> awaitConstraint,
-                                                          types::tyPtr possibleFutureType);
 
             pair<types::tyPtr, vector<constraint>> getPossibleRetTysFromFuncs(types::tyPtr possibleFuncType);
         };

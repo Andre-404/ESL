@@ -28,7 +28,6 @@ namespace typedAST{
         UNARY,
 
         LITERAL,
-        RANGE,
 
         ARRAY,
         HASHMAP,
@@ -41,8 +40,7 @@ namespace typedAST{
         INVOKE,
         NEW,
 
-        ASYNC,
-        AWAIT,
+        SPAWN,
 
         CLOSURE, // All local functions fall under this
         FUNC_DECL,
@@ -78,10 +76,8 @@ namespace typedAST{
     class CallExpr;
     class InvokeExpr;
     class NewExpr;
-    class AsyncExpr;
-    class AwaitExpr;
+    class SpawnStmt;
     class CreateClosureExpr;
-    class RangeExpr;
     class FuncDecl;
     class ReturnStmt;
     class UncondJump;
@@ -112,20 +108,18 @@ namespace typedAST{
         virtual void visitCallExpr(CallExpr* expr) = 0;
         virtual void visitInvokeExpr(InvokeExpr* expr) = 0;
         virtual void visitNewExpr(NewExpr* expr) = 0;
-        virtual void visitAsyncExpr(AsyncExpr* expr) = 0;
-        virtual void visitAwaitExpr(AwaitExpr* expr) = 0;
+        virtual void visitSpawnStmt(SpawnStmt* stmt) = 0;
         virtual void visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
-        virtual void visitRangeExpr(RangeExpr* expr) = 0;
-        virtual void visitFuncDecl(FuncDecl* expr) = 0;
-        virtual void visitReturnStmt(ReturnStmt* expr) = 0;
-        virtual void visitUncondJump(UncondJump* expr) = 0;
-        virtual void visitIfStmt(IfStmt* expr) = 0;
-        virtual void visitWhileStmt(WhileStmt* expr) = 0;
-        virtual void visitSwitchStmt(SwitchStmt* expr) = 0;
-        virtual void visitClassDecl(ClassDecl* expr) = 0;
+        virtual void visitFuncDecl(FuncDecl* decl) = 0;
+        virtual void visitReturnStmt(ReturnStmt* stmt) = 0;
+        virtual void visitUncondJump(UncondJump* stmt) = 0;
+        virtual void visitIfStmt(IfStmt* stmt) = 0;
+        virtual void visitWhileStmt(WhileStmt* stmt) = 0;
+        virtual void visitSwitchStmt(SwitchStmt* stmt) = 0;
+        virtual void visitClassDecl(ClassDecl* decl) = 0;
         virtual void visitInstGet(InstGet* expr) = 0;
         virtual void visitInstSet(InstSet* expr) = 0;
-        virtual void visitScopeBlock(ScopeEdge* expr) = 0;
+        virtual void visitScopeBlock(ScopeEdge* stmt) = 0;
     };
 
     class TypedASTCodegen{
@@ -147,20 +141,18 @@ namespace typedAST{
         virtual llvm::Value* visitCallExpr(CallExpr* expr) = 0;
         virtual llvm::Value* visitInvokeExpr(InvokeExpr* expr) = 0;
         virtual llvm::Value* visitNewExpr(NewExpr* expr) = 0;
-        virtual llvm::Value* visitAsyncExpr(AsyncExpr* expr) = 0;
-        virtual llvm::Value* visitAwaitExpr(AwaitExpr* expr) = 0;
+        virtual llvm::Value* visitSpawnStmt(SpawnStmt* stmt) = 0;
         virtual llvm::Value* visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
-        virtual llvm::Value* visitRangeExpr(RangeExpr* expr) = 0;
-        virtual llvm::Value* visitFuncDecl(FuncDecl* expr) = 0;
-        virtual llvm::Value* visitReturnStmt(ReturnStmt* expr) = 0;
-        virtual llvm::Value* visitUncondJump(UncondJump* expr) = 0;
-        virtual llvm::Value* visitIfStmt(IfStmt* expr) = 0;
-        virtual llvm::Value* visitWhileStmt(WhileStmt* expr) = 0;
-        virtual llvm::Value* visitSwitchStmt(SwitchStmt* expr) = 0;
-        virtual llvm::Value* visitClassDecl(ClassDecl* expr) = 0;
-        virtual llvm::Value* visitInstGet(InstGet* expr) = 0;
-        virtual llvm::Value* visitInstSet(InstSet* expr) = 0;
-        virtual llvm::Value* visitScopeBlock(ScopeEdge* expr) = 0;
+        virtual llvm::Value* visitFuncDecl(FuncDecl* decl) = 0;
+        virtual llvm::Value* visitReturnStmt(ReturnStmt* stmt) = 0;
+        virtual llvm::Value* visitUncondJump(UncondJump* stmt) = 0;
+        virtual llvm::Value* visitIfStmt(IfStmt* stmt) = 0;
+        virtual llvm::Value* visitWhileStmt(WhileStmt* stmt) = 0;
+        virtual llvm::Value* visitSwitchStmt(SwitchStmt* stmt) = 0;
+        virtual llvm::Value* visitClassDecl(ClassDecl* decl) = 0;
+        virtual llvm::Value* visitInstGet(InstGet* stmt) = 0;
+        virtual llvm::Value* visitInstSet(InstSet* stmt) = 0;
+        virtual llvm::Value* visitScopeBlock(ScopeEdge* stmt) = 0;
     };
 
     class TypedASTNode {
@@ -601,47 +593,6 @@ namespace typedAST{
         }
     };
 
-    class AsyncExpr : public TypedASTExpr{
-    public:
-        exprPtr callee;
-        vector<exprPtr> args;
-        AST::AsyncExprDebugInfo dbgInfo;
-
-        AsyncExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _futTy, AST::AsyncExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
-            callee = _callee;
-            args = _args;
-            // Expr that possibly holds a function type of the called function
-            exprType = _futTy;
-            type = NodeType::ASYNC;
-        }
-        ~AsyncExpr() {};
-        void accept(TypedASTVisitor* vis) override{
-            vis->visitAsyncExpr(this);
-        }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
-            return vis->visitAsyncExpr(this);
-        }
-    };
-    class AwaitExpr : public TypedASTExpr{
-    public:
-        exprPtr expr;
-        AST::AwaitExprDebugInfo dbgInfo;
-
-        AwaitExpr(exprPtr _expr, types::tyVarIdx _futAwaitTy, AST::AwaitExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
-            expr = _expr;
-            // Expr type that possibly holds a future type that holds the possible return types of the called function
-            exprType = _futAwaitTy;
-            type = NodeType::AWAIT;
-        }
-        ~AwaitExpr() {};
-        void accept(TypedASTVisitor* vis) override{
-            vis->visitAwaitExpr(this);
-        }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
-            return vis->visitAwaitExpr(this);
-        }
-    };
-
     struct Block{
         vector<nodePtr> stmts;
         // If this block terminates no need to put a br instruction at the end of it when emitting IR
@@ -710,6 +661,26 @@ namespace typedAST{
         }
     };
 
+    class SpawnStmt : public TypedASTNode{
+    public:
+        bool isInvoke;
+        exprPtr call;
+        AST::SpawnStmtDebugInfo dbgInfo;
+
+        SpawnStmt(exprPtr _call, bool _isInvoke, AST::SpawnStmtDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+            call = _call;
+            isInvoke = _isInvoke;
+            type = NodeType::SPAWN;
+        }
+        ~SpawnStmt() {};
+        void accept(TypedASTVisitor* vis){
+            vis->visitSpawnStmt(this);
+        }
+        llvm::Value* codegen(TypedASTCodegen* vis) {
+            return vis->visitSpawnStmt(this);
+        }
+    };
+
     class ReturnStmt : public TypedASTNode{
     public:
         exprPtr expr;
@@ -725,30 +696,6 @@ namespace typedAST{
         }
         llvm::Value* codegen(TypedASTCodegen* vis) override{
             return vis->visitReturnStmt(this);
-        }
-    };
-
-    class RangeExpr : public TypedASTExpr{
-    public:
-        exprPtr lhs;
-        exprPtr rhs;
-        bool isEndInclusive;
-        AST::RangeExprDebugInfo dbgInfo;
-
-        RangeExpr(exprPtr _lhs, exprPtr _rhs, bool _isEndInclusive, types::tyVarIdx _ty, AST::RangeExprDebugInfo _dbgInfo)
-        : dbgInfo(_dbgInfo){
-            lhs = _lhs;
-            rhs = _rhs;
-            isEndInclusive = _isEndInclusive;
-            exprType = _ty;
-            type = NodeType::RANGE;
-        }
-        ~RangeExpr() {};
-        void accept(TypedASTVisitor* vis) override{
-            vis->visitRangeExpr(this);
-        }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
-            return vis->visitRangeExpr(this);
         }
     };
 

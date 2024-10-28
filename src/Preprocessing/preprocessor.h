@@ -12,7 +12,6 @@ namespace preprocessing {
     class Preprocessor {
     public:
         Preprocessor();
-        ~Preprocessor();
         void preprocessProject(const string mainFilePath);
 
         vector<ESLModule*> getSortedUnits() { return sortedUnits; }
@@ -23,9 +22,9 @@ namespace preprocessing {
         unordered_map<string, ESLModule*> allUnits;
         vector<ESLModule*> sortedUnits;
 
-        vector<pair<Token, Token>> retrieveDirectives(ESLModule* unit);
+        vector<pair<Token, Token>> parseImports(ESLModule* unit);
 
-        void processDirectives(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, const string absolutePath);
+        void processImports(ESLModule* unit, vector<pair<Token, Token>>& depsToParse, const string absolutePath);
 
         ESLModule* scanFile(const string unitName);
         void toposort(ESLModule* unit);

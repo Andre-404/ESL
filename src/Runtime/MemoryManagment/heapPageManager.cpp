@@ -60,11 +60,16 @@ PageData* HeapPageManager::allocatePage(uint32_t sizeClassIdx){
 // Returns page that this ptr belongs to or null
 PageData* HeapPageManager::getPageFromPtr(char* ptr){
     // Usually lower bound uses '<' operator and can return equal element, here we use '<=' operator to save us an if check later
-    auto it = std::lower_bound(inUse.begin(), inUse.end(), ptr, [](PageData* page, char* ptr){
-        return page->basePtr <= ptr;
-    });
-    if(it == inUse.begin() || it == inUse.end()) return nullptr;
-    else return *(--it);
+    /*auto it = std::lower_bound(inUse.begin(), inUse.end(), ptr, [](PageData* page, char* ptr){
+        return page->basePtr < ptr;
+    });*/
+    for(int i = 0; i < inUse.size(); i++){
+        uint64_t diff = ptr - inUse[i]->basePtr;
+        if(diff >= 0 && diff < (PAGE_SIZE)) return inUse[i];
+    }
+    return nullptr;
+    /*if((char*)(*it) == ptr || it == inUse.begin()) return *it;
+    else return *(--it);*/
 }
 uint32_t HeapPageManager::updateEmptyBuffer(){
     int j = 0;

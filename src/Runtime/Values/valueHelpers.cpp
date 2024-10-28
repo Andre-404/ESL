@@ -51,8 +51,6 @@ string valueHelpers::typeToStr(Value x) {
                 case +ObjType::HASH_MAP: return "<hash map>";
                 case +ObjType::FILE: return "<file>";
                 case +ObjType::MUTEX: return "<mutex>";
-                case +ObjType::FUTURE: return "<future>";
-                case +ObjType::RANGE: return "<range>";
             }
     }
     return "error, couldn't determine type of value";

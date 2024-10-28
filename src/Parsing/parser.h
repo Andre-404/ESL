@@ -53,14 +53,12 @@ namespace AST {
 	class Parser {
 	public:
 		Parser();
-		void parse(vector<ESLModule*>& modules);
-        void verifySymbolImports(vector<ESLModule*>& modules);
+        vector<ASTModule> parse(vector<ESLModule*>& modules);
+        void verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& debug);
         void highlight(vector<ESLModule*>& modules, string moduleToHighlight);
 	private:
 		ASTProbe* probe;
 		MacroExpander* macroExpander;
-
-		ESLModule* parsedUnit;
 
         vector<Token>* currentContainer;
         int currentPtr;
@@ -80,6 +78,15 @@ namespace AST {
 		unordered_map<string, unique_ptr<Macro>> macros;
         unordered_map<string, unique_ptr<ExprMetaVar>> exprMetaVars;
         unordered_map<string, unique_ptr<TTMetaVar>> ttMetaVars;
+
+        // Macro expander needs to be able to parse additional tokens and report errors
+        friend class MacroExpander;
+
+        // Macro should be able to report errors in expansion
+        friend class Macro;
+
+        // Match pattern needs to be able to attempt to generate an expression
+        friend class MatchPattern;
 
 		ParseMode parseMode = ParseMode::Standard;
 
@@ -103,19 +110,10 @@ namespace AST {
 		friend ASTNodePtr parseCall(Parser* parser, ASTNodePtr left, const Token token);
 		friend ASTNodePtr parseFieldAccess(Parser* parser, ASTNodePtr left, const Token token);
 
-		// Macro expander needs to be able to parse additional tokens and report errors
-		friend class MacroExpander;
-
-        // Macro should be able to report errors in expansion
-        friend class Macro;
-
-        // Match pattern needs to be able to attempt to generate an expression
-        friend class MatchPattern;
-
         #pragma endregion
 
         #pragma region Statements
-		ASTNodePtr topLevelDeclaration();
+		ASTNodePtr topLevelDeclaration(ASTModule& module);
 		ASTNodePtr localDeclaration();
 		shared_ptr<VarDecl> varDecl();
 		shared_ptr<FuncDecl> funcDecl();
@@ -123,6 +121,7 @@ namespace AST {
 
 		ASTNodePtr statement();
         shared_ptr<ExprStmt> exprStmt();
+        shared_ptr<SpawnStmt> spawnStmt();
         shared_ptr<BlockStmt> blockStmt();
         shared_ptr<IfStmt> ifStmt();
         shared_ptr<WhileStmt> whileStmt();
@@ -162,12 +161,12 @@ namespace AST {
 
 		vector<Token> readTokenTree(bool isNonLeaf = true);
 
-		void expandMacros();
+		void expandMacros(ASTModule& module);
 
 		void sync();
 
-        void checkDependency(ESLModule* unit, Dependency& dep, std::unordered_map<string, Dependency*>& symbols,
-                             std::unordered_map<string, Dependency*>& aliases);
+        void namespaceConflict(vector<ASTModule>& modules, int importer, int dependency, Token depDebug,
+                               std::unordered_map<string, int>& symbols, std::unordered_map<string, int>& aliases);
         #pragma endregion
 
 	};

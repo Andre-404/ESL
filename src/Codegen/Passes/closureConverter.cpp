@@ -16,18 +16,18 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing){
     enclosing = _enclosing;
 }
 
-ClosureConverter::ClosureConverter(vector<ESLModule*>& _units) {
+ClosureConverter::ClosureConverter() {
+}
+
+std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> ClosureConverter::generateFreevarMap(vector<AST::ASTModule>& _units){
     current = new CurrentChunkInfo(nullptr);
     hadError = false;
-    for (ESLModule* unit : _units) {
-        for (int i = 0; i < unit->stmts.size(); i++) {
-            unit->stmts[i]->accept(this);
+    for (AST::ASTModule& unit : _units) {
+        for (int i = 0; i < unit.stmts.size(); i++) {
+            unit.stmts[i]->accept(this);
         }
     }
     delete current;
-}
-
-std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> ClosureConverter::generateFreevarMap(){
     return freevarMap;
 }
 
@@ -58,11 +58,6 @@ void ClosureConverter::visitConditionalExpr(AST::ConditionalExpr* expr) {
     expr->condition->accept(this);
     expr->mhs->accept(this);
     expr->rhs->accept(this);
-}
-
-void ClosureConverter::visitRangeExpr(AST::RangeExpr *expr) {
-    if(expr->start) expr->start->accept(this);
-    if(expr->end) expr->end->accept(this);
 }
 
 void ClosureConverter::visitBinaryExpr(AST::BinaryExpr* expr) {
@@ -142,18 +137,9 @@ void ClosureConverter::visitFuncLiteral(AST::FuncLiteral* expr) {
 void ClosureConverter::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {}
 
 // This shouldn't ever be visited as every macro should be expanded before compilation
+// TODO: add error
 void ClosureConverter::visitMacroExpr(AST::MacroExpr* expr) {}
 
-void ClosureConverter::visitAsyncExpr(AST::AsyncExpr* expr) {
-    expr->callee->accept(this);
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-}
-
-void ClosureConverter::visitAwaitExpr(AST::AwaitExpr* expr) {
-    expr->expr->accept(this);
-}
 
 void ClosureConverter::visitVarDecl(AST::VarDecl* decl) {
     if(current->scopeDepth == 0){
@@ -189,6 +175,10 @@ void ClosureConverter::visitClassDecl(AST::ClassDecl* decl) {
 
 void ClosureConverter::visitExprStmt(AST::ExprStmt* stmt) {
     stmt->expr->accept(this);
+}
+
+void ClosureConverter::visitSpawnStmt(AST::SpawnStmt* stmt){
+    stmt->callExpr->accept(this);
 }
 
 void ClosureConverter::visitBlockStmt(AST::BlockStmt* stmt) {

@@ -32,6 +32,7 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Includes/rpmalloc/rpmalloc.c
         src/Runtime/MemoryManagment/heapPageManager.cpp
         src/Runtime/MemoryManagment/heapPageManager.h
+        src/Includes/rapidhash.h
 )
 
 #execute_process(COMMAND llvm-config)

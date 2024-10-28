@@ -24,8 +24,6 @@ static void windowsSetTerminalProcessing(){
 };
 #endif
 
-int ESLModule::count = 0;
-
 int main(int argc, char* argv[]) {
     string path;
     string flag;
@@ -60,14 +58,14 @@ int main(int argc, char* argv[]) {
 
     AST::Parser parser;
 
-    parser.parse(modules);
+    vector<AST::ASTModule> ASTmodules = parser.parse(modules);
 
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
 
-    closureConversion::ClosureConverter finder(modules);
-    passes::typedASTParser::ASTTransformer transformer;
-    auto res = transformer.run(modules, finder.generateFreevarMap());
+    closureConversion::ClosureConverter finder;
+    passes::typedASTParser::ASTTransformer transformer(ASTmodules);
+    auto res = transformer.run(finder.generateFreevarMap(ASTmodules));
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
     auto env = transformer.getTypeEnv();

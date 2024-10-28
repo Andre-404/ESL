@@ -41,8 +41,6 @@ inline bool isHashMap(Value x) { return isObj(x) && decodeObj(x)->type == +ObjTy
 inline bool isUpvalue(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FREEVAR; }
 inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FILE; }
 inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::MUTEX; }
-inline bool isFuture(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FUTURE; }
-inline bool isRange(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::RANGE; }
 
 inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
 
@@ -56,8 +54,6 @@ inline object::ObjHashMap* asHashMap(Value x) { return reinterpret_cast<ObjHashM
 inline object::ObjFreevar* asUpvalue(Value x) { return reinterpret_cast<ObjFreevar*>(decodeObj(x)); }
 inline object::ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
 inline object::ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }
-inline object::ObjFuture* asFuture(Value x) { return reinterpret_cast<ObjFuture*>(decodeObj(x)); }
-inline object::ObjRange* asRange(Value x) { return reinterpret_cast<ObjRange*>(decodeObj(x)); }
 
 inline bool equals(Value x, Value y){
     ValueType type = getType(x);

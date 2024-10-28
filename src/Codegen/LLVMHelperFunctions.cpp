@@ -28,42 +28,39 @@ llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
     // Opaque pointer
     return llvm::PointerType::get(ctx, 1);
 }
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
-                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     // First 2 bytes are GC info
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
     types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
-    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], PTR_TY(TYPE(Int8))}, "ObjString");
+    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), PTR_TY(TYPE(Int8))}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], getESLValType(*ctx)}, "ObjFreevar");
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
-    // Pointer to pointer
-    auto tmpFreevarArr = PTR_TY(types["ObjFreevarPtr"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
-                                                                     PTR_TY(TYPE(Int8)), tmpFreevarArr}, "ObjClosure");
+                                                                     PTR_TY(TYPE(Int8))}, "ObjClosure");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
 
 
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
-    classType->setBody({types["Obj"], PTR_TY(TYPE(Int8)), TYPE(Int32), TYPE(Int32), PTR_TY(fnTy), PTR_TY(fnTy),
-                                TYPE(Int64), TYPE(Int64), types["ObjClosurePtr"]});
+    classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy)});
     types["ObjClass"] = classType;
 
-    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"], PTR_TY(getESLValType(*ctx))}, "ObjInstance");
+    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 }
 
-void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx, llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
+
+void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
-    //CREATE_FUNC("print", false, TYPE(Void),  TYPE(Int64));
-    // ret: Value, args: raw C string
     llvm::Type* eslValTy = getESLValType(*ctx);
-    //
+
     auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
@@ -97,7 +94,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
     CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
 
-    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)));
+    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int64)), PTR_TY(TYPE(Int8)));
     CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
@@ -122,16 +119,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
     // Creates a freevar(no args needed, its initialized to nil)
     CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
-    // Gets a freevar from closure, args: closure structure, index to which freevar to use
-    CREATE_FUNC("getFreevar", false, types["ObjFreevarPtr"], eslValTy, TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
     CREATE_FUNC("createClosure", true, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
     CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
-    // ret: Value
-    //CREATE_FUNC("random_num", false, eslValTy);
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
@@ -151,7 +144,6 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
     // customization, e.g. specifying a TargetMachine or various debugging
     // options.
     llvm::PassBuilder PB;
-    llvm::Type::getIntNTy(*ctx, 64);
 
     // Register all the basic analyses with the managers.
     PB.registerModuleAnalyses(MAM);
@@ -165,6 +157,7 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
     for(auto& it : module->functions()) {
         SafepointPass.run(it, FAM);
     }
+
 
     #ifdef COMPILER_DEBUG
     llvm::errs()<<"-------------- Optimized module --------------\n";
@@ -319,9 +312,9 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
 
-        // Atomically load the value, volatile because LLVM would otherwise optimize this away
-        auto load = builder.CreateLoad(builder.getInt8Ty(), module->getNamedGlobal("gcFlag"), true);
-        //load->setAtomic(llvm::AtomicOrdering::Monotonic);
+        // Atomically load the value
+        auto load = builder.CreateLoad(builder.getInt64Ty(), module->getNamedGlobal("gcFlag"), false);
+        load->setAtomic(llvm::AtomicOrdering::Monotonic);
         load->setAlignment(llvm::Align(8));
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
@@ -390,8 +383,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                                              {builder.getInt32(0), builder.getInt32(2)});
         ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);
 
-        llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(2)});
-        llvm::Value* idxEnd = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(3)});
+        llvm::Value* idxStart = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(3)});
+        llvm::Value* idxEnd = builder.CreateInBoundsGEP(types["ObjClass"], ptr, {builder.getInt32(0), builder.getInt32(4)});
         idxStart = builder.CreateLoad(TYPE(Int32), idxStart, "idxStart");
         idxEnd = builder.CreateLoad(TYPE(Int32), idxEnd, "idxEnd");
 

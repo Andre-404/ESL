@@ -94,10 +94,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* visitCallExpr(typedAST::CallExpr* expr) override;
         llvm::Value* visitInvokeExpr(typedAST::InvokeExpr* expr) override;
         llvm::Value* visitNewExpr(typedAST::NewExpr* expr) override;
-        llvm::Value* visitAsyncExpr(typedAST::AsyncExpr* expr) override;
-        llvm::Value* visitAwaitExpr(typedAST::AwaitExpr* expr) override;
+        llvm::Value* visitSpawnStmt(typedAST::SpawnStmt* stmt) override;
         llvm::Value* visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) override;
-        llvm::Value* visitRangeExpr(typedAST::RangeExpr* expr) override;
         llvm::Value* visitFuncDecl(typedAST::FuncDecl* stmt) override;
         llvm::Value* visitReturnStmt(typedAST::ReturnStmt* stmt) override;
         llvm::Value* visitUncondJump(typedAST::UncondJump* stmt) override;
@@ -149,8 +147,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         bool exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag);
 
         // Runtime type checking
-        void createTyErr(const string err, llvm::Value* const val, const Token token);
-        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, const Token token);
+        void createTyErr(const string err, llvm::Value* const val, Token token);
+        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, Token token);
         void createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> val,
                 string executeBBName, string errMsg, Token dbg);
         void createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
@@ -158,7 +156,7 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         // Codegen functions(take in a typedAST expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
-        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, const Token op);
+        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
@@ -174,11 +172,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
-
-
-        // Tries to optimize a function call if possible, otherwise returns nullptr
-        llvm::Value* optimizedFuncCall(const typedAST::CallExpr* expr);
+        void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
+
         // Array optimization
         void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg);
@@ -202,8 +198,10 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
         llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
         std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
+
         llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
         llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
+
         llvm::Value* optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
         llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
                                        string field, vector<llvm::Value*> args, Token dbg);
@@ -225,8 +223,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        void replaceGV(uInt64 uuid, llvm::Constant* newInit);
         void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+        void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
 
 
         #pragma endregion

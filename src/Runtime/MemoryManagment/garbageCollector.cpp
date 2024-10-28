@@ -33,27 +33,36 @@ namespace memory {
         prevHeapSize = 0;
     }
 
-    void HeapStatistics::monitor(){
-
-    }
     void HeapStatistics::adjustGCParams(){
         // TODO: right now these are just some magic numbers, work on that
-        if(currentHeapSize > collectionThreshold) collectionThreshold = currentHeapSize * 1.75;
+        if(currentHeapSize > collectionThreshold) {
+            collectionThreshold = currentHeapSize * 1.75;
+        }
         else if(currentHeapSize * 0.5 < collectionThreshold) {
             //collectionThreshold = std::min(collectionThreshold / 2, HEAP_START_SIZE * 1024ull);
         }
     }
 
-    GarbageCollector::GarbageCollector(byte &active) : active(active) {
+    void StringInterning::internString(object::ObjString* str){
+        interned.insert(str);
+        if(str->size > largestStrSize) largestStrSize = str->size;
+    }
+    object::ObjString* StringInterning::checkInterned(object::ObjString* str){
+        if(str->size > largestStrSize) return str;
+        auto it = interned.find(str);
+        if(it != interned.end()) return *it;
+        return str;
+    }
+
+    GarbageCollector::GarbageCollector(uint64_t &active) : active(active) {
         rpmalloc_initialize();
         threadsSuspended = 0;
     }
-
     void GarbageCollector::checkHeapSize(const size_t size){
         // Eases up on atomicity
         uint64_t tmpHeapSize = statistics.currentHeapSize.fetch_add(size, std::memory_order_relaxed);
         uint64_t tmpHeapSizeLimit = statistics.collectionThreshold.load(std::memory_order_relaxed);
-        if(tmpHeapSize-size <= tmpHeapSizeLimit && tmpHeapSize >= tmpHeapSizeLimit) [[unlikely]]{
+        if(tmpHeapSize <= tmpHeapSizeLimit && tmpHeapSize+size >= tmpHeapSizeLimit) [[unlikely]]{
             active = 1;
         }
 #ifdef GC_DEBUG
@@ -73,7 +82,7 @@ namespace memory {
         std::sort(largeObjects.begin(), largeObjects.end());
         #ifdef GC_DEBUG
         double d2 = duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::cout<<"Sorting "<<pages.size()<<" pages took: "<<d2-d<<"\n";
+        std::cout<<"Sorting pages took: "<<d2-d<<"\n";
         #endif
         markRoots();
         #ifdef GC_DEBUG
@@ -154,7 +163,7 @@ namespace memory {
                 case +ObjType::CLOSURE: {
                     ObjClosure *cl = reinterpret_cast<ObjClosure *>(ptr);
                     for (int i = 0; i < cl->freevarCount; i++) {
-                        markObj(cl->freevars[i]);
+                        markObj(cl->getFreevarArr()[i]);
                     }
                     break;
                 }
@@ -165,7 +174,8 @@ namespace memory {
                 }
                 case +ObjType::INSTANCE: {
                     ObjInstance *inst = reinterpret_cast<ObjInstance *>(ptr);
-                    for (int i = 0; i < inst->fieldArrLen; i++) markVal(inst->fields[i]);
+                    Value* fields = inst->getFields();
+                    for (int i = 0; i < inst->fieldArrLen; i++) markVal(fields[i]);
                     break;
                 }
                 case +ObjType::HASH_MAP: {
@@ -174,12 +184,6 @@ namespace memory {
                         markObj(field.first);
                         markVal(field.second);
                     }
-                    break;
-                }
-                case +ObjType::FUTURE: {
-                    ObjFuture *fut = reinterpret_cast<ObjFuture *>(ptr);
-                    // When tracing all threads other than the main one are suspended, so there's no way for anything to write to val
-                    markVal(fut->val);
                     break;
                 }
             }
@@ -196,8 +200,8 @@ namespace memory {
     void GarbageCollector::markRoots() {
         // Have to mark the stack of each thread
         for (auto it = threadsStack.begin(); it != threadsStack.end(); it++) {
-            byte *start = reinterpret_cast<byte *>(it->second.start);
-            byte *end = reinterpret_cast<byte *>(it->second.end);
+            Value *start = reinterpret_cast<Value *>(it->second.start);
+            Value *end = reinterpret_cast<Value *>(it->second.end);
             // The stack grows downward, so stack end is a smaller address than stack start
             while (end < start) {
                 // Cast pointer to int64, check for the object flag, if it's present try to mark the object and push to mark stack
@@ -206,7 +210,7 @@ namespace memory {
                 // (needed in case of interior pointers)
                 if (isObj(address)) {
                     Obj *object = decodeObj(address);
-                    if (object = isValidPtr(object)) {
+                    if ((object = isValidPtr(object))) {
                         markObj(object);
                     }
                 } else if (Obj *basePtr = isValidPtr(*reinterpret_cast<Obj **>(end))) {
@@ -224,7 +228,7 @@ namespace memory {
     }
 
     // Pushing to pages and adding to largeObjects is ok because this function is only ran in suspendThread and setStackEnd
-    // which both lock pauseMty before doing work
+    // which both lock pauseMtx before doing work
     void GarbageCollector::finishSweep(ThreadArena& arena){
         for(auto i = 0; i < MP_CNT; i++){
             PageData* pool = arena.getMemoryPool(i);
@@ -354,8 +358,9 @@ namespace memory {
             base += (base[half - 1] < ptr) * half;
         }
         object::Obj* potentialObj = *base;
+        uint64_t diff = ptr-potentialObj;
         // This check handles interior pointers(if difference is less than the object size than this is surely an interior pointer)
-        return reinterpret_cast<Obj *>((size_t)potentialObj * (ptr - potentialObj < potentialObj->getSize()));
+        return reinterpret_cast<Obj *>((size_t)potentialObj * (diff>= 0 && diff < potentialObj->getSize()));
     }
     // Should work for now but might be a problem when the heap gets into GB teritory
     // getPageFromPtr is O(log(n)), i dont think it can get better than this

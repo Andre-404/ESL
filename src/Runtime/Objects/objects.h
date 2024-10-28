@@ -12,7 +12,6 @@ namespace object {
     enum class ObjType {
         DEALLOCATED,
         STRING,
-        RANGE,
         CLOSURE,
         FREEVAR,
         CLASS,
@@ -21,7 +20,6 @@ namespace object {
         HASH_MAP,
         FILE,
         MUTEX,
-        FUTURE,
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
@@ -41,9 +39,8 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
+        uint32_t size;
         char* str;
-
-        ObjString(char* _str);
 
         bool compare(ObjString* other);
 
@@ -53,10 +50,19 @@ namespace object {
 
         static ObjString* createStr(char* str);
 
-        // This reroutes the new operator to take memory which the GC gives out
-        void* operator new(size_t size, const int64_t strLen);
-
     };
+
+    struct stringHash {
+        uint64_t operator()(object::ObjString* str) const noexcept;
+    };
+
+    struct stringEQ
+    {
+        bool operator()(object::ObjString* x, object::ObjString* y) const {
+            return x->compare(y);
+        }
+    };
+
 
     class ObjArray : public Obj {
     public:
@@ -70,8 +76,8 @@ namespace object {
 
     class ObjFreevar : public Obj {
     public:
+        ObjFreevar(Value val);
         Value val;
-        ObjFreevar(const Value& _value);
     };
 
     // Pointer to a compiled function
@@ -82,41 +88,38 @@ namespace object {
     class ObjClosure : public Obj {
     public:
         // A function can have a maximum of 255 parameters and 255 upvalues
-        const byte arity;
-        const byte freevarCount;
-        const Function func;
-        const char* name;
-        ObjFreevar** freevars;
-        ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount);
-        ~ObjClosure();
+        byte arity;
+        byte freevarCount;
+        Function func;
+        char* name;
+
+        ObjFreevar** getFreevarArr();
     };
 
     class ObjClass : public Obj {
     public:
-        const char* name;
         // Uses copy down inheritance, superclass ptr is still here for instanceof operator
-        int classHierarchyStart;
-        int classHierarchyEnd;
+        uint16_t methodArrLen;
+        uint16_t fieldsArrLen;
+        uint32_t classHierarchyStart;
+        uint32_t classHierarchyEnd;
+        const char* name;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
-        uInt64 methodArrLen;
-        uInt64 fieldsArrLen;
         // We use ObjClosure* instead of ObjClosure** for optimization purposes to avoid having to allocate
         // each ObjClosure individually and scatter it in memory
-        ObjClosure* methods;
+        //ObjClosure* methods;
 
         ObjClass(string _name);
-
     };
 
     // ObjInstance is a header followed by array of values(fields)
     class ObjInstance : public Obj {
     public:
-        uInt fieldArrLen;
+        uint32_t fieldArrLen;
         ObjClass* klass;
-        Value* fields;
 
-        ObjInstance(ObjClass* _klass, uInt _fieldsArrLen);
+        Value* getFields();
     };
 
     class ObjHashMap : public Obj{
@@ -142,26 +145,6 @@ namespace object {
         std::shared_mutex mtx;
 
         ObjMutex();
-    };
-
-    // Returned by "async func()" call, when the thread finishes it will populate returnVal and delete the vm
-    class ObjFuture : public Obj {
-    public:
-        std::jthread thread;
-        std::atomic<bool> done;
-        Value val;
-
-        ObjFuture(ObjClosure* func, int argc, Value* args);
-        ~ObjFuture();
-    };
-
-    class ObjRange : public Obj{
-    public:
-        const double start;
-        const double end;
-        const bool isEndInclusive;
-
-        ObjRange(const double _start, const double _end, const bool _isEndInclusive);
     };
 
 

@@ -24,10 +24,6 @@ void AST::MacroExpander::visitConditionalExpr(ConditionalExpr* expr) {
     expand(expr->mhs);
     expand(expr->rhs);
 }
-void AST::MacroExpander::visitRangeExpr(RangeExpr *expr) {
-    expand(expr->start);
-    expand(expr->end);
-}
 void AST::MacroExpander::visitBinaryExpr(BinaryExpr* expr) {
     expand(expr->left);
     expand(expr->right);
@@ -49,12 +45,6 @@ void AST::MacroExpander::visitNewExpr(NewExpr* expr) {
 }
 
 void AST::MacroExpander::visitFieldAccessExpr(FieldAccessExpr* expr) {}
-void AST::MacroExpander::visitAsyncExpr(AsyncExpr* expr) {
-    for (auto& arg : expr->args) {
-        expand(arg);
-    }
-}
-void AST::MacroExpander::visitAwaitExpr(AwaitExpr* expr) { expand(expr->expr); }
 void AST::MacroExpander::visitArrayLiteralExpr(ArrayLiteralExpr* expr) {
     for (auto& member : expr->members) {
         expand(member);
@@ -114,6 +104,9 @@ void AST::MacroExpander::visitClassDecl(ClassDecl* decl) {
 }
 
 void AST::MacroExpander::visitExprStmt(ExprStmt* stmt) { expand(stmt->expr); }
+void AST::MacroExpander::visitSpawnStmt(SpawnStmt* stmt){
+    expand(stmt->callExpr);
+}
 void AST::MacroExpander::visitBlockStmt(BlockStmt* stmt) {
     for (auto& line : stmt->statements) {
         expand(line);

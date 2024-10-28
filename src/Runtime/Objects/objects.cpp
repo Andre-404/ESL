@@ -2,7 +2,7 @@
 #include "../../Includes/fmt/format.h"
 #include "../Values/valueHelpersInline.cpp"
 #include "../MemoryManagment/garbageCollector.h"
-#include "../../Includes/rpmalloc/rpmalloc.h"
+#include "../../Includes/rapidhash.h"
 
 using namespace object;
 using namespace memory;
@@ -11,7 +11,7 @@ using namespace valueHelpers;
 #pragma region Obj
 size_t Obj::getSize(){
     switch(type){
-        case +ObjType::STRING: return sizeof(ObjString) + strlen(((ObjString*)this)->str);
+        case +ObjType::STRING: return sizeof(ObjString) + ((ObjString*)this)->size;
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
         case +ObjType::FREEVAR: return sizeof(ObjFreevar);
@@ -20,8 +20,6 @@ size_t Obj::getSize(){
         case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
         case +ObjType::FILE: return sizeof(ObjFile);
         case +ObjType::MUTEX: return sizeof(ObjMutex);
-        case +ObjType::FUTURE: return sizeof(ObjFuture);
-        case +ObjType::RANGE: return sizeof(ObjRange);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
 }
@@ -34,7 +32,6 @@ void object::runObjDestructor(object::Obj* obj){
         case +object::ObjType::DEALLOCATED: return;
         case +object::ObjType::ARRAY: reinterpret_cast<object::ObjArray*>(obj)->~ObjArray(); break;
         case +object::ObjType::FILE: reinterpret_cast<object::ObjFile*>(obj)->~ObjFile(); break;
-        case +object::ObjType::FUTURE: reinterpret_cast<object::ObjFuture*>(obj)->~ObjFuture(); break;
         case +object::ObjType::HASH_MAP: reinterpret_cast<object::ObjHashMap*>(obj)->~ObjHashMap(); break;
         case +object::ObjType::MUTEX: reinterpret_cast<object::ObjMutex*>(obj)->~ObjMutex(); break;
         default: break;
@@ -71,11 +68,6 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
         }
         case +ObjType::FILE: return "<file>";
         case +ObjType::MUTEX: return "<mutex>";;
-        case +ObjType::FUTURE: return "<future>";
-        case +ObjType::RANGE: {
-            ObjRange* range = reinterpret_cast<ObjRange*>(this);
-            return fmt::format("{}..{}{}", range->start, range->isEndInclusive ? "=" : "", range->end);
-        }
     }
     return "cannot stringfy object";
 }
@@ -86,16 +78,8 @@ void* Obj::operator new(const size_t size) {
 #pragma endregion
 
 #pragma region ObjString
-ObjString::ObjString(char* _str) {
-    str = ((char*)this)+sizeof(ObjString);
-    auto view = std::string_view(_str);
-    view.copy(str, view.size());
-    str[view.size()] = '\0';
-	type = +ObjType::STRING;
-}
-
 bool ObjString::compare(ObjString* other) {
-	return std::strcmp(str, other->str) == 0;
+	return size == other->size && std::strcmp(str, other->str) == 0;
 }
 
 bool ObjString::compare(const string other) {
@@ -103,53 +87,36 @@ bool ObjString::compare(const string other) {
 }
 
 ObjString* ObjString::concat(ObjString* other) {
-    uint64_t strlen1 = std::strlen(str);
-    uint64_t strlen2 = std::strlen(other->str);
     ObjString* newStr = static_cast<ObjString *>(
-            memory::getLocalArena().alloc(sizeof(ObjString) + strlen1 + strlen2 +1));
+            memory::getLocalArena().alloc(sizeof(ObjString) + size + other->size +1));
     newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
+    newStr->size = size + other->size;
 
-    std::memcpy(newStr->str, str, strlen1);
-    std::strcpy(newStr->str + strlen2, other->str);
+    std::memcpy(newStr->str, str, size);
+    std::memcpy(newStr->str + size, other->str, other->size+1);
 
-    auto view = std::string_view(newStr->str);
-    auto it = memory::gc->interned.find(view);
-    if(it != memory::gc->interned.end()) return it->second;
-    return newStr;
+    return memory::gc->interned.checkInterned(newStr);
 }
 
 ObjString* ObjString::createStr(char* str){
-    auto view = std::string_view(str);
-    auto it = memory::gc->interned.find(view);
-    if(it != memory::gc->interned.end()) return it->second;
-    // +1 for null terminator
-    ObjString* newStr = new(view.size()+1) ObjString(str);
-    return newStr;
+    ObjString* newStr = static_cast<ObjString *>(
+            memory::getLocalArena().alloc(sizeof(ObjString) + std::strlen(str) +1));
+    newStr->str = ((char*)newStr)+sizeof(ObjString);
+    newStr->type = +ObjType::STRING;
+    newStr->size = std::strlen(str);
+    strcpy(newStr->str, str);
+    return memory::gc->interned.checkInterned(newStr);
 }
 
-void* ObjString::operator new(size_t size, const int64_t strLen) {
-    return memory::getLocalArena().alloc(size+strLen);
+uint64_t stringHash::operator()(object::ObjString* str) const noexcept{
+    return rapidhash(str->str, str->size);
 }
-
 #pragma endregion
 
 #pragma region ObjClosure
-ObjClosure::ObjClosure(const Function _func, const int _arity, const char* _name, const int _freevarCount)
-    : func(_func), arity(_arity), name(_name), freevarCount(_freevarCount){
-    freevars = freevarCount > 0 ? new object::ObjFreevar*[freevarCount] : nullptr;
-	type = +ObjType::CLOSURE;
-}
-
-ObjClosure::~ObjClosure(){
-    delete freevars;
-}
-#pragma endregion
-
-#pragma region ObjUpval
-ObjFreevar::ObjFreevar(const Value& _val) {
-	val = _val;
-	type = +ObjType::FREEVAR;
+ObjFreevar** ObjClosure::getFreevarArr(){
+    return (ObjFreevar**)(((char*)this)+sizeof(ObjClosure));
 }
 #pragma endregion
 
@@ -165,6 +132,11 @@ ObjArray::ObjArray(const size_t size) {
 }
 #pragma endregion
 
+ObjFreevar::ObjFreevar(Value val){
+    this->val = val;
+    type = +ObjType::FREEVAR;
+}
+
 #pragma region ObjClass
 ObjClass::ObjClass(string _name) {
 	name = nullptr;
@@ -173,11 +145,8 @@ ObjClass::ObjClass(string _name) {
 #pragma endregion
 
 #pragma region ObjInstance
-ObjInstance::ObjInstance(ObjClass* _klass, uInt _fieldArrLen) {
-	klass = _klass;
-    fieldArrLen = _fieldArrLen;
-    fields = (Value*)(((char*)this)+sizeof(ObjInstance));
-	type = +ObjType::INSTANCE;
+Value* ObjInstance::getFields(){
+    return (Value*)(((char*)this)+sizeof(ObjInstance));
 }
 #pragma endregion
 
@@ -203,10 +172,8 @@ ObjMutex::ObjMutex() {
 	type = +ObjType::MUTEX;
 }
 #pragma endregion
-
-#pragma region ObjFuture
 // Function that executes on a newly started thread, handles initialization of thread data and cleanup after execution is finished
-void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
+void threadWrapper(void* fut, ObjClosure* closure, int argc, Value* args) {
     uintptr_t* stackStart = getStackPointer();
     memory::gc->addStackStart(std::this_thread::get_id(), stackStart);
 
@@ -232,24 +199,3 @@ void threadWrapper(ObjFuture* fut, ObjClosure* closure, int argc, Value* args) {
     // In such a case the gc cycle kicks of immediately after calling removeStackStart
     memory::gc->removeStackStart(std::this_thread::get_id());
 }
-
-ObjFuture::ObjFuture(ObjClosure* closure, int argc, Value* args) {
-    done = false;
-	val = encodeNil();
-	type = +ObjType::FUTURE;
-    thread = std::jthread(&threadWrapper, this, closure, argc, args);
-}
-ObjFuture::~ObjFuture() {
-    // If this future is deleted and the thread is still active detach the thread and have it run its course
-    // joinable check is because the user might have joined this thread using await
-    if(thread.joinable()) thread.detach();
-}
-
-#pragma endregion
-
-#pragma region ObjRange
-ObjRange::ObjRange(const double _start, const double _end, const bool _isEndInclusive)
-    : start(_start), end(_end), isEndInclusive(_isEndInclusive){
-    type = +ObjType::RANGE;
-}
-#pragma endregion

@@ -3,6 +3,7 @@
 #include "../../Includes/unorderedDense.h"
 #include "threadArena.h"
 #include "heapPageManager.h"
+#include "../Objects/objects.h"
 #include <mutex>
 #include <atomic>
 #include <thread>
@@ -10,12 +11,6 @@
 #include <condition_variable>
 #include <array>
 #include <variant>
-
-namespace object {
-	class Obj;
-    class ObjString;
-    class ObjFuture;
-}
 
 #ifdef _MSC_VER
 // When getStackPointer is called the return address is rsp
@@ -25,7 +20,6 @@ namespace object {
 #endif
 // NOINLINE is just in case
 NOINLINE uintptr_t* getStackPointer();
-
 
 // Non-moving, non-generational mark-sweep GC with support for multithreading
 namespace memory {
@@ -59,17 +53,25 @@ namespace memory {
         static constexpr uint64_t heapMaxSize = 1024ull * 1024ull * 1024ull * 8ull; // max size of heap is 8GB
 
         HeapStatistics();
-        void monitor();
         void adjustGCParams();
     private:
         uint64_t prevHeapSize;
+    };
+
+    class StringInterning{
+    public:
+        void internString(object::ObjString* str);
+        object::ObjString* checkInterned(object::ObjString* str);
+    private:
+        uint64_t largestStrSize = 0;
+        ankerl::unordered_dense::set<object::ObjString*, object::stringHash, object::stringEQ> interned;
     };
 
 
 
 	class GarbageCollector {
 	public:
-        GarbageCollector(byte& active);
+        GarbageCollector(uint64_t& active);
         void checkHeapSize(const size_t size);
 
         void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
@@ -83,8 +85,8 @@ namespace memory {
         void addGlobalRoot(Value* ptr);
         void markObj(object::Obj* const object);
 
-        ankerl::unordered_dense::map<std::string_view, object::ObjString*> interned;
         HeapPageManager pageManager;
+        StringInterning interned;
 	private:
         // Notify threads to wake up, or notify a single random thread to run the gc cycle
         std::condition_variable STWcv;
@@ -92,7 +94,7 @@ namespace memory {
         // threadsSuspended == threadStackStart.size() means all threads have stopped and the GC can run
         std::atomic<uint64_t> threadsSuspended;
         // 0 means gc is off, 1 means it's waiting to collect, and all threads should pause
-        std::atomic_ref<byte> active;
+        std::atomic_ref<uint64_t> active;
 
         vector<Value*> globalRoots;
         vector<object::Obj*> largeObjects;

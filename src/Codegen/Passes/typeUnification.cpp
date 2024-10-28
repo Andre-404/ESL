@@ -79,10 +79,6 @@ types::tyPtr TypeUnificator::resolveConstraints(vector<constraint> tyConstraints
                 constraintRes = processConstraint(rp_cast<types::CallResTyConstraint>(c));
                 break;
             }
-            case types::TypeConstraintFlag::GET_AWAIT_TY:{
-                constraintRes = processConstraint(rp_cast<types::AwaitTyConstraint>(c));
-                break;
-            }
             case types::TypeConstraintFlag::INST_GET_FIELD_TY:{
                 constraintRes = processConstraint(rp_cast<types::InstGetFieldTyConstraint>(c));
                 break;
@@ -154,37 +150,6 @@ pair<types::tyPtr, vector<constraint>> TypeUnificator::processConstraint(shared_
         toReturn.first = types::getBasicType(types::TypeFlag::ANY);
     }
     return toReturn;
-}
-
-pair<types::tyPtr, vector<constraint>> TypeUnificator::processConstraint(shared_ptr<types::AwaitTyConstraint> awaitConstraint){
-    types::tyPtr futTy = collapseType(awaitConstraint->potentialFuture, awaitConstraint);
-
-    types::tyPtr possibleFunc = getPossibleFuncFromFut(awaitConstraint, futTy);
-    // Once all the possible types that could be async called to create the future being awaited are known,
-    // get the return types of the functions
-    return getPossibleRetTysFromFuncs(possibleFunc);
-}
-
-types::tyPtr TypeUnificator::getPossibleFuncFromFut(shared_ptr<types::AwaitTyConstraint> awaitConstraint,
-                                                      types::tyPtr possibleFutureType){
-    if(possibleFutureType->type != types::TypeFlag::FUTURE){
-        return types::getBasicType(types::TypeFlag::ANY);
-    }
-
-    auto futTy = std::reinterpret_pointer_cast<types::FutureType>(possibleFutureType);
-    auto val = typeEnv[futTy->calleeType];
-
-    // Get all possible types that are contained in the value being async called
-    if(val.second.empty()) {
-        auto collapsed = collapsedTypes[futTy->calleeType];
-        return collapsed;
-    }
-    else{
-        constraintSet processed;
-        // Insert this constraint to prevent infinite recursion
-        processed.insert(awaitConstraint);
-        return resolveConstraints(val.second, processed);
-    }
 }
 
 pair<types::tyPtr, vector<constraint>> TypeUnificator::getPossibleRetTysFromFuncs(types::tyPtr fnType){
