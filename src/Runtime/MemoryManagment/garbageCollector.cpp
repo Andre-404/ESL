@@ -43,11 +43,11 @@ namespace memory {
         }
     }
 
-    void StringInterning::internString(object::ObjString* str){
+    void StringInterner::internString(object::ObjString* str){
         interned.insert(str);
         if(str->size > largestStrSize) largestStrSize = str->size;
     }
-    object::ObjString* StringInterning::checkInterned(object::ObjString* str){
+    object::ObjString* StringInterner::checkInterned(object::ObjString* str){
         if(str->size > largestStrSize) return str;
         auto it = interned.find(str);
         if(it != interned.end()) return *it;
@@ -59,11 +59,11 @@ namespace memory {
         threadsSuspended = 0;
     }
     void GarbageCollector::checkHeapSize(const size_t size){
-        // Eases up on atomicity
+        // Counters can get away with relaxed memory order
         uint64_t tmpHeapSize = statistics.currentHeapSize.fetch_add(size, std::memory_order_relaxed);
         uint64_t tmpHeapSizeLimit = statistics.collectionThreshold.load(std::memory_order_relaxed);
         if(tmpHeapSize <= tmpHeapSizeLimit && tmpHeapSize+size >= tmpHeapSizeLimit) [[unlikely]]{
-            active = 1;
+            active.store(1, std::memory_order_relaxed);
         }
 #ifdef GC_DEBUG
         numalloc++;
@@ -149,14 +149,12 @@ namespace memory {
             switch (ptr->type) {
                 case +ObjType::ARRAY: {
                     ObjArray *arr = reinterpret_cast<ObjArray *>(ptr);
-                    // Small optimization: if numOfHeapPtrs is 0 then we don't even scan the array for objects
-                    // and if there are objects we only scan until we find all objects
-                    int temp = 0;
-                    int i = 0;
-                    uInt64 arrSize = arr->values.size();
-                    while (i < arrSize && temp < arr->numOfHeapPtr) {
-                        markVal(arr->values[i]);
-                        if (isObj(arr->values[i])) temp++;
+                    // If array doesn't contain objects(arrays of nums are common) don't try to mark contents of arr
+                    markObj(arr->storage);
+                    if(!arr->containsObjects) break;
+                    Value* data = arr->getData();
+                    for(int i = 0; i < arr->size; i++){
+                        markVal(data[i]);
                     }
                     break;
                 }

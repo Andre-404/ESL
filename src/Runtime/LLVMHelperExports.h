@@ -100,11 +100,11 @@ EXPORT Value createArr(uint32_t arrSize){
 }
 
 EXPORT Value* getArrPtr(Value arr){
-    return asArray(arr)->values.data();
+    return asArray(arr)->getData();
 }
 
 EXPORT int64_t getArrSize(Value arr){
-    return asArray(arr)->values.size();
+    return asArray(arr)->size;
 }
 
 EXPORT void gcInit(uint64_t* gcFlag, uintptr_t* frameAddr){
@@ -162,22 +162,6 @@ EXPORT Value hashmapGetV(ObjHashMap* map, ObjString* str){
 // Can't error since if str isn't in map it's inserted as a new value
 EXPORT void hashmapSetV(ObjHashMap* map, ObjString* str, Value v){
     map->fields.insert_or_assign(str, v);
-}
-
-EXPORT Value arrayGetV(ObjArray* arr, Value num){
-    int64_t n = floor(decodeNumber(num));
-    if(n < 0 || n >= arr->values.size()){
-        // TODO: error
-    }
-    return arr->values[n];
-}
-
-EXPORT void arraySetV(ObjArray* arr, Value num, Value v){
-    int64_t n = floor(decodeNumber(num));
-    if(n < 0 || n >= arr->values.size()){
-        // TODO: error
-    }
-    arr->values[n] = v;
 }
 
 EXPORT Obj* gcAlloc(int bytes){

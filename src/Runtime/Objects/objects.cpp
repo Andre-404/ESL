@@ -13,6 +13,7 @@ size_t Obj::getSize(){
     switch(type){
         case +ObjType::STRING: return sizeof(ObjString) + ((ObjString*)this)->size;
         case +ObjType::ARRAY: return sizeof(ObjArray);
+        case +ObjType::ARRAY_STORAGE_HEADER: return sizeof(ObjArrayStorage) + ((ObjArrayStorage*)this)->capacity*sizeof(Value);
         case +ObjType::CLOSURE: return sizeof(ObjClosure);
         case +ObjType::FREEVAR: return sizeof(ObjFreevar);
         case +ObjType::CLASS: return sizeof(ObjClass);
@@ -22,6 +23,7 @@ size_t Obj::getSize(){
         case +ObjType::MUTEX: return sizeof(ObjMutex);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
+    __builtin_unreachable();
 }
 
 void object::runObjDestructor(object::Obj* obj){
@@ -46,8 +48,8 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
         case +ObjType::ARRAY:{
             ObjArray* arr = reinterpret_cast<ObjArray*>(this);
             string str = "[";
-            for(Value& val : arr->values){
-                str.append(" " + valueHelpers::toString(val, stack)).append(",");
+            for(int i = 0; i < arr->size; i++){
+                str.append(" " + valueHelpers::toString(arr->getData()[i], stack)).append(",");
             }
             str.erase(str.size() - 1).append(" ]");
             return str;
@@ -121,14 +123,46 @@ ObjFreevar** ObjClosure::getFreevarArr(){
 #pragma endregion
 
 #pragma region ObjArray
-ObjArray::ObjArray() {
-	type = +ObjType::ARRAY;
-	numOfHeapPtr = 0;
+
+Value* ObjArrayStorage::getData(){
+    return (Value*)(((char*)this)+sizeof(ObjArrayStorage));
 }
-ObjArray::ObjArray(const size_t size) {
-	values.resize(size);
+
+ObjArrayStorage* ObjArrayStorage::allocArray(uint32_t desiredSize){
+    uint64_t capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
+    if(capacity > (1 << 31)){
+        // TODO: error
+    }
+    ObjArrayStorage* store = static_cast<ObjArrayStorage *>(memory::getLocalArena().alloc(
+            sizeof(ObjArrayStorage) + capacity * sizeof(Value)));
+    store->type = +ObjType::ARRAY_STORAGE_HEADER;
+    store->capacity = capacity;
+    return store;
+}
+
+ObjArray::ObjArray() {
+    containsObjects = 0;
+    storage = ObjArrayStorage::allocArray(8);
+    size = 0;
 	type = +ObjType::ARRAY;
-	numOfHeapPtr = 0;
+}
+ObjArray::ObjArray(const size_t _size) {
+    containsObjects = 0;
+    size = _size;
+    storage = ObjArrayStorage::allocArray(size);
+	type = +ObjType::ARRAY;
+}
+
+Value* ObjArray::getData(){
+    return storage->getData();
+}
+void ObjArray::push(Value item){
+    if(size == storage->capacity){
+        ObjArrayStorage* newStorage = ObjArrayStorage::allocArray(storage->capacity+1);
+        memcpy(newStorage->getData(), storage->getData(), size*sizeof(Value));
+        storage = newStorage;
+    }
+    getData()[size++] = item;
 }
 #pragma endregion
 
