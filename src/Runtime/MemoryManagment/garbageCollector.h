@@ -58,9 +58,10 @@ namespace memory {
         uint64_t prevHeapSize;
     };
 
-    class StringInterning{
+    class StringInterner{
     public:
         void internString(object::ObjString* str);
+        // Optimizes checking to avoid having to hash large strings
         object::ObjString* checkInterned(object::ObjString* str);
     private:
         uint64_t largestStrSize = 0;
@@ -86,7 +87,7 @@ namespace memory {
         void markObj(object::Obj* const object);
 
         HeapPageManager pageManager;
-        StringInterning interned;
+        StringInterner interned;
 	private:
         // Notify threads to wake up, or notify a single random thread to run the gc cycle
         std::condition_variable STWcv;

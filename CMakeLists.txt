@@ -15,8 +15,8 @@ find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+#set(CMAKE_CXX_STANDARD 23)
+#set(CMAKE_CXX_STANDARD_REQUIRED True)
 #set(CMAKE_EXE_LINKER_FLAGS "-static")
 
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -43,3 +43,5 @@ message(STATUS "All libraries: ${llvm_libs}")
 
 # Link against LLVM libraries
 target_link_libraries(ESL "${llvm_libs}")
+
+target_compile_features(ESL PUBLIC cxx_std_20)

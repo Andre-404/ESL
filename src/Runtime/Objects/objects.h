@@ -17,6 +17,7 @@ namespace object {
         CLASS,
         INSTANCE,
         ARRAY,
+        ARRAY_STORAGE_HEADER,
         HASH_MAP,
         FILE,
         MUTEX,
@@ -63,15 +64,27 @@ namespace object {
         }
     };
 
+    // Header for array storage
+    class ObjArrayStorage : public Obj{
+    public:
+        uint32_t capacity;
+
+        inline Value* getData();
+
+        static ObjArrayStorage* allocArray(uint32_t capacity);
+    };
 
     class ObjArray : public Obj {
     public:
-        // Used to decrease marking speed, if an array is filled with eg. numbers there is no need to scan it for ptrs
-        // TODO: this doesnt work
-        uInt numOfHeapPtr;
-        vector<Value> values;
+        byte containsObjects;
+        uint32_t size;
+        ObjArrayStorage* storage;
+
         ObjArray();
         ObjArray(const size_t size);
+
+        Value* getData();
+        void push(Value item);
     };
 
     class ObjFreevar : public Obj {
