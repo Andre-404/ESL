@@ -60,10 +60,11 @@ ThreadArena::~ThreadArena(){
 }
 
 [[gnu::hot]] void *ThreadArena::alloc(const size_t size) {
-    // Allocating is lockless, each arena does its own thing
-    // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
+    // Only update gc after LOCAL_BYTE_CACHE bytes have been allocated,
+    // removes pressure from atomic add instruction in checkHeapSize
     localBytesAllocated += size;
     if(localBytesAllocated >= LOCAL_BYTE_CACHE){
+        // TODO: should this also check if the gc pointer isn't null? seems kinda dangerous
         gc->checkHeapSize(localBytesAllocated);
         localBytesAllocated = 0;
     }
@@ -136,7 +137,10 @@ vector<object::Obj*>& ThreadArena::getTempStorage(){
 }
 // If the heap version of GC changed then there is a chance some pages are no longer available to this arena
 void ThreadArena::updateMemoryPools(uint32_t gcHeapVer){
+    // Always reset roving pointer
     for(int i = 0; i < MP_CNT; i++) firstFreePage[i] = pools[i];
+    // GC finds out how much live memory it has during mark phase, reset localBytesAllocated to avoid overreporting
+    localBytesAllocated = 0;
     if(heapVersion == gcHeapVer) return;
     heapVersion = gcHeapVer;
     for(int i = 0; i < MP_CNT; i++){
