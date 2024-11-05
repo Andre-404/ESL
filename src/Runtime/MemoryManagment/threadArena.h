@@ -37,6 +37,7 @@ namespace memory {
         void* fastAlloc(size_t poolIdx);
     };
     ThreadArena& getLocalArena();
+    void deleteLocalArena();
     // Reverts white objects that are alive back to black objects
     void sweepPage(PageData& page);
 }

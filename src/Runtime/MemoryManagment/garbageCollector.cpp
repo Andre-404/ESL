@@ -153,8 +153,12 @@ namespace memory {
                     markObj(arr->storage);
                     if(!arr->containsObjects) break;
                     Value* data = arr->getData();
+                    arr->containsObjects = 0;
                     for(int i = 0; i < arr->size; i++){
-                        markVal(data[i]);
+                        if (isObj(data[i])){
+                            memory::gc->markObj(decodeObj(data[i]));
+                            arr->containsObjects = 1;
+                        }
                     }
                     break;
                 }

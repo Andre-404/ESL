@@ -24,6 +24,7 @@ EXPORT Value ms_since_epoch(ObjClosure* ptr){
 }
 
 EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
+    asArray(arr)->containsObjects |= isObj(top);
     asArray(arr)->push(top);
     return arr;
 }

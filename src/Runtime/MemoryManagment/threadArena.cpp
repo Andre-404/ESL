@@ -19,7 +19,7 @@ static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nu
 [[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
     // Reading from TLS block is expensive in JIT mode since this is linked dynamically
     // To combat this we use a function local cache of thread id and pointer to arena
-    // Calling pthread_self is much less expensive than reading from TLS block(no mutex locking)
+    // Calling pthread_self is a lot less expensive than reading from TLS block
     static pthread_t local_tid = pthread_self();
     static ThreadArena* cachedArena = threadArena;
     // Standard recommends not to do this since pthread_t can be implemented as a struct, but on GCC its uintptr_t
@@ -33,6 +33,10 @@ static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nu
         cachedArena = threadArena;
     }
     return *cachedArena;
+}
+
+[[gnu::always_inline]] void memory::deleteLocalArena(){
+    if(threadArena) delete threadArena;
 }
 
 
