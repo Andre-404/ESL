@@ -13,6 +13,17 @@
 #include "llvm/IR/LLVMContext.h"
 #include <memory>
 
+// JIT needs this if an alloca happens and for some reason it doesn't pick it up from libgcc
+extern "C" {
+#if defined(__x86_64__)
+    void ___chkstk_ms(uint64_t);
+#elif defined(__aarch64__)
+    void __chkstk(uint64_t);
+#elif defined(__arm__)
+    void __chkstk(uint32_t);
+#endif
+}
+
 namespace llvm {
     namespace orc {
 
@@ -27,20 +38,22 @@ namespace llvm {
             IRCompileLayer CompileLayer;
 
             JITDylib &MainJD;
-
         public:
             KaleidoscopeJIT(std::unique_ptr<ExecutionSession> ES,
                             JITTargetMachineBuilder JTMB, DataLayout DL)
                     : ES(std::move(ES)), DL(std::move(DL)), Mangle(*this->ES, this->DL),
-                      ObjectLayer(*this->ES,
-                                  []() { return std::make_unique<SectionMemoryManager>(); }),
-                      CompileLayer(*this->ES, ObjectLayer,
-                                   std::make_unique<ConcurrentIRCompiler>(std::move(JTMB))),
+                      ObjectLayer(*this->ES,[]() { return std::make_unique<SectionMemoryManager>(); }),
+                      CompileLayer(*this->ES, ObjectLayer,std::make_unique<ConcurrentIRCompiler>(std::move(JTMB))),
                       MainJD(this->ES->createBareJITDylib("<main>")) {
+
                 ObjectLayer.setOverrideObjectFlagsWithResponsibilityFlags(true);
-                MainJD.addGenerator(
-                        cantFail(DynamicLibrarySearchGenerator::GetForCurrentProcess(
-                                DL.getGlobalPrefix())));
+                MainJD.addGenerator(cantFail(DynamicLibrarySearchGenerator::GetForCurrentProcess(DL.getGlobalPrefix())));
+
+
+                auto Sym = llvm::orc::absoluteSymbols({{Mangle("___chkstk_ms"),
+                                                        ExecutorSymbolDef(ExecutorAddr::fromPtr(___chkstk_ms),llvm::JITSymbolFlags::Exported)}});
+
+                cantFail(MainJD.define(std::move(Sym)));
             }
 
             ~KaleidoscopeJIT() {
@@ -67,6 +80,7 @@ namespace llvm {
             }
 
             const DataLayout &getDataLayout() const { return DL; }
+            ExecutionSession &getES() { return *ES; }
 
             JITDylib &getMainJITDylib() { return MainJD; }
 
