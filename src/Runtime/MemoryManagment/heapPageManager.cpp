@@ -100,6 +100,20 @@ void HeapPageManager::prepForCollection(){
     }
 }
 
+void HeapPageManager::moveArenaPagesToGraveyard(ThreadArena& arena){
+    // Need to lock because modifying graveyard is not threadsafe
+    std::scoped_lock<std::mutex> lk(allocMtx);
+    for(int i = 0; i < MP_CNT; i++){
+        // Chain linked list from arena to graveyard
+        PageData* pg = arena.getMemoryPool(i);
+        if(!pg) continue;
+        PageData* tmp = pg;
+        while(tmp->next) tmp = tmp->next;
+        tmp->next = graveyard[i];
+        graveyard[i] = pg;
+    }
+}
+
 void HeapPageManager::cleanUpPage(PageData* page, uint32_t newSizeClass){
     // If block sizes are the same no need to destruct every objects now, defer it to lazy sweeping
     page->head = 0;

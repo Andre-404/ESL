@@ -16,27 +16,25 @@
 using namespace memory;
 
 static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nullptr;
+
+// TODO: optimize this, getting TLS is very slow
 [[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
-    // Reading from TLS block is expensive in JIT mode since this is linked dynamically
-    // To combat this we use a function local cache of thread id and pointer to arena
-    // Calling pthread_self is a lot less expensive than reading from TLS block
-    static pthread_t local_tid = pthread_self();
-    static ThreadArena* cachedArena = threadArena;
-    // Standard recommends not to do this since pthread_t can be implemented as a struct, but on GCC its uintptr_t
-    // This could cause problems when compiling with other compilers
-    if(local_tid != pthread_self()){
-        cachedArena = threadArena;
-        local_tid = pthread_self();
-    }
-    if(!cachedArena)[[unlikely]]{
+    if(!threadArena)[[unlikely]]{
         threadArena = new ThreadArena();
-        cachedArena = threadArena;
+        rpmalloc_thread_initialize();
     }
-    return *cachedArena;
+    return *threadArena;
 }
 
+// Upon thread death, if it allocated some pages move them to a global graveyard and remove the stack start
 [[gnu::always_inline]] void memory::deleteLocalArena(){
-    if(threadArena) delete threadArena;
+    if(threadArena) {
+        // TODO: Both of these operations needs to lock their respective mutexes, maybe try making it use only 1?
+        gc->pageManager.moveArenaPagesToGraveyard(*threadArena);
+        gc->removeStackStart(std::this_thread::get_id());
+        delete threadArena;
+    }
+    rpmalloc_thread_finalize(1);
 }
 
 

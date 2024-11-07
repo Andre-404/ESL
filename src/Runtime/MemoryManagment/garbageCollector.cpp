@@ -13,15 +13,15 @@
 using namespace valueHelpers;
 
 // start size of heap in KB
-#define HEAP_START_SIZE 1024
+#define HEAP_START_SIZE 1024*64
 
 
 NOINLINE uintptr_t *getStackPointer() {
   return (uintptr_t *)(GET_FRAME_ADDRESS);
 }
 #ifdef GC_DEBUG
-static uint64_t numalloc = 0;
-static uint64_t marked = 0;
+static std::atomic<uint64_t> numalloc = 0;
+static std::atomic<uint64_t> marked = 0;
 #endif
 namespace memory {
     GarbageCollector *gc = nullptr;
@@ -280,11 +280,13 @@ namespace memory {
     void GarbageCollector::removeStackStart(const std::thread::id thread) {
         {
             std::scoped_lock<std::mutex> lk(pauseMtx);
-            // TODO: put giving pages here
             threadsStack.erase(thread);
         }
         // Only notify on deletion
         STWcv.notify_one();
+    }
+    void moveDeadArenaPages(ThreadArena& arena){
+
     }
     void GarbageCollector::setStackEnd(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena){
         {

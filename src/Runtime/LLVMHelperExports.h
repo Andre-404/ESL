@@ -5,14 +5,11 @@
 #include "MemoryManagment/garbageCollector.h"
 #include <csetjmp>
 #include <stdarg.h>
-#include "unwind.h"
-#include <any>
 
 #define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
 #define __READ_RSP() __asm__ volatile("movq %%rsp, %0" : "=r"(__rsp))
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
-
 
 EXPORT NOINLINE void stopThread(){
     if(!memory::gc) return;
@@ -176,5 +173,20 @@ EXPORT void gcInternStr(Value val){
     memory::gc->interned.internString(ptr);
 }
 
+using wrapper = void*(*)(void*);
+
+EXPORT void createNewThread(wrapper llvmWrapper, int64_t* alloca){
+    pthread_t p;
+    pthread_create(&p, nullptr, llvmWrapper, alloca);
+}
+
+EXPORT void threadInit(uintptr_t* frameAddr){
+    memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
+}
+
+EXPORT void threadDestruct(){
+    memory::deleteLocalArena();
+    memory::gc->removeStackStart(std::this_thread::get_id());
+}
 
 #undef EXPORT

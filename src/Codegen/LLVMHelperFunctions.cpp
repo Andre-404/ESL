@@ -51,6 +51,12 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
 
     types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
+
+    types["ObjArrayStorage"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32)}, "ObjArrayStorage");
+    types["ObjArrayStoragePtr"] = PTR_TY(types["ObjArrayStorage"]);
+
+    types["ObjArray"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int32), types["ObjArrayStoragePtr"]}, "ObjArray");
+    types["ObjArrayPtr"] = PTR_TY(types["ObjArray"]);
 }
 
 void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
@@ -125,6 +131,11 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
+
+    llvm::FunctionType* fnty = llvm::FunctionType::get(PTR_TY(TYPE(Void)), PTR_TY(TYPE(Int64)), false);
+    CREATE_FUNC("createNewThread", false, TYPE(Void), PTR_TY(fnty), builder.getPtrTy());
+    CREATE_FUNC("threadInit", false, TYPE(Void), builder.getPtrTy());
+    CREATE_FUNC("threadDestruct", false, TYPE(Void));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
@@ -394,7 +405,25 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         F->insert(F->end(), notObjBB);
         builder.SetInsertPoint(notObjBB);
         builder.CreateRet(builder.getInt1(false));
-
         llvm::verifyFunction(*F);
     }();
+
+    {
+        llvm::Function *F = createFunc("decodeArray",llvm::FunctionType::get(types["ObjArrayPtr"], eslValTy,false));
+        llvm::Value* tmp = builder.CreateCall(module->getFunction("decodeObj"), F->getArg(0));
+        tmp = builder.CreateBitCast(tmp, types["ObjArrayPtr"]);
+        builder.CreateRet(tmp);
+        llvm::verifyFunction(*F);
+    }
+    {
+        llvm::Function *F = createFunc("arrWriteBarrier",llvm::FunctionType::get(TYPE(Void), {types["ObjArrayPtr"], eslValTy}, false));
+        llvm::Value* ptr = builder.CreateConstInBoundsGEP2_32(types["ObjArray"], F->getArg(0), 0, 1);
+        llvm::Value* tmp = builder.CreateLoad(TYPE(Int8), ptr, "has.obj");
+        llvm::Value* isObj = builder.CreateCall(module->getFunction("isObj"), F->getArg(1));
+        isObj = builder.CreateZExt(isObj, TYPE(Int8));
+        tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
+        builder.CreateStore(tmp, ptr);
+        builder.CreateRetVoid();
+        llvm::verifyFunction(*F);
+    }
 }

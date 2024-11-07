@@ -45,7 +45,10 @@ string valueHelpers::typeToStr(Value x) {
                 case +ObjType::ARRAY: return "<array>";
                 case +ObjType::CLASS: return "<class " + string(asClass(x)->name) + ">";
                 case +ObjType::CLOSURE: return "<function>";
-                case +ObjType::INSTANCE: return "<instance: " + string(asInstance(x)->klass->name) + ">";
+                case +ObjType::INSTANCE: {
+                    ObjInstance* inst = asInstance(x);
+                    return "<instance: " + string(inst->klass->name) + ">";
+                }
                 case +ObjType::STRING: return "<string>";
                 case +ObjType::FREEVAR: return "<upvalue>";
                 case +ObjType::HASH_MAP: return "<hash map>";

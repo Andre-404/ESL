@@ -164,14 +164,15 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr);
         llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr);
         llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr);
+        llvm::Value *codegenCollectionIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::CollectionGet> expr);
         llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
 
         // Functions helpers
-        llvm::Function* createNewFunc(const string name, const std::shared_ptr<types::FunctionType> fnTy);
+        llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
-        llvm::Value* createFuncCall(llvm::Value* closureVal, vector<llvm::Value*> args, Token dbg);
+        std::pair<llvm::Value*, llvm::FunctionType*> setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
         void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
         std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
 
@@ -206,6 +207,11 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
                                        string field, vector<llvm::Value*> args, Token dbg);
 
+        // Multithreading
+        // Unfortunately right now we need to create a threadWrapper for each spawn statement
+        llvm::Function* createThreadWrapperDirectCall(llvm::Function* func, int numArgs);
+        llvm::Function* createThreadWrapperIndirectCall(llvm::FunctionType* funcType, int numArgs);
+
         // Const objects
         llvm::Constant* createESLString(const string& str);
         llvm::Constant* createConstObjHeader(int type);
@@ -218,14 +224,16 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* CastToESLVal(llvm::Value* val);
         llvm::Constant* ConstCastToESLVal(llvm::Constant* constant);
         llvm::Type* getESLValType();
+
         // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        void implementNativeFunctions(fastMap<string, types::tyVarIdx>& natives);
+        void generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives);
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
-
+        // Declares both user and native functions
+        void declareFunctions();
 
         #pragma endregion
 	};

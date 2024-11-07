@@ -35,6 +35,8 @@ namespace memory{
         uint16_t numBlocks;
     };
 
+    class ThreadArena;
+
     class HeapPageManager{
     public:
         HeapPageManager();
@@ -42,6 +44,7 @@ namespace memory{
         PageData* getPageFromPtr(char* ptr);
         uint32_t updateEmptyBuffer();
         void prepForCollection();
+        void moveArenaPagesToGraveyard(ThreadArena& arena);
     private:
         // This needs to be a vector to allow for efficient binary search
         vector<PageData*> inUse;

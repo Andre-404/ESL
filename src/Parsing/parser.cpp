@@ -726,6 +726,7 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
 shared_ptr<SpawnStmt> Parser::spawnStmt(){
     Token keyword = previous();
     ASTNodePtr expr = expression();
+    consume(TokenType::SEMICOLON, "Expected ';' after expression.");
     if (expr->type != ASTType::CALL) throw error(keyword, "Expected a call after 'spawn'.");
     auto call = std::static_pointer_cast<CallExpr>(expr);
     return make_shared<SpawnStmt>(call, keyword);
