@@ -285,9 +285,6 @@ namespace memory {
         // Only notify on deletion
         STWcv.notify_one();
     }
-    void moveDeadArenaPages(ThreadArena& arena){
-
-    }
     void GarbageCollector::setStackEnd(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena){
         {
             std::scoped_lock<std::mutex> lk(pauseMtx);

@@ -172,9 +172,9 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
-        std::pair<llvm::Value*, llvm::FunctionType*> setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
+        llvm::FunctionCallee setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
         void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
-        std::pair<llvm::Value*, llvm::FunctionType*> getBitcastFunc(llvm::Value* closurePtr, const int argc);
+        llvm::FunctionCallee getBitcastFunc(llvm::Value* closurePtr, const int argc);
 
         // Array optimization
         void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
@@ -197,20 +197,21 @@ class Compiler : public typedAST::TypedASTCodegen {
 
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
         llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
-        llvm::Value* instGetUnoptimized(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass, string field);
-        std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, llvm::Constant* field);
+        llvm::Value* instGetUnoptimized(llvm::Value* inst, string fieldName, Token dbg);
+        std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, string field);
+        std::pair<llvm::Value*, llvm::Value*> instGetClassPtr(llvm::Value* inst, Token dbg);
+        llvm::Value* instGetIdxType(llvm::Value* fieldIdx, llvm::Value* methodIdx);
 
         llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
         llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
 
-        llvm::Value* optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
-        llvm::Value* unoptimizedInvoke(llvm::Value* inst, llvm::Value* fieldIdx, llvm::Value* methodIdx, llvm::Value* klass,
-                                       string field, vector<llvm::Value*> args, Token dbg);
+        llvm::FunctionCallee optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
+        llvm::Value* unoptimizedInvoke(llvm::Value* inst, string field, vector<llvm::Value*> args, Token dbg);
 
         // Multithreading
         // Unfortunately right now we need to create a threadWrapper for each spawn statement
-        llvm::Function* createThreadWrapperDirectCall(llvm::Function* func, int numArgs);
-        llvm::Function* createThreadWrapperIndirectCall(llvm::FunctionType* funcType, int numArgs);
+        llvm::Function* createThreadWrapper(llvm::FunctionType* funcType, int numArgs);
+        void setupThreadCreation(llvm::FunctionCallee callee, vector<llvm::Value*>& args);
 
         // Const objects
         llvm::Constant* createESLString(const string& str);
