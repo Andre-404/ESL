@@ -7,6 +7,10 @@
 #include <future>
 #include <thread>
 
+namespace memory{
+    class ThreadArena;
+}
+
 namespace object {
 
     enum class ObjType {
@@ -32,7 +36,7 @@ namespace object {
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
         // This reroutes the new operator to take memory which the GC gives out
-        void* operator new(const size_t size);
+        void* operator new(const size_t size, memory::ThreadArena& allocator);
     };
 
     void runObjDestructor(object::Obj* obj);
@@ -47,9 +51,9 @@ namespace object {
 
         bool compare(const string other);
 
-        ObjString* concat(ObjString* other);
+        ObjString* concat(ObjString* other, memory::ThreadArena& allocator);
 
-        static ObjString* createStr(char* str);
+        static ObjString* createStr(char* str, memory::ThreadArena& allocator);
 
     };
 
@@ -71,7 +75,7 @@ namespace object {
 
         inline Value* getData();
 
-        static ObjArrayStorage* allocArray(uint32_t capacity);
+        static ObjArrayStorage* allocArray(uint32_t capacity, memory::ThreadArena& allocator);
     };
 
     class ObjArray : public Obj {
@@ -80,11 +84,11 @@ namespace object {
         uint32_t size;
         ObjArrayStorage* storage;
 
-        ObjArray();
-        ObjArray(const size_t size);
+        ObjArray(memory::ThreadArena& allocator);
+        ObjArray(const size_t size, memory::ThreadArena& allocator);
 
         Value* getData();
-        void push(Value item);
+        void push(Value item, memory::ThreadArena& allocator);
     };
 
     class ObjFreevar : public Obj {

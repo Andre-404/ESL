@@ -12,9 +12,10 @@
 namespace llvmHelpers {
     llvm::Type* getESLValType(llvm::LLVMContext& ctx);
     void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module,
-                                                                    std::unique_ptr<llvm::LLVMContext> &context,
-                                                                    llvm::IRBuilder<>& builder,
-                                                                    ankerl::unordered_dense::map<string, llvm::Type*>& types);
+                                    std::unique_ptr<llvm::LLVMContext> &context,
+                                    llvm::IRBuilder<>& builder,
+                                    ankerl::unordered_dense::map<string, llvm::Type*>& types,
+                                    std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT);
 
     void runModule(std::unique_ptr<llvm::Module> module, std::unique_ptr<llvm::LLVMContext> ctx,
                    std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT, std::unique_ptr<llvm::TargetMachine> machine,

@@ -8,6 +8,9 @@ namespace object{
 }
 
 namespace memory {
+    struct ThreadLocalData{
+        ThreadArena* arena;
+    };
     enum class GCAllocType{ MALLOC = MP_CNT, CONSTANT = 128 };
     inline constexpr byte operator+ (GCAllocType const val) { return static_cast<byte>(val); }
     enum GCBlockColor{ WHITE = 1, BLACK = 2, CONSTANT = 3 };
@@ -36,8 +39,8 @@ namespace memory {
 
         void* fastAlloc(size_t poolIdx);
     };
-    ThreadArena& getLocalArena();
-    void deleteLocalArena();
+    ThreadArena& getLocalArena(ThreadLocalData* threadData);
+    void deleteLocalArena(ThreadLocalData* threadData);
     // Reverts white objects that are alive back to black objects
     void sweepPage(PageData& page);
 }

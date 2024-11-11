@@ -74,8 +74,8 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
     return "cannot stringfy object";
 }
 
-void* Obj::operator new(const size_t size) {
-    return memory::getLocalArena().alloc(size);
+void* Obj::operator new(const size_t size, memory::ThreadArena& allocator) {
+    return allocator.alloc(size);
 }
 #pragma endregion
 
@@ -88,9 +88,8 @@ bool ObjString::compare(const string other) {
 	return std::strcmp(str, other.c_str()) == 0;
 }
 
-ObjString* ObjString::concat(ObjString* other) {
-    ObjString* newStr = static_cast<ObjString *>(
-            memory::getLocalArena().alloc(sizeof(ObjString) + size + other->size +1));
+ObjString* ObjString::concat(ObjString* other, ThreadArena& allocator) {
+    ObjString* newStr = static_cast<ObjString *>(allocator.alloc(sizeof(ObjString) + size + other->size +1));
     newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
     newStr->size = size + other->size;
@@ -101,9 +100,8 @@ ObjString* ObjString::concat(ObjString* other) {
     return memory::gc->interned.checkInterned(newStr);
 }
 
-ObjString* ObjString::createStr(char* str){
-    ObjString* newStr = static_cast<ObjString *>(
-            memory::getLocalArena().alloc(sizeof(ObjString) + std::strlen(str) +1));
+ObjString* ObjString::createStr(char* str, memory::ThreadArena& allocator){
+    ObjString* newStr = static_cast<ObjString *>(allocator.alloc(sizeof(ObjString) + std::strlen(str) +1));
     newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
     newStr->size = std::strlen(str);
@@ -128,37 +126,37 @@ Value* ObjArrayStorage::getData(){
     return (Value*)(((char*)this)+sizeof(ObjArrayStorage));
 }
 
-ObjArrayStorage* ObjArrayStorage::allocArray(uint32_t desiredSize){
+ObjArrayStorage* ObjArrayStorage::allocArray(uint32_t desiredSize, memory::ThreadArena& allocator){
     uint64_t capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
     if(capacity > (1 << 31)){
         // TODO: error
     }
-    ObjArrayStorage* store = static_cast<ObjArrayStorage *>(memory::getLocalArena().alloc(
+    ObjArrayStorage* store = static_cast<ObjArrayStorage *>(allocator.alloc(
             sizeof(ObjArrayStorage) + capacity * sizeof(Value)));
     store->type = +ObjType::ARRAY_STORAGE_HEADER;
     store->capacity = capacity;
     return store;
 }
 
-ObjArray::ObjArray() {
+ObjArray::ObjArray(memory::ThreadArena& allocator) {
     containsObjects = 0;
-    storage = ObjArrayStorage::allocArray(8);
+    storage = ObjArrayStorage::allocArray(8, allocator);
     size = 0;
 	type = +ObjType::ARRAY;
 }
-ObjArray::ObjArray(const size_t _size) {
+ObjArray::ObjArray(const size_t _size, memory::ThreadArena& allocator) {
     containsObjects = 0;
     size = _size;
-    storage = ObjArrayStorage::allocArray(size);
+    storage = ObjArrayStorage::allocArray(size, allocator);
 	type = +ObjType::ARRAY;
 }
 
 Value* ObjArray::getData(){
     return storage->getData();
 }
-void ObjArray::push(Value item){
+void ObjArray::push(Value item, memory::ThreadArena& allocator){
     if(size == storage->capacity){
-        ObjArrayStorage* newStorage = ObjArrayStorage::allocArray(storage->capacity+1);
+        ObjArrayStorage* newStorage = ObjArrayStorage::allocArray(storage->capacity+1, allocator);
         memcpy(newStorage->getData(), storage->getData(), size*sizeof(Value));
         storage = newStorage;
     }

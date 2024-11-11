@@ -61,6 +61,16 @@ namespace llvm {
                     ES->reportError(std::move(Err));
             }
 
+            void addSymbol(StringRef name, void* ptr){
+                auto Sym = llvm::orc::absoluteSymbols({{Mangle(name),
+                                                        ExecutorSymbolDef(ExecutorAddr::fromPtr(ptr),
+                                                                          llvm::JITSymbolFlags::Exported |     // Make visible to JIT'd code
+                                                                          llvm::JITSymbolFlags::Callable |     // It's a function
+                                                                          llvm::JITSymbolFlags::Absolute)}});
+
+                cantFail(MainJD.define(std::move(Sym)));
+            }
+
             static Expected<std::unique_ptr<KaleidoscopeJIT>> Create() {
                 auto EPC = SelfExecutorProcessControl::Create();
                 if (!EPC)

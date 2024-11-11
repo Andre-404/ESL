@@ -294,14 +294,14 @@ namespace memory {
             finishSweep(arena);
         }
     }
-
-    void GarbageCollector::tryLockUserMutex(std::mutex& mtx){
+    // TODO: fix this
+    void GarbageCollector::tryLockUserMutex(std::mutex& mtx, ThreadArena& threadArena){
         // Get stack end(lowest address) and then spill the registers to the stack
         jmp_buf jb;
         setjmp(jb);
         uintptr_t* stackEnd;
         __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
-        setStackEnd(std::this_thread::get_id(), stackEnd, getLocalArena());
+        setStackEnd(std::this_thread::get_id(), stackEnd, threadArena);
         // Let GC know this thread will now try to lock mtx and could block
         threadsSuspended++;
         mtx.lock();
@@ -310,7 +310,7 @@ namespace memory {
         // (so locking it here will block until GC finishes)
         std::scoped_lock<std::mutex> lk(pauseMtx);
         threadsSuspended--;
-        getLocalArena().updateMemoryPools(statistics.heapVer);
+        threadArena.updateMemoryPools(statistics.heapVer);
     }
 
     void GarbageCollector::suspendThread(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena) {

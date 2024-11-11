@@ -18,7 +18,8 @@
 #include <iostream>
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
-    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, name, module.get())
+    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get()); \
+    JIT->addSymbol(#name, reinterpret_cast<void*>(name))
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
@@ -63,11 +64,11 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
-                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types,
+                                             std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT){
     createLLVMTypes(ctx, types);
     llvm::Type* eslValTy = getESLValType(*ctx);
-
-    auto fn = CREATE_FUNC("tyErrSingle", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
+    auto fn = CREATE_FUNC(tyErrSingle, false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
@@ -75,7 +76,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::NoFree);
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::MustProgress);
-    fn = CREATE_FUNC("tyErrDouble", false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy, eslValTy);
+    fn = CREATE_FUNC(tyErrDouble, false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy, eslValTy);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     fn->addFnAttr(llvm::Attribute::Memory);
@@ -85,26 +86,26 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::MustProgress);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     // Helper from C std lib
-    CREATE_FUNC("printf", true, TYPE(Int32), PTR_TY(TYPE(Int8)));
-    CREATE_FUNC("exit", false, TYPE(Void), TYPE(Int32));
+    CREATE_FUNC(printf, true, TYPE(Int32), PTR_TY(TYPE(Int8)));
+    CREATE_FUNC(exit, false, TYPE(Void), TYPE(Int32));
 
     // ret: Value, args: lhs, rhs - both are known to be strings
-    CREATE_FUNC("strAdd", false, eslValTy, eslValTy, eslValTy);
+    CREATE_FUNC(strAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy);
     // Same as strAdd, but has additional information in case of error, additional args: file name, line
-    CREATE_FUNC("strTryAdd", false, eslValTy, eslValTy, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int32));
-    CREATE_FUNC("strCmp", false, eslValTy, eslValTy, eslValTy);
+    CREATE_FUNC(strTryAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int32));
+    CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy);
     // Invoked by gc.safepoint
-    CREATE_FUNC("stopThread", false, TYPE(Void));
+    CREATE_FUNC(stopThread, false, TYPE(Void), builder.getPtrTy());
     // ret: Value, args: arr size
-    CREATE_FUNC("createArr", false, eslValTy, TYPE(Int32));
-    CREATE_FUNC("getArrPtr", false, PTR_TY(eslValTy), eslValTy);
-    CREATE_FUNC("getArrSize", false, TYPE(Int64), eslValTy);
+    CREATE_FUNC(createArr, false, eslValTy, builder.getPtrTy(), TYPE(Int32));
+    CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy);
+    CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy);
 
-    CREATE_FUNC("gcInit", false, TYPE(Void), PTR_TY(TYPE(Int64)), PTR_TY(TYPE(Int8)));
-    CREATE_FUNC("gcInternStr", false ,TYPE(Void), eslValTy);
+    CREATE_FUNC(gcInit, false, TYPE(Void), PTR_TY(TYPE(Int64)));
+    CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy);
     // Marks a pointer to a variable as a gc root, this is used for all global variables
-    CREATE_FUNC("addGCRoot", false, TYPE(Void), PTR_TY(eslValTy));
-    fn = CREATE_FUNC("gcAlloc", false, types["ObjPtr"], TYPE(Int32));
+    CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy));
+    fn = CREATE_FUNC(gcAlloc, false, types["ObjPtr"], builder.getPtrTy(), TYPE(Int64));
     fn->addFnAttr(llvm::Attribute::get(*ctx, "allockind", "alloc"));
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::NoCallback);
@@ -122,20 +123,18 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addRetAttr(llvm::Attribute::NoUndef);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
-    CREATE_FUNC("createHashMap", true, eslValTy, TYPE(Int32));
-    // Creates a freevar(no args needed, its initialized to nil)
-    CREATE_FUNC("createFreevar", false, types["ObjFreevarPtr"]);
+    CREATE_FUNC(createHashMap, true, eslValTy, builder.getPtrTy(), TYPE(Int32));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
-    CREATE_FUNC("createClosure", true, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
+    CREATE_FUNC(createClosure, true, eslValTy, builder.getPtrTy(), PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
-    CREATE_FUNC("hashmapGetV", false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
+    CREATE_FUNC(hashmapGetV, false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
-    CREATE_FUNC("hashmapSetV", false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
+    CREATE_FUNC(hashmapSetV, false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
 
     llvm::FunctionType* fnty = llvm::FunctionType::get(PTR_TY(TYPE(Void)), PTR_TY(TYPE(Int64)), false);
-    CREATE_FUNC("createNewThread", false, TYPE(Void), PTR_TY(fnty), builder.getPtrTy());
-    CREATE_FUNC("threadInit", false, TYPE(Void), builder.getPtrTy());
-    CREATE_FUNC("threadDestruct", false, TYPE(Void));
+    CREATE_FUNC(createNewThread, false, TYPE(Void), PTR_TY(fnty), builder.getPtrTy());
+    CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy());
+    CREATE_FUNC(threadDestruct, false, TYPE(Void));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
@@ -165,9 +164,9 @@ void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_pt
     // Create the pass manager.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     MPM.run(*module, MAM);
-    for(auto& it : module->functions()) {
+    /*for(auto& it : module->functions()) {
         SafepointPass.run(it, FAM);
-    }
+    }*/
 
 
     #ifdef COMPILER_DEBUG
@@ -317,7 +316,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
     // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
     [&]{
-        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "gc.safepoint_poll", module.get());
+        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), builder.getPtrTy(), false), llvm::Function::ExternalLinkage, "safepoint_poll", module.get());
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
         builder.SetInsertPoint(BB);
         llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
@@ -332,7 +331,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        auto call = builder.CreateCall(module->getFunction("stopThread"));
+        auto call = builder.CreateCall(module->getFunction("stopThread"), F->getArg(0));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
@@ -399,8 +398,8 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         idxStart = builder.CreateLoad(TYPE(Int32), idxStart, "idxStart");
         idxEnd = builder.CreateLoad(TYPE(Int32), idxEnd, "idxEnd");
 
-        auto cmp = builder.CreateAnd(builder.CreateICmpSGE(subclassIdxStart, idxStart),
-                                             builder.CreateICmpSLE(subclassIdxEnd, idxEnd));
+        auto cmp = builder.CreateAnd(builder.CreateICmpUGE(idxStart, subclassIdxStart),
+                                             builder.CreateICmpULE(idxEnd, subclassIdxEnd));
         builder.CreateRet(cmp);
         F->insert(F->end(), notObjBB);
         builder.SetInsertPoint(notObjBB);

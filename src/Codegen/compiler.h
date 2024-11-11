@@ -235,6 +235,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
         // Declares both user and native functions
         void declareFunctions();
+        void createMainEntrypoint(string entrypointName);
+        llvm::Value* getThreadData();
 
         #pragma endregion
 	};

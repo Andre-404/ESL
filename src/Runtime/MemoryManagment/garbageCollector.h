@@ -78,7 +78,7 @@ namespace memory {
         void addStackStart(const std::thread::id thread, uintptr_t* stackStart);
         void removeStackStart(const std::thread::id thread);
         void setStackEnd(const std::thread::id thread, uintptr_t *stackEnd, ThreadArena& arena);
-        void tryLockUserMutex(std::mutex& mtx);
+        void tryLockUserMutex(std::mutex& mtx, ThreadArena& threadArena);
         // Called by each thread, last thread that suspends executes the collecting
         // Note: any place where threadsSuspended is incremented should have a defined stack end before it
         // If a thread is considered suspended its stack start and end must be valid pointers

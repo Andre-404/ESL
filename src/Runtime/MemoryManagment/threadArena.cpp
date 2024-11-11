@@ -15,26 +15,23 @@
 
 using namespace memory;
 
-static __thread ThreadArena* threadArena [[gnu::tls_model("initial-exec")]] = nullptr;
-
-// TODO: optimize this, getting TLS is very slow
-[[gnu::always_inline]] ThreadArena& memory::getLocalArena(){
-    if(!threadArena)[[unlikely]]{
-        threadArena = new ThreadArena();
+[[gnu::always_inline]] memory::ThreadArena& memory::getLocalArena(ThreadLocalData* threadData){
+    if(!threadData->arena)[[unlikely]]{
+        threadData->arena = new memory::ThreadArena();
         rpmalloc_thread_initialize();
     }
-    return *threadArena;
+    return *threadData->arena;
 }
 
 // Upon thread death, if it allocated some pages move them to a global graveyard and remove the stack start
-[[gnu::always_inline]] void memory::deleteLocalArena(){
-    if(threadArena) {
+[[gnu::always_inline]] void memory::deleteLocalArena(ThreadLocalData* threadData){
+    if(threadData->arena) {
         // TODO: Both of these operations needs to lock their respective mutexes, maybe try making it use only 1?
-        gc->pageManager.moveArenaPagesToGraveyard(*threadArena);
+        gc->pageManager.moveArenaPagesToGraveyard(*threadData->arena);
         gc->removeStackStart(std::this_thread::get_id());
-        delete threadArena;
+        delete threadData->arena;
+        rpmalloc_thread_finalize(1);
     }
-    rpmalloc_thread_finalize(1);
 }
 
 
