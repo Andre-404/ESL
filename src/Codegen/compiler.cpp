@@ -867,7 +867,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     vector<llvm::Constant*> methods(stmt->methods.size());
     for(auto [mName, method] : stmt->methods){
         llvm::Function* methodFn = functions[method.first.code->fnTy];
-        methodFn->setName(mName);
+        methodFn->setName(stmt->fullName + mName);
         // Functions are already forward declared
         methodDecl[mName] = methodFn;
         // Creates an ObjClosure associated with this method
@@ -1578,21 +1578,6 @@ llvm::Function* Compiler::createMethodChooseFunc(string className, std::unordere
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
-    return fn;
-}
-
-llvm::Function* Compiler::forwardDeclMethod(typedAST::ClassMethod& method){
-    // Create a function type with the appropriate number of arguments
-    vector<llvm::Type*> params;
-    // First argument is always the closure structure
-    for(int i = 0; i < method.code->fnTy->argCount+1; i++) params.push_back(getESLValType());
-    llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
-    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, method.code->name, curModule.get());
-    fn->addFnAttr("frame-pointer", "all");
-    fn->addFnAttr("no-stack-arg-probe");
-    // Creates a connection between function types and functions
-    functions.insert_or_assign(method.code->fnTy, fn);
-    fn->setGC("statepoint-example");
     return fn;
 }
 void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd,
