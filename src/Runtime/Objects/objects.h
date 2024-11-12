@@ -25,6 +25,7 @@ namespace object {
         HASH_MAP,
         FILE,
         MUTEX,
+        CHANNEL,
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
@@ -123,9 +124,6 @@ namespace object {
         const char* name;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
-        // We use ObjClosure* instead of ObjClosure** for optimization purposes to avoid having to allocate
-        // each ObjClosure individually and scatter it in memory
-        //ObjClosure* methods;
 
         ObjClass(string _name);
     };

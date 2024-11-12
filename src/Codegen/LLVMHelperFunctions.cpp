@@ -41,13 +41,15 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
                                                                      PTR_TY(TYPE(Int8))}, "ObjClosure");
+    types["ObjClosureAligned"] = llvm::StructType::create(*ctx, {types["ObjClosure"], TYPE(Int64)}, "ObjClosureAligned");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
 
 
     auto classType = llvm::StructType::create(*ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
     auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
-    classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy)});
+    // Last int64 is for padding
+    classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64)});
     types["ObjClass"] = classType;
 
     types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
@@ -300,11 +302,12 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::verifyFunction(*f);
     }();
     [&]{
-        llvm::Function* f = createFunc("encodeObj",llvm::FunctionType::get(eslValTy, PTR_TY(types["Obj"]),false));
-        // MASK_SIGNATURE_OBJ | (Int64)x
+        llvm::Function* f = createFunc("encodeObj",llvm::FunctionType::get(eslValTy, {PTR_TY(types["Obj"]), builder.getInt64Ty()},false));
+        // MASK_SIGNATURE_OBJ | type | (Int64)x
         auto cast = builder.CreatePtrToInt(f->getArg(0), builder.getInt64Ty());
         auto const1 = builder.getInt64(MASK_SIGNATURE_OBJ);
-        builder.CreateRet(builder.CreateIntToPtr(builder.CreateOr(const1, cast), eslValTy));
+        llvm::Value* mask = builder.CreateOr(const1, f->getArg(1));
+        builder.CreateRet(builder.CreateIntToPtr(builder.CreateOr(mask, cast), eslValTy));
         llvm::verifyFunction(*f);
     }();
     [&]{
@@ -349,25 +352,14 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
     [&]{
         llvm::Function* F = createFunc("isObjType",llvm::FunctionType::get(TYPE(Int1), {eslValTy, TYPE(Int8)},false));
-        auto arg = F->getArg(0);
+        // (x & (MASK_SIGNATURE | MASK_PAYLOAD_TYPE)) == (MASK_SIGNATURE_OBJ | expectedType)
+        auto arg = ESLValToI64(F->getArg(0), builder);
 
-        auto cond1 = builder.CreateCall(module->getFunction("isObj"), arg);
-        auto objTy = F->getArg(1);
-        llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
-        llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkType", F);
-        cond1 = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond1, builder.getInt1(true)});
-        builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
+        llvm::Value* mask = builder.getInt64(MASK_SIGNATURE | MASK_PAYLOAD_TYPE);
 
-        builder.SetInsertPoint(checkTypeBB);
-        auto castPtr = builder.CreateCall(module->getFunction("decodeObj"), arg);
-        vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-        auto ptr = builder.CreateInBoundsGEP(types["Obj"], castPtr, idxList);
-        auto type = builder.CreateLoad(builder.getInt8Ty(), ptr);
-        builder.CreateRet(builder.CreateICmpEQ(type, objTy));
-
-        F->insert(F->end(), notObjBB);
-        builder.SetInsertPoint(notObjBB);
-        builder.CreateRet(builder.getInt1(false));
+        llvm::Value* res = builder.CreateAnd(arg, mask, "val.type");
+        llvm::Value* expected = builder.CreateOr(builder.getInt64(MASK_SIGNATURE_OBJ), builder.CreateZExt(F->getArg(1), builder.getInt64Ty()), "expected");
+        builder.CreateRet(builder.CreateICmpEQ(res, expected, "is.obj"));
 
         llvm::verifyFunction(*F);
     }();
@@ -388,7 +380,6 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
         builder.SetInsertPoint(checkTypeBB);
         inst = builder.CreateCall(module->getFunction("decodeObj"), {inst});
-        inst = builder.CreateBitCast(inst, types["ObjInstancePtr"]);
         auto ptr = builder.CreateInBoundsGEP(types["ObjInstance"], inst,
                                              {builder.getInt32(0), builder.getInt32(2)});
         ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);

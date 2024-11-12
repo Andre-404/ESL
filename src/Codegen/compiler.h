@@ -164,7 +164,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr);
         llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr);
         llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr);
-        llvm::Value *codegenCollectionIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::CollectionGet> expr);
         llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
 
@@ -216,7 +215,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         // Const objects
         llvm::Constant* createESLString(const string& str);
         llvm::Constant* createConstObjHeader(int type);
-        llvm::Constant* constObjToVal(llvm::Constant* obj);
+        llvm::Constant* constObjToVal(llvm::Constant* obj, uint8_t type);
         llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
 
         // ESL val casting

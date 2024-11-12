@@ -17,7 +17,7 @@ static ValueType getType(Value x){
 
 inline Value encodeNumber(double x){ return *reinterpret_cast<Value*>(&x); }
 inline Value encodeBool(bool x){ return MASK_QNAN | (MASK_SIGNATURE_TRUE*x); }
-inline Value encodeObj(object::Obj* x){ return MASK_SIGNATURE_OBJ | reinterpret_cast<Value>(x); }
+inline Value encodeObj(object::Obj* x){ return MASK_SIGNATURE_OBJ | reinterpret_cast<Value>(x) | x->type; }
 inline Value encodeNil(){ return MASK_SIGNATURE_NIL; }
 
 inline double decodeNumber(Value x){ return *reinterpret_cast<double*>(&x); }
@@ -32,15 +32,15 @@ inline bool isObj(Value x){ return (x & MASK_SIGNATURE) == MASK_SIGNATURE_OBJ; }
 
 inline bool isInt(Value x) { return isNumber(x) && FLOAT_EQ(decodeNumber(x), std::round(decodeNumber(x))); }
 
-inline bool isString(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::STRING; }
-inline bool isArray(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::ARRAY; }
-inline bool isClosure(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::CLOSURE; }
-inline bool isClass(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::CLASS; }
-inline bool isInstance(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::INSTANCE; }
-inline bool isHashMap(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::HASH_MAP; }
-inline bool isUpvalue(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FREEVAR; }
-inline bool isFile(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::FILE; }
-inline bool isMutex(Value x) { return isObj(x) && decodeObj(x)->type == +ObjType::MUTEX; }
+inline bool isString(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::STRING; }
+inline bool isArray(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::ARRAY; }
+inline bool isClosure(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::CLOSURE; }
+inline bool isClass(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::CLASS; }
+inline bool isInstance(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::INSTANCE; }
+inline bool isHashMap(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::HASH_MAP; }
+inline bool isUpvalue(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::FREEVAR; }
+inline bool isFile(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::FILE; }
+inline bool isMutex(Value x) { return isObj(x) && (x&MASK_PAYLOAD_TYPE) == +ObjType::MUTEX; }
 
 inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
 

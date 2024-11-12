@@ -69,8 +69,9 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
     builder.CreateRetVoid();
     llvm::verifyFunction(*inProgressFuncs.top().fn);
     llvm::verifyModule(*curModule, &llvm::errs());
+    llvm::errs()<<"--------------------Unoptimized module--------------------\n";
 #ifdef COMPILER_DEBUG
-    //curModule->print(llvm::errs(), nullptr);
+    curModule->print(llvm::errs(), nullptr);
 #endif
 }
 
@@ -301,7 +302,6 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
     auto arrNum = builder.getInt32(vals.size());
     auto arr = builder.CreateCall(safeGetFunc("createArr"), {getThreadData(), arrNum}, "array");
     // I think this should be faster than passing everything to "createArr", but I could be wrong
-    //auto arrPtr = builder.CreateCall(safeGetFunc("getArrPtr"), arr, "arr.ptr");
     llvm::Value* arrPtr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "obj.arr.ptr");
     llvm::Value* storagePtr = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjArray"], arrPtr, 0, 3);
     storagePtr = builder.CreateLoad(namedTypes["ObjArrayStoragePtr"], storagePtr, "storage.ptr");
@@ -531,15 +531,15 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     builder.CreateStore(objInfo, memptr);
 
     llvm::Value* inst = builder.CreateBitCast(memptr, namedTypes["ObjPtr"]);
-    inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst});
+    inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst, builder.getInt64(+object::ObjType::INSTANCE)});
     // If there is a constructor declared in this class, call it
     if(klass.ty->methods.contains(name)){
         std::pair<types::tyVarIdx, uInt64> fnty = klass.ty->methods[name];
         auto fn  = functions[typeEnv[fnty.first]];
-        auto ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosure"], klass.methodArrPtr,
+        auto ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr,
                                                                  builder.getInt32(fnty.second));
         // Need to tag the method
-        ptr = constObjToVal(ptr);
+        ptr = constObjToVal(ptr, +object::ObjType::CLOSURE);
         vector<llvm::Value*> args = {getThreadData(), ptr, inst};
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
         return builder.CreateCall(fn, args);
@@ -620,7 +620,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
         ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(1)});
         llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], ptr, methodIdx);
         // Since this is a raw ObjClosure pointer we tag it first
-        auto method = builder.CreateCall(safeGetFunc("encodeObj"), val);
+        auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val, builder.getInt64(+object::ObjType::CLOSURE)});
         args.insert(args.begin(), {method, encodedInst});
         // -1 because closure ptr is not taken into account by arg checking
         setupThreadCreation(setupUnoptCall(method, args.size(), expr->dbgInfo.method),  args);
@@ -718,7 +718,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     // Creates a place in memory for the function and stores it there
     llvm::Constant* fnLoc = storeConstObj(fnC);
     auto gv = (llvm::dyn_cast<llvm::GlobalVariable>(variables.at(stmt->globalVarUuid)));
-    gv->setInitializer(constObjToVal(fnLoc));
+    gv->setInitializer(constObjToVal(fnLoc, +object::ObjType::CLOSURE));
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -873,15 +873,16 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
         // Creates an ObjClosure associated with this method
         methods[method.second] = createMethodObj(method.first, methodFn);
     }
-    llvm::Constant* methodArr = llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosure"],
+    llvm::Constant* methodArr = llvm::ConstantArray::get(llvm::ArrayType::get(namedTypes["ObjClosureAligned"],
                                                                    methods.size()), methods);
 
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClass"), {
             createConstObjHeader(+object::ObjType::CLASS), methodsLen, fieldsLen, subClassIdxStart, subClassIdxEnd, name, methodsFunc,
-            fieldsFunc});
+            fieldsFunc, builder.getInt64(0)});
     obj = llvm::ConstantStruct::getAnon({obj, methodArr});
     llvm::GlobalVariable* klass = new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
+    klass->setAlignment(llvm::Align(16));
     // Associates a full class name with the class object and instance template
     classes[stmt->fullName] = Class(klass, createInstanceTemplate(klass, stmt->fields.size()),
                                     stmt->classType, methodArr);
@@ -1624,9 +1625,11 @@ llvm::Constant* Compiler::createMethodObj(typedAST::ClassMethod& method, llvm::F
     auto freeVarCnt = builder.getInt8(0);
 
     // Create method constant
-    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
+    llvm::Constant* closure =  llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosure"),
                                      {createConstObjHeader(+object::ObjType::CLOSURE),
                                       arity, freeVarCnt, typeErasedFn, name});
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjClosureAligned"),
+                                     {closure, builder.getInt64(0)});
 }
 // Creates an instance template with already nulled fields that is memcpy-ed when using new
 llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, int fieldN){
@@ -1649,8 +1652,8 @@ llvm::Value* Compiler::optimizeInstGet(llvm::Value* inst, string field, Class& k
         auto arrIdx = builder.getInt32(klass.ty->methods[field].second);
 
         // Doesn't actually access the array, but treats the pointer as a pointer to allocated ObjClosure
-        llvm::Constant* val = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosure"], klass.methodArrPtr, arrIdx);
-        return constObjToVal(val);
+        llvm::Constant* val = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr, arrIdx);
+        return constObjToVal(val, +object::ObjType::CLOSURE);
     }else if(klass.ty->fields.contains(field)){
         // Index into the array of fields of the instance
         auto arrIdx = builder.getInt32(klass.ty->fields[field].second);
@@ -1696,8 +1699,8 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* maybeInst, string fieldNa
     builder.SetInsertPoint(methodBB);
     // Methods are just behind class
     ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(1)});
-    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], ptr, methodIdx);
-    auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val});
+    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosureAligned"], ptr, methodIdx);
+    auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val, builder.getInt64(+object::ObjType::CLOSURE)});
     builder.CreateBr(mergeBB);
 
     F->insert(F->end(), errorBB);
@@ -1816,9 +1819,9 @@ llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, C
         auto arrIdx = builder.getInt32(klass.ty->methods[field].second);
 
         // Doesn't actually access the array, but treats the pointer as a pointer to allocated ObjClosure
-        auto closure = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosure"], klass.methodArrPtr, arrIdx);
+        auto closure = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr, arrIdx);
         // Closures in class are stored as raw pointers, tag them and then pass to method
-        closure = constObjToVal(closure);
+        closure = constObjToVal(closure, +object::ObjType::CLOSURE);
         llvm::Function* fn = functions[typeEnv[klass.ty->methods[field].first]];
         // Insert at begin + 1 to skip the thread data ptr
         callArgs.insert(callArgs.begin()+1, {closure, inst});
@@ -1877,9 +1880,9 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
     builder.SetInsertPoint(methodBB);
     // First load the ObjClosurePtr(we treat the offset into the ObjClosure array that the class has as a standalone pointer to that closure)
     ptr = builder.CreateInBoundsGEP(namedTypes["ObjClass"], klass, {builder.getInt32(1)});
-    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], ptr, methodIdx);
+    llvm::Value* val = builder.CreateInBoundsGEP(namedTypes["ObjClosureAligned"], ptr, methodIdx);
     // Since this is a raw ObjClosure pointer we tag it first
-    auto method = builder.CreateCall(safeGetFunc("encodeObj"), val);
+    auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val, builder.getInt64(+object::ObjType::CLOSURE)});
     // Skip over thread data ptr that is passed as the first arg
     args.insert(args.begin()+1, {method, encodedInst});
     llvm::Value* callres2 = builder.CreateCall(setupUnoptCall(method, args.size(), dbg), args);
@@ -1980,7 +1983,7 @@ llvm::Constant* Compiler::createESLString(const string& str){
     if(ESLStrings.contains(str)) return ESLStrings[str];
     auto obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjString"), {
         createConstObjHeader(+object::ObjType::STRING), builder.getInt32(str.size()), createConstStr(str)});
-    auto val = constObjToVal(storeConstObj(obj));
+    auto val = constObjToVal(storeConstObj(obj), +object::ObjType::STRING);
     ESLStrings[str] = val;
     return val;
 }
@@ -2026,6 +2029,7 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
 llvm::GlobalVariable* Compiler::storeConstObj(llvm::Constant* obj){
     auto gv =  new llvm::GlobalVariable(*curModule, obj->getType(), true,
                                     llvm::GlobalVariable::LinkageTypes::PrivateLinkage, obj, "internal.const.obj");
+    gv->setAlignment(llvm::Align(16));
     return gv;
 }
 llvm::Constant* Compiler::createConstObjHeader(int type){
@@ -2034,9 +2038,9 @@ llvm::Constant* Compiler::createConstObjHeader(int type){
     return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "Obj"),{padding, builder.getInt8(type)});
 }
 
-llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj){
+llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj, uint8_t type){
     auto val = llvm::ConstantExpr::getPtrToInt(obj, builder.getInt64Ty());
-    return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_OBJ)));
+    return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_OBJ | type)));
 }
 
 llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr){
@@ -2103,7 +2107,7 @@ void Compiler::generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives){
                                                          arity, freeVarCnt, typeErasedFn, cname});
         // Creates a place in memory for the function and stores it there
         llvm::Constant* fnLoc = storeConstObj(fnC);
-        return constObjToVal(fnLoc);
+        return constObjToVal(fnLoc, +object::ObjType::CLOSURE);
     };
     for(std::pair<string, types::tyVarIdx> p : natives){
         auto fnTy = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[p.second]);

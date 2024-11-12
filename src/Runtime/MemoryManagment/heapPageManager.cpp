@@ -47,6 +47,7 @@ PageData* HeapPageManager::allocatePage(uint32_t sizeClassIdx){
 #endif
     // Page data is stored as a header in the page
     PageData* pageData = static_cast<PageData *>(page);
+    // Padding to make everything 16byte aligned
     pageData->basePtr = (char*)page + sizeof(PageData);
     pageData->blockSize = mpBlockSizes[sizeClassIdx];
     pageData->numAllocBlocks = 0;

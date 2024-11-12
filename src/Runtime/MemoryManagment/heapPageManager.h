@@ -33,6 +33,7 @@ namespace memory{
         // Allocator uses sequential-fit when searching through page, this keeps track of where it stopped
         uint16_t head;
         uint16_t numBlocks;
+        uint8_t padding[8];
     };
 
     class ThreadArena;
