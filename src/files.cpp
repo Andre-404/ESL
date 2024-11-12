@@ -1,5 +1,4 @@
 #include "common.h"
-#include <iostream>
 #include <filesystem>
 #include <fstream>
 
@@ -22,6 +21,6 @@ string readFile(const char* path) {
     return readFile((char*)path);
 }
 
-string readFile(string& path) {
+string readFile(const string& path) {
     return readFile(path.c_str());
 }

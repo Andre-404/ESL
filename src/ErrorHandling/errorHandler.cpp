@@ -17,18 +17,18 @@ const string yellow = "\u001b[38;5;220m";
 void highlightToken(Token token) {
 	File* src = token.str.sourceFile;
 
-	string lineNumber = std::to_string(token.str.line + 1);
-	string line = token.str.getLine();
+	string lineNumber = std::to_string(token.str.computeLine() + 1);
+	std::string_view line = token.str.getLine();
     std::cout << yellow << src->name << black << ":" << cyan << lineNumber << " | " << black;
 	std::cout << line << std::endl;
 
 	string highlight = "";
     highlight.insert(highlight.end(), src->name.length() + lineNumber.length() + 4, ' ');
-    for (int i = 0; i < token.str.column; i++){
+    for (int i = 0; i < token.str.computeColumn(); i++){
         if (line[i] == '\t') highlight += '\t';
         else highlight += ' ';
     }
-	highlight.insert(highlight.end(), token.str.length, '^');
+	highlight.insert(highlight.end(), token.str.end - token.str.start, '^');
 
 	std::cout << red << highlight << black << "\n";
 }
@@ -59,8 +59,6 @@ void report(File* src, Token& token, string msg) {
 	std::cout << red + "error: " + black + msg + "\n";
 
 	highlightToken(token);
-	//logDefinitionPath(token);
-	//logExpansionPath(token);
 	std::cout << "\n";
 }
 
@@ -92,24 +90,24 @@ namespace errorHandler {
 		compileErrors.emplace_back(msg, token.str.sourceFile, token);
 	}
 	void addSystemError(string msg) {
-        std::cout<<msg;
+        std::cout << msg << '\n';
         exit(1);
 	}
 
 	bool hasErrors() {
-		return !compileErrors.empty();
+		return !(compileErrors.size() == 0);
 	}
 
     vector<string> convertCompilerErrorsToJson(){
         vector<string> errors;
-        for (CompileTimeError error : compileErrors) {
+        /*for (CompileTimeError error : compileErrors) {
             string final = "{";
             final += fmt::format("\"path\": \"{}\", \"code\": {}, \"message\": \"{}\", \"line\": {}, \"start\": {}, \"end\": {}, \"severity\": \"{}\", \"relatedInformation\" :",
                                  error.origin->path, 0, error.errorText, error.token.str.line, error.token.str.column, error.token.str.column + error.token.str.length,
                                  "error");
             final += "[] }";
             errors.push_back(final);
-        }
+        }*/
         return errors;
     }
 }

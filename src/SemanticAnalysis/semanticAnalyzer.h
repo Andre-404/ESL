@@ -1,6 +1,7 @@
+#pragma once
 #include <array>
 #include "../common.h"
-#include "../Parsing/ASTDefs.h"
+#include "../AST/ASTDefs.h"
 #include "../Parsing/parser.h"
 
 
@@ -95,9 +96,9 @@ namespace SemanticAnalysis {
         }
 
         SemanticToken(Token token, string _type, vector<string> _modifiers = vector<string>()) {
-            line = token.str.line;
-            start = token.str.column;
-            length = token.str.length;
+            line = token.str.computeLine();
+            start = token.str.computeColumn();
+            length = token.str.end - token.str.start;
             type = _type;
             modifiers = _modifiers;
         }
@@ -126,9 +127,9 @@ namespace SemanticAnalysis {
             length = 0;
         }
         DiagnosticRelatedInfo(Token token, string _message){
-            line = token.str.line;
-            start = token.str.column;
-            length = token.str.length;
+            line = token.str.computeLine();
+            start = token.str.computeColumn();
+            length = token.str.end - token.str.start;
             message = _message;
         }
 
@@ -154,9 +155,9 @@ namespace SemanticAnalysis {
             path = "";
         }
         Diagnostic(Token token, string _message, int _code){
-            line = token.str.line;
-            start = token.str.column;
-            length = token.str.length;
+            line = token.str.computeLine();
+            start = token.str.computeColumn();
+            length = token.str.end - token.str.start;
             code = _code;
             severity = "error";
             message = _message;
@@ -185,9 +186,9 @@ namespace SemanticAnalysis {
 
         SemanticAnalyzer();
 
-        string highlight(vector<CSLModule *> &units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros);
+        string highlight(vector<ESLModule *> &units, ESLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros);
 
-        string generateDiagnostics(vector<CSLModule *> &units);
+        string generateDiagnostics(vector<ESLModule *> &units);
 
         #pragma region Visitor pattern
 
@@ -196,8 +197,6 @@ namespace SemanticAnalysis {
         void visitSetExpr(AST::SetExpr *expr) override;
 
         void visitConditionalExpr(AST::ConditionalExpr *expr) override;
-
-        void visitRangeExpr(AST::RangeExpr *expr) override;
 
         void visitBinaryExpr(AST::BinaryExpr *expr) override;
 
@@ -209,17 +208,11 @@ namespace SemanticAnalysis {
 
         void visitFieldAccessExpr(AST::FieldAccessExpr *expr) override;
 
-        void visitAsyncExpr(AST::AsyncExpr *expr) override;
-
-        void visitAwaitExpr(AST::AwaitExpr *expr) override;
-
         void visitArrayLiteralExpr(AST::ArrayLiteralExpr *expr) override;
 
         void visitStructLiteralExpr(AST::StructLiteral *expr) override;
 
         void visitLiteralExpr(AST::LiteralExpr *expr) override;
-
-        void visitSuperExpr(AST::SuperExpr *expr) override;
 
         void visitFuncLiteral(AST::FuncLiteral *expr) override;
 
@@ -234,6 +227,8 @@ namespace SemanticAnalysis {
         void visitClassDecl(AST::ClassDecl *decl) override;
 
         void visitExprStmt(AST::ExprStmt *stmt) override;
+
+        void visitSpawnStmt(AST::SpawnStmt* stmt) override;
 
         void visitBlockStmt(AST::BlockStmt *stmt) override;
 
@@ -257,10 +252,10 @@ namespace SemanticAnalysis {
 
         #pragma endregion
     private:
-        CSLModule *curUnit;
+        ESLModule *curUnit;
         int curUnitIndex;
         int curGlobalIndex;
-        vector<CSLModule *> units;
+        vector<ESLModule *> units;
 
         vector<GlobalVar> globals;
         std::shared_ptr<ClassChunkInfo> currentClass;
@@ -305,8 +300,6 @@ namespace SemanticAnalysis {
 
         bool invoke(AST::CallExpr *expr);
 
-        bool invoke(AST::AsyncExpr *expr);
-
         string resolveClassField(Token name, bool canAssign);
 
         void resolveSuperClassField(Token name);
@@ -319,8 +312,6 @@ namespace SemanticAnalysis {
         bool resolveThis(AST::SetExpr *expr);
 
         bool resolveImplicitObjectField(AST::CallExpr *expr);
-
-        bool resolveImplicitObjectField(AST::AsyncExpr *expr);
 
         SemanticAnalyzerException error(Token token, const string &msg) noexcept(false);
 

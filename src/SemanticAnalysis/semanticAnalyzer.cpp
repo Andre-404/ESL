@@ -1,7 +1,7 @@
 #include "semanticAnalyzer.h"
 #include <iostream>
 #include "../Includes/fmt/format.h"
-#include "../Codegen/upvalueFinder.h"
+#include "../Codegen/Passes/closureConverter.h"
 #include "../ErrorHandling/errorHandler.h"
 
 using namespace SemanticAnalysis;
@@ -30,9 +30,9 @@ SemanticAnalyzer::SemanticAnalyzer() {
     generateSemanticTokens = false;
 }
 
-string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros){
+string SemanticAnalyzer::highlight(vector<ESLModule *> &_units, ESLModule* unitToHighlight, unordered_map<string, std::unique_ptr<AST::Macro>>& macros){
     units = _units;
-    for (CSLModule* unit : units) {
+    for (ESLModule* unit : units) {
         if(unit == unitToHighlight) generateSemanticTokens = true;
         curUnit = unit;
 
@@ -72,7 +72,7 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
             }
         }
     }
-    for (CSLModule* unit : units) delete unit;
+    for (ESLModule* unit : units) delete unit;
     string final = "[";
     for(auto token : semanticTokens){
         final += token.toJSON() + ",";
@@ -82,10 +82,10 @@ string SemanticAnalyzer::highlight(vector<CSLModule *> &_units, CSLModule* unitT
     return final;
 }
 
-string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
+string SemanticAnalyzer::generateDiagnostics(vector<ESLModule *> &_units){
     units = _units;
     vector<string> previousErrors = errorHandler::convertCompilerErrorsToJson();
-    for (CSLModule *unit: units) {
+    for (ESLModule *unit: units) {
         curUnit = unit;
         for (const auto decl: unit->topDeclarations) {
             globals.emplace_back(decl->getName(), decl->getType());
@@ -102,7 +102,7 @@ string SemanticAnalyzer::generateDiagnostics(vector<CSLModule *> &_units){
         curGlobalIndex = globals.size();
         curUnitIndex++;
     }
-    for (CSLModule* unit : units) delete unit;
+    for (ESLModule* unit : units) delete unit;
     string final = "[";
     for(auto& str : previousErrors) final += str + ",";
     if(diagnostics.empty() && !previousErrors.empty()) final.pop_back();
@@ -153,11 +153,6 @@ void SemanticAnalyzer::visitConditionalExpr(AST::ConditionalExpr* expr) {
     if (expr->rhs) expr->rhs->accept(this);
 }
 
-void SemanticAnalyzer::visitRangeExpr(AST::RangeExpr *expr) {
-    if(expr->start) expr->start->accept(this);
-    if(expr->end) expr->end->accept(this);
-}
-
 void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
     expr->left->accept(this);
     uint8_t op = 0;
@@ -187,7 +182,6 @@ void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::GREATER_EQUAL:
         case TokenType::LESS:
         case TokenType::LESS_EQUAL:
-        case TokenType::IN: break;
         default: error(expr->op, "Unrecognized token in binary expression.");
     }
     expr->right->accept(this);
@@ -295,18 +289,6 @@ void SemanticAnalyzer::visitStructLiteralExpr(AST::StructLiteral* expr) {
     }
 }
 
-void SemanticAnalyzer::visitSuperExpr(AST::SuperExpr* expr) {
-    if (currentClass == nullptr) {
-        error(expr->methodName, "Can't use 'super' outside of a class.");
-        createSemanticToken(expr->methodName, "method");
-    }
-    else if (!currentClass->superclass) {
-        error(expr->methodName, "Can't use 'super' in a class with no superclass.");
-    }
-    resolveSuperClassField(expr->methodName);
-    createSemanticToken(expr->methodName, "method");
-}
-
 void SemanticAnalyzer::visitLiteralExpr(AST::LiteralExpr* expr) {
     switch (expr->token.type) {
         case TokenType::IDENTIFIER: {
@@ -351,23 +333,6 @@ void SemanticAnalyzer::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
 void SemanticAnalyzer::visitMacroExpr(AST::MacroExpr* expr) {
     createSemanticToken(expr->macroName, "macro");
 }
-
-void SemanticAnalyzer::visitAsyncExpr(AST::AsyncExpr* expr) {
-    if (invoke(expr)) return;
-    if(expr->callee->type == AST::ASTType::LITERAL){
-        Token token = probeToken(expr->callee);
-        createSemanticToken(token, "function");
-    }else expr->callee->accept(this);
-    expr->callee->accept(this);
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-}
-
-void SemanticAnalyzer::visitAwaitExpr(AST::AwaitExpr* expr) {
-    expr->expr->accept(this);
-}
-
 
 void SemanticAnalyzer::visitVarDecl(AST::VarDecl* decl) {
     uint16_t global;
@@ -455,6 +420,10 @@ void SemanticAnalyzer::visitClassDecl(AST::ClassDecl* decl) {
 
 void SemanticAnalyzer::visitExprStmt(AST::ExprStmt* stmt) {
     stmt->expr->accept(this);
+}
+
+void SemanticAnalyzer::visitSpawnStmt(AST::SpawnStmt* stmt){
+
 }
 
 void SemanticAnalyzer::visitBlockStmt(AST::BlockStmt* stmt) {
@@ -725,78 +694,6 @@ bool SemanticAnalyzer::invoke(AST::CallExpr* expr) {
         }
         return true;
     }
-    else if (expr->callee->type == AST::ASTType::SUPER) {
-        auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-            createSemanticToken(superCall->methodName, "method");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        resolveSuperClassField(superCall->methodName);
-        createSemanticToken(superCall->methodName, "method");
-
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        for (AST::ASTNodePtr arg : expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
-    // Class methods can be accessed without 'this' keyword inside of methods and called
-    return resolveImplicitObjectField(expr);
-}
-
-bool SemanticAnalyzer::invoke(AST::AsyncExpr* expr) {
-    if (expr->callee->type == AST::ASTType::FIELD_ACCESS) {
-        //currently we only optimizes field invoking(struct.field() or array[field]())
-        auto call = std::static_pointer_cast<AST::FieldAccessExpr>(expr->callee);
-        if (call->accessor.type == TokenType::LEFT_BRACKET) return false;
-
-        call->callee->accept(this);
-        uint16_t constant;
-        Token name = probeToken(call->field);
-        // If invoking a method inside another method, make sure to get the right(public/private) name
-        if (isLiteralThis(call->callee)) {
-            string res = resolveClassField(name, false);
-            if (res == "") error(name, fmt::format("Field {}, doesn't exist in class {}.", name.getLexeme(),
-                                                   currentClass->name.getLexeme()));
-            createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-        } else createSemanticToken(name, "method");
-
-        for (AST::ASTNodePtr arg: expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
-    else if (expr->callee->type == AST::ASTType::SUPER) {
-        auto superCall = std::static_pointer_cast<AST::SuperExpr>(expr->callee);
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-            createSemanticToken(superCall->methodName, "method");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        resolveSuperClassField(superCall->methodName);
-        createSemanticToken(superCall->methodName, "method");
-
-        if (currentClass == nullptr) {
-            error(superCall->methodName, "Can't use 'super' outside of a class.");
-        }
-        else if (!currentClass->superclass) {
-            error(superCall->methodName, "Can't use 'super' in a class with no superclass.");
-        }
-        for (AST::ASTNodePtr arg : expr->args) {
-            arg->accept(this);
-        }
-        return true;
-    }
     // Class methods can be accessed without 'this' keyword inside of methods and called
     return resolveImplicitObjectField(expr);
 }
@@ -871,20 +768,6 @@ bool SemanticAnalyzer::resolveThis(AST::FieldAccessExpr *expr) {
 // Recognizes object_field() as an invoke operation
 // If object_field() is encountered inside a closure which is inside a method, throw an error since only this.object_field() is allowed in closures
 bool SemanticAnalyzer::resolveImplicitObjectField(AST::CallExpr *expr) {
-    if(expr->callee->type != AST::ASTType::LITERAL) return false;
-    Token name = probeToken(expr->callee);
-    string res = resolveClassField(name, false);
-    if(res == "") return false;
-    if(current->type == FuncType::TYPE_FUNC) error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
-    createSemanticToken(name, currentClass->fields[res] ? "method" : "property");
-    for (AST::ASTNodePtr arg : expr->args) {
-        arg->accept(this);
-    }
-
-    return true;
-}
-
-bool SemanticAnalyzer::resolveImplicitObjectField(AST::AsyncExpr *expr) {
     if(expr->callee->type != AST::ASTType::LITERAL) return false;
     Token name = probeToken(expr->callee);
     string res = resolveClassField(name, false);
@@ -1016,7 +899,7 @@ uint32_t SemanticAnalyzer::resolveModuleVariable(Token moduleAlias, Token variab
 
     createSemanticToken(moduleAlias, "namespace");
 
-    CSLModule* unit = depPtr->module;
+    ESLModule* unit = depPtr->module;
     int index = 0;
     for (auto& i : units) {
         if (i != unit) {

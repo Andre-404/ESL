@@ -1,0 +1,67 @@
+#pragma once
+#include "../ErrorHandling/errorHandler.h"
+#include "../Includes/fmt/format.h"
+#include "LLVMHelperExports.h"
+#include "Values/valueHelpers.h"
+#include "Values/valueHelpersInline.cpp"
+#include <csetjmp>
+#include <iostream>
+#include <string>
+#include <stdarg.h>
+
+using namespace object;
+
+#define EXPORT extern "C" DLLEXPORT
+
+EXPORT Value print(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value x){
+    std::cout<< valueHelpers::toString(x)<<std::endl;
+    return encodeNil();
+}
+
+EXPORT Value ms_since_epoch(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+    double duration = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return encodeNumber(duration);
+}
+
+EXPORT Value arr_push(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value arr, Value top){
+    asArray(arr)->containsObjects |= isObj(top);
+    asArray(arr)->push(top, memory::getLocalArena(threadData));
+    return arr;
+}
+
+EXPORT Value input(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+    string in;
+    std::getline(std::cin, in);
+    return encodeObj(ObjString::createStr((char*)in.c_str(), memory::getLocalArena(threadData)));
+}
+
+EXPORT Value random_num(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+    return encodeNumber(rand());
+}
+
+EXPORT Value as_number(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value num){
+    if (isNumber(num)) { return num; }
+    if (!isString(num)){
+        std::cerr << "Cannot convert value to number.\n"; 
+        exit(64);
+    }
+    try {
+        return encodeNumber(std::stod(asString(num)->str));
+    }
+    catch (std::exception &e){
+        std::cerr << fmt::format("Cannot convert \"{}\" to Number.\n", asString(num)->str);
+        exit(64);
+    }
+}
+
+// doggy?
+EXPORT Value cpu_clock(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+    return encodeNumber(std::clock());
+}
+
+// doggy?
+EXPORT Value clocks_per_sec(memory::ThreadLocalData*, ObjClosure* ptr){
+    return encodeNumber(CLOCKS_PER_SEC);
+}
+
+#undef EXPORT

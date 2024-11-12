@@ -5,7 +5,9 @@
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
-#include "Runtime/vm.h"
+#include "Runtime/MemoryManagment/garbageCollector.h"
+#include "Codegen/Passes/closureConverter.h"
+#include "Codegen/Passes/ASTToTypedAST.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -28,15 +30,15 @@ int main(int argc, char* argv[]) {
     // For ease of use during development
     #ifdef DEBUG_MODE
     #if defined(_WIN32) || defined(WIN32)
-    path = "C:\\Temp\\mergeSort.esl";
+    path = "C:\\Temp\\ESL-prez\\main.esl";
     #else
-    path = "/mnt/c/Temp/main.esl";
+    path = string(argv[1]);
     #endif
-    flag = "-run";
+    flag = "-jit";
     #else
     if(argc == 2) {
         path = string(argv[1]);
-        flag = "-run";
+        flag = "-jit";
     }
     else if(argc == 3){
         path = string(argv[1]);
@@ -50,46 +52,28 @@ int main(int argc, char* argv[]) {
     #if defined(_WIN32) || defined(WIN32)
     windowsSetTerminalProcessing();
     #endif
-    if(flag == "-run") {
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
+    preprocessing::Preprocessor preprocessor;
+    preprocessor.preprocessProject(path);
+    vector<ESLModule *> modules = preprocessor.getSortedUnits();
 
-        AST::Parser parser;
+    AST::Parser parser;
 
-        parser.parse(modules);
+    vector<AST::ASTModule> ASTmodules = parser.parse(modules);
 
-        errorHandler::showCompileErrors();
-        if (errorHandler::hasErrors()) exit(64);
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
 
-        compileCore::Compiler compiler(modules);
+    closureConversion::ClosureConverter finder;
+    passes::typedASTParser::ASTTransformer transformer(ASTmodules);
+    auto res = transformer.run(finder.generateFreevarMap(ASTmodules));
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
+    auto env = transformer.getTypeEnv();
+    auto classes = transformer.getClassHierarchy();
+    errorHandler::showCompileErrors();
+    if (errorHandler::hasErrors()) exit(64);
 
-        errorHandler::showCompileErrors();
-        if (errorHandler::hasErrors()) exit(64);
-
-        auto vm = new runtime::VM(&compiler);
-
-        vm->execute();
-    }else if(flag == "-validate-file"){
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
-
-        AST::Parser().parse(modules);
-
-        SemanticAnalysis::SemanticAnalyzer semanticAnalyzer;
-        std::cout << semanticAnalyzer.generateDiagnostics(modules);
-    }else if(flag == "-semantic-analysis"){
-        preprocessing::Preprocessor preprocessor;
-        preprocessor.preprocessProject(path);
-        vector<CSLModule *> modules = preprocessor.getSortedUnits();
-
-        AST::Parser parser;
-
-        parser.highlight(modules, path);
-    }else{
-        std::cout<<"Unrecognized flag.\n";
-        return 1;
-    }
+    compileCore::CompileType type = flag == "-jit" ? compileCore::CompileType::JIT : compileCore::CompileType::OBJECT_CODE;
+    compileCore::Compiler compiler(type, res.first, res.second, env, classes, transformer.getNativeFuncTypes());
     return 0;
 }
