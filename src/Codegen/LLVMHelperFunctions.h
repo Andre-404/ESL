@@ -5,7 +5,6 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/IRBuilder.h"
 
-#include "JIT.h"
 #include "../Includes/unorderedDense.h"
 #include "../common.h"
 
@@ -14,11 +13,5 @@ namespace llvmHelpers {
     void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module,
                                     std::unique_ptr<llvm::LLVMContext> &context,
                                     llvm::IRBuilder<>& builder,
-                                    ankerl::unordered_dense::map<string, llvm::Type*>& types,
-                                    std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT);
-
-    void runModule(std::unique_ptr<llvm::Module> module, std::unique_ptr<llvm::LLVMContext> ctx,
-                   std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT, std::unique_ptr<llvm::TargetMachine> machine,
-                   bool shouldJIT);
-
+                                    ankerl::unordered_dense::map<string, llvm::Type*>& types);
 }

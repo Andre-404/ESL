@@ -1,6 +1,5 @@
 #pragma once
 #include "Passes/ASTToTypedAST.h"
-#include "JIT.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
@@ -13,6 +12,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include <array>
 #include <stack>
@@ -72,9 +72,9 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives);
-        void compile(std::shared_ptr<typedAST::Function> _code, string mainFnName);
+		Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL);
+        llvm::orc::ThreadSafeModule compile(std::shared_ptr<typedAST::Function> _code, string mainFnName);
 
 		#pragma region Visitor pattern
         llvm::Value* visitVarDecl(typedAST::VarDecl* decl) override;
@@ -128,8 +128,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         std::unique_ptr<llvm::LLVMContext> ctx;
         llvm::IRBuilder<> builder;
         std::unique_ptr<llvm::Module> curModule;
-        std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT;
-        std::unique_ptr<llvm::TargetMachine> targetMachine;
+        vector<llvm::Attribute> ESLFuncAttrs;
 
         std::stack<Function> inProgressFuncs;
         std::stack<llvm::BasicBlock*> continueJumpDest;
@@ -138,7 +137,11 @@ class Compiler : public typedAST::TypedASTCodegen {
         std::stack<llvm::BasicBlock*> advanceJumpDest;
 
         // LLVM stuff
-        void setupModule(CompileType compileFlag);
+        void setupModule(const llvm::DataLayout& DL);
+        void optimizeModule(llvm::Module& module);
+        // Declares both user and native functions
+        void declareFunctions();
+        void createMainEntrypoint(string entrypointName);
 
         #pragma region Helpers
         // Compile time type checking
@@ -231,9 +234,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         void generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives);
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
-        // Declares both user and native functions
-        void declareFunctions();
-        void createMainEntrypoint(string entrypointName);
+
         llvm::Value* getThreadData();
 
         #pragma endregion

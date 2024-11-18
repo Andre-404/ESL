@@ -8,18 +8,15 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Transforms/Scalar/PlaceSafepoints.h"
 #include "llvm/Support/ModRef.h"
 
 #include <unordered_set>
 #include <iostream>
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
-    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get()); \
-    JIT->addSymbol(#name, reinterpret_cast<void*>(name))
+    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get());
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
@@ -66,8 +63,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
 void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
-                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types,
-                                             std::unique_ptr<llvm::orc::KaleidoscopeJIT>& JIT){
+                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
     llvm::Type* eslValTy = getESLValType(*ctx);
     auto fn = CREATE_FUNC(tyErrSingle, false, TYPE(Void), PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int8)), TYPE(Int32), eslValTy);
@@ -139,76 +135,6 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     CREATE_FUNC(threadDestruct, false, TYPE(Void));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
-}
-
-void llvmHelpers::runModule(std::unique_ptr<llvm::Module> module, std::unique_ptr<llvm::LLVMContext> ctx,
-                            std::unique_ptr<llvm::orc::KaleidoscopeJIT> JIT, std::unique_ptr<llvm::TargetMachine> machine,
-                            bool shouldJIT){
-    // Create the analysis managers.
-    llvm::LoopAnalysisManager LAM;
-    llvm::FunctionAnalysisManager FAM;
-    llvm::CGSCCAnalysisManager CGAM;
-    llvm::ModuleAnalysisManager MAM;
-    llvm::PlaceSafepointsPass SafepointPass;
-
-    // Create the new pass manager builder.
-    // Take a look at the PassBuilder constructor parameters for more
-    // customization, e.g. specifying a TargetMachine or various debugging
-    // options.
-    llvm::PassBuilder PB;
-
-    // Register all the basic analyses with the managers.
-    PB.registerModuleAnalyses(MAM);
-    PB.registerCGSCCAnalyses(CGAM);
-    PB.registerFunctionAnalyses(FAM);
-    PB.registerLoopAnalyses(LAM);
-    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-    // Create the pass manager.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-    MPM.run(*module, MAM);
-    /*for(auto& it : module->functions()) {
-        SafepointPass.run(it, FAM);
-    }*/
-
-
-    #ifdef COMPILER_DEBUG
-    llvm::errs()<<"-------------- Optimized module --------------\n";
-    module->print(llvm::errs(), nullptr);
-    #endif
-
-    if(shouldJIT) {
-        auto RT = JIT->getMainJITDylib().createResourceTracker();
-
-        auto TSM = llvm::orc::ThreadSafeModule(std::move(module), std::move(ctx));
-        llvm::ExitOnError()(JIT->addModule(std::move(TSM), RT));
-
-        llvm::orc::ExecutorSymbolDef ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
-        assert(ExprSymbol.getAddress() && "Function not found");
-
-        int (*FP)(int, char*) = ExprSymbol.getAddress().toPtr< int(*)(int, char*)>();
-        FP(0, nullptr);
-        llvm::ExitOnError()(RT->remove());
-    }else{
-        /*auto Filename = "output.o";
-        std::error_code EC;
-        llvm::raw_fd_ostream dest(Filename, EC, llvm::sys::fs::OF_None);
-
-        if (EC) {
-            llvm::errs() << "Could not open file: " << EC.message();
-            return;
-        }
-        llvm::legacy::PassManager pass;
-
-        auto FileType = llvm::CodeGenFileType::CGFT_ObjectFile;
-
-        if (machine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
-            llvm::errs() << "TargetMachine can't emit a file of this type";
-            return;
-        }
-
-        pass.run(*module);
-        dest.flush();*/
-    }
 }
 
 static llvm::Value* ESLValToI64(llvm::Value* val, llvm::IRBuilder<>& builder){

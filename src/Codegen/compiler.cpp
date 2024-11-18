@@ -10,43 +10,27 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Transforms/Scalar/PlaceSafepoints.h"
 
 #include <unordered_set>
 #include <iostream>
 
 using namespace compileCore;
 
-Compiler::Compiler(CompileType compileFlag, std::shared_ptr<typedAST::Function> _code, vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                   fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives)
+Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
+                   fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
     classHierarchy = _classHierarchy;
 
-    setupModule(compileFlag);
-
-    curModule->getOrInsertGlobal("gcFlag", builder.getInt64Ty());
-    llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
-    gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
-    gvar->setInitializer(builder.getInt64(0));
-    gvar->setAlignment(llvm::Align::Of<uint64_t>());
-    llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes, JIT);
+    setupModule(DL);
+    llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
     declareFunctions();
     generateNativeFuncs(natives);
-
-    // Because we use some windows printing apis it's treated as a gui so it neeeds the WinMain start function
-    string startFunction;
-    #if defined(_WIN32) || defined(WIN32)
-        startFunction = "main";
-    #else
-        startFunction = "main";
-    #endif
-    compile(_code, compileFlag == CompileType::JIT ? "func.main" : startFunction);
-    llvmHelpers::runModule(std::move(curModule), std::move(ctx), std::move(JIT),
-                           std::move(targetMachine), compileFlag == CompileType::JIT);
 }
 
-void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
+llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
     createMainEntrypoint(mainFnName);
     try {
         for (auto stmt: _code->block.stmts) {
@@ -64,7 +48,6 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
     for(auto strObj : ESLStrings){
         tempBuilder.CreateCall(safeGetFunc("gcInternStr"), {strObj.second});
     }
-    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Val is: %p frame addr is: %p \n"), getThreadData(), val});
     // Ends the main function
     builder.CreateRetVoid();
     llvm::verifyFunction(*inProgressFuncs.top().fn);
@@ -73,6 +56,8 @@ void Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnN
 #ifdef COMPILER_DEBUG
     curModule->print(llvm::errs(), nullptr);
 #endif
+    optimizeModule(*curModule);
+    return std::move(llvm::orc::ThreadSafeModule(std::move(curModule), std::move(ctx)));
 }
 
 
@@ -944,39 +929,95 @@ llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
-void Compiler::setupModule(CompileType compileFlag){
+static void setFuncAttrs(vector<llvm::Attribute>& attrs, llvm::Function* func){
+    for(auto& attr : attrs) func->addFnAttr(attr);
+}
+void Compiler::setupModule(const llvm::DataLayout& DL){
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
+    curModule->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 4);
     auto targetTriple = llvm::sys::getDefaultTargetTriple();
-    if(compileFlag == CompileType::JIT){
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        llvm::InitializeNativeTargetAsmParser();
-        auto err = llvm::orc::KaleidoscopeJIT::Create().moveInto(JIT);
-        curModule->setDataLayout(JIT->getDataLayout());
-
-    }else{
-        llvm::InitializeNativeTarget();
-        llvm::InitializeNativeTargetAsmPrinter();
-        llvm::InitializeNativeTargetAsmParser();
-
-        std::string Error;
-        auto Target = llvm::TargetRegistry::lookupTarget(targetTriple, Error);
-
-        // Print an error and exit if we couldn't find the requested target.
-        // This generally occurs if we've forgotten to initialise the
-        // TargetRegistry or we have a bogus target triple.
-        if (!Target) {
-            llvm::errs() << Error;
-            exit(64);
-        }
-        auto CPU = "generic";
-        auto Features = "";
-
-        llvm::TargetOptions opt;
-        targetMachine.reset(Target->createTargetMachine(targetTriple, CPU, Features, opt, llvm::Reloc::PIC_));
-        curModule->setDataLayout(targetMachine->createDataLayout());
-    }
+    curModule->setDataLayout(DL);
     curModule->setTargetTriple(targetTriple);
+    curModule->getOrInsertGlobal("gcFlag", builder.getInt64Ty());
+    llvm::GlobalVariable* gvar = curModule->getNamedGlobal("gcFlag");
+    gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
+    gvar->setInitializer(builder.getInt64(0));
+    gvar->setAlignment(llvm::Align::Of<uint64_t>());
+    ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, llvm::Attribute::AttrKind::NoInline));
+    ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, "uwtable", "sync"));
+}
+
+void Compiler::optimizeModule(llvm::Module& module){
+    // Create the analysis managers.
+    llvm::LoopAnalysisManager LAM;
+    llvm::FunctionAnalysisManager FAM;
+    llvm::CGSCCAnalysisManager CGAM;
+    llvm::ModuleAnalysisManager MAM;
+    llvm::PlaceSafepointsPass SafepointPass;
+
+    // Create the new pass manager builder.
+    // Take a look at the PassBuilder constructor parameters for more
+    // customization, e.g. specifying a TargetMachine or various debugging
+    // options.
+    llvm::PassBuilder PB;
+
+    // Register all the basic analyses with the managers.
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+    // Create the pass manager.
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+    MPM.run(module, MAM);
+
+}
+
+void Compiler::declareFunctions(){
+    for(types::tyPtr type: typeEnv){
+        if(type->type != types::TypeFlag::FUNCTION || functions.contains(type)) continue;
+        std::shared_ptr<types::FunctionType> fnType = std::reinterpret_pointer_cast<types::FunctionType>(type);
+        // First argument is always the thread data ptr
+        vector<llvm::Type*> params = {builder.getPtrTy()};
+        // Second argument is always the closure structure
+        for(int i = 0; i < fnType->argCount + 1; i++) params.push_back(getESLValType());
+        llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
+        auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "thunk", curModule.get());
+        setFuncAttrs(ESLFuncAttrs, tmp);
+        tmp->setGC("statepoint-example");
+        // Creates a connection between function types and functions
+        functions.insert_or_assign(fnType, tmp);
+    }
+}
+
+void Compiler::createMainEntrypoint(string entrypointName){
+    // Create internal entrypoint function, takes in the thread data ptr
+    llvm::FunctionType* entryFT = llvm::FunctionType::get(builder.getVoidTy(),{builder.getPtrTy()}, false);
+    auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
+    setFuncAttrs(ESLFuncAttrs, entryFn);
+    entryFn->setGC("statepoint-example");
+    // Create the runtime entrypoint that calls the internal entrypoint
+    llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);
+    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, entrypointName, curModule.get());
+    setFuncAttrs(ESLFuncAttrs, tmpfn);
+    tmpfn->setGC("statepoint-example");
+
+    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
+    builder.SetInsertPoint(BB);
+
+    llvm::Value* alloca = builder.CreateAlloca(builder.getPtrTy(), builder.getInt64(1), "thread.data");
+    builder.CreateStore(builder.getInt64(0), alloca);
+
+    auto call = builder.CreateCall(entryFn, alloca);
+    builder.CreateCall(safeGetFunc("exit"), builder.getInt32(0));
+    builder.CreateRet(builder.getInt32(0));
+    llvm::verifyFunction(*tmpfn);
+
+    // Setup to start writing to internal entrypoint
+    entryFn->setGC("statepoint-example");
+    BB = llvm::BasicBlock::Create(*ctx, "entry", entryFn);
+    builder.SetInsertPoint(BB);
+    inProgressFuncs.emplace(entryFn);
 }
 
 #pragma region helpers
@@ -1281,9 +1322,9 @@ llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<
     return fn;
 }
 llvm::FunctionType* Compiler::getFuncType(int argCount){
-    vector<llvm::Type*> params;
+    vector<llvm::Type*> params = {};
     // First argument is always the closure structure;
-    for(int i = 0; i < argCount+1; i++) params.push_back(getESLValType());
+    for(int i = 0; i < argCount; i++) params.push_back(getESLValType());
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
     return fty;
 }
@@ -1856,7 +1897,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
     // Erases closure from args list because they are needed for method calling below
     // Skip over thread data ptr that is passed as the first arg
     args.insert(args.begin()+1, field);
-    llvm::Value* callres1 = builder.CreateCall(setupUnoptCall(field, args.size(), dbg),  args);
+    llvm::CallInst* callres1 = builder.CreateCall(setupUnoptCall(field, args.size(), dbg),  args);
     args.erase(args.begin()+1);
     fieldBB = builder.GetInsertBlock();
     builder.CreateBr(mergeBB);
@@ -1870,7 +1911,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val, builder.getInt64(+object::ObjType::CLOSURE)});
     // Skip over thread data ptr that is passed as the first arg
     args.insert(args.begin()+1, {method, encodedInst});
-    llvm::Value* callres2 = builder.CreateCall(setupUnoptCall(method, args.size(), dbg), args);
+    llvm::CallInst* callres2 = builder.CreateCall(setupUnoptCall(method, args.size(), dbg), args);
     methodBB = builder.GetInsertBlock();
     builder.CreateBr(mergeBB);
 
@@ -1894,6 +1935,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
 llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int numArgs){
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false);
     auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "threadWrapper", curModule.get());
+    fn->addFnAttr("uwtable", "sync");
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
@@ -2118,50 +2160,7 @@ void Compiler::createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llv
     sw->setMetadata(llvm::LLVMContext::MD_prof, WeightsNode);
 }
 
-void Compiler::declareFunctions(){
-    for(types::tyPtr type: typeEnv){
-        if(type->type != types::TypeFlag::FUNCTION || functions.contains(type)) continue;
-        std::shared_ptr<types::FunctionType> fnType = std::reinterpret_pointer_cast<types::FunctionType>(type);
-        // First argument is always the thread data ptr
-        vector<llvm::Type*> params = {builder.getPtrTy()};
-        // Second argument is always the closure structure
-        for(int i = 0; i < fnType->argCount + 1; i++) params.push_back(getESLValType());
-        llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
-        auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "thunk", curModule.get());
-        tmp->addFnAttr("frame-pointer", "all");
-        // Creates a connection between function types and functions
-        functions.insert_or_assign(fnType, tmp);
-        tmp->setGC("statepoint-example");
-    }
-}
 
-void Compiler::createMainEntrypoint(string entrypointName){
-    // Create internal entrypoint function, takes in the thread data ptr
-    llvm::FunctionType* entryFT = llvm::FunctionType::get(builder.getVoidTy(),{builder.getPtrTy()}, false);
-    auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
-
-    llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);
-    auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, entrypointName, curModule.get());
-
-    // Create the runtime entrypoint that calls the internal entrypoint
-    tmpfn->setGC("statepoint-example");
-    tmpfn->addFnAttr("frame-pointer", "all");
-    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
-    builder.SetInsertPoint(BB);
-    llvm::Value* alloca = builder.CreateAlloca(builder.getPtrTy(), builder.getInt64(1), "thread.data");
-    builder.CreateStore(builder.getInt64(0), alloca);
-    builder.CreateCall(entryFn, alloca);
-    builder.CreateCall(safeGetFunc("exit"), builder.getInt32(0));
-    builder.CreateRet(builder.getInt32(0));
-    llvm::verifyFunction(*tmpfn);
-
-    // Setup to start writing to internal entrypoint
-    entryFn->setGC("statepoint-example");
-    entryFn->addFnAttr("frame-pointer", "all");
-    BB = llvm::BasicBlock::Create(*ctx, "entry", entryFn);
-    builder.SetInsertPoint(BB);
-    inProgressFuncs.emplace(entryFn);
-}
 
 
 llvm::Value* Compiler::getThreadData(){

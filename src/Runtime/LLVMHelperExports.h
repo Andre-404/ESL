@@ -10,7 +10,7 @@
 #define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
 #define __READ_RSP() __asm__ volatile("movq %%rsp, %0" : "=r"(__rsp))
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
-#define EXPORT extern "C"
+#define EXPORT extern "C" DLLEXPORT
 
 EXPORT NOINLINE void stopThread(memory::ThreadLocalData* threadData){
     if(!memory::gc) return;

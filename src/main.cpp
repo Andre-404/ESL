@@ -4,6 +4,8 @@
 #include "ErrorHandling/errorHandler.h"
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
+#include "JIT.h"
+#include "llvm/Support/TargetSelect.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
 #include "Runtime/MemoryManagment/garbageCollector.h"
 #include "Codegen/Passes/closureConverter.h"
@@ -73,7 +75,15 @@ int main(int argc, char* argv[]) {
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
 
-    compileCore::CompileType type = flag == "-jit" ? compileCore::CompileType::JIT : compileCore::CompileType::OBJECT_CODE;
-    compileCore::Compiler compiler(type, res.first, res.second, env, classes, transformer.getNativeFuncTypes());
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+    std::unique_ptr<llvm::orc::LLJIT> JIT = std::move(setupJIT());
+    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(), JIT->getDataLayout());
+    llvm::cantFail(JIT->addIRModule(std::move(compiler.compile(res.first, "func.main"))));
+
+    llvm::orc::ExecutorAddr ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
+    int (*FP)(int, char*) = ExprSymbol.toPtr< int(*)(int, char*)>();
+    FP(0, nullptr);
     return 0;
 }
