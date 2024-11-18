@@ -7,10 +7,10 @@
 #include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/SymbolSize.h"
-#include "windows.h"
 
 // JIT needs this if an alloca happens and for some reason it doesn't pick it up from libgcc
 #ifdef _WIN32
+#include "windows.h"
 extern "C" {
 #if defined(__x86_64__)
     void ___chkstk_ms(uint64_t);
