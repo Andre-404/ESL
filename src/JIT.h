@@ -34,6 +34,7 @@ std::unique_ptr<llvm::orc::LLJIT> setupJIT(){
                         ES, std::move(GetMemMgr));
 
                 Layer->setProcessAllSections(true);
+                Layer->setOverrideObjectFlagsWithResponsibilityFlags(true);
                 Layer->setNotifyLoaded([](llvm::orc::MaterializationResponsibility &R, const llvm::object::ObjectFile &Obj,
                                           const llvm::RuntimeDyld::LoadedObjectInfo &info){
                     if (auto *COFFObj = llvm::dyn_cast<llvm::object::COFFObjectFile>(&Obj)) {

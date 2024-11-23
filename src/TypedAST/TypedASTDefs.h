@@ -898,15 +898,16 @@ namespace typedAST{
         START,
         END
     };
-    // Used for better debug info and to know which variables to remove when exiting scope
+    // Used for better debug info and to know which variables to remove when exiting scope and for generating runtime debug info
     class ScopeEdge : public TypedASTNode{
     public:
-        // Start or end edge of scope
         ScopeEdgeType edgeType;
+        Token location;
         // Variables to pop from the variable map
-        std::unordered_set<uInt64> toPop;
-        ScopeEdge(ScopeEdgeType _ty, std::unordered_set<uInt64> _toPop){
+        vector<uInt64> toPop;
+        ScopeEdge(ScopeEdgeType _ty, Token& _location, vector<uInt64> _toPop){
             edgeType = _ty;
+            location = _location;
             toPop = _toPop;
             type = NodeType::BLOCK_EDGE;
         }

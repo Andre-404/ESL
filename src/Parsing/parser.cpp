@@ -397,6 +397,7 @@ vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
 }
 
 void Parser::verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& importTokenDebug){
+    if(importTokenDebug.empty()) return;
     for(int i = 0; i < modules.size(); i++){
         // 2 units being imported using the same alias is illegal
         // Units imported without an alias must abide by the rule that every symbol must be unique
@@ -735,6 +736,7 @@ shared_ptr<SpawnStmt> Parser::spawnStmt(){
 shared_ptr<BlockStmt> Parser::blockStmt() {
     vector<ASTNodePtr> stmts;
     int endSize = -1;
+    Token start = previous();
     // TokenType::LEFT_BRACE is already consumed
     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
@@ -748,8 +750,8 @@ shared_ptr<BlockStmt> Parser::blockStmt() {
     }
     // Optimization: removes dead code if a control flow terminator has been detected before end of block
     if(endSize != -1) stmts.resize(endSize);
-    consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
-    return make_shared<BlockStmt>(stmts);
+    Token end = consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
+    return make_shared<BlockStmt>(stmts, start, end);
 }
 
 shared_ptr<IfStmt> Parser::ifStmt() {

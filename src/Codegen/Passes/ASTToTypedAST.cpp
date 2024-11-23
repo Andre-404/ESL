@@ -430,13 +430,13 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     }
 
     // endScope is in endFuncDecl
-    auto scopeEdge = beginScope();
+    auto scopeEdge = beginScope(expr->body->start);
 
     declareFuncArgs(expr->args);
     current->func->block = parseStmtsToBlock(expr->body->statements);
     current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
     auto fvars = current->freevarPtrs;
-    auto func = endFuncDecl();
+    auto func = endFuncDecl(expr->body->end);
     vector<Token> params;
     for(auto arg : expr->args) params.push_back(arg.name);
 
@@ -514,12 +514,12 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
     // No need for a endScope, since returning from the function discards the entire callstack
-    auto scopeEdge = beginScope();
+    auto scopeEdge = beginScope(decl->body->start);
     declareFuncArgs(decl->args);
     current->func->block = parseStmtsToBlock(decl->body->statements);
     // Insert scope edge to the start of the function
     current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
-    auto func = endFuncDecl();
+    auto func = endFuncDecl(decl->body->end);
 
     vector<Token> params;
     for(auto arg : decl->args) params.push_back(arg.name);
@@ -588,12 +588,12 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         methodTys.push_back(methodTy);
 
 
-        int fieldIndex = currentClass->classTy->methods.size();
+        int methodArrIndex = currentClass->classTy->methods.size();
         if(currentClass->methods.contains(str)){
-            fieldIndex = currentClass->classTy->methods[str].second;
+            methodArrIndex = currentClass->classTy->methods[str].second;
         }
 
-        classTy->methods.insert_or_assign(str, std::make_pair(tyIdx, fieldIndex));
+        classTy->methods.insert_or_assign(str, std::make_pair(tyIdx, methodArrIndex));
     }
 
     // Process the methods after forward declaring the fields
@@ -635,7 +635,7 @@ void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
                                                     AST::SpawnStmtDebugInfo(stmt->keyword))};
 }
 void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
-    vector<typedAST::nodePtr> nodes = {beginScope()};
+    vector<typedAST::nodePtr> nodes = {beginScope(stmt->start)};
     for(auto temp : stmt->statements){
         vector<typedAST::nodePtr> nodesToInsert;
         try{
@@ -645,7 +645,7 @@ void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
         }
         nodes.insert(nodes.end(), nodesToInsert.begin(), nodesToInsert.end());
     }
-    nodes.push_back(endScope());
+    nodes.push_back(endScope(stmt->end));
     nodesToReturn.insert(nodesToReturn.end(), nodes.begin(), nodes.end());
 }
 
@@ -671,7 +671,7 @@ void ASTTransformer::visitWhileStmt(AST::WhileStmt* stmt) {
 }
 void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     // Convert for to a while loop with "init" directly above it in a block
-    auto scopeEdge1 = beginScope();
+    auto scopeEdge1 = beginScope(stmt->keyword);
     vector<typedAST::nodePtr> init;
     typedAST::exprPtr cond = nullptr;
     typedAST::exprPtr inc = nullptr;
@@ -682,7 +682,8 @@ void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
 
     typedAST::Block loopBody = parseStmtToBlock(stmt->body);
     if(stmt->increment) inc = evalASTExpr(stmt->increment);
-    auto scopeEdge2 = endScope();
+
+    auto scopeEdge2 = endScope(stmt->keyword);
     // Init isn't treated as part of the while loop, but as statement(s) by itself(exprStmt or var decl + var store)
     nodesToReturn.insert(nodesToReturn.end(), scopeEdge1);
     nodesToReturn.insert(nodesToReturn.end(), init.begin(), init.end());
@@ -1001,26 +1002,26 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
     return nullptr;
 }
 
-std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::beginScope(){
+std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::beginScope(Token location){
     current->scopeDepth++;
-    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START,std::unordered_set<uInt64>());
+    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START, location, vector<uInt64>());
 }
 // Pop every variable that was declared in this scope
-std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(){
+std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(Token location){
     // First lower the scope, the check for every var that is deeper than the parserCurrent scope
     current->scopeDepth--;
     // Store which variables to pop(store the VarDecl ptr)
-    std::unordered_set<uInt64> toPop;
+    vector<uInt64> toPop;
     // Pop from the stack
     while (current->locals.size() > 0 && current->locals.back().depth > current->scopeDepth) {
-        toPop.insert(current->locals.back().ptr->uuid);
+        toPop.push_back(current->locals.back().ptr->uuid);
         current->locals.pop_back();
     }
-    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::END, toPop);
+    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::END, location, toPop);
 }
 
 // Functions
-std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
+std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(Token endLoc){
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
     if(!current->func->block.terminates){
@@ -1041,7 +1042,7 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
         current->func->block.terminates = true;
     }
     // Need to end scope AFTER emitting return because "this" is a local var(arg)
-    auto scopeEdge = endScope();
+    auto scopeEdge = endScope(endLoc);
     current->func->block.stmts.push_back(scopeEdge);
 
     auto func = current->func;
@@ -1054,6 +1055,7 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(){
         auto stmt = func->block.stmts[i];
         if(stmt->type == typedAST::NodeType::RETURN || stmt->type == typedAST::NodeType::UNCOND_JMP){
             func->block.stmts.resize(i + 1);
+            func->block.stmts.push_back(scopeEdge);
             break;
         }
     }
@@ -1084,7 +1086,7 @@ types::tyVarIdx ASTTransformer::createNewFunc(const string name, const int arity
 
 // Classes and methods
 // Class name is for recognizing constructor
-typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
+typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
                                                    std::shared_ptr<types::FunctionType> fnTy){
 
     string fullGlobalSymbol = computeFullSymbol(className, curUnitIndex);
@@ -1094,16 +1096,16 @@ typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const
     current = new CurrentChunkInfo(current, type,  fullGlobalSymbol + ".method." + _method->getName().getLexeme());
     current->func->fnTy = fnTy;
     // No need for a endScope, since returning from the function discards the entire callstack
-    auto scopeEdge = beginScope();
+    auto scopeEdge = beginScope(_method->body->start);
 
     declareFuncArgs(_method->args);
     current->func->block = parseStmtsToBlock(_method->body->statements);
     // Insert the scope edge to the start of the functions
     current->func->block.stmts.insert(current->func->block.stmts.begin(), scopeEdge);
-    auto func = endFuncDecl();
+    auto func = endFuncDecl(_method->body->end);
     vector<Token> params;
     for(auto arg : _method->args) params.push_back(arg.name);
-    return typedAST::ClassMethod(func, AST::MethodDebugInfo(overrides, _method->keyword, _method->name, params));
+    return typedAST::ClassMethod(func, AST::MethodDebugInfo(overrideTok, _method->keyword, _method->name, params));
 }
 std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
                                                                          const Token paren1, const Token paren2){
@@ -1149,16 +1151,16 @@ void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool is
     string privName = "priv." + pubName;
     // Immediately catch the thrown error since this isn't an error that would require unwinding
     try{
-        if(isMethod && !methodOverrides && (currentClass->methods.contains(pubName) || currentClass->methods.contains(privName))){
+        if(isMethod && !methodOverrides && (currentClass->classTy->methods.contains(pubName) || currentClass->classTy->methods.contains(privName))){
             error(publicName, "Duplicate symbol found. Methods that override need to be explicitly marked with 'override'.");
         }
 
-        if(isMethod && methodOverrides && !(currentClass->methods.contains(pubName) || currentClass->methods.contains(privName))){
+        if(isMethod && methodOverrides && !(currentClass->classTy->methods.contains(pubName) || currentClass->classTy->methods.contains(privName))){
             // If this method has been marked as override but there isn't a parent method to override, throw an error
             error(publicName, "Method marked as 'override' but there is no parent method with matching name.");
         }
 
-        if(currentClass->fields.contains(pubName) || currentClass->fields.contains(privName)){
+        if(currentClass->classTy->fields.contains(pubName) || currentClass->classTy->fields.contains(privName)){
             error(publicName, "Duplicate symbol found. Fields are inherited from parents.");
         }
     }catch(TransformerException& e){
@@ -1170,7 +1172,7 @@ void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool is
 // First bool in pair is if the search was succesful, second is if the field found was public or private
 static string classContainsField(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
-    for(auto it : klass->fields){
+    for(auto it : klass->classTy->fields){
         if(publicField == it.first) return publicField;
         else if(privateField == it.first) return privateField;
     }
@@ -1178,7 +1180,7 @@ static string classContainsField(string publicField, std::shared_ptr<ClassChunkI
 }
 static string classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass){
     string privateField = "priv." + publicField;
-    for(auto it : klass->methods){
+    for(auto it : klass->classTy->methods){
         if(publicField == it.first) return publicField;
         else if(privateField == it.first) return privateField;
     }
@@ -1355,12 +1357,18 @@ typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts
         }
         // Dead code elimination
         // If a terminator instruction is detected in this block, don't eval anything below it
+        vector<typedAST::nodePtr> scopeEdges;
         for (int i = stmtVec.size() - 1; i >= 0; i--) {
             if (stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP || stmtVec[i]->type == typedAST::NodeType::RETURN) {
                 stmtVec.resize(i + 1);
                 block.terminates = true;
+                stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
                 block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
                 return block;
+            }else if(stmtVec[i]->type == typedAST::NodeType::BLOCK_EDGE){
+                std::shared_ptr<typedAST::ScopeEdge> edge = std::reinterpret_pointer_cast<typedAST::ScopeEdge>(stmtVec[i]);
+                if(edge->edgeType == typedAST::ScopeEdgeType::START) scopeEdges.pop_back();
+                else scopeEdges.push_back(edge);
             }
         }
         block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
@@ -1378,12 +1386,18 @@ typedAST::Block ASTTransformer::parseStmtToBlock(AST::ASTNodePtr stmt){
     }
     // Dead code elimination
     // If a terminator instruction is detected in this block, don't eval anything below it
+    vector<typedAST::nodePtr> scopeEdges;
     for(int i = stmtVec.size()-1; i >= 0; i--){
         if(stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP || stmtVec[i]->type == typedAST::NodeType::RETURN){
             stmtVec.resize(i + 1);
             block.terminates = true;
+            stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
             block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
             return block;
+        }else if(stmtVec[i]->type == typedAST::NodeType::BLOCK_EDGE){
+            std::shared_ptr<typedAST::ScopeEdge> edge = std::reinterpret_pointer_cast<typedAST::ScopeEdge>(stmtVec[i]);
+            if(edge->edgeType == typedAST::ScopeEdgeType::START) scopeEdges.pop_back();
+            else scopeEdges.push_back(edge);
         }
     }
     block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());

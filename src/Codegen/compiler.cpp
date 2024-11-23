@@ -17,14 +17,15 @@
 
 using namespace compileCore;
 
-Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                   fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL)
+Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv, fastMap<string, std::pair<int, int>>& _classHierarchy,
+                   fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
     classHierarchy = _classHierarchy;
 
     setupModule(DL);
+    debugEmitter = DebugEmitter(*curModule, *sourceFiles.back(), true);
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
     declareFunctions();
     generateNativeFuncs(natives);
@@ -56,12 +57,14 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function
 #ifdef COMPILER_DEBUG
     curModule->print(llvm::errs(), nullptr);
 #endif
+    debugEmitter.finalize();
     optimizeModule(*curModule);
     return std::move(llvm::orc::ThreadSafeModule(std::move(curModule), std::move(ctx)));
 }
 
 
 llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
+    debugEmitter.emitNewLocation(builder, decl->dbgInfo.varName);
     switch(decl->varType){
         case typedAST::VarType::LOCAL:{
             // Alloca at the beginning of the function to make use of mem2reg pass
@@ -69,6 +72,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             tempBuilder.SetInsertPointPastAllocas(inProgressFuncs.top().fn);
             auto tmp = tempBuilder.CreateAlloca(getESLValType(), nullptr, decl->dbgInfo.varName.getLexeme());
             variables.insert_or_assign(decl->uuid, tmp);
+            debugEmitter.addLocalVarDecl(builder, tmp, decl->dbgInfo.varName, false);
             break;
         }
         case typedAST::VarType::FREEVAR:{
@@ -84,6 +88,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             builder.CreateStore(builder.getInt8(+object::ObjType::FREEVAR), objTypePtr);
             builder.CreateStore(builder.getInt64(MASK_SIGNATURE_NIL), storedValPtr);
             variables.insert_or_assign(decl->uuid, var);
+            debugEmitter.addLocalVarDecl(builder, var, decl->dbgInfo.varName, false);
             break;
         }
         case typedAST::VarType::GLOBAL_FUNC:
@@ -98,6 +103,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
                 builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
             }
             variables.insert_or_assign(decl->uuid, gvar);
+            debugEmitter.addGlobalVar(gvar, decl->dbgInfo.varName);
             break;
         }
         default: errorHandler::addSystemError("Unreachable code reached during compilation.");
@@ -107,14 +113,16 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
 }
 
 llvm::Value* Compiler::visitVarRead(typedAST::VarRead* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     return codegenVarRead(expr->varPtr);
 }
 llvm::Value* Compiler::visitVarStore(typedAST::VarStore* expr) {
     llvm::Value* valToStore = expr->toStore->codegen(this);
-
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     return codegenVarStore(expr->varPtr, valToStore);
 }
 llvm::Value* Compiler::visitVarReadNative(typedAST::VarReadNative* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     // Since native variables are known at compile time reading them is noop
     return nativeFunctions[expr->nativeName];
 }
@@ -163,6 +171,7 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     using typedAST::ArithmeticOp;
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
     if(expr->opType == ArithmeticOp::ADD) {
         // If types of both lhs and rhs are known unnecessary runtime checks are skipped
         // TODO: maybe split this so if variable type of one expression is known at compile time and the other isn't we only check for that type
@@ -174,7 +183,6 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
             return builder.CreateCall(safeGetFunc("strAdd"), {getThreadData(), lhs, rhs});
         }else return codegenBinaryAdd(lhs, rhs, expr->dbgInfo.op);
     }
-
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error since all other ops work only on numbers
@@ -201,7 +209,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
 
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
-
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error, otherwise proceed as normal
@@ -224,6 +232,8 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
 }
 llvm::Value* Compiler::visitInstanceofExpr(typedAST::InstanceofExpr* expr){
     llvm::Value* inst = expr->lhs->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
+
     auto subclassesInterval = classHierarchy[expr->className];
     return builder.CreateCall(safeGetFunc("isInstAndClass"),
                               {inst, builder.getInt32(subclassesInterval.first), builder.getInt32(subclassesInterval.second)});
@@ -232,6 +242,7 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
     using typedAST::UnaryOp;
     if(expr->opType == UnaryOp::NEG){
         llvm::Value* rhs = expr->rhs->codegen(this);
+        debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
         // If type is known to be a bool skip the runtime check and just execute the expr
         if(exprIsType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
             return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), builder.getInt64(MASK_TYPE_TRUE)));
@@ -243,13 +254,16 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
         // This relies on the fact that true and false are the first flags and are thus represented with 00 and 01
         return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), builder.getInt64(MASK_TYPE_TRUE)));
     }else if(expr->opType == UnaryOp::FNEG || expr->opType == UnaryOp::BIN_NEG){
-        return codegenNeg(expr->rhs, expr->opType, expr->dbgInfo.op);
+        llvm::Value* rhs = expr->rhs->codegen(this);
+        debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
+        return codegenNeg(rhs, expr->rhs->exprType, expr->opType, expr->dbgInfo.op);
     }else{
-        return codegenIncrement(expr->opType, expr->rhs);
+        return codegenIncrement(expr->opType, expr->rhs, expr->dbgInfo.op);
     }
 }
 
 llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.literal);
     switch(expr->val.index()){
         case 0: {
             auto tmp = llvm::ConstantFP::get(*ctx, llvm::APFloat(get<double>(expr->val)));
@@ -269,17 +283,22 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
 }
 
 llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.brace1);
     vector<llvm::Value*> args = {getThreadData(), builder.getInt32(expr->fields.size())};
     // For each field, compile it and get the constant of the field name
+    int i = 0;
     for (auto entry : expr->fields) {
+        debugEmitter.emitNewLocation(builder, expr->dbgInfo.fields[i].str);
         // This gets rid of quotes, ""Hello world""->"Hello world"
         args.push_back(createESLString(entry.first));
         args.push_back(entry.second->codegen(this));
+        i++;
     }
 
     return builder.CreateCall(safeGetFunc("createHashMap"), args);
 }
 llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.bracket1);
     vector<llvm::Value*> vals;
     for(auto mem : expr->fields){
         vals.push_back(mem->codegen(this));
@@ -303,7 +322,7 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
     return arr;
 }
 
-// Returns whether collection is array(01) or hashmap(10), used in switch
+// Returns whether collection is array(0b01) or hashmap(0b10), used in switch
 static llvm::Value* collectionTypeCheck(llvm::IRBuilder<>& builder, llvm::Value* collection, llvm::Function* typeChecker){
     // Have to use i8 otherwise we won't know which function returned true
     llvm::Value* cond1 = builder.CreateCall(typeChecker,{collection, builder.getInt8(+object::ObjType::ARRAY)});
@@ -320,6 +339,7 @@ static llvm::Value* collectionTypeCheck(llvm::IRBuilder<>& builder, llvm::Value*
 llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.accessor);
 
     bool optArrIndex = exprIsType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
     bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
@@ -371,6 +391,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
     llvm::Value* val = expr->toStore->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.accessor);
 
     bool optArrIndex = exprIsType(expr->field, types::getBasicType(types::TypeFlag::NUMBER));
     bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
@@ -423,6 +444,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
 
 llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
     auto condtmp = expr->cond->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.questionmark);
     llvm::Value* cond = nullptr;
     // If condition is known to be a boolean the isNull check can be skipped
     if(exprIsType(expr->cond, types::getBasicType(types::TypeFlag::BOOL))){
@@ -465,6 +487,7 @@ llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
 llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     bool opt = exprIsComplexType(expr->callee, types::TypeFlag::FUNCTION);
     llvm::Value* closureVal = expr->callee->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.paren1);
     // First two params of every function are reserved for: threadLocalData ptr, closure ptr
     vector<llvm::Value*> args = {getThreadData(), closureVal};
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
@@ -486,6 +509,7 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
 }
 llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     auto inst = expr->inst->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.method);
 
     vector<llvm::Value*> args = {getThreadData()};
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
@@ -502,6 +526,7 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
 }
 
 llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.keyword);
     Class& klass = classes[expr->className];
     string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
     // Instead of initializing instance in some runtime function, we request memory, copy the template and adjust pointers
@@ -545,6 +570,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
         // Inserts tagged closure since that is what functions expect
         vector<llvm::Value*> args = {closureVal};
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
+        debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
 
         if(!opt) {
             // -1 because arg checking doesn't take closure ptr into account
@@ -566,6 +592,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
 
         vector<llvm::Value*> args;
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
+        debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
 
         if(typeEnv[expr->inst->exprType]->type == types::TypeFlag::INSTANCE) {
             auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->inst->exprType])->klass->name];
@@ -629,7 +656,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
     // is stored in parserCurrent->enclosing
-    inProgressFuncs.emplace(startFuncDef(expr->fn->name, expr->fn->fnTy));
+    inProgressFuncs.emplace(startFuncDef(expr->fn->name, expr->fn->fnTy, expr->dbgInfo.keyword));
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
     llvm::Value* cl = builder.CreateCall(safeGetFunc("decodeClosure"), inProgressFuncs.top().fn->getArg(1), "closure");
@@ -650,6 +677,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     // Enclosing function become the active one, the function that was just compiled is stored in fn
     auto lambda = inProgressFuncs.top().fn;
     inProgressFuncs.pop();
+    debugEmitter.popScope(builder, expr->dbgInfo.keyword);
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
@@ -674,7 +702,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
 }
 
 llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
-    inProgressFuncs.emplace(startFuncDef(stmt->fn->name, stmt->fn->fnTy));
+    inProgressFuncs.emplace(startFuncDef(stmt->fn->name, stmt->fn->fnTy, stmt->dbgInfo.name));
 
     declareFuncArgs(stmt->fn->args);
 
@@ -685,6 +713,7 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     // Enclosing function become the active one, the function that was just compiled is stored in fn
     auto fn = inProgressFuncs.top().fn;
     inProgressFuncs.pop();
+    debugEmitter.popScope(builder, stmt->dbgInfo.keyword);
 
     // Set insertion point to the end of the enclosing function
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
@@ -708,10 +737,12 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
 }
 
 llvm::Value* Compiler::visitReturnStmt(typedAST::ReturnStmt* stmt) {
+    debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
     builder.CreateRet(stmt->expr->codegen(this));
     return nullptr; // Stmts return nullptr on codegen
 }
 llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
+    debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
     switch(stmt->jmpType){
         case typedAST::JumpType::BREAK: builder.CreateBr(breakJumpDest.top()); break;
         case typedAST::JumpType::CONTINUE: builder.CreateBr(continueJumpDest.top()); break;
@@ -825,6 +856,7 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
         F->insert(F->end(), blocks[i]);
         builder.SetInsertPoint(blocks[i]);
 
+        debugEmitter.emitNewLocation(builder, stmt->dbgInfo.cases[i]);
         codegenBlock(stmt->cases[i]);
         if(!stmt->cases[i].terminates){
             builder.CreateBr(mergeBB);
@@ -839,22 +871,26 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
 
 llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     auto name = createConstStr(stmt->fullName);
-    auto fieldsLen = builder.getInt16(stmt->fields.size());
-    auto methodsLen = builder.getInt16(stmt->methods.size());
+    auto fieldsLen = builder.getInt16(stmt->classType->fields.size());
+    auto methodsLen = builder.getInt16(stmt->classType->methods.size());
     // Generates functions to call when type of instance is not known at compile time to get the index into the field/method array
-    auto fieldsFunc = createFieldChooseFunc(stmt->fullName, stmt->fields);
-    auto methodsFunc = createMethodChooseFunc(stmt->fullName, stmt->methods);
+    auto fieldsFunc = createStrToIdxFunc(stmt->classType, false);
+    auto methodsFunc = createStrToIdxFunc(stmt->classType, true);
     // Result of a dfs done on the class graph
     auto subClassIdxStart = builder.getInt32(classHierarchy[stmt->fullName].first);
     auto subClassIdxEnd = builder.getInt32(classHierarchy[stmt->fullName].second);
 
-    fastMap<string, llvm::Function*> methodDecl;
-    vector<llvm::Constant*> methods(stmt->methods.size());
+    vector<llvm::Constant*> methods(stmt->classType->methods.size());
+    // Copy all methods of parent class, these can then be (possibly) overriden
+    if(classes.contains(stmt->parentClassName)){
+        int i = 0;
+        for(llvm::Constant* parentMethod : classes[stmt->parentClassName].methodArr){
+            methods[i++] = parentMethod;
+        }
+    }
     for(auto [mName, method] : stmt->methods){
         llvm::Function* methodFn = functions[method.first.code->fnTy];
         methodFn->setName(stmt->fullName + mName);
-        // Functions are already forward declared
-        methodDecl[mName] = methodFn;
         // Creates an ObjClosure associated with this method
         methods[method.second] = createMethodObj(method.first, methodFn);
     }
@@ -868,18 +904,21 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     llvm::GlobalVariable* klass = new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
     klass->setAlignment(llvm::Align(16));
+    llvm::ArrayRef<llvm::Constant*> idx = {builder.getInt32(0), builder.getInt32(1)};
+    llvm::Constant* methodArrPtr = llvm::ConstantExpr::getInBoundsGetElementPtr(obj->getType(), klass, idx);
     // Associates a full class name with the class object and instance template
     classes[stmt->fullName] = Class(klass, createInstanceTemplate(klass, stmt->fields.size()),
-                                    stmt->classType, methodArr);
+                                    stmt->classType, methods, methodArrPtr);
 
-    for(auto p : stmt->methods){
-        codegenMethod(stmt->fullName, p.second.first, subClassIdxStart, subClassIdxEnd, methodDecl[p.first]);
+    for(auto [mName, method] : stmt->methods){
+        codegenMethod(stmt->fullName, method.first, subClassIdxStart, subClassIdxEnd);
     }
     return nullptr; // Stmts return nullptr on codegen
 }
 
 llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     auto inst = expr->instance->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
     if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
         auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
         return optimizeInstGet(inst, expr->field, klass);
@@ -889,6 +928,7 @@ llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
 }
 llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     auto inst = expr->instance->codegen(this);
+    debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
     llvm::Value* fieldPtr = nullptr;
     if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
         auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
@@ -926,6 +966,10 @@ llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
     for(auto uuid : stmt->toPop){
         variables.erase(uuid);
     }
+    // TODO: very hacky, but macroExpander creates synthetic scopes that shouldn't be a part of debug info
+    if(stmt->location.isSynthetic) return nullptr;
+    if(stmt->edgeType == typedAST::ScopeEdgeType::START) debugEmitter.addScope(builder, stmt->location);
+    else debugEmitter.popScope(builder, stmt->location);
     return nullptr; // Stmts return nullptr on codegen
 }
 
@@ -934,7 +978,8 @@ static void setFuncAttrs(vector<llvm::Attribute>& attrs, llvm::Function* func){
 }
 void Compiler::setupModule(const llvm::DataLayout& DL){
     curModule = std::make_unique<llvm::Module>("Module", *ctx);
-    curModule->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 4);
+    curModule->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
+                             llvm::DEBUG_METADATA_VERSION);
     auto targetTriple = llvm::sys::getDefaultTargetTriple();
     curModule->setDataLayout(DL);
     curModule->setTargetTriple(targetTriple);
@@ -953,14 +998,8 @@ void Compiler::optimizeModule(llvm::Module& module){
     llvm::FunctionAnalysisManager FAM;
     llvm::CGSCCAnalysisManager CGAM;
     llvm::ModuleAnalysisManager MAM;
-    llvm::PlaceSafepointsPass SafepointPass;
 
-    // Create the new pass manager builder.
-    // Take a look at the PassBuilder constructor parameters for more
-    // customization, e.g. specifying a TargetMachine or various debugging
-    // options.
     llvm::PassBuilder PB;
-
     // Register all the basic analyses with the managers.
     PB.registerModuleAnalyses(MAM);
     PB.registerCGSCCAnalyses(CGAM);
@@ -970,7 +1009,6 @@ void Compiler::optimizeModule(llvm::Module& module){
     // Create the pass manager.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     MPM.run(module, MAM);
-
 }
 
 void Compiler::declareFunctions(){
@@ -996,6 +1034,7 @@ void Compiler::createMainEntrypoint(string entrypointName){
     auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
     setFuncAttrs(ESLFuncAttrs, entryFn);
     entryFn->setGC("statepoint-example");
+    debugEmitter.addMainFunc(entryFn);
     // Create the runtime entrypoint that calls the internal entrypoint
     llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);
     auto tmpfn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage, entrypointName, curModule.get());
@@ -1086,6 +1125,7 @@ void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lh
 
 // Codegen functions
 llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op){
+    debugEmitter.emitNewLocation(builder, op);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If both are a number go to addNum, if not try adding as string
     // If both aren't strings, throw error(error is thrown inside strTryAdd C++ function)
@@ -1231,11 +1271,10 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     PN->addIncoming(strCmpRes, cmpStrBB);
     return PN;
 }
-llvm::Value* Compiler::codegenNeg(const typedExprPtr _rhs, typedAST::UnaryOp op, Token dbg){
-    llvm::Value* rhs = _rhs->codegen(this);
+llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyVarIdx type, typedAST::UnaryOp op, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
-    if(!exprIsType(_rhs, types::getBasicType(types::TypeFlag::NUMBER))){
+    if(typeEnv[type] != types::getBasicType(types::TypeFlag::NUMBER)){
         createRuntimeTypeCheck(safeGetFunc("isNum"), {rhs},
                                "Operand must be a number, got '{}'.", "num.neg", dbg);
     }
@@ -1257,20 +1296,21 @@ void Compiler::codegenBlock(const typedAST::Block& block){
         stmt->codegen(this);
     }
 }
-llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr) {
+llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr, const Token dbg) {
     // No array/hashmap field access because it's to complicated
     if(expr->type == typedAST::NodeType::VAR_READ){
-        return codegenVarIncrement(op, std::reinterpret_pointer_cast<typedAST::VarRead>(expr));
+        return codegenVarIncrement(op, std::reinterpret_pointer_cast<typedAST::VarRead>(expr), dbg);
     }else if(expr->type == typedAST::NodeType::INST_GET){
-        return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr));
+        return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr), dbg);
     }
     // TODO: error
     errorHandler::addSystemError("Unreachable code reached during compilation.");
     __builtin_unreachable();
 }
 // Reuses var read and var store
-llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr) {
+llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr, Token dbg) {
     llvm::Value* val = codegenVarRead(expr->varPtr);
+    debugEmitter.emitNewLocation(builder, dbg);
     // Right now we can only increment numbers, maybe change this when adding iterators?
     if(!exprIsType(expr, types::getBasicType(types::TypeFlag::NUMBER))){
         createRuntimeTypeCheck(safeGetFunc("isNum"), {val}, "is.num",
@@ -1284,7 +1324,7 @@ llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const st
     codegenVarStore(expr->varPtr, res);
     return val;
 }
-llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr) {
+llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr, Token dbg) {
     auto inst = expr->instance->codegen(this);
 
     llvm::Value* fieldPtr = nullptr;
@@ -1296,6 +1336,8 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
         fieldPtr = getUnoptInstFieldPtr(inst, expr->field, expr->dbgInfo.field);
     }
     llvm::Value* storedField = builder.CreateLoad(getESLValType(), fieldPtr);
+    // Set debug to operator after getting field for more correct error messages
+    debugEmitter.emitNewLocation(builder, dbg);
     createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
                            "val.is.num", "Expected a number, got {}", expr->dbgInfo.field);
 
@@ -1308,14 +1350,11 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
     return storedField;
 }
 
-llvm::Value *codegenCollectionIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::CollectionGet> expr){
-
-}
-
 // Function codegen helpers
-llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy){
+llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc){
     llvm::Function* fn = functions[fnTy];
     fn->setName(name);
+    debugEmitter.addNewFunc(builder, fn, *fnTy, loc);
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
@@ -1350,6 +1389,7 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
             auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevar.addr");
             builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), tmpEle);
         }
+        debugEmitter.addLocalVarDecl(builder, varPtr, var->dbgInfo.varName, true, argIndex);
         // Insert the argument into the pool of variables
         variables.insert_or_assign(var->uuid, varPtr);
     }
@@ -1585,32 +1625,16 @@ llvm::Value* Compiler::createSeqCmp(llvm::Value* compVal, vector<std::pair<std::
 }
 
 // Class helpers
-llvm::Function* Compiler::createFieldChooseFunc(string className, std::unordered_map<string, int>& fields){
+llvm::Function* Compiler::createStrToIdxFunc(std::shared_ptr<types::ClassType> classType, bool isMethod){
+    string fnName = classType->name + (isMethod ? ":methodChoose" : "fieldChoose");
+    auto& collection = isMethod ? classType->methods : classType->fields;
     llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt32Ty(), {getESLValType()}, false);
-    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, className+":fieldChoose", curModule.get());
+    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, fnName, curModule.get());
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
     llvm::Value* idx = builder.getInt32(-1);
-    for(auto p : fields){
-        auto toCmp = createESLString(p.first);
-        auto cmp = builder.CreateICmpEQ(fn->getArg(0), toCmp);
-        idx = builder.CreateSelect(cmp, builder.getInt32(p.second), idx);
-    }
-    builder.CreateRet(idx);
-
-    // Set insertion point to the end of the enclosing function
-    builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
-    return fn;
-}
-llvm::Function* Compiler::createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods){
-    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getInt32Ty(), {getESLValType()}, false);
-    auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, className+":methodChoose", curModule.get());
-
-    llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
-    builder.SetInsertPoint(BB);
-    llvm::Value* idx = builder.getInt32(-1);
-    for(auto p : methods){
+    for(auto& p : collection){
         auto toCmp = createESLString(p.first);
         auto cmp = builder.CreateICmpEQ(fn->getArg(0), toCmp);
         idx = builder.CreateSelect(cmp, builder.getInt32(p.second.second), idx);
@@ -1621,9 +1645,10 @@ llvm::Function* Compiler::createMethodChooseFunc(string className, std::unordere
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
     return fn;
 }
-void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd,
-                             llvm::Function* methodFn){
+void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd){
+    llvm::Function* methodFn = functions[method.code->fnTy];
     inProgressFuncs.emplace(methodFn);
+    debugEmitter.addNewFunc(builder, methodFn, *method.code->fnTy, method.dbg.name);
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", inProgressFuncs.top().fn);
     builder.SetInsertPoint(BB);
     declareFuncArgs(method.code->args);
@@ -1637,6 +1662,7 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
     // Enclosing function become the active one, the function that was just compiled is stored in fn
     auto fn = inProgressFuncs.top();
     inProgressFuncs.pop();
+    debugEmitter.popScope(builder, method.dbg.keyword);
 
     // Set insertion point to the end of the enclosing method
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
@@ -1841,11 +1867,10 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* maybeInst, string field
 // Modifies callArgs to have correct args
 llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& callArgs, Token dbg){
     if(klass.ty->methods.contains(field)){
-        // Index into the array of ObjClosure contained in the class
-        auto arrIdx = builder.getInt32(klass.ty->methods[field].second);
-
         // Doesn't actually access the array, but treats the pointer as a pointer to allocated ObjClosure
-        auto closure = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr, arrIdx);
+        auto closure = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr,
+                                                                    builder.getInt32(klass.ty->methods[field].second));
+        closure = llvm::ConstantExpr::getBitCast(closure, builder.getPtrTy());
         // Closures in class are stored as raw pointers, tag them and then pass to method
         closure = constObjToVal(closure, +object::ObjType::CLOSURE);
         llvm::Function* fn = functions[typeEnv[klass.ty->methods[field].first]];
@@ -1959,7 +1984,7 @@ llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int 
     builder.CreateCall(safeGetFunc("threadInit"), {frameAddr});
 
     builder.CreateCall(funcType, funcPtr, args);
-    builder.CreateCall(safeGetFunc("threadDestruct"));
+    builder.CreateCall(safeGetFunc("threadDestruct"), threadData);
     builder.CreateRet(llvm::ConstantPointerNull::get(builder.getPtrTy()));
     llvm::verifyFunction(*fn);
 

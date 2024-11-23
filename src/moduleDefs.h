@@ -45,6 +45,8 @@ struct File {
     string path;
     File(const string _sourceFile, const string& _name, const string _path) : sourceFile(_sourceFile), name(_name), path(_path) {};
     File() = default;
+
+    string getFullPath() { return path + name; }
 };
 
 // Span of characters in a source file of code
@@ -100,7 +102,7 @@ struct Token {
     string syntheticStr;
     //default constructor
     Token() {
-        isSynthetic = false;
+        isSynthetic = true;
         isPartOfMacro = false;
         type = TokenType::NONE;
     }

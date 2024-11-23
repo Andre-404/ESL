@@ -1,6 +1,7 @@
 #include "scanner.h"
 #include "../files.h"
 #include <iostream>
+#include <filesystem>
 
 // Map to convert keywords in string form to their corresponding TokenType
 std::unordered_map<string, TokenType> keywordToTokenType = {
@@ -49,7 +50,7 @@ Scanner::Scanner() {
 
 vector<Token> Scanner::tokenizeSource(const string path, const string sourceName) {
     // Setup
-    curFile = new File(readFile(path), sourceName, path);
+    curFile = new File(readFile(path), sourceName, std::filesystem::path(path).parent_path().generic_string());
     start = 0;
     current = start;
     hadError = false;

@@ -193,7 +193,8 @@ AST::ASTNodePtr AST::Macro::expand(vector<Token> &args, const Token &callerToken
         if (!isStmt){
             return stmts[0];
         } else {
-            return make_shared<AST::BlockStmt>(stmts);
+            Token empty;
+            return make_shared<AST::BlockStmt>(stmts, callerToken, callerToken);
         }
     }
 

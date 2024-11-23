@@ -1,5 +1,6 @@
 #pragma once
 #include "Passes/ASTToTypedAST.h"
+#include "DebugEmitter.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
@@ -40,10 +41,12 @@ namespace compileCore {
         llvm::Constant* classPtr;
         llvm::GlobalVariable* instTemplatePtr;
         std::shared_ptr<types::ClassType> ty;
+        vector<llvm::Constant*> methodArr;
         llvm::Constant* methodArrPtr;
 
-        Class(llvm::Constant* classPtr, llvm::GlobalVariable* instTemplatePtr, std::shared_ptr<types::ClassType> ty, llvm::Constant* methodArrPtr) :
-            classPtr(classPtr), instTemplatePtr(instTemplatePtr), ty(ty), methodArrPtr(methodArrPtr) {}
+        Class(llvm::Constant* classPtr, llvm::GlobalVariable* instTemplatePtr, std::shared_ptr<types::ClassType> ty,
+              vector<llvm::Constant*> methodArr, llvm::Constant* methodArrPtr) :
+            classPtr(classPtr), instTemplatePtr(instTemplatePtr), ty(ty), methodArr(methodArr), methodArrPtr(methodArrPtr) {}
         Class(){
             classPtr = nullptr;
             instTemplatePtr = nullptr;
@@ -123,6 +126,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         fastMap<string, llvm::Constant*> CStrings;
         fastMap<string, llvm::Constant*> ESLStrings;
         fastMap<string, llvm::Type*> namedTypes;
+        DebugEmitter debugEmitter;
 
 
         std::unique_ptr<llvm::LLVMContext> ctx;
@@ -162,16 +166,16 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
-        llvm::Value* codegenNeg(const typedExprPtr expr1, const typedAST::UnaryOp op, const Token dbg);
+        llvm::Value* codegenNeg(llvm::Value* rhs, const types::tyVarIdx type, const typedAST::UnaryOp op, const Token dbg);
         void codegenBlock(const typedAST::Block& block);
-        llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr);
-        llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr);
-        llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr);
+        llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr, const Token dbg);
+        llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr, Token dbg);
+        llvm::Value *codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr, Token dbg);
         llvm::Value* codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore);
 
         // Functions helpers
-        llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy);
+        llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args);
         llvm::FunctionCallee setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
@@ -191,9 +195,8 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* createSeqCmp(llvm::Value* compVal, vector<std::pair<std::variant<double, bool, void*, string>, int>>& constants);
 
         // Class helpers
-        llvm::Function* createFieldChooseFunc(string className, std::unordered_map<string, int>& fields);
-        llvm::Function* createMethodChooseFunc(string className, std::unordered_map<string, std::pair<typedAST::ClassMethod, int>>& methods);
-        void codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd, llvm::Function* methodFn);
+        llvm::Function* createStrToIdxFunc(std::shared_ptr<types::ClassType> classType, bool isMethod);
+        void codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
         llvm::Constant* createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr);
 
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
@@ -234,7 +237,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         void generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives);
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
-
         llvm::Value* getThreadData();
 
         #pragma endregion

@@ -3,21 +3,18 @@ project(ESL)
 
 # Hardcoded llvm paths
 if(WIN32)
-    set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
+    set(LLVM_DIR "C:/Temp/LLVM-19/Install/lib/cmake/llvm")
     set(CMAKE_CXX_FLAGS "-march=native")
 else()
     set(LLVM_DIR "/usr/local/lib")
     set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic -march=native")
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
+set(LLVM_ENABLE_ASSERTIONS OFF)
 find_package(LLVM REQUIRED CONFIG)
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-
-#set(CMAKE_CXX_STANDARD 23)
-#set(CMAKE_CXX_STANDARD_REQUIRED True)
-#set(CMAKE_EXE_LINKER_FLAGS "-static")
 
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
@@ -33,9 +30,9 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/MemoryManagment/heapPageManager.cpp
         src/Runtime/MemoryManagment/heapPageManager.h
         src/Includes/rapidhash.h
+        src/Codegen/DebugEmitter.cpp
+        src/Codegen/DebugEmitter.h
 )
-
-#execute_process(COMMAND llvm-config)
 
 llvm_map_components_to_libnames(llvm_libs
         support core irreader orcjit native passes scalaropts ipo target option analysis transformutils instcombine bitreader object option instrumentation)

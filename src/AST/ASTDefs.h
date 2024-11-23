@@ -471,9 +471,13 @@ namespace AST {
 	class BlockStmt : public ASTNode {
 	public:
 		vector<ASTNodePtr> statements;
+        Token start;
+        Token end;
 
-		BlockStmt(vector<ASTNodePtr> _statements) {
+		BlockStmt(vector<ASTNodePtr> _statements, const Token& _start, const Token& _end) {
 			statements = _statements;
+            start = _start;
+            end = _end;
 			type = ASTType::BLOCK;
 		}
 		void accept(Visitor* vis) {

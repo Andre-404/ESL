@@ -30,14 +30,14 @@ int main(int argc, char* argv[]) {
     string path;
     string flag;
     // For ease of use during development
-    #ifdef DEBUG_MODE
-    #if defined(_WIN32) || defined(WIN32)
+#ifdef DEBUG_MODE
+#if defined(_WIN32) || defined(WIN32)
     path = "C:\\Temp\\ESL-prez\\main.esl";
-    #else
+#else
     path = string(argv[1]);
-    #endif
+#endif
     flag = "-jit";
-    #else
+#else
     if(argc == 2) {
         path = string(argv[1]);
         flag = "-jit";
@@ -50,10 +50,10 @@ int main(int argc, char* argv[]) {
         std::cout<<"No filepath entered.\n";
         return 1;
     }
-    #endif
-    #if defined(_WIN32) || defined(WIN32)
+#endif
+#if defined(_WIN32) || defined(WIN32)
     windowsSetTerminalProcessing();
-    #endif
+#endif
     preprocessing::Preprocessor preprocessor;
     preprocessor.preprocessProject(path);
     vector<ESLModule *> modules = preprocessor.getSortedUnits();
@@ -78,6 +78,7 @@ int main(int argc, char* argv[]) {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
+    llvm::InitializeNativeTargetDisassembler();
     std::unique_ptr<llvm::orc::LLJIT> JIT = std::move(setupJIT());
     compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(), JIT->getDataLayout());
     llvm::cantFail(JIT->addIRModule(std::move(compiler.compile(res.first, "func.main"))));

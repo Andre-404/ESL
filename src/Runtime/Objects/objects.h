@@ -116,7 +116,6 @@ namespace object {
 
     class ObjClass : public Obj {
     public:
-        // Uses copy down inheritance, superclass ptr is still here for instanceof operator
         uint16_t methodArrLen;
         uint16_t fieldsArrLen;
         uint32_t classHierarchyStart;

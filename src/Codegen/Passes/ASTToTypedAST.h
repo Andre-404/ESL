@@ -78,7 +78,6 @@ namespace typedASTParser{
         }
 
         void inherit(std::shared_ptr<ClassChunkInfo> _parent){
-            methods = _parent->methods;
             fields = _parent->fields;
             parent = _parent;
         }
@@ -187,15 +186,15 @@ namespace typedASTParser{
         typedAST::exprPtr readVar(const Token name);
         typedAST::exprPtr storeToVar(const Token name, const Token op, typedAST::exprPtr toStore);
 
-        std::shared_ptr<typedAST::ScopeEdge> beginScope();
-        std::shared_ptr<typedAST::ScopeEdge> endScope();
+        std::shared_ptr<typedAST::ScopeEdge> beginScope(Token location);
+        std::shared_ptr<typedAST::ScopeEdge> endScope(Token location);
         // Functions
-        std::shared_ptr<typedAST::Function> endFuncDecl();
+        std::shared_ptr<typedAST::Function> endFuncDecl(Token endLoc);
         void declareFuncArgs(vector<AST::ASTVar>& args);
         types::tyVarIdx createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure);
 
         // Classes and methods
-        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrides, const string className,
+        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
                                            std::shared_ptr<types::FunctionType> fnTy);
         std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
                                                                  const Token paren1, const Token paren2);

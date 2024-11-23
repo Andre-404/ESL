@@ -129,10 +129,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     CREATE_FUNC(hashmapSetV, false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
 
-    llvm::FunctionType* fnty = llvm::FunctionType::get(PTR_TY(TYPE(Void)), PTR_TY(TYPE(Int64)), false);
-    CREATE_FUNC(createNewThread, false, TYPE(Void), PTR_TY(fnty), builder.getPtrTy());
+    // ret: void, args: wrapper function ptr, alloca ptr with args
+    CREATE_FUNC(createNewThread, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy());
+    // ret: void, args: frame address
     CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy());
-    CREATE_FUNC(threadDestruct, false, TYPE(Void));
+    // ret: void, args: threadData ptr
+    CREATE_FUNC(threadDestruct, false, TYPE(Void), builder.getPtrTy());
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
