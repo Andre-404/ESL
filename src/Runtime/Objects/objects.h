@@ -26,6 +26,7 @@ namespace object {
         FILE,
         MUTEX,
         CHANNEL,
+        WAIT_GROUP
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 

@@ -154,12 +154,12 @@ class Compiler : public typedAST::TypedASTCodegen {
         bool exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag);
 
         // Runtime type checking
-        void createTyErr(const string err, llvm::Value* const val, Token token);
-        void createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, Token token);
-        void createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> val,
-                string executeBBName, string errMsg, Token dbg);
-        void createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
-                                    string executeBBName, string errMsg, Token dbg);
+        void createTypeCheckUnary(const string err, llvm::Value* const val, std::tuple<uint64_t, uint64_t, bool> masks);
+        void createTypeCheckBinary(const string err, llvm::Value* const lhs, llvm::Value* const rhs, std::tuple<uint64_t, uint64_t, bool> masks);
+        void createArgCountCheck(const string err, llvm::Value* closure, uint8_t expectedArity);
+        void createArrBoundsCheck(const string err, llvm::Value* arr, llvm::Value* index);
+        void createInstNoField(const string err, const string field, llvm::Value* inst);
+        void createInstClassCheck(const string err, llvm::Value* inst, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
 
         // Codegen functions(take in a typedAST expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
@@ -183,7 +183,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::FunctionCallee getBitcastFunc(llvm::Value* closurePtr, const int argc);
 
         // Array optimization
-        void createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg);
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg);
         llvm::Value* getArrElement(llvm::Value* arr, llvm::Value* index, bool opt, Token dbg);
         llvm::Value* getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg);

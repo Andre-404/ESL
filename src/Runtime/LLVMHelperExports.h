@@ -6,6 +6,10 @@
 #include <csetjmp>
 #include <stdarg.h>
 #include "../Includes/rpmalloc/rpmalloc.h"
+#include <format>
+#include "JIT/JIT.h"
+#include <unwind.h>
+
 
 #define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
 #define __READ_RSP() __asm__ volatile("movq %%rsp, %0" : "=r"(__rsp))
@@ -30,62 +34,64 @@ EXPORT double asNum(Value x){
     exit(64);
 }
 
-EXPORT void runtimeErr(const char* ptr, char**args, int argSize){
-    string str(ptr);
-    size_t pos = 0;
-    for(uInt i = 0; i < argSize; i++){
-        pos = str.find("{}", pos);
-        if(pos == str.npos){
-            std::cout<< "Error\n";
+_Unwind_Reason_Code callback(struct _Unwind_Context* context, void* arg){
+    uint64_t ip = (uint64_t)_Unwind_GetIP(context);
+    printf("%p\n", (void*)ip);
+    return _URC_NO_REASON;
+}
+
+enum class runtimeErrorType : uint8_t{
+    WRONG_TYPE,
+    WRONG_TYPE_BINARY,
+    ARG_CNT,
+    INST_FIELD,
+    OUT_OF_BOUNDS
+};
+inline constexpr unsigned operator+ (runtimeErrorType const val) { return static_cast<byte>(val); }
+// A bit hacky, but we only ever need a maximum of 3 values for errors, what does values are(ESL "Value"s, char ptrs..)
+// is up to the error type to interpret
+EXPORT void runtimeError(const char* msg, uint8_t errType, uint64_t val1, uint64_t val2, uint64_t val3){
+    string str(msg);
+    switch(errType){
+        case +runtimeErrorType::WRONG_TYPE: {
+            string type = valueHelpers::typeToStr(val1);
+            str = fmt::vformat(msg, fmt::make_format_args(type));
+            break;
         }
-        str.replace(pos, 2, args[i]);
-        pos += strlen(args[i]);
+        case +runtimeErrorType::WRONG_TYPE_BINARY:{
+            string lhsType = valueHelpers::typeToStr(val1);
+            string rhsType = valueHelpers::typeToStr(val2);
+            str = fmt::vformat(msg, fmt::make_format_args(lhsType, rhsType));
+            break;
+        }
+        case +runtimeErrorType::ARG_CNT:{
+            string funcName = asClosure(val1)->name;
+            uint8_t funcArity = asClosure(val1)->arity;
+            uint64_t wrongArgCount = val2;
+            str = fmt::vformat(msg, fmt::make_format_args(funcName, funcArity, wrongArgCount));
+            break;
+        }
+        case +runtimeErrorType::INST_FIELD:{
+            string instType = valueHelpers::typeToStr(val1);
+            char* field = reinterpret_cast<char*>(val2);
+            str = fmt::vformat(msg, fmt::make_format_args(instType, std::string_view(field)));
+            break;
+        }
+        case +runtimeErrorType::OUT_OF_BOUNDS:{
+            ObjArray* array = asArray(val1);
+            uint64_t arrCnt = array->size;
+            // Hacky, but index is a signed 64bit num, and reinterpret cast doesn't let you convert uint->int
+            int64_t index = *reinterpret_cast<int64_t*>(&val2);
+            str = fmt::vformat(msg, fmt::make_format_args(arrCnt, index));
+            break;
+        }
     }
-
+    _Unwind_Backtrace(callback, nullptr);
     std::cout<<str<<std::endl;
     exit(64);
 }
-
-// TODO: Probably use printf for this since it's easier to do the format
-EXPORT void tyErrSingle(const char* ptr, const char* fileName, const int line, Value val){
-    string str(ptr);
-    string type = valueHelpers::typeToStr(val);
-
-    size_t pos = str.find("{}");
-    if(pos == str.npos) std::cout<< "Error formatting string for error output\n";
-    str.replace(pos, 2, type);
-
-    std::cout<<str<<std::endl;
-    exit(64);
-}
-
-EXPORT void tyErrDouble(const char* ptr, const char* fileName, const int line, Value lhs, Value rhs){
-    string str(ptr);
-    string lhsTy = valueHelpers::typeToStr(lhs);
-    string rhsTy = valueHelpers::typeToStr(rhs);
-
-    // Doesn't look pretty, but better than a loop
-    size_t pos = str.find("{}");
-    if(pos == str.npos)std::cout<< "Error formatting string for error output\n";
-    str.replace(pos, 2, lhsTy);
-    pos += lhsTy.length();
-
-    pos = str.find("{}", pos);
-    if(pos == str.npos) std::cout<< "Error formatting string for error output\n";
-    str.replace(pos, 2, rhsTy);
-
-
-    std::cout<<str<<std::endl;
-    exit(64);
-}
-
 // Both values are known to be strings
 EXPORT Value strAdd(memory::ThreadLocalData* threadData, Value lhs, Value rhs){
-    return encodeObj(asString(lhs)->concat(asString(rhs), memory::getLocalArena(threadData)));
-}
-
-EXPORT Value strTryAdd(memory::ThreadLocalData* threadData, Value lhs, Value rhs, const char* fileName, const int line){
-    if(!isString(lhs) || !isString(rhs)) tyErrDouble("Operands must be numbers or strings, got '{}' and '{}'.", fileName, line, lhs, rhs);
     return encodeObj(asString(lhs)->concat(asString(rhs), memory::getLocalArena(threadData)));
 }
 

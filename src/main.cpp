@@ -4,7 +4,7 @@
 #include "ErrorHandling/errorHandler.h"
 #include "Parsing/parser.h"
 #include "Codegen/compiler.h"
-#include "JIT.h"
+#include "Runtime/JIT/JIT.h"
 #include "llvm/Support/TargetSelect.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
 #include "Runtime/MemoryManagment/garbageCollector.h"
@@ -79,12 +79,10 @@ int main(int argc, char* argv[]) {
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
     llvm::InitializeNativeTargetDisassembler();
-    std::unique_ptr<llvm::orc::LLJIT> JIT = std::move(setupJIT());
-    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(), JIT->getDataLayout());
-    llvm::cantFail(JIT->addIRModule(std::move(compiler.compile(res.first, "func.main"))));
-
-    llvm::orc::ExecutorAddr ExprSymbol = llvm::ExitOnError()(JIT->lookup("func.main"));
-    int (*FP)(int, char*) = ExprSymbol.toPtr< int(*)(int, char*)>();
-    FP(0, nullptr);
+    ESLJIT::createJIT();
+    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(), ESLJIT::getJIT().getDL());
+    ESLJIT::getJIT().addIRModule(std::move(compiler.compile(res.first, "func.main")));
+    MainFn mainFuncPtr = ESLJIT::getJIT().getMainFunc();
+    mainFuncPtr(0, nullptr);
     return 0;
 }

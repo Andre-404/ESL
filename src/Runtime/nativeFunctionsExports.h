@@ -8,7 +8,6 @@
 #include <iostream>
 #include <string>
 #include <stdarg.h>
-#include <unwind.h>
 
 using namespace object;
 
