@@ -16,9 +16,15 @@
 #include <iostream>
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
-    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get());
+    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get())
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
+
+// TODO: make this work only on windows, linux shouldn't have dllimport storage( i think)
+llvm::Function* wrapFn(llvm::Function*  fn){
+    fn->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+    return fn;
+}
 
 using namespace llvmHelpers;
 
@@ -66,7 +72,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
                                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     createLLVMTypes(ctx, types);
     llvm::Type* eslValTy = getESLValType(*ctx);
-    auto fn = CREATE_FUNC(runtimeError, false, TYPE(Void), PTR_TY(TYPE(Int8)), TYPE(Int8), TYPE(Int64), TYPE(Int64), TYPE(Int64));
+    auto fn = wrapFn(CREATE_FUNC(runtimeError, false, TYPE(Void), PTR_TY(TYPE(Int8)), TYPE(Int8), TYPE(Int64), TYPE(Int64), TYPE(Int64)));
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
     fn->addFnAttr(llvm::Attribute::Memory);
@@ -76,24 +82,24 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::MustProgress);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     // Helper from C std lib
-    CREATE_FUNC(printf, true, TYPE(Int32), PTR_TY(TYPE(Int8)));
-    CREATE_FUNC(exit, false, TYPE(Void), TYPE(Int32));
+    wrapFn(CREATE_FUNC(printf, true, TYPE(Int32), PTR_TY(TYPE(Int8))));
+    wrapFn(CREATE_FUNC(exit, false, TYPE(Void), TYPE(Int32)));
 
     // ret: Value, args: lhs, rhs - both are known to be strings
-    CREATE_FUNC(strAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy);
-    CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy);
+    wrapFn(CREATE_FUNC(strAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy));
+    wrapFn(CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy));
     // Invoked by gc.safepoint
-    CREATE_FUNC(stopThread, false, TYPE(Void), builder.getPtrTy());
+    wrapFn(CREATE_FUNC(stopThread, false, TYPE(Void), builder.getPtrTy()));
     // ret: Value, args: arr size
-    CREATE_FUNC(createArr, false, eslValTy, builder.getPtrTy(), TYPE(Int32));
-    CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy);
-    CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy);
+    wrapFn(CREATE_FUNC(createArr, false, eslValTy, builder.getPtrTy(), TYPE(Int32)));
+    wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
+    wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
 
-    CREATE_FUNC(gcInit, false, TYPE(Void), PTR_TY(TYPE(Int64)));
-    CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy);
+    wrapFn(CREATE_FUNC(gcInit, false, TYPE(Void), PTR_TY(TYPE(Int64))));
+    wrapFn(CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy));
     // Marks a pointer to a variable as a gc root, this is used for all global variables
-    CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy));
-    fn = CREATE_FUNC(gcAlloc, false, types["ObjPtr"], builder.getPtrTy(), TYPE(Int64));
+    wrapFn(CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy)));
+    fn = wrapFn(CREATE_FUNC(gcAlloc, false, types["ObjPtr"], builder.getPtrTy(), TYPE(Int64)));
     fn->addFnAttr(llvm::Attribute::get(*ctx, "allockind", "alloc"));
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::NoCallback);
@@ -111,20 +117,20 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addRetAttr(llvm::Attribute::NoUndef);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
-    CREATE_FUNC(createHashMap, true, eslValTy, builder.getPtrTy(), TYPE(Int32));
+    wrapFn(CREATE_FUNC(createHashMap, true, eslValTy, builder.getPtrTy(), TYPE(Int32)));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
-    CREATE_FUNC(createClosure, true, eslValTy, builder.getPtrTy(), PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32));
+    wrapFn(CREATE_FUNC(createClosure, true, eslValTy, builder.getPtrTy(), PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32)));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
-    CREATE_FUNC(hashmapGetV, false, eslValTy, types["ObjPtr"], types["ObjPtr"]);
+    wrapFn(CREATE_FUNC(hashmapGetV, false, eslValTy, types["ObjPtr"], types["ObjPtr"]));
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
-    CREATE_FUNC(hashmapSetV, false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy);
+    wrapFn(CREATE_FUNC(hashmapSetV, false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy));
 
     // ret: void, args: wrapper function ptr, alloca ptr with args
-    CREATE_FUNC(createNewThread, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy());
+    wrapFn(CREATE_FUNC(createNewThread, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy()));
     // ret: void, args: frame address
-    CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy());
+    wrapFn(CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy()));
     // ret: void, args: threadData ptr
-    CREATE_FUNC(threadDestruct, false, TYPE(Void), builder.getPtrTy());
+    wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), builder.getPtrTy()));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }

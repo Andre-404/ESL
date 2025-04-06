@@ -83,7 +83,7 @@ struct Span {
             if(sourceFile->sourceFile[i] == '\n') line++;
             i--;
         }
-        return line;
+        return line+1;
     }
     int computeColumn(){
         int lineStart = start;

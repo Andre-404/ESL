@@ -78,7 +78,7 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function
     llvm::verifyModule(*curModule, &llvm::errs());
     llvm::errs()<<"--------------------Unoptimized module--------------------\n";
 #ifdef COMPILER_DEBUG
-    curModule->print(llvm::errs(), nullptr);
+    //curModule->print(llvm::errs(), nullptr);
 #endif
     debugEmitter.finalize();
     optimizeModule(*curModule);
@@ -1011,7 +1011,6 @@ void Compiler::setupModule(const llvm::DataLayout& DL){
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
     gvar->setInitializer(builder.getInt64(0));
     gvar->setAlignment(llvm::Align::Of<uint64_t>());
-    ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, llvm::Attribute::AttrKind::NoInline));
     ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, "uwtable", "sync"));
 }
 
@@ -1030,8 +1029,9 @@ void Compiler::optimizeModule(llvm::Module& module){
     PB.registerLoopAnalyses(LAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
     // Create the pass manager.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O0);
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     MPM.run(module, MAM);
+    curModule->print(llvm::errs(), nullptr);
 }
 
 void Compiler::declareFunctions(){
@@ -1057,6 +1057,7 @@ void Compiler::createMainEntrypoint(string entrypointName){
     auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
     setFuncAttrs(ESLFuncAttrs, entryFn);
     entryFn->setGC("statepoint-example");
+    entryFn->addFnAttr(llvm::Attribute::AttrKind::NoInline);
     debugEmitter.addMainFunc(entryFn);
     // Create the runtime entrypoint that calls the internal entrypoint
     llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);

@@ -9,6 +9,7 @@
 #include <format>
 #include "JIT/JIT.h"
 #include <unwind.h>
+#include <pthread.h>
 
 
 #define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
@@ -36,7 +37,8 @@ EXPORT double asNum(Value x){
 
 _Unwind_Reason_Code callback(struct _Unwind_Context* context, void* arg){
     uint64_t ip = (uint64_t)_Unwind_GetIP(context);
-    printf("%p\n", (void*)ip);
+    // This takes care of printing
+    ESLJIT::getJIT().addressToFunc(ip);
     return _URC_NO_REASON;
 }
 
@@ -86,8 +88,8 @@ EXPORT void runtimeError(const char* msg, uint8_t errType, uint64_t val1, uint64
             break;
         }
     }
-    _Unwind_Backtrace(callback, nullptr);
     std::cout<<str<<std::endl;
+    _Unwind_Backtrace(callback, nullptr);
     exit(64);
 }
 // Both values are known to be strings

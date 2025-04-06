@@ -21,11 +21,10 @@ public:
 
     MainFn getMainFunc();
 
-    string addressToFunc(uint64_t address);
+    void addressToFunc(uint64_t address);
 
 private:
-    std::unique_ptr<llvm::DWARFContext> dwarfContext;
-    uint64_t startAddress;
+    vector<std::pair<std::unique_ptr<llvm::DWARFContext>, llvm::StringMap<std::unique_ptr<llvm::MemoryBuffer>>>> dwarfContext;
     std::unique_ptr<llvm::orc::LLJIT> underlyingJIT;
     static ESLJIT* global;
 };

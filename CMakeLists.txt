@@ -3,8 +3,8 @@ project(ESL)
 
 # Hardcoded llvm paths
 if(WIN32)
-    set(LLVM_DIR "C:/Temp/LLVM-19/Install/lib/cmake/llvm")
-    set(CMAKE_CXX_FLAGS "-march=native")
+    set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
+    set(CMAKE_CXX_FLAGS "-march=native -pthread")
 else()
     set(LLVM_DIR "/usr/local/llvm/lib")
     set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic -march=native")
@@ -35,13 +35,12 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/JIT/JIT.cpp
         src/Runtime/JIT/SEHFrameRegistrar.h
         src/Runtime/JIT/SEHFrameRegistrar.cpp
+        src/Runtime/JIT/DebugInfoPlugin.cpp
+        src/Runtime/JIT/DebugInfoPlugin.h
 )
 
-llvm_map_components_to_libnames(llvm_libs
-        support core irreader orcjit native passes scalaropts ipo target option analysis transformutils instcombine bitreader object option instrumentation)
-message(STATUS "All libraries: ${llvm_libs}")
-
+string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")
 # Link against LLVM libraries
-target_link_libraries(ESL "${llvm_libs}")
+target_link_libraries(ESL "${llvm_libraries}")
 
 target_compile_features(ESL PUBLIC cxx_std_20)

@@ -8,7 +8,9 @@ namespace llvm::orc {
     class SEHRegistrarPlugin : public ObjectLinkingLayer::Plugin {
     public:
         void modifyPassConfig(MaterializationResponsibility &MR, jitlink::LinkGraph &G, jitlink::PassConfiguration &Config) override{
-            Config.PostFixupPasses.push_back(AddSEHFrames);
+            Config.PostFixupPasses.push_back([&](jitlink::LinkGraph& G){
+                return AddSEHFrames(MR, G);
+            });
         }
 
         Error notifyEmitted(MaterializationResponsibility &MR) override {
@@ -25,7 +27,7 @@ namespace llvm::orc {
 
         void notifyTransferringResources(JITDylib &JD, ResourceKey DstKey, ResourceKey SrcKey) override {}
     private:
-        static Error AddSEHFrames(jitlink::LinkGraph &G);
+        static Error AddSEHFrames(MaterializationResponsibility &MR, jitlink::LinkGraph &G);
     };
 
 }

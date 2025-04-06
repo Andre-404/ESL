@@ -7,6 +7,10 @@
 #include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "SEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
+#include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
+#include "DebugInfoPlugin.h"
+#include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
+#include "../../ErrorHandling/errorHandler.h"
 
 ESLJIT* ESLJIT::global = nullptr;
 // JIT needs this if an alloca happens and for some reason it doesn't pick it up from libgcc
@@ -27,9 +31,16 @@ void ESLJIT::createJIT(){
     global = new ESLJIT();
     ESLJIT& JIT = *global;
     llvm::orc::LLJITBuilder builder;
+
     builder.setObjectLinkingLayerCreator(
-            [](llvm::orc::ExecutionSession &ES, const llvm::Triple &TT) {
-                auto Layer = std::make_unique<llvm::orc::ObjectLinkingLayer>(ES);
+            [&JIT](llvm::orc::ExecutionSession &ES, const llvm::Triple &TT) {
+
+                auto MemMgr =
+                        llvm::orc::MapperJITLinkMemoryManager::CreateWithMapper<llvm::orc::InProcessMemoryMapper>(
+                                /* Slab size, e.g. 1Gb */ 1024 * 1024 * 1024);
+                if (!MemMgr) exit(1);
+
+                auto Layer = std::make_unique<llvm::orc::ObjectLinkingLayer>(ES, std::move(*MemMgr));
 
                 if(TT.isOSBinFormatCOFF()) {
                     Layer->setOverrideObjectFlagsWithResponsibilityFlags(true);
@@ -39,7 +50,10 @@ void ESLJIT::createJIT(){
                     if (auto EHFrameRegistrar = llvm::orc::EPCEHFrameRegistrar::Create(ES))
                         Layer->addPlugin(std::make_unique<llvm::orc::EHFrameRegistrationPlugin>(ES, std::move(*EHFrameRegistrar)));
                 }
-
+                Layer->addPlugin(std::make_shared<llvm::orc::DebugInfoPlugin>(
+                        [&](std::pair<std::unique_ptr<llvm::DWARFContext>, llvm::StringMap<std::unique_ptr<llvm::MemoryBuffer>>> ctx){
+                            JIT.dwarfContext.push_back(std::move(ctx));
+                        }));
                 return std::move(Layer);
             });
 
@@ -53,50 +67,37 @@ void ESLJIT::createJIT(){
 
     auto& ES = JIT.underlyingJIT->getExecutionSession();
     auto &TT = JIT.underlyingJIT->getExecutionSession().getTargetTriple();
-    auto& JD = JIT.underlyingJIT->getMainJITDylib();
-    auto G = std::make_unique<llvm::jitlink::LinkGraph>(
-            string("ImageBaseGraph"), TT,
-            TT.isArch64Bit() ? 8 : 4,
-            TT.isLittleEndian() ? llvm::endianness::little : llvm::endianness::big,
-            llvm::jitlink::getGenericEdgeKindName);
-    auto &Sec = G->createSection(string(".rodata"), llvm::orc::MemProt::Read);
-    auto content = G->allocateBuffer(8);
-    *((uint64_t*)(&content.front())) = 0x4000000;
-    auto &B = G->createContentBlock(Sec, content, llvm::orc::ExecutorAddr(), 8, 0);
-    G->addDefinedSymbol(B, 0, string("__ImageBase"), 1, llvm::jitlink::Linkage::Strong, llvm::jitlink::Scope::Default,
-            /* Callable = */ false, /* Live = */ true);
-    llvm::cantFail(static_cast<llvm::orc::ObjectLinkingLayer&>(JIT.underlyingJIT->getObjLinkingLayer()).add(JD, std::move(G)));
-    if (auto Err = JIT.underlyingJIT->lookup(JD, "__ImageBase")){
-
-    }
 
     // Hack around the ___chkstk_ms routine no being defined
     auto Mangle = llvm::orc::MangleAndInterner(JIT.underlyingJIT->getExecutionSession(), JIT.underlyingJIT->getDataLayout());
-    auto Sym = llvm::orc::absoluteSymbols({{Mangle("___chkstk_ms"),
-                                            llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(___chkstk_ms),
-                                                                         llvm::JITSymbolFlags::Exported |     // Make visible to JIT'd code
-                                                                         llvm::JITSymbolFlags::Callable |     // It's a function
-                                                                         llvm::JITSymbolFlags::Absolute)}});
-    cantFail(JIT.underlyingJIT->getMainJITDylib().define(std::move(Sym)));
-
-    // This is a remnant from the kaleidoscope tutorial, is it needed here after the switch to LLJIT?
-    JIT.underlyingJIT->getMainJITDylib().addGenerator(
-            cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-                    JIT.underlyingJIT->getDataLayout().getGlobalPrefix())));
+    llvm::orc::SymbolMap symbolMap;
+    symbolMap[Mangle("___chkstk_ms")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(___chkstk_ms),
+                                                                     llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable );
+    auto Sym = llvm::orc::absoluteSymbols(symbolMap);
+    // Define in platformdylib so that main jitdylib can find it because resolution never looks at current dylib for exported symbols
+    cantFail(JIT.underlyingJIT->getPlatformJITDylib()->define(std::move(Sym)));
+    // TODO: this wont be necessary soon
+    llvm::orc::ExecutorAddr ExprSymbolTemp = llvm::ExitOnError()(JIT.underlyingJIT->lookup("__ImageBase"));
 }
 
 MainFn ESLJIT::getMainFunc(){
     llvm::orc::ExecutorAddr ExprSymbol = llvm::ExitOnError()(underlyingJIT->lookup("func.main"));
-    llvm::DIDumpOptions opts;
-    opts.AddrSize = 8;
-    opts.Version = 3;
-    opts.Verbose = true;
-    global->dwarfContext->dump(llvm::errs(), opts);
     return ExprSymbol.toPtr<MainFn>();
 }
 
+using FnKind = llvm::DINameKind;
+using FileKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
 
-string ESLJIT::addressToFunc(uint64_t address){
-
-    return dwarfContext->getLineInfoForAddress({address-startAddress, llvm::object::SectionedAddress::UndefSection}).FunctionName;
+void ESLJIT::addressToFunc(uint64_t address){
+    for(auto& [ctx, mem] : dwarfContext){
+        llvm::DILineInfoSpecifier specifier(FileKind::AbsoluteFilePath, FnKind::ShortName);
+        auto InlineInfo = ctx->getInliningInfoForAddress(
+                {address, llvm::object::SectionedAddress::UndefSection}, specifier);
+        int num = InlineInfo.getNumberOfFrames();
+        for(int i = 0; i < num; i++){
+            auto& frame = InlineInfo.getFrame(i);
+            errorHandler::printRuntimeError(frame.FunctionName, frame.FileName, frame.Line,
+                                            frame.Column, num > 0 && i < num-1);
+        }
+    }
 }
