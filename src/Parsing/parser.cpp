@@ -213,7 +213,7 @@ namespace AST {
                 }
                 return make_shared<MacroExpr>(macroName, parser->readTokenTree());
             }
-            case TokenType::INSTANCEOF:{
+            case TokenType::IS:{
                 auto right = parser->expression(parser->infixPrecLevel(token.type));
                 if(!(right->type == ASTType::LITERAL || right->type == ASTType::MODULE_ACCESS)){
                     throw parser->error(token, "Right side of the 'instanceof' operator can only be an identifier.");
@@ -350,7 +350,7 @@ Parser::Parser() {
     addInfix(TokenType::LEFT_PAREN, Precedence::CALL, parseCall);
     addInfix(TokenType::LEFT_BRACKET, Precedence::CALL, parseFieldAccess);
     addInfix(TokenType::DOT, Precedence::CALL, parseFieldAccess);
-    addInfix(TokenType::INSTANCEOF, Precedence::INSTANCEOF, parseBinary);
+    addInfix(TokenType::IS, Precedence::INSTANCEOF, parseBinary);
 
     addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
 

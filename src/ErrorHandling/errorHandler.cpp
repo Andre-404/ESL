@@ -110,4 +110,7 @@ namespace errorHandler {
         }*/
         return errors;
     }
+    void printRuntimeError(string func, string file, uint32_t line, uint32_t col, bool isInline){
+        std::cout<<"File "<<file<<", line "<<line<<", in "<<func<<(isInline ? "(inlined)" : "")<<"\n";
+    }
 }

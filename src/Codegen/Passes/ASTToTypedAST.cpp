@@ -177,7 +177,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
 
     auto lhs = evalASTExpr(expr->left);
-    if(expr->op.type == TokenType::INSTANCEOF){
+    if(expr->op.type == TokenType::IS){
         returnedExpr = createInstanceofExpr(lhs, expr->right, dbg);
         return;
     }
@@ -226,7 +226,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::LESS_EQUAL:
         case TokenType::AND:
         case TokenType::OR:
-        case TokenType::INSTANCEOF:{
+        case TokenType::IS:{
             typedAST::ComparisonOp op;
             switch(expr->op.type){
                 case TokenType::BANG_EQUAL: op = typedAST::ComparisonOp::NOT_EQUAL; break;

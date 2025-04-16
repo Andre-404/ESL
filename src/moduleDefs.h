@@ -31,8 +31,8 @@ enum class TokenType {
     CLASS, THIS,
     SWITCH, CASE, DEFAULT,
     LET, STATIC,
-    IMPORT, PUB, INSTANCEOF, NEW, OVERRIDE, AS,
-    SPAWN,
+    IMPORT, PUB, IS, NEW, OVERRIDE, CHECK, AS,
+    SPAWN, DEFER,
     ADDMACRO, EXPR, TT,
 
     NEWLINE, ERROR, NONE
@@ -83,7 +83,7 @@ struct Span {
             if(sourceFile->sourceFile[i] == '\n') line++;
             i--;
         }
-        return line;
+        return line+1;
     }
     int computeColumn(){
         int lineStart = start;

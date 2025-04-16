@@ -1,6 +1,7 @@
 #include "common.h"
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 string readFile(char* path) {
     std::filesystem::path p(path);

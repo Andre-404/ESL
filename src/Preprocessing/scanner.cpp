@@ -32,10 +32,12 @@ std::unordered_map<string, TokenType> keywordToTokenType = {
         {"expr", TokenType::EXPR},
         {"tt", TokenType::TT},
         {"static", TokenType::STATIC},
-        {"instanceof", TokenType::INSTANCEOF},
+        {"is", TokenType::IS},
         {"new", TokenType::NEW},
         {"spawn", TokenType::SPAWN},
-        {"override", TokenType::OVERRIDE}
+        {"override", TokenType::OVERRIDE},
+        {"check", TokenType::CHECK},
+        {"defer", TokenType::DEFER},
 };
 
 using namespace preprocessing;

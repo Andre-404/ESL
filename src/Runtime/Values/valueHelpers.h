@@ -33,27 +33,25 @@ enum class ValueType {
 inline constexpr unsigned operator+ (ValueType const val) { return static_cast<byte>(val); }
 
 // Masks for important segments of a float value
-#define MASK_SIGNATURE      0xffff000000000000
+constexpr uint64_t mask_signature =     0xffff000000000000ull;
 // Objects are 16 byte aligned
-#define MASK_PAYLOAD_OBJ    0x0000fffffffffff0
-#define MASK_PAYLOAD_TYPE   0x000000000000000f
+constexpr uint64_t mask_payload_obj =   0x0000fffffffffff0ull;
+constexpr uint64_t mask_payload_type =  0x000000000000000full;
 // 51st bit is set to 1 to avoid Intels “QNaN Floating-Point Indefinite”
-#define MASK_QNAN           0x7ffc000000000000
+constexpr uint64_t mask_qnan =          0x7ffc000000000000ull;
 
 // Types
-#define MASK_TYPE_FALSE 0x0000000000000000
-#define MASK_TYPE_TRUE  0x0001000000000000
-#define MASK_TYPE_NIL   0x0002000000000000
-#define MASK_TYPE_OBJ   0x0003000000000000
-#define MASK_TYPE_ERR   0x8000000000000000
-
+constexpr uint64_t mask_type_bool = 0x0000000000000000ull;
+constexpr uint64_t mask_type_true = 0x0000000000000001ull;
+constexpr uint64_t mask_type_null = 0x0001000000000000ull;
+constexpr uint64_t mask_type_obj  = 0x0002000000000000ull;
 
 // Signatures
-#define MASK_SIGNATURE_FALSE (MASK_QNAN | MASK_TYPE_FALSE)
-#define MASK_SIGNATURE_TRUE (MASK_QNAN | MASK_TYPE_TRUE)
-#define MASK_SIGNATURE_NIL (MASK_QNAN | MASK_TYPE_NIL)
-#define MASK_SIGNATURE_OBJ (MASK_QNAN | MASK_TYPE_OBJ)
-#define MASK_SIGNATURE_ERR (MASK_QNAN | MASK_TYPE_ERR)
+constexpr uint64_t mask_signature_bool = mask_qnan | mask_type_bool;
+constexpr uint64_t mask_signature_false = mask_signature_bool;
+constexpr uint64_t mask_signature_true = mask_signature_bool | mask_type_true;
+constexpr uint64_t mask_signature_null = mask_qnan | mask_type_null;
+constexpr uint64_t mask_signature_obj = mask_qnan | mask_type_obj;
 
 namespace valueHelpers {
     string toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj *>> stack = nullptr);

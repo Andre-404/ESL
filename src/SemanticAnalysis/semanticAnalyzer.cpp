@@ -157,7 +157,7 @@ void SemanticAnalyzer::visitBinaryExpr(AST::BinaryExpr* expr) {
     expr->left->accept(this);
     uint8_t op = 0;
     switch (expr->op.type) {
-        case TokenType::INSTANCEOF:{
+        case TokenType::IS:{
             getClassFromExpr(expr->right);
             return;
         }

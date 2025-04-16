@@ -15,6 +15,29 @@
 #include <unordered_set>
 #include <iostream>
 
+enum class runtimeErrorType : uint8_t{
+    WRONG_TYPE,
+    WRONG_TYPE_BINARY,
+    ARG_CNT,
+    INST_FIELD,
+    OUT_OF_BOUNDS
+};
+inline constexpr unsigned operator+ (runtimeErrorType const val) { return static_cast<byte>(val); }
+
+// first el: expected masked value, second el: mask, third val: whether to use NEQ or not, needed to support number type checking
+static inline std::tuple<uint64_t, uint64_t, bool> getObjectTypeMasks(object::ObjType type){
+    return {mask_signature_obj | +type, mask_signature_obj | mask_payload_type, false};
+}
+static inline std::tuple<uint64_t, uint64_t, bool> getNumberTypeMasks(){
+    return {mask_qnan, mask_qnan, true};
+}
+static inline std::tuple<uint64_t, uint64_t, bool> getBoolTypeMasks(){
+    return {mask_signature_bool, mask_signature_bool, false};
+}
+static inline std::tuple<uint64_t, uint64_t, bool> getNullTypeMasks(){
+    return {mask_signature_null, mask_signature_null, false};
+}
+
 using namespace compileCore;
 
 Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv, fastMap<string, std::pair<int, int>>& _classHierarchy,
@@ -55,7 +78,7 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function
     llvm::verifyModule(*curModule, &llvm::errs());
     llvm::errs()<<"--------------------Unoptimized module--------------------\n";
 #ifdef COMPILER_DEBUG
-    curModule->print(llvm::errs(), nullptr);
+    //curModule->print(llvm::errs(), nullptr);
 #endif
     debugEmitter.finalize();
     optimizeModule(*curModule);
@@ -86,7 +109,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             llvm::Value* storedValPtr = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjFreevar"], var, 0, 1);
             // Store type tag and null as default value
             builder.CreateStore(builder.getInt8(+object::ObjType::FREEVAR), objTypePtr);
-            builder.CreateStore(builder.getInt64(MASK_SIGNATURE_NIL), storedValPtr);
+            builder.CreateStore(builder.getInt64(mask_signature_null), storedValPtr);
             variables.insert_or_assign(decl->uuid, var);
             debugEmitter.addLocalVarDecl(builder, var, decl->dbgInfo.varName, false);
             break;
@@ -96,7 +119,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             string varName = decl->dbgInfo.varName.getLexeme() + std::to_string(decl->uuid);
             llvm::GlobalVariable* gvar = new llvm::GlobalVariable(*curModule, getESLValType(), false,
                                                                   llvm::GlobalVariable::PrivateLinkage,
-                                                                  ConstCastToESLVal(builder.getInt64(MASK_SIGNATURE_NIL)),varName);
+                                                                  ConstCastToESLVal(builder.getInt64(mask_signature_null)),varName);
             gvar->setAlignment(llvm::Align::Of<Value>());
             // Globals aren't on the stack, so they need to be marked for GC collection separately
             if(decl->varType == typedAST::VarType::GLOBAL) {
@@ -186,8 +209,8 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
         // If either or both aren't numbers, go to error since all other ops work only on numbers
-        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binop.execute",
-                               "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
+        string err = fmt::format("Operator '{}' expects numbers, got '{}' and '{}'.", expr->dbgInfo.op.getLexeme(), "{}", "{}");
+        createTypeCheckBinary(err, lhs, rhs, getNumberTypeMasks());
     }
 
     // Transforms the operands into the required type
@@ -212,9 +235,8 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
     if(!exprIsType(expr->lhs, expr->rhs, types::getBasicType(types::TypeFlag::NUMBER))) {
-        // If either or both aren't numbers, go to error, otherwise proceed as normal
-        createRuntimeTypeCheck(safeGetFunc("isNum"), lhs, rhs, "binop.execute",
-                               "Operands must be numbers, got '{}' and '{}'.", expr->dbgInfo.op);
+        string err = fmt::format("Operator '{}' expects numbers, got '{}' and '{}'.", expr->dbgInfo.op.getLexeme(), "{}", "{}");
+        createTypeCheckBinary(err, lhs, rhs, getNumberTypeMasks());
     }
 
     lhs = ESLValTo(lhs, builder.getDoubleTy());
@@ -244,15 +266,11 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
         llvm::Value* rhs = expr->rhs->codegen(this);
         debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
         // If type is known to be a bool skip the runtime check and just execute the expr
-        if(exprIsType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
-            return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), builder.getInt64(MASK_TYPE_TRUE)));
+        if(!exprIsType(expr->rhs, types::getBasicType(types::TypeFlag::BOOL))) {
+            createTypeCheckUnary("Operator '!' expects boolean value, got '{}'", rhs, getBoolTypeMasks());
         }
 
-        createRuntimeTypeCheck(safeGetFunc("isBool"), {rhs},
-                               "Operand must be a boolean, got '{}'.", "negbool", expr->dbgInfo.op);
-        // Instead of decoding bool, negating and encoding, we just XOR with the true flag
-        // This relies on the fact that true and false are the first flags and are thus represented with 00 and 01
-        return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), builder.getInt64(MASK_TYPE_TRUE)));
+        return CastToESLVal(builder.CreateXor(ESLValTo(rhs, builder.getInt64Ty()), mask_type_true));
     }else if(expr->opType == UnaryOp::FNEG || expr->opType == UnaryOp::BIN_NEG){
         llvm::Value* rhs = expr->rhs->codegen(this);
         debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
@@ -270,10 +288,10 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
             return CastToESLVal(tmp);
         }
         case 1: {
-            uInt64 val = get<bool>(expr->val) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
+            uInt64 val = get<bool>(expr->val) ? mask_signature_true : mask_signature_false;
             return CastToESLVal(builder.getInt64(val));
         }
-        case 2: return CastToESLVal(builder.getInt64(MASK_SIGNATURE_NIL));
+        case 2: return CastToESLVal(builder.getInt64(mask_signature_null));
         case 3: {
             return createESLString(get<string>(expr->val));
         }
@@ -374,7 +392,10 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
 
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
-    createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr("Expected an array or hashmap, got '{}'.");
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
+                                                    collection, intMax, intMax});
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -430,7 +451,10 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
 
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
-    createTyErr("Expected an array or hashmap, got '{}'.", collection, expr->dbgInfo.accessor);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr("Expected an array or hashmap, got '{}'.");
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
+                                                    collection, intMax, intMax});
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -640,10 +664,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
 
         F->insert(F->end(), errorBB);
         builder.SetInsertPoint(errorBB);
-        // TODO: better errors
-        builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
-                                                   createConstStr(expr->field)});
-        builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+        createInstNoField("Instance of type '{}' doesn't contain field or method '{}'", expr->field, encodedInst);
         builder.CreateUnreachable();
 
         F->insert(F->end(), mergeBB);
@@ -950,11 +971,13 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     }
     auto storedField = builder.CreateLoad(getESLValType(), fieldPtr);
     if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-        createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "val.is.num", "Expected a number, got {}", expr->dbgInfo.op);
+        string err = fmt::format("Operator '{}' expects numbers, field '{}' is '{}', rhs is '{}'.",
+                                 expr->dbgInfo.op.getLexeme(), expr->field, "{}", "{}");
+        createTypeCheckBinary(err, storedField, val, getNumberTypeMasks());
+    }else{
+        string err = fmt::format("Operator '{}' expects numbers, field '{}' is '{}'.", expr->dbgInfo.op.getLexeme(), expr->field, "{}");
+        createTypeCheckUnary(err, storedField, getNumberTypeMasks());
     }
-    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
-                           "val.is.num", "Expected a number, got {}", expr->dbgInfo.field);
 
     val = CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
     builder.CreateStore(val, fieldPtr);
@@ -988,7 +1011,6 @@ void Compiler::setupModule(const llvm::DataLayout& DL){
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
     gvar->setInitializer(builder.getInt64(0));
     gvar->setAlignment(llvm::Align::Of<uint64_t>());
-    ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, llvm::Attribute::AttrKind::NoInline));
     ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, "uwtable", "sync"));
 }
 
@@ -1009,6 +1031,7 @@ void Compiler::optimizeModule(llvm::Module& module){
     // Create the pass manager.
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     MPM.run(module, MAM);
+    curModule->print(llvm::errs(), nullptr);
 }
 
 void Compiler::declareFunctions(){
@@ -1034,6 +1057,7 @@ void Compiler::createMainEntrypoint(string entrypointName){
     auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
     setFuncAttrs(ESLFuncAttrs, entryFn);
     entryFn->setGC("statepoint-example");
+    entryFn->addFnAttr(llvm::Attribute::AttrKind::NoInline);
     debugEmitter.addMainFunc(entryFn);
     // Create the runtime entrypoint that calls the internal entrypoint
     llvm::FunctionType* FT = llvm::FunctionType::get(builder.getInt32Ty(),{builder.getInt32Ty(), builder.getPtrTy()}, false);
@@ -1074,52 +1098,151 @@ bool Compiler::exprIsComplexType(const typedExprPtr expr, const types::TypeFlag 
 
 
 // Runtime type checking
-void Compiler::createTyErr(const string err, llvm::Value* const val, Token token){
-    llvm::Constant* str = createConstStr(err);
-    llvm::Constant* file = createConstStr(token.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(token.str.computeLine());
-    builder.CreateCall(safeGetFunc("tyErrSingle"), {str, file, line, val});
-}
-void Compiler::createTyErr(const string err, llvm::Value* const lhs, llvm::Value* const rhs, Token token){
-    llvm::Constant* str = createConstStr(err);
-    llvm::Constant* file = createConstStr(token.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(token.str.computeLine());
-    builder.CreateCall(safeGetFunc("tyErrDouble"), {str, file, line, lhs, rhs});
-}
-void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, vector<llvm::Value*> args, string executeBBName,
-                                      string errMsg, Token dbg){
+// All type info is contained inside the 64bits of the NaN boxed value, so we can just ICmp
+// runtimeError requires that the nonUsed arguments be UINT64_MAX
+void Compiler::createTypeCheckUnary(const string err, llvm::Value* const val, std::tuple<uint64_t, uint64_t, bool> masks){
+    auto [expected, mask, useNEQ] = masks;
+
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
-    auto cond = builder.CreateCall(predicate, args);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "no.error");
+
+    llvm::Value* castVal = ESLValTo(val, builder.getInt64Ty());
+    llvm::Value* expectedType = builder.getInt64(expected);
+    llvm::Value* cond;
+    if(useNEQ) cond = builder.CreateICmpNE(builder.CreateAnd(castVal, mask), expectedType, "type.check");
+    else cond = builder.CreateICmpEQ(builder.CreateAnd(castVal, mask), expectedType, "type.check");
+
     cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(true)});
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
     // Calls the type error function which throws
     builder.SetInsertPoint(errorBB);
-    createTyErr(errMsg, args[0], dbg);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
+                                                    castVal, intMax, intMax});
     builder.CreateUnreachable();
 
     F->insert(F->end(), executeOpBB);
     builder.SetInsertPoint(executeOpBB);
 }
-void Compiler::createRuntimeTypeCheck(llvm::Function* predicate, llvm::Value* lhs, llvm::Value* rhs,
-                                      string executeBBName, string errMsg, Token dbg){
+void Compiler::createTypeCheckBinary(const string err, llvm::Value* const lhs, llvm::Value* const rhs, std::tuple<uint64_t, uint64_t, bool> masks){
+    auto [expected, mask, useNEQ] = masks;
+
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, executeBBName);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "no.error");
 
-    auto c1 = builder.CreateCall(predicate, lhs);
-    auto c2 = builder.CreateCall(predicate, rhs);
-    auto cond = builder.CreateAnd(c1, c2);
+    llvm::Value* castLhs = ESLValTo(lhs, builder.getInt64Ty());
+    llvm::Value* castRhs = ESLValTo(rhs, builder.getInt64Ty());
+    llvm::Value* expectedType = builder.getInt64(expected);
+
+    llvm::Value* condLhs;
+    llvm::Value* condRhs;
+    if(useNEQ) {
+        condLhs = builder.CreateICmpNE(builder.CreateAnd(castLhs, mask), expectedType, "type.check.lhs");
+        condRhs = builder.CreateICmpNE(builder.CreateAnd(castRhs, mask), expectedType, "type.check.rhs");
+    }
+    else {
+        condLhs = builder.CreateICmpEQ(builder.CreateAnd(castLhs, mask), expectedType, "type.check.lhs");
+        condRhs = builder.CreateICmpEQ(builder.CreateAnd(castRhs, mask), expectedType, "type.check.rhs");
+    }
+    llvm::Value* cond = builder.CreateAnd(condLhs, condRhs);
     cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(true)});
     builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE_BINARY),
+                                                    castLhs, castRhs, intMax});
+    builder.CreateUnreachable();
+
+    F->insert(F->end(), executeOpBB);
+    builder.SetInsertPoint(executeOpBB);
+}
+void Compiler::createArgCountCheck(const string err, llvm::Value* closure, uint8_t expectedArity){
+    llvm::Value* decodedClosure = builder.CreateCall(safeGetFunc("decodeObj"), closure, "decoded.closure");
+    vector<llvm::Value *> idxList = {builder.getInt32(0), builder.getInt32(1)};
+    auto argNumPtr = builder.CreateInBoundsGEP(namedTypes["ObjClosure"], decodedClosure, idxList);
+    auto argNum = builder.CreateLoad(builder.getInt8Ty(), argNumPtr);
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    auto errorBB = llvm::BasicBlock::Create(builder.getContext(), "error", F);
+    llvm::BasicBlock *callBB = llvm::BasicBlock::Create(builder.getContext(), "call");
+
+    auto cond = builder.CreateICmpEQ(argNum, builder.getInt8(expectedArity));
+    builder.CreateCondBr(builder.CreateNot(cond), errorBB, callBB);
 
     builder.SetInsertPoint(errorBB);
-    // Calls the type error function which throws
-    createTyErr(errMsg, lhs, rhs, dbg);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::ARG_CNT),
+                                                    ESLValTo(closure, builder.getInt64Ty()), builder.getInt64(expectedArity), intMax});
     builder.CreateUnreachable();
+
+    F->insert(F->end(), callBB);
+    builder.SetInsertPoint(callBB);
+}
+void Compiler::createArrBoundsCheck(const string err, llvm::Value* arr, llvm::Value* index){
+    llvm::Value* decodedArr = builder.CreateCall(safeGetFunc("decodeObj"), arr, "decoded.arr");
+    llvm::Value* ptrToSize = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjArray"], decodedArr, 0, 2);
+    llvm::Value* upperbound = builder.CreateLoad(builder.getInt32Ty(), ptrToSize, "arr.size");
+    upperbound = builder.CreateZExt(upperbound, builder.getInt64Ty());
+
+    auto castIndex = ESLValTo(index, builder.getDoubleTy());
+    // Index can be negative
+    castIndex = builder.CreateFPToSI(castIndex, builder.getInt64Ty(), "index");
+    auto cond = builder.CreateICmpSGE(castIndex, upperbound);
+    auto cond2 = builder.CreateICmpSLT(castIndex, builder.getInt64(0));
+    cond = builder.CreateOr(cond, cond2, "out.of.bounds");
+    cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
+
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "exec.arr.op");
+    builder.CreateCondBr(cond, errorBB, executeOpBB);
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    llvm::Value* castArray = ESLValTo(arr, builder.getInt64Ty());
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::OUT_OF_BOUNDS),
+                                                    castArray, castIndex, intMax});
+    builder.CreateUnreachable();
+
     F->insert(F->end(), executeOpBB);
-    // Actual operation goes into this block
+    builder.SetInsertPoint(executeOpBB);
+}
+// Doesn't actually perform any checks, that is done inside instUnoptGet/Set
+void Compiler::createInstNoField(const string err, const string field, llvm::Value* inst){
+    llvm::Value* castInst = ESLValTo(inst, builder.getInt64Ty());
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    llvm::Constant* fieldStr = createConstStr(field);
+    // Have to case because runtimeError expects int64 for the 3 args
+    fieldStr = llvm::ConstantExpr::getPtrToInt(fieldStr, builder.getInt64Ty());
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::INST_FIELD),
+                                                    castInst, fieldStr, intMax});
+}
+void Compiler::createInstClassCheck(const string err, llvm::Value* inst, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd){
+    llvm::Function *F = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
+    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "no.error");
+
+    llvm::Value* cond = builder.CreateCall(safeGetFunc("isInstAndClass"), {inst, subClassIdxStart, subClassIdxEnd});
+
+    cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(true)});
+    builder.CreateCondBr(builder.CreateNot(cond), errorBB, executeOpBB);
+    // Calls the type error function which throws
+    builder.SetInsertPoint(errorBB);
+    llvm::Value* intMax = builder.getInt64(UINT64_MAX);
+    llvm::Constant* str = createConstStr(err);
+    builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
+                                                    ESLValTo(inst, builder.getInt64Ty()), intMax, intMax});
+    builder.CreateUnreachable();
+
+    F->insert(F->end(), executeOpBB);
     builder.SetInsertPoint(executeOpBB);
 }
 
@@ -1128,7 +1251,6 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Toke
     debugEmitter.emitNewLocation(builder, op);
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If both are a number go to addNum, if not try adding as string
-    // If both aren't strings, throw error(error is thrown inside strTryAdd C++ function)
     llvm::BasicBlock *addNumBB = llvm::BasicBlock::Create(*ctx, "add.num", F);
     llvm::BasicBlock *addStringBB = llvm::BasicBlock::Create(*ctx, "add.string");
     llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
@@ -1149,11 +1271,11 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Toke
     // Tries to add lhs and rhs as strings, if it fails throw a type error
     F->insert(F->end(), addStringBB);
     builder.SetInsertPoint(addStringBB);
-    // Have to pass file and line since strAdd might throw an error, and it needs to know where the error occurred
-    llvm::Constant* file = createConstStr(op.str.sourceFile->path);
-    llvm::Constant* line = builder.getInt32(op.str.computeLine());
-    // Returns Value
-    auto stringAddRes = builder.CreateCall(safeGetFunc("strTryAdd"), {getThreadData(), lhs, rhs, file, line});
+    createTypeCheckBinary("Addition expects numbers or strings, got '{}' and '{}'.", lhs, rhs,
+                          getObjectTypeMasks(object::ObjType::STRING));
+    // Type check creates new blocks
+    addStringBB = builder.GetInsertBlock();
+    auto stringAddRes = builder.CreateCall(safeGetFunc("strAdd"), {getThreadData(), lhs, rhs,});
     builder.CreateBr(mergeBB);
 
     // Final destination for both branches, if both values were numbers or strings(meaning no error was thrown)
@@ -1275,8 +1397,8 @@ llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyVarIdx type, 
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
     if(typeEnv[type] != types::getBasicType(types::TypeFlag::NUMBER)){
-        createRuntimeTypeCheck(safeGetFunc("isNum"), {rhs},
-                               "Operand must be a number, got '{}'.", "num.neg", dbg);
+        string err = fmt::format("Operator '{}' expects a number, got '{}'.", dbg.getLexeme(), "{}");
+        createTypeCheckUnary(err, rhs, getNumberTypeMasks());
     }
     // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
     if(op == typedAST::UnaryOp::BIN_NEG){
@@ -1313,8 +1435,8 @@ llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const st
     debugEmitter.emitNewLocation(builder, dbg);
     // Right now we can only increment numbers, maybe change this when adding iterators?
     if(!exprIsType(expr, types::getBasicType(types::TypeFlag::NUMBER))){
-        createRuntimeTypeCheck(safeGetFunc("isNum"), {val}, "is.num",
-                               "Expected a number, got '{}'.", expr->dbgInfo.varName);
+        string err = fmt::format("Operator '{}' expects a number, but got '{}'.", dbg.getLexeme(), "{}");
+        createTypeCheckUnary(err, val, getNumberTypeMasks());
     }
     llvm::Value* res = ESLValTo(val, builder.getDoubleTy());
 
@@ -1338,8 +1460,8 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
     llvm::Value* storedField = builder.CreateLoad(getESLValType(), fieldPtr);
     // Set debug to operator after getting field for more correct error messages
     debugEmitter.emitNewLocation(builder, dbg);
-    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedField},
-                           "val.is.num", "Expected a number, got {}", expr->dbgInfo.field);
+    string err = fmt::format("Operator '{}' expects a number, field '{}' is '{}'.", dbg.getLexeme(), expr->field, "{}");
+    createTypeCheckUnary(err, storedField, getNumberTypeMasks());
 
     llvm::Value* res = ESLValTo(storedField, builder.getDoubleTy());
     if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
@@ -1361,9 +1483,9 @@ llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<
     return fn;
 }
 llvm::FunctionType* Compiler::getFuncType(int argCount){
-    vector<llvm::Type*> params = {};
+    vector<llvm::Type*> params = {builder.getPtrTy()};
     // First argument is always the closure structure;
-    for(int i = 0; i < argCount; i++) params.push_back(getESLValType());
+    for(int i = 0; i < argCount+1; i++) params.push_back(getESLValType());
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
     return fty;
 }
@@ -1396,13 +1518,13 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
 }
 
 llvm::FunctionCallee Compiler::setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg){
-    createRuntimeTypeCheck(safeGetFunc("isObjType"), {closureVal, builder.getInt8(+object::ObjType::CLOSURE)},
-                           "call.exec","Expected a function for a callee, got '{}'.", dbg);
+    createTypeCheckUnary("Expected a function for a callee, got '{}'.", closureVal, getObjectTypeMasks(object::ObjType::CLOSURE));
 
+    // argc-2
+    string err = fmt::format("Function being called with {} arguments when it accepts {}.", "{}", argc-2);
+    createArgCountCheck(err, closureVal, argc-2);
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
-    // Doesn't take closure ptr into account
-    createRuntimeFuncArgCheck(closurePtr, argc-2, dbg);
-    return getBitcastFunc(closurePtr, argc);
+    return getBitcastFunc(closurePtr, argc-2);
 }
 
 void Compiler::createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg){
@@ -1438,34 +1560,6 @@ llvm::FunctionCallee Compiler::getBitcastFunc(llvm::Value* closurePtr, const int
     return llvm::FunctionCallee(fnTy, fnPtr);
 }
 
-// Array bounds checking
-void Compiler::createArrBoundsCheck(llvm::Value* arr, llvm::Value* index, string errMsg, Token dbg){
-    arr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "arr.decoded");
-    llvm::Value* ptrToSize = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjArray"], arr, 0, 2);
-    llvm::Value* upperbound = builder.CreateLoad(builder.getInt32Ty(), ptrToSize, "arr.size");
-    upperbound = builder.CreateZExt(upperbound, builder.getInt64Ty());
-
-    auto castIndex = ESLValTo(index, builder.getDoubleTy());
-    castIndex = builder.CreateFPToUI(castIndex, builder.getInt64Ty(), "index");
-    auto cond = builder.CreateICmpUGE(castIndex, upperbound);
-    auto cond2 = builder.CreateICmpULT(castIndex, builder.getInt64(0));
-    cond = builder.CreateOr(cond, cond2, "in.range");
-    cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
-
-    llvm::Function *F = builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock *errorBB = llvm::BasicBlock::Create(*ctx, "error", F);
-    llvm::BasicBlock *executeOpBB = llvm::BasicBlock::Create(*ctx, "exec.arr.op");
-
-    builder.CreateCondBr(cond, errorBB, executeOpBB);
-    // Calls the type error function which throws
-    builder.SetInsertPoint(errorBB);
-    createTyErr(errMsg, index, dbg);
-    builder.CreateUnreachable();
-
-    F->insert(F->end(), executeOpBB);
-    builder.SetInsertPoint(executeOpBB);
-}
-
 llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg){
     auto num1 = ESLValTo(storedVal, builder.getDoubleTy());
     auto num2 = ESLValTo(newVal, builder.getDoubleTy());
@@ -1498,12 +1592,11 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
 }
 
 llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool opt, Token dbg){
-    if(!opt) createRuntimeTypeCheck(safeGetFunc("isNum"), {field},
-                                    "get.arr.addr", "Expected a number, got {}", dbg);
+    if(!opt) createTypeCheckUnary("Array accessor must be a number, got '{}'.", field, getNumberTypeMasks());
     // Check the index first because we need the untagged version of the index for error reporting
-    createArrBoundsCheck(arr, field, "Index {} outside of array range.", dbg);
+    createArrBoundsCheck("Index {} outside of array range, array size is {}.", arr, field);
     field = ESLValTo(field, builder.getDoubleTy());
-    field = builder.CreateFPToUI(field, builder.getInt64Ty());
+    field = builder.CreateFPToSI(field, builder.getInt64Ty());
 
 
     arr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "obj.arr.ptr");
@@ -1515,8 +1608,9 @@ llvm::Value* Compiler::getArrElement(llvm::Value* arr, llvm::Value* field, bool 
 }
 
 llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg){
-    if(!opt) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
-                               "get.map.val", "Expected a string, got {}", dbg);
+    if(!opt) createTypeCheckUnary("Map accessor must be a string, got '{}'.", field,
+                                  getObjectTypeMasks(object::ObjType::STRING));
+
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
     return builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field}, "map.elem");
@@ -1524,10 +1618,9 @@ llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool 
 
 llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
-    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isNum"), {index},
-                                    "get.arr.addr", "Expected a number, got {}", dbg);
+    if(!optIdx) createTypeCheckUnary("Array accessor must be a number, got '{}'.", index, getNumberTypeMasks());
 
-    createArrBoundsCheck(arr, index, "Index {} outside of array range.", dbg);
+    createArrBoundsCheck("Index {} outside of array range, array size is {}.", arr, index);
     index = ESLValTo(index, builder.getDoubleTy());
     index = builder.CreateFPToUI(index, builder.getInt64Ty());
     arr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "obj.arr.ptr");
@@ -1548,11 +1641,11 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
         return val;
     }
     auto storedVal = builder.CreateLoad(getESLValType(), ptr);
-    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "val.is.num", "Expected a number, got {}", dbg);
-    // Since the type system assumes all collections store "any" datatype this runtime check can't be skipped
-    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
-                           "val.is.num", "Expected a number, got {}", dbg);
+    if(!optVal) {
+        createTypeCheckBinary("Operator expects numbers, array element is '{}', rhs is '{}'.", storedVal, val, getNumberTypeMasks());
+    }else{
+        createTypeCheckUnary("Operator expects numbers, array element is '{}'.", storedVal, getNumberTypeMasks());
+    }
 
     val = CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     builder.CreateStore(val, ptr);
@@ -1560,8 +1653,8 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
 }
 llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
                                      typedAST::SetType opTy, Token dbg){
-    if(!optIdx) createRuntimeTypeCheck(safeGetFunc("isObjType"), {field, builder.getInt8(+object::ObjType::STRING)},
-                               "set.map.val", "Expected a string, got {}", dbg);
+    if(!optIdx) createTypeCheckUnary("Map accessor must be a string, got '{}'.", field,
+                                  getObjectTypeMasks(object::ObjType::STRING));
 
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
@@ -1577,11 +1670,11 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
         return val;
     }
     auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
-    if(!optVal) createRuntimeTypeCheck(safeGetFunc("isNum"), {val},
-                               "val.is.num", "Expected a number, got {}", dbg);
-    // Since the type system assumes all collections store "any" datatype this runtime check can't be skipped
-    createRuntimeTypeCheck(safeGetFunc("isNum"), {storedVal},
-                           "val.is.num", "Expected a number, got {}", dbg);
+    if(!optVal) {
+        createTypeCheckBinary("Operator expects numbers, array element is '{}', rhs is '{}'.", storedVal, val, getNumberTypeMasks());
+    }else{
+        createTypeCheckUnary("Operator expects numbers, array element is '{}'.", storedVal, getNumberTypeMasks());
+    }
 
     val = CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
@@ -1593,8 +1686,8 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
 llvm::ConstantInt* Compiler::createSwitchConstantInt(std::variant<double, bool, void*, string>& constant){
     switch(constant.index()){
         case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
-        case 1: return builder.getInt64(get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE);
-        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
+        case 1: return builder.getInt64(get<bool>(constant) ? mask_signature_true : mask_signature_false);
+        case 2: return builder.getInt64(mask_signature_null);
         default: errorHandler::addSystemError("Unreachable code reached during compilation.");
 
     }
@@ -1652,8 +1745,8 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", inProgressFuncs.top().fn);
     builder.SetInsertPoint(BB);
     declareFuncArgs(method.code->args);
-    createRuntimeTypeCheck(safeGetFunc("isInstAndClass"),{inProgressFuncs.top().fn->getArg(2), subClassIdxStart, subClassIdxEnd},
-                           "is.inst", fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"), method.dbg.name);
+    createInstClassCheck(fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"),
+                         inProgressFuncs.top().fn->getArg(2), subClassIdxStart, subClassIdxEnd);
 
     for(auto s : method.code->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -1686,7 +1779,7 @@ llvm::Constant* Compiler::createMethodObj(typedAST::ClassMethod& method, llvm::F
 // Creates an instance template with already nulled fields that is memcpy-ed when using new
 llvm::GlobalVariable* Compiler::createInstanceTemplate(llvm::Constant* klass, int fieldN){
     vector<llvm::Constant*> fields(fieldN);
-    std::fill(fields.begin(), fields.end(), ConstCastToESLVal(builder.getInt64(MASK_SIGNATURE_NIL)));
+    std::fill(fields.begin(), fields.end(), ConstCastToESLVal(builder.getInt64(mask_signature_null)));
     // Template array that is already nulled
     llvm::Constant* fieldArr = llvm::ConstantArray::get(llvm::ArrayType::get(getESLValType(), fieldN), fields);
     llvm::Constant* obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjInstance"), {
@@ -1757,10 +1850,7 @@ llvm::Value* Compiler::instGetUnoptimized(llvm::Value* maybeInst, string fieldNa
 
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
-
-    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
-                                               createConstStr(fieldName)});
-    builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+    createInstNoField("Instance of type '{}' doesn't contain field or method '{}'", fieldName, maybeInst);
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -1787,8 +1877,7 @@ std::pair<llvm::Value*, llvm::Value*> Compiler::instGetUnoptIdx(llvm::Value* kla
 }
 
 std::pair<llvm::Value*, llvm::Value*> Compiler::instGetClassPtr(llvm::Value* inst, Token dbg){
-    createRuntimeTypeCheck(safeGetFunc("isObjType"), {inst, builder.getInt8(+object::ObjType::INSTANCE)},
-                           "is.inst", "Expected an instance, got '{}'", dbg);
+    createTypeCheckUnary("Expected an instance, got '{}'.", inst, getObjectTypeMasks(object::ObjType::INSTANCE));
 
     inst = builder.CreateCall(safeGetFunc("decodeObj"), {inst});
     inst = builder.CreateBitCast(inst, namedTypes["ObjInstancePtr"]);
@@ -1848,11 +1937,7 @@ llvm::Value* Compiler::getUnoptInstFieldPtr(llvm::Value* maybeInst, string field
 
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
-
-    // TODO make better errors
-    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field '%s'"),
-                                               createConstStr(field)});
-    builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+    createInstNoField("Instance of type '{}' doesn't contain field or method '{}'", field, maybeInst);
     builder.CreateUnreachable();
 
     F->insert(F->end(), fieldBB);
@@ -1942,10 +2027,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
 
     F->insert(F->end(), errorBB);
     builder.SetInsertPoint(errorBB);
-    // TODO: better errors
-    builder.CreateCall(safeGetFunc("printf"), {createConstStr("Instance doesn't contain field or method %s"),
-                                               createConstStr(fieldName)});
-    builder.CreateCall(safeGetFunc("exit"), {builder.getInt32(64)});
+    createInstNoField("Instance of type '{}' doesn't contain field or method '{}'", fieldName, encodedInst);
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -2066,10 +2148,10 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
             return llvm::ConstantExpr::getBitCast(tmp, builder.getInt64Ty());
         }
         case 1: {
-            uInt64 val = get<bool>(constant) ? MASK_SIGNATURE_TRUE : MASK_SIGNATURE_FALSE;
+            uInt64 val = get<bool>(constant) ? mask_signature_true : mask_signature_false;
             return builder.getInt64(val);
         }
-        case 2: return builder.getInt64(MASK_SIGNATURE_NIL);
+        case 2: return builder.getInt64(mask_signature_null);
         case 3: {
             return ESLConstTo(createESLString(get<string>(constant)), builder.getInt64Ty());
         }
@@ -2092,7 +2174,7 @@ llvm::Constant* Compiler::createConstObjHeader(int type){
 
 llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj, uint8_t type){
     auto val = llvm::ConstantExpr::getPtrToInt(obj, builder.getInt64Ty());
-    return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(MASK_SIGNATURE_OBJ | type)));
+    return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(mask_signature_obj | type)));
 }
 
 llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr){
