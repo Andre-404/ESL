@@ -5,16 +5,16 @@ Optional rule(s) are inside [ ]
 ```
 program -> declaration* EOF
 declaration -> ["pub"](varDecl | funcDecl | classDecl) | statement
-varDecl -> "let" identifier (";" | "=" expr ";")
-funcDecl -> "fn" identifier "(" paramlist ")" blockStmt
-paramlist -> identifier ("," identifier)* | 
+varDecl -> "let" [type] identifier (";" | "=" expr ";")
+funcDecl -> "fn" identifier "(" paramlist ")" [type] blockStmt
+paramlist -> identifier [type] ("," identifier [type])* | 
 classDecl -> "class" identifier [":" declaccess] "{" [ (["pub"](classField | classMethod))* ] "}"
-classField -> "let" identifier ("," identifier)*
+classField -> "let" [type] identifier ("," identifier)*
 classMethod -> ["override"] funcDecl
 
 
 statement -> blockStmt | ifStmt | whileStmt | forStmt | switchStmt | returnStmt | spawnStmt |
-             ("advance" | "break" | "continue" | expr) ";"
+             importStmt | ("advance" | "break" | "continue" | expr) ";"
 blockStmt -> "{" statement* "}
 ifStmt -> "if" "(" expr ")" statement ["else" statement]
 whileStmt -> "while" "(" expr ")" statement
@@ -23,6 +23,7 @@ switchStmt -> "switch" "(" expr ")" "{" case* "}"
 case -> "case" expr ":" statement | "default" ":" statement
 returnStmt -> "return" expr ";"
 spawnStmt -> "spawn" call ";"
+importStmt -> "import" string ["as" identifier]
 
 expr -> assignment | conditional | or | and | comparison | binor | binxor | binand |
         bitshift | sum | factor | unary | increment | is | call | primary
@@ -53,6 +54,7 @@ access ->  call "." identifier | call "[" expr "]"
 primary -> declaccess | number | string | funcDecl | "{" (string ":" expr)* "}" | "(" expr ")"
 lvalue -> declaccess | access
 declaccess -> identifier "::" identifier | identifier
+type -> declaccess
 
 identifier := (_ + [a-zA-z])(_ + [a-zA-Z] + [0-9])*
 number := any whole or decimal number
