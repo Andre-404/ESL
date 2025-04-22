@@ -9,7 +9,7 @@ using namespace AST;
 
 // Have to define this in the AST namespace because parselets are c++ friend classes
 namespace AST {
-    //!, -, ~, $, --, ++, async, await, .., ..=
+    //!, -, ~, $, --, ++
     ASTNodePtr parsePrefix(Parser* parser, const Token token) {
         switch (token.type) {
             // Macro meta variables
@@ -427,37 +427,6 @@ void Parser::verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token
     }
 }
 
-void Parser::highlight(vector<ESLModule*>& modules, string moduleToHighlight){
-    // Modules are already sorted using topsort
-    /*for (ESLModule* unit : modules) {
-        parsedUnit = unit;
-
-        // Parse tokenized source into AST
-        loopDepth = 0;
-        switchDepth = 0;
-        currentContainer = &parsedUnit->tokens;
-        currentPtr = 0;
-        while (!isAtEnd()) {
-            try {
-                if (match(TokenType::ADDMACRO)) {
-                    defineMacro();
-                    continue;
-                }
-                unit->stmts.push_back(topLevelDeclaration());
-            }
-            catch (ParserException& e) {
-                sync();
-            }
-        }
-        if(unit->file->path == moduleToHighlight){
-            SemanticAnalysis::SemanticAnalyzer semanticAnalyzer;
-            std::cout << semanticAnalyzer.highlight(modules, unit, macros);
-            return;
-        }
-        expandMacros();
-    }*/
-}
-
 void Parser::defineMacro() {
     consume(TokenType::BANG, "Expected '!' after 'addMacro' token.");
     Token macroName = consume(TokenType::IDENTIFIER, "Expected macro name to be an identifier.");
@@ -544,6 +513,7 @@ ASTNodePtr Parser::topLevelDeclaration(ASTModule& module) {
     else if (match(TokenType::CLASS)) node = classDecl();
     else if (match(TokenType::FN)) node = funcDecl();
     else if(isExported) throw error(previous(), "Only declarations are allowed after keyword 'pub'");
+
     if(node){
         for(const auto decl : module.topDeclarations){
             if (node->getName().equals(decl->getName())) {

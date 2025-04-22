@@ -55,7 +55,6 @@ namespace AST {
 		Parser();
         vector<ASTModule> parse(vector<ESLModule*>& modules);
         void verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& debug);
-        void highlight(vector<ESLModule*>& modules, string moduleToHighlight);
 	private:
 		ASTProbe* probe;
 		MacroExpander* macroExpander;
