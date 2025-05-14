@@ -452,11 +452,6 @@ ASTNodePtr Parser::expression() {
 }
 
 #pragma region Statements and declarations
-// Helper for dead code elimination
-// Control flow terminators are: break, continue, advance and return
-static bool stmtIsTerminator(const ASTNodePtr stmt){
-    return stmt->type == ASTType::BREAK || stmt->type == ASTType::CONTINUE || stmt->type == ASTType::ADVANCE || stmt->type == ASTType::RETURN;
-}
 // Module level variables are put in a list to help with error reporting in compiler
 ASTNodePtr Parser::topLevelDeclaration(ASTModule& module) {
     // Export is only allowed in global scope
@@ -619,22 +614,15 @@ shared_ptr<SpawnStmt> Parser::spawnStmt(){
 
 shared_ptr<BlockStmt> Parser::blockStmt() {
     vector<ASTNodePtr> stmts;
-    int endSize = -1;
     Token start = previous();
     // TokenType::LEFT_BRACE is already consumed
     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
             stmts.push_back(localDeclaration());
-            // TODO: 1. put this into ASTOptimizations
-            if(stmtIsTerminator(stmts.back())) {
-                endSize = stmts.size();
-            }
         }catch(ParserException& e){
             sync();
         }
     }
-    // Optimization: removes dead code if a control flow terminator has been detected before end of block
-    if(endSize != -1) stmts.resize(endSize);
     Token end = consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
     return make_shared<BlockStmt>(stmts, start, end);
 }
@@ -708,13 +696,10 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     consume(TokenType::LEFT_BRACE, "Expect '{' after switch expression.");
     vector<shared_ptr<CaseStmt>> cases;
     bool hasDefault = false;
-    // Every constant in a switch has to be unique, caseStmt checks for that using this vector
-    // TODO: 1. astverifier
-    vector<Token> allSwitchConstants;
 
     while (!check(TokenType::RIGHT_BRACE) && match({ TokenType::CASE, TokenType::DEFAULT })) {
         Token prev = previous();// To see if it's a default statement
-        shared_ptr<CaseStmt> curCase = caseStmt(allSwitchConstants);
+        shared_ptr<CaseStmt> curCase = caseStmt();
         curCase->caseType = prev;
         if (prev.type == TokenType::DEFAULT) hasDefault = true;
         cases.push_back(curCase);
@@ -723,7 +708,7 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     return make_shared<SwitchStmt>(expr, cases, hasDefault, keyword);
 }
 
-shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
+shared_ptr<CaseStmt> Parser::caseStmt() {
     vector<Token> matchConstants;
     // Default cases don't have a match expression
     if (previous().type != TokenType::DEFAULT) {
@@ -737,22 +722,15 @@ shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
     }
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
-    // TODO: 1. ASTOptimizer for the terminator stuff
-    int endSize = -1;
     while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd() && peek().type != TokenType::RIGHT_BRACE) {
         try {
             stmts.push_back(localDeclaration());
-            if(stmtIsTerminator(stmts.back())) {
-                endSize = stmts.size();
-            }
         }catch(ParserException& e){
             sync();
         }
     }
     // Implicit break at the end of a case, gets erased if there is a control flow terminator in this block
     stmts.push_back(make_shared<BreakStmt>(Token()));
-    // Optimization: removes dead code if a control flow terminator has been detected before end of block
-    if(endSize != -1) stmts.resize(endSize);
     return make_shared<CaseStmt>(matchConstants, stmts);
 }
 

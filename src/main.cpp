@@ -11,6 +11,7 @@
 #include "Codegen/Passes/closureConverter.h"
 #include "Codegen/Passes/ASTToTypedAST.h"
 #include "Codegen/Passes/SemanticVerifier.h"
+#include "Codegen/Passes/ASTOptimization.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -66,6 +67,8 @@ int main(int argc, char* argv[]) {
     verifier.process(ASTmodules);
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
+    AST::ASTOptimizer optimizer;
+    optimizer.process(ASTmodules);
 
     closureConversion::ClosureConverter finder;
     passes::typedASTParser::ASTTransformer transformer(ASTmodules);
