@@ -64,13 +64,6 @@ namespace AST {
             }
                 // Function literal
             case TokenType::FN: {
-                // The depths are used for throwing errors for switch and loops stmts,
-                // and since a function can be declared inside a loop we need to account for that
-                int tempLoopDepth = parser->loopDepth;
-                int tempSwitchDepth = parser->switchDepth;
-                parser->loopDepth = 0;
-                parser->switchDepth = 0;
-
                 parser->consume(TokenType::LEFT_PAREN, "Expect '(' for arguments.");
                 vector<ASTVar> args;
                 if (!parser->check(TokenType::RIGHT_PAREN)) {
@@ -86,8 +79,6 @@ namespace AST {
                 parser->consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
                 shared_ptr<BlockStmt> body = parser->blockStmt();
 
-                parser->loopDepth = tempLoopDepth;
-                parser->switchDepth = tempSwitchDepth;
                 return make_shared<FuncLiteral>(args, body, token);
             }
             case TokenType::NEW:{
@@ -162,8 +153,8 @@ namespace AST {
             // Only unwrap +=, -=, etc. if this is a normal variable assignment,
             // Important to not do this for set expressions because then we'd be computing the callee and the field twice
             rhs = parseAssign(left, token, rhs);
-            left->accept(parser->probe);
-            Token temp = parser->probe->getProbedToken();
+            left->accept(&parser->probe);
+            Token temp = parser->probe.getProbedToken();
             if (temp.type != TokenType::IDENTIFIER) throw parser->error(token, "Left side is not assignable");
             return make_shared<AssignmentExpr>(temp, token, rhs);
         }
@@ -195,16 +186,16 @@ namespace AST {
             // Module access cannot be chained, so it throws an error if left side isn't an identifier
             case TokenType::DOUBLE_COLON:{
                 if(left->type != ASTType::LITERAL) throw parser->error(token, "Expected left side to be a module name.");
-                left->accept(parser->probe);
-                Token lhs = parser->probe->getProbedToken();
+                left->accept(&parser->probe);
+                Token lhs = parser->probe.getProbedToken();
                 if(lhs.type != TokenType::IDENTIFIER) throw parser->error(lhs, "Expected identifier for module name.");
                 Token ident = parser->consume(TokenType::IDENTIFIER, "Expected variable name.");
                 return make_shared<ModuleAccessExpr>(lhs, ident);
             }
             case TokenType::BANG:{
                 if(left->type != ASTType::LITERAL) throw parser->error(token, "Expected macro name to be an identifier.");
-                left->accept(parser->probe);
-                Token macroName = parser->probe->getProbedToken();
+                left->accept(&parser->probe);
+                Token macroName = parser->probe.getProbedToken();
                 if (macroName.type != TokenType::IDENTIFIER) {
                     throw parser->error(macroName, "Expected macro name to be an identifier.");
                 }
@@ -275,11 +266,7 @@ namespace AST {
 }
 
 Parser::Parser() {
-    probe = new ASTProbe;
     macroExpander = new MacroExpander(this);
-
-    loopDepth = 0;
-    switchDepth = 0;
 
     currentContainer = nullptr;
     currentPtr = 0;
@@ -367,14 +354,13 @@ vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
     parsedModules.resize(modules.size());
     for (int i = 0; i < modules.size(); i++) {
         // Parse tokenized source into AST
-        loopDepth = 0;
-        switchDepth = 0;
         currentContainer = &modules[i]->tokens;
         currentPtr = 0;
         parsedModules[i].file = modules[i]->file;
         // Converts dependencies from ESLModules to alias + ASTModule(referenced by pos in array)
         for(Dependency dep : modules[i]->deps){
             parsedModules[i].importedModules.emplace_back(dep.alias, dep.module->id);
+            parsedModules[i].importedModulesPath.push_back(dep.pathString);
             importDebugTokens[i].push_back(dep.pathString);
         }
         while (!isAtEnd()) {
@@ -391,40 +377,8 @@ vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
         }
         expandMacros(parsedModules[i]);
     }
-    verifySymbolImports(parsedModules, importDebugTokens);
     for(ESLModule* module : modules) delete module;
     return parsedModules;
-}
-
-void Parser::verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& importTokenDebug){
-    if(importTokenDebug.empty()) return;
-    for(int i = 0; i < modules.size(); i++){
-        // 2 units being imported using the same alias is illegal
-        // Units imported without an alias must abide by the rule that every symbol must be unique
-        std::unordered_map<string, int> symbols;
-        std::unordered_map<string, int> aliases;
-        // Symbols of this unit are also taken into account when checking uniqueness
-        for(auto decl : modules[i].topDeclarations){
-            symbols[decl->getName().getLexeme()] = i;
-        }
-        vector<Token>& curModuleDebug = importTokenDebug[i];
-        int j = 0;
-        for (auto& [alias, dependencyIndex] : modules[i].importedModules) {
-            if(alias.type == TokenType::NONE) {
-                namespaceConflict(modules, i, dependencyIndex, curModuleDebug[j], symbols, aliases);
-                j++;
-                continue;
-            }
-            // Check if any imported dependencies share the same alias
-            if (aliases.count(alias.getLexeme()) > 0) {
-                int secondAliasModule = aliases[alias.getLexeme()];
-                error(modules[i].importedModules[secondAliasModule].first, "Cannot use the same alias for 2 module imports.");
-                error(alias, "Cannot use the same alias for 2 module imports.");
-            }
-            aliases[alias.getLexeme()] = dependencyIndex;
-            j++;
-        }
-    }
 }
 
 void Parser::defineMacro() {
@@ -507,25 +461,19 @@ static bool stmtIsTerminator(const ASTNodePtr stmt){
 ASTNodePtr Parser::topLevelDeclaration(ASTModule& module) {
     // Export is only allowed in global scope
     shared_ptr<ASTDecl> node = nullptr;
-    bool isExported = false;
-    if (match(TokenType::PUB)) isExported = true;
+    bool isExported = match(TokenType::PUB);
+
     if (match(TokenType::LET)) node = varDecl();
     else if (match(TokenType::CLASS)) node = classDecl();
     else if (match(TokenType::FN)) node = funcDecl();
-    else if(isExported) throw error(previous(), "Only declarations are allowed after keyword 'pub'");
 
     if(node){
-        for(const auto decl : module.topDeclarations){
-            if (node->getName().equals(decl->getName())) {
-                error(node->getName(), fmt::format("Error, {} already defined.", node->getName().getLexeme()));
-                throw error(decl->getName(), fmt::format("Error, redefinition of {}.", decl->getName().getLexeme()));
-            }
-        }
         // Passing in the actual AST node, not just the name, because it also contains info about declaration type(var, func, class)
         module.topDeclarations.push_back(node);
         if(isExported) module.exports.push_back(node);
         return node;
-    }
+    }else if(isExported)
+        throw error(previous(), "Only declarations are allowed after keyword 'pub'");
     return statement();
 }
 
@@ -549,17 +497,11 @@ shared_ptr<VarDecl> Parser::varDecl() {
 }
 
 shared_ptr<FuncDecl> Parser::funcDecl() {
-    // The depths are used for throwing errors for switch and loops stmts,
-    // and since a function can be declared inside a loop we need to account for that
-    int tempLoopDepth = loopDepth;
-    int tempSwitchDepth = switchDepth;
-    loopDepth = 0;
-    switchDepth = 0;
     Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a function name.");
     consume(TokenType::LEFT_PAREN, "Expect '(' after function name.");
     vector<ASTVar> args;
-    //parse args
+    // Parse args
     if (!check(TokenType::RIGHT_PAREN)) {
         do {
             Token arg = consume(TokenType::IDENTIFIER, "Expect argument name");
@@ -573,17 +515,16 @@ shared_ptr<FuncDecl> Parser::funcDecl() {
     consume(TokenType::LEFT_BRACE, "Expect '{' after arguments.");
     shared_ptr<BlockStmt> body = blockStmt();
 
-    loopDepth = tempLoopDepth;
-    switchDepth = tempSwitchDepth;
     return make_shared<FuncDecl>(name, args, body, keyword);
 }
 
 shared_ptr<ClassDecl> Parser::classDecl() {
     Token keyword = previous();
     Token name = consume(TokenType::IDENTIFIER, "Expected a class name.");
+    // TODO: 3. Fix this when types are introduced
     ASTNodePtr inherited = nullptr;
     // Inheritance is optional
-    Token colon; // For debug purposes
+    Token colon; // For better error messages
     if (match(TokenType::COLON)) {
         colon = previous();
         // Only accept identifiers and module access
@@ -599,61 +540,33 @@ shared_ptr<ClassDecl> Parser::classDecl() {
     vector<ClassMethod> methods;
     vector<ClassField> fields;
 
-    auto checkName = [&](Token token){
-        for(auto& m : methods){
-            if(token.equals(m.method->name)) {
-                error(token, "Re-declaration of method.");
-                throw error(m.method->name, "Method first defined here.");
-            }
-        }
-        for(auto& field : fields){
-            if(token.equals(field.field)) {
-                error(token, "Re-declaration of field.");
-                throw error(field.field, "Field first defined here.");
-            }
-        }
-    };
     try {
         while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-            bool isPublic = false;
-            if (match(TokenType::PUB)) {
-                isPublic = true;
-            }
+            bool isPublic = match(TokenType::PUB);
             if (match(TokenType::LET)) {
-                Token field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
-
-                checkName(field);
-                fields.emplace_back(isPublic, field);
-
-                while (!check(TokenType::SEMICOLON) && !check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-                    if (!match(TokenType::COMMA)) break;
-                    field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
-                    checkName(field);
+                do{
+                    Token field = consume(TokenType::IDENTIFIER, "Expected a field identifier.");
                     fields.emplace_back(isPublic, field);
-                }
+                    if(check(TokenType::SEMICOLON)) {
+                        consume(TokenType::SEMICOLON, "Expected ';' after field name.");
+                        break;
+                    }
+                    consume(TokenType::COMMA, "Expected ',' before next field or ';'.");
+                }while(!check(TokenType::RIGHT_BRACE) && !isAtEnd());
+            }
+            Token override = match(TokenType::OVERRIDE) ? previous() : Token();
 
-                consume(TokenType::SEMICOLON, "Expected ';' after field name");
-            } else if (match(TokenType::FN)) {
-                // TODO: maybe warn if constructor isn't declared pub?
-                auto decl = funcDecl();
-                checkName(decl->name);
+            if (match(TokenType::FN)) {
+                // TODO: maybe warn if constructor isn't declared pub? -> this goes into 1.(SemanticVerifier)
+                auto decl = funcDecl();;
                 // Implicitly declare "this"
+                // TODO: 4. maybe add token source pos?
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
                 // If TokenType of override is NONE(the token is default constructed) then this function doesn't override
-                methods.emplace_back(isPublic, Token(), decl);
-            }else if (match(TokenType::OVERRIDE)) {
-                Token override = previous();
-                // "override" keyword must be followed by a method
-                if(!match(TokenType::FN)){
-                    error(peek(), "'override' must be followed by a method definition.");
-                }
-                auto decl = funcDecl();
-                checkName(decl->name);
-                // Implicitly declare "this"
-                decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
                 methods.emplace_back(isPublic, override, decl);
-            } else {
-                throw error(peek(), "Expected let or fn keywords.");
+            }else {
+                if(override.type == TokenType::NONE) throw error(override, "Expected a method definition after 'override'");
+                throw error(peek(), "Expected field or method declaration.");
             }
         }
     }catch(ParserException& e){
@@ -698,6 +611,7 @@ shared_ptr<SpawnStmt> Parser::spawnStmt(){
     Token keyword = previous();
     ASTNodePtr expr = expression();
     consume(TokenType::SEMICOLON, "Expected ';' after expression.");
+
     if (expr->type != ASTType::CALL) throw error(keyword, "Expected a call after 'spawn'.");
     auto call = std::static_pointer_cast<CallExpr>(expr);
     return make_shared<SpawnStmt>(call, keyword);
@@ -711,6 +625,7 @@ shared_ptr<BlockStmt> Parser::blockStmt() {
     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
         try {
             stmts.push_back(localDeclaration());
+            // TODO: 1. put this into ASTOptimizations
             if(stmtIsTerminator(stmts.back())) {
                 endSize = stmts.size();
             }
@@ -732,28 +647,21 @@ shared_ptr<IfStmt> Parser::ifStmt() {
     // Using statement() instead of declaration() disallows declarations directly in a control flow body
     // Declarations are still allowed in block statement
     ASTNodePtr thenBranch = statement();
-    ASTNodePtr elseBranch = nullptr;
-    if (match(TokenType::ELSE)) {
-        elseBranch = statement();
-    }
+    ASTNodePtr elseBranch = match(TokenType::ELSE) ? statement() : nullptr;
     return make_shared<IfStmt>(thenBranch, elseBranch, condition, keyword);
 }
 
 shared_ptr<WhileStmt> Parser::whileStmt() {
     Token keyword = previous();
-    // loopDepth is used to see if a 'continue' or 'break' statement is allowed within the body
-    loopDepth++;
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
     ASTNodePtr condition = expression();
     consume(TokenType::RIGHT_PAREN, "Expect ')' after condition.");
     ASTNodePtr body = statement();
-    loopDepth--;
     return make_shared<WhileStmt>(body, condition, keyword);
 }
 
 shared_ptr<ForStmt> Parser::forStmt() {
     Token keyword = previous();
-    loopDepth++;
     consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.");
     // Initializer can either be: empty, a new variable declaration, or any expression
     ASTNodePtr init = nullptr;
@@ -763,30 +671,27 @@ shared_ptr<ForStmt> Parser::forStmt() {
     else if (match(TokenType::LET)) init = varDecl();
     else init = exprStmt();
 
-    ASTNodePtr condition = nullptr;
-    if (!check(TokenType::SEMICOLON)) condition = expression();
+    ASTNodePtr condition = check(TokenType::SEMICOLON) ? nullptr : expression();
     consume(TokenType::SEMICOLON, "Expect ';' after loop condition");
 
-    ASTNodePtr increment = nullptr;
     // Using expression() here instead of exprStmt() because there is no trailing ';'
-    if (!check(TokenType::RIGHT_PAREN)) increment = expression();
+    ASTNodePtr increment = check(TokenType::RIGHT_PAREN) ? nullptr : expression();
+
     consume(TokenType::RIGHT_PAREN, "Expect ')' after 'for' clauses.");
     // Disallows declarations unless they're in a block
+    // TODO: maybe make this localDeclaration? its dumb but it should be allowed i think
     ASTNodePtr body = statement();
-    loopDepth--;
     return make_shared<ForStmt>(init, condition, increment, body, keyword);
 }
 
 shared_ptr<BreakStmt> Parser::breakStmt() {
     Token keyword = previous();
-    if (loopDepth == 0 && switchDepth == 0) throw error(keyword, "Cannot use 'break' outside of loops or switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after break.");
     return make_shared<BreakStmt>(keyword);
 }
 
 shared_ptr<ContinueStmt> Parser::continueStmt() {
     Token keyword = previous();
-    if (loopDepth == 0) throw error(keyword, "Cannot use 'continue' outside of loops.");
     consume(TokenType::SEMICOLON, "Expect ';' after continue.");
     return make_shared<ContinueStmt>(keyword);
 }
@@ -801,25 +706,20 @@ shared_ptr<SwitchStmt> Parser::switchStmt() {
     ASTNodePtr expr = expression();
     consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
     consume(TokenType::LEFT_BRACE, "Expect '{' after switch expression.");
-    switchDepth++;
     vector<shared_ptr<CaseStmt>> cases;
     bool hasDefault = false;
     // Every constant in a switch has to be unique, caseStmt checks for that using this vector
+    // TODO: 1. astverifier
     vector<Token> allSwitchConstants;
 
     while (!check(TokenType::RIGHT_BRACE) && match({ TokenType::CASE, TokenType::DEFAULT })) {
         Token prev = previous();// To see if it's a default statement
         shared_ptr<CaseStmt> curCase = caseStmt(allSwitchConstants);
         curCase->caseType = prev;
-        if (prev.type == TokenType::DEFAULT) {
-            //don't throw, it isn't a breaking error
-            if (hasDefault) error(prev, "Only 1 default case is allowed inside a switch statement.");
-            hasDefault = true;
-        }
+        if (prev.type == TokenType::DEFAULT) hasDefault = true;
         cases.push_back(curCase);
     }
     consume(TokenType::RIGHT_BRACE, "Expect '}' after switch body.");
-    switchDepth--;
     return make_shared<SwitchStmt>(expr, cases, hasDefault, keyword);
 }
 
@@ -828,15 +728,7 @@ shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
     // Default cases don't have a match expression
     if (previous().type != TokenType::DEFAULT) {
         while (match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE })) {
-            Token newConstant = previous();
-            // Check for constant uniqueness
-            for(auto& t : constants){
-                if(newConstant.type == t.type && newConstant.getLexeme() == t.getLexeme()){
-                    error(newConstant, "Duplicate case value.");
-                    error(t, "Value already in a case here.");
-                }
-            }
-            matchConstants.push_back(newConstant);
+            matchConstants.push_back(previous());
             if (!match(TokenType::BITWISE_OR)) break;
         }
         if (!match({ TokenType::NIL, TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE }) && peek().type != TokenType::COLON) {
@@ -845,6 +737,7 @@ shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
     }
     consume(TokenType::COLON, "Expect ':' after 'case' or 'default'.");
     vector<ASTNodePtr> stmts;
+    // TODO: 1. ASTOptimizer for the terminator stuff
     int endSize = -1;
     while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) && !isAtEnd() && peek().type != TokenType::RIGHT_BRACE) {
         try {
@@ -858,25 +751,21 @@ shared_ptr<CaseStmt> Parser::caseStmt(vector<Token> constants) {
     }
     // Implicit break at the end of a case, gets erased if there is a control flow terminator in this block
     stmts.push_back(make_shared<BreakStmt>(Token()));
-    //Optimization: removes dead code if a control flow terminator has been detected before end of block
+    // Optimization: removes dead code if a control flow terminator has been detected before end of block
     if(endSize != -1) stmts.resize(endSize);
     return make_shared<CaseStmt>(matchConstants, stmts);
 }
 
 shared_ptr<AdvanceStmt> Parser::advanceStmt() {
     Token keyword = previous();
-    if (switchDepth == 0) throw error(keyword, "Cannot use 'advance' outside of switch statements.");
     consume(TokenType::SEMICOLON, "Expect ';' after 'advance'.");
     return make_shared<AdvanceStmt>(keyword);
 }
 
 shared_ptr<ReturnStmt> Parser::returnStmt() {
-    ASTNodePtr expr = nullptr;
     Token keyword = previous();
-    if (!match(TokenType::SEMICOLON)) {
-        expr = expression();
-        consume(TokenType::SEMICOLON, "Expect ';' at the end of 'return'.");
-    }
+    ASTNodePtr expr = check(TokenType::SEMICOLON) ? nullptr : expression();
+    consume(TokenType::SEMICOLON, "Expect ';' at the end of 'return'.");
     return make_shared<ReturnStmt>(expr, keyword);
 }
 
@@ -1049,33 +938,5 @@ int Parser::infixPrecLevel(const TokenType type){
 int Parser::postfixPrecLevel(const TokenType type){
     if(!postfixParselets.contains(type)) return +Precedence::NONE;
     return postfixParselets[type].first;
-}
-
-void Parser::namespaceConflict(vector<ASTModule>& modules, int importer, int dependency, Token importerDebug,
-                               std::unordered_map<string, int>& symbols, std::unordered_map<string, int>& aliases){
-    for (const auto decl : modules[dependency].exports) {
-        string lexeme = decl->getName().getLexeme();
-
-        if (symbols.count(lexeme) == 0) {
-            symbols[lexeme] = dependency;
-            continue;
-        }
-        string dependencyPath = modules[dependency].file->path;
-        string conflictModulePath = modules[symbols[lexeme]].file->path;
-        string importerModulePath = modules[importer].file->path;
-        // Module importing dependency contains a redefinition of lexeme
-        if(symbols[lexeme] == importer){
-            string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and redefined in '{}', consider using an alias when importing.",
-                                     lexeme, dependencyPath, conflictModulePath);
-            for(auto importerDecl : modules[importer].topDeclarations){
-                if(importerDecl->getName().getLexeme() != lexeme) continue;
-                error(importerDecl->getName(), str);
-            }
-            return;
-        }
-        string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and '{}', which are both imported in {}.",
-                                 lexeme, dependencyPath, conflictModulePath, importerModulePath);
-        error(importerDebug, str);
-    }
 }
 #pragma endregion

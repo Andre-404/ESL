@@ -10,6 +10,7 @@
 #include "Runtime/MemoryManagment/garbageCollector.h"
 #include "Codegen/Passes/closureConverter.h"
 #include "Codegen/Passes/ASTToTypedAST.h"
+#include "Codegen/Passes/SemanticVerifier.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -61,7 +62,8 @@ int main(int argc, char* argv[]) {
     AST::Parser parser;
 
     vector<AST::ASTModule> ASTmodules = parser.parse(modules);
-
+    AST::SemanticVerifier verifier;
+    verifier.process(ASTmodules);
     errorHandler::showCompileErrors();
     if (errorHandler::hasErrors()) exit(64);
 

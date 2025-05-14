@@ -54,16 +54,12 @@ namespace AST {
 	public:
 		Parser();
         vector<ASTModule> parse(vector<ESLModule*>& modules);
-        void verifySymbolImports(vector<ASTModule>& modules, vector<vector<Token>>& debug);
 	private:
-		ASTProbe* probe;
+		ASTProbe probe;
 		MacroExpander* macroExpander;
 
         vector<Token>* currentContainer;
         int currentPtr;
-
-		int loopDepth;
-		int switchDepth;
 
 		unordered_map<TokenType, std::pair<int, PrefixFunc>> prefixParselets;
 		unordered_map<TokenType, std::pair<int, InfixFunc>> infixParselets;
@@ -163,9 +159,6 @@ namespace AST {
 		void expandMacros(ASTModule& module);
 
 		void sync();
-
-        void namespaceConflict(vector<ASTModule>& modules, int importer, int dependency, Token depDebug,
-                               std::unordered_map<string, int>& symbols, std::unordered_map<string, int>& aliases);
         #pragma endregion
 
 	};

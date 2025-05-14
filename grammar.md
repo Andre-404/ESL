@@ -3,7 +3,8 @@ Repetition of a rule is denoted by *
 
 Optional rule(s) are inside [ ]
 ```
-program -> declaration* EOF
+program -> import* declaration* EOF
+import -> "import" string ["as" identifier]
 declaration -> ["pub"](varDecl | funcDecl | classDecl) | statement
 varDecl -> "let" [type] identifier (";" | "=" expr ";")
 funcDecl -> "fn" identifier "(" paramlist ")" [type] blockStmt
@@ -12,18 +13,17 @@ classDecl -> "class" identifier [":" declaccess] "{" [ (["pub"](classField | cla
 classField -> "let" [type] identifier ("," identifier)*
 classMethod -> ["override"] funcDecl
 
-
+localDeclaration -> varDecl | statement
 statement -> blockStmt | ifStmt | whileStmt | forStmt | switchStmt | returnStmt | spawnStmt |
-             importStmt | ("advance" | "break" | "continue" | expr) ";"
-blockStmt -> "{" statement* "}
+             ("advance" | "break" | "continue" | expr) ";"
+blockStmt -> "{" localDeclaration* "}
 ifStmt -> "if" "(" expr ")" statement ["else" statement]
 whileStmt -> "while" "(" expr ")" statement
 forStmt -> "for" "(" [varDecl] ";" [expr] ";" [expr] ")" statement
 switchStmt -> "switch" "(" expr ")" "{" case* "}"
 case -> "case" expr ":" statement | "default" ":" statement
 returnStmt -> "return" expr ";"
-spawnStmt -> "spawn" call ";"
-importStmt -> "import" string ["as" identifier]
+spawnStmt -> "spawn" call "(" arglist ")" ";"
 
 expr -> assignment | conditional | or | and | comparison | binor | binxor | binand |
         bitshift | sum | factor | unary | increment | is | call | primary
@@ -51,7 +51,8 @@ call -> ["new"] call "(" arglist ")" | access | primary
 arglist -> expr ("," expr)* |
 access ->  call "." identifier | call "[" expr "]"
 
-primary -> declaccess | number | string | funcDecl | "{" (string ":" expr)* "}" | "(" expr ")"
+primary -> declaccess | number | string | true | false | null |
+           funcDecl | "{" (string ":" expr)* "}" | "(" expr ")"
 lvalue -> declaccess | access
 declaccess -> identifier "::" identifier | identifier
 type -> declaccess

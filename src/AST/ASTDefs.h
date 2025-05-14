@@ -129,12 +129,15 @@ namespace AST {
 
     struct ASTModule{
         File* file;
+        // Alias + index of dependency, used to resolve references to exported symbols
         vector<std::pair<Token,int>> importedModules;
+        // Same order as importedModules, used to report errors that happened from importing module with index i
+        vector<Token> importedModulesPath;
         // AST of this file
         vector<std::shared_ptr<AST::ASTNode>> stmts;
         // Exported declarations
         vector<std::shared_ptr<AST::ASTDecl>> exports;
-        // Used by the compiler to look up if a global variable exists since globals are late bound
+
         vector<std::shared_ptr<AST::ASTDecl>> topDeclarations;
     };
 

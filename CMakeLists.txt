@@ -37,6 +37,10 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/JIT/SEHFrameRegistrar.cpp
         src/Runtime/JIT/DebugInfoPlugin.cpp
         src/Runtime/JIT/DebugInfoPlugin.h
+        src/Codegen/Passes/ASTOptimization.cpp
+        src/Codegen/Passes/ASTOptimization.h
+        src/Codegen/Passes/SemanticVerifier.cpp
+        src/Codegen/Passes/SemanticVerifier.h
 )
 
 string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")
