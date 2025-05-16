@@ -627,6 +627,7 @@ void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
     nodesToReturn= {evalASTExpr(stmt->expr)};
 }
 void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
+    //TODO: can remove this after parser change
     if(stmt->callExpr->type != AST::ASTType::CALL){
         error(stmt->keyword, "Expected a function call following keyword 'spawn'.");
     }
@@ -737,13 +738,6 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     vector<typedAST::Block> caseBlocks;
     int defaultBlockIdx = -1;
     int i = 0;
-    vector<Token> containedTokens;
-    auto contains = [&](Token t){
-        for(Token& tok : containedTokens){
-            if(tok.equals(t)) return true;
-        }
-        return false;
-    };
     bool containsString = false;
     for(auto _case : stmt->cases){
         if(_case->caseType.type == TokenType::DEFAULT){
@@ -752,12 +746,7 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
             i++;
             continue;
         }
-        // For error reporting
         for(Token& tok : _case->constants){
-            if(contains(tok)){
-                error(tok, "Switch cannot contains 2 same constants");
-            }
-            containedTokens.emplace_back(tok);
             if(tok.type == TokenType::STRING) containsString = true;
         }
         auto convertedLiterals = getCaseConstants(_case->constants);

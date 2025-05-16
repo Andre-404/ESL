@@ -31,7 +31,7 @@ expr -> assignment | conditional | or | and | comparison | binor | binxor | bina
 assignment -> lvalue assignop assignment
 assignop -> "=" | "+=" | "-=" | "*=" | "/=" | "|=" | "^=" | "&=" | "%=" |
 
-conditional -> or "?" expr ":" conditional
+conditional -> or "?" expr ":" conditional | or
 or -> or "||" and | and
 and -> and "&&" equality | equality
 equality ->  equality ("==" | "!=") relational | relational
@@ -44,16 +44,18 @@ binand -> binand "&" bitshift | bitshift
 bitshift -> bitshift ("<<" | ">>") sum | sum
 
 sum -> sum ("+" | "-") factor | factor
-factor -> factor ("*" | "-") unary | unary
-unary -> ("!" | "~") unary | ("++" | "--") lvalue | call
+factor -> factor ("*" | "-") is | is
+is -> unary "is" type | unary
+unary -> ("!" | "~") unary | ("++" | "--") lvalue | "new" type "(" arglist ")" | call
 
-call -> ["new"] call "(" arglist ")" | access | primary
+call -> call "(" arglist ")" | access | primary
 arglist -> expr ("," expr)* |
 access ->  call "." identifier | call "[" expr "]"
 
 primary -> declaccess | number | string | true | false | null |
-           funcDecl | "{" (string ":" expr)* "}" | "(" expr ")"
-lvalue -> declaccess | access
+           funcDecl | "{" (string ":" expr)* "}" | "(" expr ")" |
+           "[" (expr ",")* "]"
+lvalue -> identifier | access
 declaccess -> identifier "::" identifier | identifier
 type -> declaccess
 

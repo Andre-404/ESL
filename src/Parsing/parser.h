@@ -21,17 +21,18 @@ namespace AST {
         RANGE,
 		OR,
 		AND,
-        COMPARISON,
+        EQUALITY,
+        RELATIONAL,
 		BIN_OR,
 		BIN_XOR,
 		BIN_AND,
 		BITSHIFT,
 		SUM,
 		FACTOR,
+        IS,
         UNARY_PREFIX,
         UNARY_POSTFIX,
 		CALL,
-        INSTANCEOF,
 		PRIMARY
 	};
 	// Conversion from enum to 1 byte number

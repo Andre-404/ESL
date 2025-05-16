@@ -21,6 +21,19 @@ namespace AST {
             case TokenType::DECREMENT:{
                 throw parser->error(token, "Prefix incrementing/decrementing is not supported.");
             }
+            case TokenType::NEW:{
+                // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
+                // or module access to identifier
+                // TODO: fix this so it only works with types, no need to call expression
+                auto call = parser->expression(+Precedence::CALL - 1);
+                if(call->type != ASTType::CALL) throw parser->error(token, "Expected a call to class.");
+                auto castCall = std::static_pointer_cast<CallExpr>(call);
+                auto type = castCall->callee->type;
+                if(!(type == AST::ASTType::LITERAL || type == AST::ASTType::MODULE_ACCESS)) {
+                    throw parser->error(token, "Expected a class identifier or module access to class identifier.");
+                }
+                return make_shared<NewExpr>(castCall, token);
+            }
             default: {
                 ASTNodePtr expr = parser->expression(parser->prefixPrecLevel(token.type));
                 return make_shared<UnaryExpr>(token, expr, true);
@@ -81,19 +94,7 @@ namespace AST {
 
                 return make_shared<FuncLiteral>(args, body, token);
             }
-            case TokenType::NEW:{
-                // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
-                // or module access to identifier
-                auto call = parser->expression(+Precedence::CALL - 1);
-                if(call->type != ASTType::CALL) throw parser->error(token, "Expected a call to class.");
-                auto castCall = std::static_pointer_cast<CallExpr>(call);
-                auto type = castCall->callee->type;
-                if(!(type == AST::ASTType::LITERAL || type == AST::ASTType::MODULE_ACCESS)) {
-                    throw parser->error(token, "Expected a class identifier or module access to class identifier.");
-                }
-                return make_shared<NewExpr>(castCall, token);
-            }
-                //number, string, boolean or nil
+            //number, string, boolean or nil
             default:
                 return make_shared<LiteralExpr>(token);
         }
@@ -144,11 +145,12 @@ namespace AST {
         return make_shared<BinaryExpr>(left, newTok, right);
     }
     ASTNodePtr parseAssignment(Parser* parser, ASTNodePtr left, const Token token) {
-        if (!(left->type == ASTType::LITERAL || left->type == ASTType::FIELD_ACCESS)) throw parser->error(token, "Left side is not assignable");
+        if (!(left->type == ASTType::LITERAL || left->type == ASTType::FIELD_ACCESS))
+            throw parser->error(token, "Left side is not assignable");
         // Precedence level -1 makes assignment right to left associative since parser->expression call won't stop when it hits '=' token
         // E.g. a = b = 2; gets parsed as a = (b = 2);
         auto rhs = parser->expression(parser->infixPrecLevel(token.type) - 1);
-        // Assignment can be either variable assignment or set expression
+        // Assignment can be either variable assignment or set expression(can't be a module access)
         if(left->type == ASTType::LITERAL){
             // Only unwrap +=, -=, etc. if this is a normal variable assignment,
             // Important to not do this for set expressions because then we'd be computing the callee and the field twice
@@ -206,6 +208,7 @@ namespace AST {
             }
             case TokenType::IS:{
                 auto right = parser->expression(parser->infixPrecLevel(token.type));
+                // TODO: change this to type
                 if(!(right->type == ASTType::LITERAL || right->type == ASTType::MODULE_ACCESS)){
                     throw parser->error(token, "Right side of the 'instanceof' operator can only be an identifier.");
                 }
@@ -217,6 +220,7 @@ namespace AST {
 
                 // Chaining comparison ops is forbidden, here lhs is checked against op of this binary expr,
                 // After parsing rhs, rhs is compared to op of this binary expr
+                // TODO: move this to SemanticVerifer
                 if(left->type == ASTType::BINARY){
                     auto op = std::static_pointer_cast<BinaryExpr>(left)->op;
                     if(isComparisonOp(op)){
@@ -273,14 +277,16 @@ Parser::Parser() {
 
 #pragma region Parselets
     // Prefix
-    addPrefix(TokenType::BANG, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::BANG,  Precedence::UNARY_PREFIX, parsePrefix);
     addPrefix(TokenType::MINUS, Precedence::UNARY_PREFIX, parsePrefix);
     addPrefix(TokenType::TILDA, Precedence::UNARY_PREFIX, parsePrefix);
     // Only for macros
     addPrefix(TokenType::DOLLAR, Precedence::UNARY_PREFIX, parsePrefix);
 
+    // Doesn't work, but exists to throw an error and let the user know
     addPrefix(TokenType::INCREMENT, Precedence::UNARY_PREFIX, parsePrefix);
     addPrefix(TokenType::DECREMENT, Precedence::UNARY_PREFIX, parsePrefix);
+    addPrefix(TokenType::NEW, Precedence::UNARY_PREFIX, parsePrefix);
 
     addPrefix(TokenType::IDENTIFIER, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::STRING, Precedence::PRIMARY, parseLiteral);
@@ -292,7 +298,6 @@ Parser::Parser() {
     addPrefix(TokenType::LEFT_BRACKET, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::LEFT_BRACE, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::FN, Precedence::PRIMARY, parseLiteral);
-    addPrefix(TokenType::NEW, Precedence::PRIMARY, parseLiteral);
     addPrefix(TokenType::THIS, Precedence::PRIMARY, parseLiteral);
 
     // Infix and mix-fix
@@ -315,13 +320,13 @@ Parser::Parser() {
     addInfix(TokenType::BITWISE_XOR, Precedence::BIN_XOR, parseBinary);
     addInfix(TokenType::BITWISE_AND, Precedence::BIN_AND, parseBinary);
 
-    addInfix(TokenType::EQUAL_EQUAL, Precedence::COMPARISON, parseBinary);
-    addInfix(TokenType::BANG_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::EQUAL_EQUAL, Precedence::EQUALITY, parseBinary);
+    addInfix(TokenType::BANG_EQUAL, Precedence::EQUALITY, parseBinary);
 
-    addInfix(TokenType::LESS, Precedence::COMPARISON, parseBinary);
-    addInfix(TokenType::LESS_EQUAL, Precedence::COMPARISON, parseBinary);
-    addInfix(TokenType::GREATER, Precedence::COMPARISON, parseBinary);
-    addInfix(TokenType::GREATER_EQUAL, Precedence::COMPARISON, parseBinary);
+    addInfix(TokenType::LESS, Precedence::RELATIONAL, parseBinary);
+    addInfix(TokenType::LESS_EQUAL, Precedence::RELATIONAL, parseBinary);
+    addInfix(TokenType::GREATER, Precedence::RELATIONAL, parseBinary);
+    addInfix(TokenType::GREATER_EQUAL, Precedence::RELATIONAL, parseBinary);
 
     addInfix(TokenType::BITSHIFT_LEFT, Precedence::BITSHIFT, parseBinary);
     addInfix(TokenType::BITSHIFT_RIGHT, Precedence::BITSHIFT, parseBinary);
@@ -337,8 +342,9 @@ Parser::Parser() {
     addInfix(TokenType::LEFT_PAREN, Precedence::CALL, parseCall);
     addInfix(TokenType::LEFT_BRACKET, Precedence::CALL, parseFieldAccess);
     addInfix(TokenType::DOT, Precedence::CALL, parseFieldAccess);
-    addInfix(TokenType::IS, Precedence::INSTANCEOF, parseBinary);
+    addInfix(TokenType::IS, Precedence::IS, parseBinary);
 
+    // Module access, only for variable/function access, type accessing is done differently
     addInfix(TokenType::DOUBLE_COLON, Precedence::PRIMARY, parseBinary);
 
     // Postfix
@@ -350,7 +356,6 @@ Parser::Parser() {
 vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
     // Modules are already sorted using topsort
     vector<ASTModule> parsedModules;
-    vector<vector<Token>> importDebugTokens;
     parsedModules.resize(modules.size());
     for (int i = 0; i < modules.size(); i++) {
         // Parse tokenized source into AST
@@ -361,7 +366,6 @@ vector<ASTModule> Parser::parse(vector<ESLModule*>& modules) {
         for(Dependency dep : modules[i]->deps){
             parsedModules[i].importedModules.emplace_back(dep.alias, dep.module->id);
             parsedModules[i].importedModulesPath.push_back(dep.pathString);
-            importDebugTokens[i].push_back(dep.pathString);
         }
         while (!isAtEnd()) {
             try {
