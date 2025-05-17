@@ -4,6 +4,11 @@
 #include <memory>
 #include <tuple>
 
+
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 namespace preprocessing {
     using std::unordered_map;
     using std::unique_ptr;
@@ -11,13 +16,14 @@ namespace preprocessing {
 
     class Preprocessor {
     public:
-        Preprocessor();
+        Preprocessor(errorHandler::ErrorHandler& errorH);
         void preprocessProject(const string mainFilePath);
 
         vector<ESLModule*> getSortedUnits() { return sortedUnits; }
     private:
         string projectRootPath;
         Scanner scanner;
+        errorHandler::ErrorHandler& errorH;
 
         unordered_map<string, ESLModule*> allUnits;
         vector<ESLModule*> sortedUnits;

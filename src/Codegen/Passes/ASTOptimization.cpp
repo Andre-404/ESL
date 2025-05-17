@@ -6,7 +6,7 @@
 
 using namespace AST;
 
-ASTOptimizer::ASTOptimizer() {
+ASTOptimizer::ASTOptimizer(errorHandler::ErrorHandler& errHandler) : errHandler(errHandler) {
 
 }
 
@@ -144,8 +144,4 @@ void ASTOptimizer::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
 }
 void ASTOptimizer::visitReturnStmt(AST::ReturnStmt* stmt) {
     stmt->expr->accept(this);
-}
-
-void ASTOptimizer::warning(const Token token, const string msg){
-    errorHandler::addCompileError(msg, token);
 }

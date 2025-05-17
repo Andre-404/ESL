@@ -5,6 +5,10 @@
 #include "../../Includes/unorderedDense.h"
 #include "computeClassHierarchy.h"
 
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 namespace passes{
 namespace typedASTParser{
     enum class FuncType {
@@ -103,7 +107,7 @@ namespace typedASTParser{
         vector<File*> sourceFiles;
         bool hadError;
 
-        ASTTransformer(vector<AST::ASTModule> &_units);
+        ASTTransformer(vector<AST::ASTModule> &_units, errorHandler::ErrorHandler& errHandler);
         std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
         run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
 
@@ -165,6 +169,8 @@ namespace typedASTParser{
 
         vector<typedAST::nodePtr> nodesToReturn;
         typedAST::exprPtr returnedExpr;
+
+        errorHandler::ErrorHandler& errHandler;
 
         #pragma region Helpers
         // Variables

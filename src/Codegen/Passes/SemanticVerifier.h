@@ -1,11 +1,15 @@
 #pragma once
 #include "../../AST/ASTDefs.h"
 
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 namespace AST {
     class SemanticVerifier : public Visitor {
     public:
-        SemanticVerifier();
-        bool process(vector<ASTModule>& units);
+        SemanticVerifier(errorHandler::ErrorHandler& errHandler);
+        void process(vector<ASTModule>& units);
 #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
@@ -43,12 +47,10 @@ namespace AST {
     private:
         int loopDepth;
         int switchDepth;
-        bool hasErrors;
+        errorHandler::ErrorHandler& errHandler;
 
         void checkAliasConflict(ASTModule& module);
         void checkNamingConflicts(ASTModule& module, vector<ASTModule>& units);
-
-        void error(const Token token, const string msg);
     };
 }
 

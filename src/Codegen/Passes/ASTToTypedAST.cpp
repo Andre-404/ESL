@@ -7,7 +7,8 @@
 using namespace passes;
 using namespace typedASTParser;
 
-ASTTransformer::ASTTransformer(vector<AST::ASTModule> &_units) : units(_units) {
+ASTTransformer::ASTTransformer(vector<AST::ASTModule> &_units, errorHandler::ErrorHandler& errHandler)
+                : units(_units), errHandler(errHandler) {
     curUnitIndex = 0;
     hadError = false;
     current = nullptr;
@@ -627,10 +628,6 @@ void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
     nodesToReturn= {evalASTExpr(stmt->expr)};
 }
 void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
-    //TODO: can remove this after parser change
-    if(stmt->callExpr->type != AST::ASTType::CALL){
-        error(stmt->keyword, "Expected a function call following keyword 'spawn'.");
-    }
     auto call = evalASTExpr(stmt->callExpr);
     nodesToReturn = {std::make_shared<typedAST::SpawnStmt>(call, call->type == typedAST::NodeType::INVOKE,
                                                     AST::SpawnStmtDebugInfo(stmt->keyword))};
@@ -713,6 +710,7 @@ vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstan
             temp.erase(temp.size() - 1, 1);
             converted.emplace_back(temp);
         }else if(literal.type == TokenType::NUMBER) {
+            // TODO: what is this?
             double num = std::stod(literal.getLexeme());
             if(trunc(num) != num) {
                 error(literal, "Case literal can't be a floating point.");
@@ -1321,12 +1319,12 @@ Token ASTTransformer::syntheticToken(const string& str){
     return Token(TokenType::IDENTIFIER, str);
 }
 void ASTTransformer::error(const Token token, const string& msg) noexcept(false){
-    errorHandler::addCompileError(msg, token);
+    errHandler.reportError(msg, token);
     hadError = true;
     throw TransformerException();
 }
 void ASTTransformer::error(const string& message) noexcept(false){
-    errorHandler::addSystemError("System compile error in '" + units[curUnitIndex].file->name + "': \n" + message + "\n");
+    errHandler.reportUnrecoverableError("System compile error in '" + units[curUnitIndex].file->name + "': \n" + message + "\n");
     hadError = true;
     throw TransformerException();
 }

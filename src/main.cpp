@@ -12,6 +12,7 @@
 #include "Codegen/Passes/ASTToTypedAST.h"
 #include "Codegen/Passes/SemanticVerifier.h"
 #include "Codegen/Passes/ASTOptimization.h"
+#include "ErrorHandling/errorHandler.h"
 #include <chrono>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -56,36 +57,47 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32) || defined(WIN32)
     windowsSetTerminalProcessing();
 #endif
-    preprocessing::Preprocessor preprocessor;
+    errorHandler::ErrorHandler handler;
+    preprocessing::Preprocessor preprocessor(handler);
     preprocessor.preprocessProject(path);
     vector<ESLModule *> modules = preprocessor.getSortedUnits();
-
-    AST::Parser parser;
+    if(handler.hasErrors()){
+        handler.displayErrors();
+        exit(64);
+    }
+    AST::Parser parser(handler);
 
     vector<AST::ASTModule> ASTmodules = parser.parse(modules);
-    AST::SemanticVerifier verifier;
+    AST::SemanticVerifier verifier(handler);
     verifier.process(ASTmodules);
-    errorHandler::showCompileErrors();
-    if (errorHandler::hasErrors()) exit(64);
-    AST::ASTOptimizer optimizer;
+    if(handler.hasErrors()){
+        handler.displayErrors();
+        exit(64);
+    }
+    AST::ASTOptimizer optimizer(handler);
     optimizer.process(ASTmodules);
 
     closureConversion::ClosureConverter finder;
-    passes::typedASTParser::ASTTransformer transformer(ASTmodules);
+    passes::typedASTParser::ASTTransformer transformer(ASTmodules, handler);
     auto res = transformer.run(finder.generateFreevarMap(ASTmodules));
-    errorHandler::showCompileErrors();
-    if (errorHandler::hasErrors()) exit(64);
+    if(handler.hasErrors()){
+        handler.displayErrors();
+        exit(64);
+    }
     auto env = transformer.getTypeEnv();
     auto classes = transformer.getClassHierarchy();
-    errorHandler::showCompileErrors();
-    if (errorHandler::hasErrors()) exit(64);
+    if(handler.hasErrors()){
+        handler.displayErrors();
+        exit(64);
+    }
 
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
     llvm::InitializeNativeTargetDisassembler();
     ESLJIT::createJIT();
-    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(), ESLJIT::getJIT().getDL());
+    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(),
+                                   ESLJIT::getJIT().getDL(), handler);
     ESLJIT::getJIT().addIRModule(std::move(compiler.compile(res.first, "func.main")));
     MainFn mainFuncPtr = ESLJIT::getJIT().getMainFunc();
     mainFuncPtr(0, nullptr);

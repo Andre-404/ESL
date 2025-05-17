@@ -28,20 +28,6 @@ EXPORT NOINLINE void stopThread(memory::ThreadLocalData* threadData){
     memory::gc->suspendThread(std::this_thread::get_id(), stackEnd, memory::getLocalArena(threadData));
 }
 
-EXPORT double asNum(Value x){
-    if(isNumber(x)){
-        return decodeNumber(x);
-    }
-    exit(64);
-}
-
-_Unwind_Reason_Code callback(struct _Unwind_Context* context, void* arg){
-    uint64_t ip = (uint64_t)_Unwind_GetIP(context);
-    // This takes care of printing
-    ESLJIT::getJIT().addressToFunc(ip);
-    return _URC_NO_REASON;
-}
-
 enum class runtimeErrorType : uint8_t{
     WRONG_TYPE,
     WRONG_TYPE_BINARY,
@@ -89,7 +75,12 @@ EXPORT void runtimeError(const char* msg, uint8_t errType, uint64_t val1, uint64
         }
     }
     std::cout<<str<<std::endl;
-    _Unwind_Backtrace(callback, nullptr);
+    _Unwind_Backtrace([](struct _Unwind_Context* context, void* arg){
+        uint64_t ip = (uint64_t)_Unwind_GetIP(context);
+        // This takes care of printing
+        ESLJIT::getJIT().addressToFunc(ip);
+        return _URC_NO_REASON;
+    }, nullptr);
     exit(64);
 }
 // Both values are known to be strings

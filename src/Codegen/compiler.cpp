@@ -41,8 +41,8 @@ static inline std::tuple<uint64_t, uint64_t, bool> getNullTypeMasks(){
 using namespace compileCore;
 
 Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv, fastMap<string, std::pair<int, int>>& _classHierarchy,
-                   fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL)
-    : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)) {
+                   fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL, errorHandler::ErrorHandler& errHandler)
+    : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)), errHandler(errHandler) {
     sourceFiles = _srcFiles;
     typeEnv = _tyEnv;
     classHierarchy = _classHierarchy;
@@ -129,7 +129,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             debugEmitter.addGlobalVar(gvar, decl->dbgInfo.varName);
             break;
         }
-        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+        default: errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
 
     return nullptr; // Stmts return nullptr on codegen
@@ -184,7 +184,7 @@ static llvm::Value* compileArithmeticOp(typedAST::ArithmeticOp op, llvm::IRBuild
         }
         // Add is handles separately because of string concatenating
         case ArithmeticOp::ADD:
-        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+        default: break;
     }
     if(!isFloatingPointOp(op)) val = builder.CreateSIToFP(val, builder.getDoubleTy());
     return val;
@@ -248,7 +248,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
         case ComparisonOp::LESSEQ: val = builder.CreateFCmpOLE(lhs, rhs, "ole.tmp"); break;
         case ComparisonOp::GREAT: val = builder.CreateFCmpOGT(lhs, rhs, "ogt.tmp"); break;
         case ComparisonOp::GREATEQ: val = builder.CreateFCmpOGE(lhs, rhs, "oge.tmp"); break;
-        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+        default: errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
     return builder.CreateCall(safeGetFunc("encodeBool"), val);
 }
@@ -295,7 +295,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
         case 3: {
             return createESLString(get<string>(expr->val));
         }
-        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+        default: errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
     __builtin_unreachable();
 }
@@ -525,7 +525,7 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
     // TODO: this should be done in a separate pass
     if(funcType->argCount != expr->args.size()){
-        errorHandler::addCompileError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
+        errHandler.reportError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
                                       expr->dbgInfo.paren1);
         throw CompilerError("Incorrect number of arguments passed");
     }
@@ -603,7 +603,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
             auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
             // TODO: this should be done in a separate pass
             if(funcType->argCount != expr->args.size()){
-                errorHandler::addCompileError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
+                errHandler.reportError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
                                               expr->dbgInfo.paren1);
                 throw CompilerError("Incorrect number of arguments passed");
             }
@@ -1012,6 +1012,7 @@ void Compiler::setupModule(const llvm::DataLayout& DL){
     gvar->setInitializer(builder.getInt64(0));
     gvar->setAlignment(llvm::Align::Of<uint64_t>());
     ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, "uwtable", "sync"));
+    ESLFuncAttrs.push_back(llvm::Attribute::get(*ctx, "no-trapping-math", "true"));
 }
 
 void Compiler::optimizeModule(llvm::Module& module){
@@ -1419,15 +1420,14 @@ void Compiler::codegenBlock(const typedAST::Block& block){
     }
 }
 llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr, const Token dbg) {
-    // No array/hashmap field access because it's to complicated
+    // No array/hashmap field access because it's too complicated
     if(expr->type == typedAST::NodeType::VAR_READ){
         return codegenVarIncrement(op, std::reinterpret_pointer_cast<typedAST::VarRead>(expr), dbg);
     }else if(expr->type == typedAST::NodeType::INST_GET){
         return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr), dbg);
     }
     // TODO: error
-    errorHandler::addSystemError("Unreachable code reached during compilation.");
-    __builtin_unreachable();
+    errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
 }
 // Reuses var read and var store
 llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr, Token dbg) {
@@ -1688,7 +1688,7 @@ llvm::ConstantInt* Compiler::createSwitchConstantInt(std::variant<double, bool, 
         case 0: return builder.getInt64(*reinterpret_cast<uInt64*>(&get<double>(constant)));
         case 1: return builder.getInt64(get<bool>(constant) ? mask_signature_true : mask_signature_false);
         case 2: return builder.getInt64(mask_signature_null);
-        default: errorHandler::addSystemError("Unreachable code reached during compilation.");
+        default: errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
 
     }
     __builtin_unreachable();
@@ -1812,7 +1812,7 @@ llvm::Value* Compiler::optimizeInstGet(llvm::Value* inst, string field, Class& k
         return builder.CreateLoad(getESLValType(), ptr);
     }else{
         // TODO: error
-        errorHandler::addSystemError("Unreachable code reached during compilation.");
+        errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
     __builtin_unreachable();
 }
@@ -1910,7 +1910,7 @@ llvm::Value* Compiler::getOptInstFieldPtr(llvm::Value* inst, Class& klass, strin
         return ptr;
     }else{
         // TODO: error
-        errorHandler::addSystemError("Unreachable code reached during compilation.");
+        errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
     // Unreachable (at least it should be)
     __builtin_unreachable();
@@ -1979,7 +1979,7 @@ llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, C
         return setupUnoptCall(closure, callArgs.size(), dbg);
     }else{
         // TODO: error since we're invoking a method/field that doesnt exist
-        errorHandler::addSystemError("Unreachable code reached during compilation.");
+        errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     }
     __builtin_unreachable();
 }
@@ -2156,7 +2156,7 @@ llvm::Constant* Compiler::createConstant(std::variant<double, bool, void*,string
             return ESLConstTo(createESLString(get<string>(constant)), builder.getInt64Ty());
         }
     }
-    errorHandler::addSystemError("Unreachable code reached during compilation.");
+    errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     __builtin_unreachable();
 }
 
@@ -2195,7 +2195,7 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr)
             return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.gvar");
         }
     }
-    errorHandler::addSystemError("Unreachable code reached during compilation.");
+    errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
     __builtin_unreachable();
 }
 

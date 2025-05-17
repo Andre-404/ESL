@@ -20,7 +20,7 @@
 #define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
-// TODO: make this work only on windows, linux shouldn't have dllimport storage( i think)
+// TODO: make this work only on windows, linux shouldn't have dllimport storage(i think)
 llvm::Function* wrapFn(llvm::Function*  fn){
     fn->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
     return fn;
@@ -87,13 +87,16 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
 
     // ret: Value, args: lhs, rhs - both are known to be strings
     wrapFn(CREATE_FUNC(strAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy));
-    wrapFn(CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy));
+    fn = wrapFn(CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy));
+    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
     // Invoked by gc.safepoint
     wrapFn(CREATE_FUNC(stopThread, false, TYPE(Void), builder.getPtrTy()));
     // ret: Value, args: arr size
     wrapFn(CREATE_FUNC(createArr, false, eslValTy, builder.getPtrTy(), TYPE(Int32)));
-    wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
-    wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
+    fn = wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
+    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
+    fn = wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
+    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
 
     wrapFn(CREATE_FUNC(gcInit, false, TYPE(Void), PTR_TY(TYPE(Int64))));
     wrapFn(CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy));

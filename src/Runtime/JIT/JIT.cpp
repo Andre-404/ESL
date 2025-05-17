@@ -68,7 +68,7 @@ void ESLJIT::createJIT(){
     auto& ES = JIT.underlyingJIT->getExecutionSession();
     auto &TT = JIT.underlyingJIT->getExecutionSession().getTargetTriple();
 
-    // Hack around the ___chkstk_ms routine no being defined
+    // Hack around the ___chkstk_ms routine not being defined
     auto Mangle = llvm::orc::MangleAndInterner(JIT.underlyingJIT->getExecutionSession(), JIT.underlyingJIT->getDataLayout());
     llvm::orc::SymbolMap symbolMap;
     symbolMap[Mangle("___chkstk_ms")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(___chkstk_ms),
@@ -96,8 +96,7 @@ void ESLJIT::addressToFunc(uint64_t address){
         int num = InlineInfo.getNumberOfFrames();
         for(int i = 0; i < num; i++){
             auto& frame = InlineInfo.getFrame(i);
-            errorHandler::printRuntimeError(frame.FunctionName, frame.FileName, frame.Line,
-                                            frame.Column, num > 0 && i < num-1);
+            std::cout<<"File "<<frame.FileName<<", line "<<frame.Line<<", in "<<frame.FunctionName<<(i < num-1 ? "(inlined)" : "")<<"\n";
         }
     }
 }

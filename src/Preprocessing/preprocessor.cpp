@@ -1,8 +1,8 @@
 #include "preprocessor.h"
 #include "../files.h"
-#include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include <filesystem>
+#include "../ErrorHandling/errorHandler.h"
 
 using std::unordered_map;
 using std::pair;
@@ -27,7 +27,7 @@ string parsePath(path& absP, string relativeP){
     return p.string() + "/" + relativeP;
 }
 
-Preprocessor::Preprocessor(){
+Preprocessor::Preprocessor(errorHandler::ErrorHandler& errorH) : errorH(errorH){
     projectRootPath = "";
 }
 
@@ -36,7 +36,7 @@ void Preprocessor::preprocessProject(const string mainFilePath) {
 
     // Check file validity
     if (p.extension().string() != ".esl" || !exists(p)) {
-        errorHandler::addSystemError(fmt::format("Couldn't find {}.esl", p.stem().string()));
+        errorH.reportUnrecoverableError(fmt::format("Couldn't find {}.esl", p.stem().string()));
         return;
     }
 
@@ -90,7 +90,7 @@ vector<pair<Token, Token>> Preprocessor::parseImports(ESLModule* unit) {
         if (token.type == TokenType::IMPORT) {
             // Move to dependency name
             if (!match(TokenType::STRING, tokens, ++i)) {
-                addCompileError("Expected a module path.", getErrorToken(i));
+                errorH.reportError("Expected a module path.", getErrorToken(i));
                 continue;
             }
 
@@ -100,7 +100,7 @@ vector<pair<Token, Token>> Preprocessor::parseImports(ESLModule* unit) {
             if (match(TokenType::AS, tokens, i + 1)) {
                 if (match(TokenType::IDENTIFIER, tokens, i + 2)) alias = tokens[i + 2];
                 else {
-                    addCompileError("Expected alias for module. ", getErrorToken(i + 2));
+                    errorH.reportError("Expected alias for module. ", getErrorToken(i + 2));
                     continue;
                 }
                 i += 2;
@@ -129,7 +129,7 @@ void Preprocessor::processImports(ESLModule* unit, vector<pair<Token, Token>>& d
         if (allUnits.count(path)) {
             // If we detect a cyclical import we still continue parsing other files to detect as many errors as possible
             if (!allUnits[path]->resolvedDeps) {
-                addCompileError("Cyclical importing detected.", pathToken);
+                errorH.reportError("Cyclical importing detected.", pathToken);
                 continue;
             }
             unit->deps.push_back(Dependency(alias, pathToken, allUnits[path]));
@@ -142,7 +142,7 @@ void Preprocessor::processImports(ESLModule* unit, vector<pair<Token, Token>>& d
             unit->deps.push_back(dep);
         }
         else {
-            addCompileError("File " + path + " doesn't exist.", pathToken);
+            errorH.reportError("File " + path + " doesn't exist.", pathToken);
         }
     }
 

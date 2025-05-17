@@ -1,10 +1,14 @@
 #pragma once
 #include "../../AST/ASTDefs.h"
 
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 namespace AST {
     class ASTOptimizer : public Visitor {
     public:
-        ASTOptimizer();
+        ASTOptimizer(errorHandler::ErrorHandler& errHandler);
         void process(vector<ASTModule>& units);
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -40,7 +44,7 @@ namespace AST {
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
         #pragma endregion
     private:
-        void warning(const Token token, const string msg);
+        errorHandler::ErrorHandler& errHandler;
     };
 }
 

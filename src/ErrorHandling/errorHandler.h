@@ -2,11 +2,35 @@
 #include "../moduleDefs.h"
 
 namespace errorHandler {
-	void showCompileErrors();
+    class Error{
+    public:
+        string msg;
+        Span highlightArea;
+    };
+    class ErrorHandler{
+    public:
+        ErrorHandler(){
 
-	void addCompileError(string msg, Token token);
-	void addSystemError(string msg);
-	bool hasErrors();
-    vector<string> convertCompilerErrorsToJson();
-    void printRuntimeError(string func, string file, uint32_t line, uint32_t col, bool isInline);
+        }
+
+        void reportError(string msg, const std::initializer_list<Token>& tokens);
+        void reportWarning(string msg, const std::initializer_list<Token>& tokens);
+        void reportError(string msg, Token token){
+            reportError(msg, {token});
+        }
+        void reportWarning(string msg, Token token){
+            reportWarning(msg, {token});
+        }
+        void reportUnrecoverableError(string msg);
+        bool hasErrors(){
+            return !errors.empty();
+        }
+
+        vector<string> convertToJSON();
+        void displayErrors();
+        void displayWarnings();
+    private:
+        vector<Error> errors;
+        vector<Error> warnings;
+    };
 }

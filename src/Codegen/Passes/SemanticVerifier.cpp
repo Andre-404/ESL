@@ -6,13 +6,12 @@
 
 using namespace AST;
 
-SemanticVerifier::SemanticVerifier() {
-    hasErrors = false;
+SemanticVerifier::SemanticVerifier(errorHandler::ErrorHandler& errHandler) : errHandler(errHandler) {
     loopDepth = 0;
     switchDepth = 0;
 }
 
-bool SemanticVerifier::process(vector<ASTModule> &units) {
+void SemanticVerifier::process(vector<ASTModule> &units) {
     for(ASTModule& module : units){
         loopDepth = 0;
         switchDepth = 0;
@@ -23,9 +22,9 @@ bool SemanticVerifier::process(vector<ASTModule> &units) {
                 shared_ptr<ASTDecl> decl = std::reinterpret_pointer_cast<ASTDecl>(stmt);
                 Token declName = decl->getName();
                 if(declarations.contains(declName.getLexeme())){
-                    error(declarations[declName.getLexeme()],
-                          fmt::format("Error, {} already defined.", declarations[declName.getLexeme()].getLexeme()));
-                    error(declName, fmt::format("Error, redefinition of {}.", declName.getLexeme()));
+                    errHandler.reportError(fmt::format("Error, {} already defined.", declarations[declName.getLexeme()].getLexeme()),
+                                           declarations[declName.getLexeme()]);
+                    errHandler.reportError(fmt::format("Error, redefinition of {}.", declName.getLexeme()), declName);
                 }
                 declarations[declName.getLexeme()] = declName;
             }
@@ -34,7 +33,6 @@ bool SemanticVerifier::process(vector<ASTModule> &units) {
         checkAliasConflict(module);
         checkNamingConflicts(module, units);
     }
-    return hasErrors;
 }
 
 void SemanticVerifier::visitAssignmentExpr(AST::AssignmentExpr* expr) {
@@ -50,7 +48,22 @@ void SemanticVerifier::visitConditionalExpr(AST::ConditionalExpr* expr) {
     expr->mhs->accept(this);
     expr->rhs->accept(this);
 }
+// Binary ops, module access(::) and macro invocation(!)
+static bool isComparisonOp(const Token token){
+    auto t = token.type;
+    return (t == TokenType::LESS || t == TokenType::LESS_EQUAL ||
+            t == TokenType::GREATER || t== TokenType::GREATER_EQUAL);
+}
 void SemanticVerifier::visitBinaryExpr(AST::BinaryExpr* expr){
+    // Chaining comparison ops is forbidden, here lhs is checked against op of this binary expr,
+    // After parsing rhs, rhs is compared to op of this binary expr
+    // TODO: move this to SemanticVerifer
+    if(expr->left->type == ASTType::BINARY){
+        auto op = std::static_pointer_cast<BinaryExpr>(expr->left)->op;
+        if(isComparisonOp(op) && isComparisonOp(expr->op)){
+            errHandler.reportWarning("Comparisons like 'X<=Y<=Z' don't have their mathematical meaning.", expr->op);
+        }
+    }
     expr->left->accept(this);
     expr->right->accept(this);
 }
@@ -115,8 +128,11 @@ void SemanticVerifier::visitClassDecl(AST::ClassDecl* decl) {
         // Field loop takes care of the method-field conflict
         Token methodName = method.method->name;
         if (methodNames.contains(methodName.getLexeme())) {
-            error(methodName, "Redefinition of method.");
-            error(methodNames[methodName.getLexeme()], "Method first defined here.");
+            errHandler.reportError("Redefinition of method.", methodName);
+            errHandler.reportError("Method first defined here.", methodNames[methodName.getLexeme()]);
+        }
+        if(methodName.getLexeme() == decl->name.getLexeme()){
+            errHandler.reportWarning("Constructor isn't declared pub, won't be called when creating class.", methodName);
         }
         methodNames[methodName.getLexeme()] = methodName;
     }
@@ -124,15 +140,15 @@ void SemanticVerifier::visitClassDecl(AST::ClassDecl* decl) {
     for(auto field : decl->fields){
         Token fieldName = field.field;
         if(fieldNames.contains(fieldName.getLexeme())){
-            error(fieldName, "Field redefinition.");
-            error(fieldNames[fieldName.getLexeme()], "Field first defined here.");
+            errHandler.reportError("Field redefinition.", fieldName);
+            errHandler.reportError("Field first defined here.", fieldNames[fieldName.getLexeme()]);
         }else if(methodNames.contains(fieldName.getLexeme())){
             Token methodName = methodNames[fieldName.getLexeme()];
             // Informs the user as to what was declared first, method or field
             string err1 = fieldName.str.start > methodName.str.start ? "Method redefined as a field." : "Field redefined as a method.";
             string err2 = fieldName.str.start > methodName.str.start ? "Method first defined here." : "Field first defined here.";
-            error(fieldName, err1);
-            error(methodNames[fieldName.getLexeme()], err2);
+            errHandler.reportError(err1, fieldName);
+            errHandler.reportError(err2, methodNames[fieldName.getLexeme()]);
         }
         fieldNames[fieldName.getLexeme()] = fieldName;
     }
@@ -168,11 +184,11 @@ void SemanticVerifier::visitForStmt(AST::ForStmt* stmt) {
 }
 void SemanticVerifier::visitBreakStmt(AST::BreakStmt* stmt) {
     if (loopDepth == 0 && switchDepth == 0)
-        error(stmt->keyword, "Cannot use 'break' outside of loops or switch statements.");
+        errHandler.reportError("Cannot use 'break' outside of loops or switch statements.", stmt->keyword);
 }
 void SemanticVerifier::visitContinueStmt(AST::ContinueStmt* stmt) {
     if (loopDepth == 0)
-        error(stmt->keyword, "Cannot use 'continue' outside of loops.");
+        errHandler.reportError("Cannot use 'continue' outside of loops.", stmt->keyword);
 }
 // Can't use the visit method because we need to pass vector for switch constants
 void SemanticVerifier::handleCaseStmt(AST::CaseStmt& _case, vector<Token> allSwitchConstants){
@@ -187,8 +203,8 @@ void SemanticVerifier::handleCaseStmt(AST::CaseStmt& _case, vector<Token> allSwi
             }
         }
         if(index != -1){
-            error(c, "Duplicate case value.");
-            error(allSwitchConstants[index], "Value already in a case here.");
+            errHandler.reportError("Duplicate case value.", c);
+            errHandler.reportError("Value already in a case here.", allSwitchConstants[index]);
         }else allSwitchConstants.push_back(c);
     }
     for(auto stmt : _case.stmts) stmt->accept(this);
@@ -202,7 +218,7 @@ void SemanticVerifier::visitSwitchStmt(AST::SwitchStmt* stmt) {
     for(auto _case : stmt->cases) {
         if(_case->caseType.type == TokenType::DEFAULT) {
             if (hasDefault) {
-                error(_case->caseType, "Only 1 default case is allowed inside a switch statement.");
+                errHandler.reportError("Only 1 default case is allowed inside a switch statement.", _case->caseType);
             } else hasDefault = true;
         }
         handleCaseStmt(*_case, allSwitchConstants);
@@ -213,7 +229,7 @@ void SemanticVerifier::visitCaseStmt(AST::CaseStmt* _case) {
     // Empty, handled in handleCaseStmt
 }
 void SemanticVerifier::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
-    if (switchDepth == 0) error(stmt->keyword, "Cannot use 'advance' outside of switch statements.");
+    if (switchDepth == 0) errHandler.reportError("Cannot use 'advance' outside of switch statements.", stmt->keyword);
 }
 void SemanticVerifier::visitReturnStmt(AST::ReturnStmt* stmt) {
     stmt->expr->accept(this);
@@ -224,8 +240,8 @@ void SemanticVerifier::checkAliasConflict(ASTModule& module){
     for(auto [alias, depIdx] : module.importedModules){
         if(alias.type == TokenType::NONE) continue;
         if(aliases.contains(alias.getLexeme())){
-            error(aliases[alias.getLexeme()], "Alias already declared here.");
-            error(alias, "Duplicate use of alias.");
+            errHandler.reportError("Alias already declared here.", aliases[alias.getLexeme()]);
+            errHandler.reportError("Duplicate use of alias.", alias);
         }else aliases[alias.getLexeme()] = alias;
     }
 }
@@ -244,7 +260,7 @@ void SemanticVerifier::checkNamingConflicts(ASTModule& module, vector<ASTModule>
             if(symbols.contains(lexeme)){
                 string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and redefined in '{}', consider using an alias when importing.",
                                          lexeme, symbols[lexeme], depPath);
-                error(pathToken, str);
+                errHandler.reportError(str, pathToken);
             }else symbols[lexeme] = depPath;
         }
     }
@@ -254,12 +270,7 @@ void SemanticVerifier::checkNamingConflicts(ASTModule& module, vector<ASTModule>
         if(symbols.contains(lexeme)){
             string str = fmt::format("Ambiguous definition, symbol '{}' defined in '{}' and redefined here, consider using an alias when importing.",
                                      lexeme, symbols[lexeme]);
-            error(exportedDecl->getName(), str);
+            errHandler.reportError(str, exportedDecl->getName());
         }
     }
-}
-
-void SemanticVerifier::error(const Token token, const string msg){
-    errorHandler::addCompileError(msg, token);
-    hasErrors = true;
 }

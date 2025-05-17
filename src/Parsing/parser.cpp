@@ -176,13 +176,7 @@ namespace AST {
         return make_shared<ConditionalExpr>(left, mhs, rhs, token, colon);
     }
 
-    // Binary ops, module access(::) and macro invocation(!)
-    static bool isComparisonOp(const Token token){
-        auto t = token.type;
-        return (t == TokenType::EQUAL_EQUAL || t == TokenType::BANG_EQUAL ||
-                t == TokenType::LESS || t == TokenType::LESS_EQUAL ||
-                t == TokenType::GREATER || t== TokenType::GREATER_EQUAL);
-    }
+
     ASTNodePtr parseBinary(Parser* parser, ASTNodePtr left, const Token token){
         switch(token.type){
             // Module access cannot be chained, so it throws an error if left side isn't an identifier
@@ -216,25 +210,6 @@ namespace AST {
             }
             default:{
                 ASTNodePtr right = parser->expression(parser->infixPrecLevel(token.type));
-                if(!isComparisonOp(token)) return make_shared<BinaryExpr>(left, token, right);
-
-                // Chaining comparison ops is forbidden, here lhs is checked against op of this binary expr,
-                // After parsing rhs, rhs is compared to op of this binary expr
-                // TODO: move this to SemanticVerifer
-                if(left->type == ASTType::BINARY){
-                    auto op = std::static_pointer_cast<BinaryExpr>(left)->op;
-                    if(isComparisonOp(op)){
-                        parser->error(op, "Cannot chain comparison operators.");
-                        parser->error(token, "Second comparison operator here.");
-                    }
-                }
-                if(right->type == ASTType::BINARY){
-                    auto op = std::static_pointer_cast<BinaryExpr>(right)->op;
-                    if(isComparisonOp(op)){
-                        parser->error(token, "Second comparison operator here.");
-                        parser->error(op, "Cannot chain comparison operators.");
-                    }
-                }
                 return make_shared<BinaryExpr>(left, token, right);
             }
         }
@@ -269,7 +244,7 @@ namespace AST {
     }
 }
 
-Parser::Parser() {
+Parser::Parser(errorHandler::ErrorHandler& errorH) : errHandler(errorH) {
     macroExpander = new MacroExpander(this);
 
     currentContainer = nullptr;
@@ -556,7 +531,6 @@ shared_ptr<ClassDecl> Parser::classDecl() {
             Token override = match(TokenType::OVERRIDE) ? previous() : Token();
 
             if (match(TokenType::FN)) {
-                // TODO: maybe warn if constructor isn't declared pub? -> this goes into 1.(SemanticVerifier)
                 auto decl = funcDecl();;
                 // Implicitly declare "this"
                 // TODO: 4. maybe add token source pos?
@@ -608,10 +582,11 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
 
 shared_ptr<SpawnStmt> Parser::spawnStmt(){
     Token keyword = previous();
-    ASTNodePtr expr = expression();
-    consume(TokenType::SEMICOLON, "Expected ';' after expression.");
+    ASTNodePtr expr = expression(+Precedence::CALL-1);
+    Token paren1 = consume(TokenType::LEFT_PAREN, "Expected call after spawn");
+    expr = parseCall(this, expr, paren1);
+    consume(TokenType::SEMICOLON, "Expected ';' after call.");
 
-    if (expr->type != ASTType::CALL) throw error(keyword, "Expected a call after 'spawn'.");
     auto call = std::static_pointer_cast<CallExpr>(expr);
     return make_shared<SpawnStmt>(call, keyword);
 }
@@ -818,7 +793,7 @@ Token Parser::consume(const TokenType type, const string msg) {
 
 ParserException Parser::error(const Token token, const string msg) {
     if (parseMode != ParseMode::Matcher) {
-        errorHandler::addCompileError(msg, token);
+        errHandler.reportError(msg, token);
     }
     return ParserException();
 }

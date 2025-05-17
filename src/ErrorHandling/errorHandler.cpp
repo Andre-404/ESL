@@ -1,5 +1,4 @@
 #include "errorHandler.h"
-#include "../Preprocessing/scanner.h"
 #include "../Includes/fmt/format.h"
 #include <iostream>
 
@@ -14,21 +13,21 @@ const string red = "\u001b[38;5;196m";
 const string yellow = "\u001b[38;5;220m";
 
 // Highlights a token
-void highlightToken(Token token) {
-	File* src = token.str.sourceFile;
+void highlightToken(Span span) {
+	File* src = span.sourceFile;
 
-	string lineNumber = std::to_string(token.str.computeLine() + 1);
-	std::string_view line = token.str.getLine();
+	string lineNumber = std::to_string(span.computeLine());
+	std::string_view line = span.getLine();
     std::cout << yellow << src->name << black << ":" << cyan << lineNumber << " | " << black;
 	std::cout << line << std::endl;
 
 	string highlight = "";
     highlight.insert(highlight.end(), src->name.length() + lineNumber.length() + 4, ' ');
-    for (int i = 0; i < token.str.computeColumn(); i++){
+    for (int i = 0; i < span.computeColumn(); i++){
         if (line[i] == '\t') highlight += '\t';
         else highlight += ' ';
     }
-	highlight.insert(highlight.end(), token.str.end - token.str.start, '^');
+	highlight.insert(highlight.end(), span.end - span.start, '^');
 
 	std::cout << red << highlight << black << "\n";
 }
@@ -54,63 +53,65 @@ void logDefinitionPath(Token token) {
 	logDefinitionPath(macroToken);
 }
 */
-void report(File* src, Token& token, string msg) {
-	string name = "\u001b[38;5;220m" + src->name + black;
-	std::cout << red + "error: " + black + msg + "\n";
+void display(File* src, Span& token, string msg, bool isWarning) {
+	string name = yellow + src->name + black;
+	std::cout << (isWarning ? yellow : red) + "error: " + black + msg + "\n";
 
 	highlightToken(token);
 	std::cout << "\n";
 }
 
 namespace errorHandler {
-	namespace {
-        struct CompileTimeError {
-            string errorText;
-            File* origin;
-            Token token;
-
-            CompileTimeError(string _errorText, File* _origin, Token _token) {
-                errorText = _errorText;
-                origin = _origin;
-                token = _token;
-            }
-        };
-
-		//errors during preprocessing, building of the AST tree and compiling
-		vector<CompileTimeError> compileErrors;
-	}
-
-	void showCompileErrors() {
-		for (CompileTimeError error : compileErrors) {
-			report(error.origin, error.token, error.errorText);
-		}
-	}
-
-	void addCompileError(string msg, Token token) {
-		compileErrors.emplace_back(msg, token.str.sourceFile, token);
-	}
-	void addSystemError(string msg) {
-        std::cout << msg << '\n';
-        exit(1);
-	}
-
-	bool hasErrors() {
-		return !(compileErrors.size() == 0);
-	}
-
-    vector<string> convertCompilerErrorsToJson(){
-        vector<string> errors;
-        /*for (CompileTimeError error : compileErrors) {
-            string final = "{";
-            final += fmt::format("\"path\": \"{}\", \"code\": {}, \"message\": \"{}\", \"line\": {}, \"start\": {}, \"end\": {}, \"severity\": \"{}\", \"relatedInformation\" :",
-                                 error.origin->path, 0, error.errorText, error.token.str.line, error.token.str.column, error.token.str.column + error.token.str.length,
-                                 "error");
-            final += "[] }";
-            errors.push_back(final);
-        }*/
-        return errors;
+    void ErrorHandler::reportWarning(std::string msg, const std::initializer_list<Token> &tokens) {
+        Span hightlight;
+        for(const Token& token : tokens){
+            hightlight.sourceFile = token.str.sourceFile ? token.str.sourceFile : hightlight.sourceFile;
+            hightlight.start = token.str.start < hightlight.start ? token.str.start : hightlight.start;
+            hightlight.end = token.str.end < hightlight.end ? token.str.end : hightlight.end;
+        }
+        warnings.emplace_back(msg, hightlight);
     }
-    void printRuntimeError(string func, string file, uint32_t line, uint32_t col, bool isInline){
-        std::cout<<"File "<<file<<", line "<<line<<", in "<<func<<(isInline ? "(inlined)" : "")<<"\n";
+    void ErrorHandler::reportError(std::string msg, const std::initializer_list<Token> &tokens) {
+        Span highlight;
+        highlight.start = -1;
+        for(const Token& token : tokens){
+            highlight.sourceFile = token.str.sourceFile ? token.str.sourceFile : highlight.sourceFile;
+            highlight.start = token.str.start < highlight.start || highlight.start == -1 ? token.str.start : highlight.start;
+            highlight.end = token.str.end > highlight.end ? token.str.end : highlight.end;
+        }
+        errors.emplace_back(msg, highlight);
+    }
+    void ErrorHandler::reportUnrecoverableError(std::string msg) {
+        std::cout<<msg;
+        exit(64);
+    }
+    vector<string> ErrorHandler::convertToJSON(){
+        vector<string> convertedErrors;
+        for (Error& error : errors) {
+            string final = "{";
+            Span span = error.highlightArea;
+            final += fmt::format("\"path\": \"{}\", \"code\": {}, \"message\": \"{}\", \"line\": {}, \"start\": {}, \"end\": {}, \"severity\": \"{}\", \"relatedInformation\" :",
+                                 span.sourceFile->path, 0, error.msg, span.computeLine(), span.computeColumn(),
+                                 span.computeColumn() + span.end - span.start, "error");
+            final += "[] }";
+            convertedErrors.push_back(final);
+        }
+        return convertedErrors;
+    }
+    void ErrorHandler::displayErrors(){
+        std::sort(errors.begin(), errors.end(), [](Error& err1, Error& err2){
+            return err1.highlightArea.start < err2.highlightArea.start;
+        });
+        for(Error& error : errors){
+            display(error.highlightArea.sourceFile, error.highlightArea, error.msg, false);
+        }
+    }
+    void ErrorHandler::displayWarnings() {
+        std::sort(warnings.begin(), warnings.end(), [](Error& warn1, Error& warn2){
+            return warn1.highlightArea.start < warn2.highlightArea.start;
+        });
+        for(Error& warning : warnings){
+            display(warning.highlightArea.sourceFile, warning.highlightArea, warning.msg, true);
+        }
     }
 }

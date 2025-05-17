@@ -18,6 +18,10 @@
 #include <array>
 #include <stack>
 
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 template<class T, class K>
 using fastMap = ankerl::unordered_dense::map<T, K>;
 
@@ -58,16 +62,10 @@ namespace compileCore {
     class Function{
     public:
         llvm::Function* fn;
-        llvm::AllocaInst* frameStack;
-        int stackSize;
-        int maxStackSize;
         Function(){
             fn = nullptr;
-            frameStack = nullptr;
-            stackSize = 0;
-            maxStackSize = 0;
         }
-        Function(llvm::Function* fn) : fn(fn), frameStack(nullptr), stackSize(0), maxStackSize(0){}
+        Function(llvm::Function* fn) : fn(fn){}
     };
 
 class Compiler : public typedAST::TypedASTCodegen {
@@ -76,7 +74,8 @@ class Compiler : public typedAST::TypedASTCodegen {
 		vector<File*> sourceFiles;
 
 		Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL);
+                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL,
+                 errorHandler::ErrorHandler& errHandler);
         llvm::orc::ThreadSafeModule compile(std::shared_ptr<typedAST::Function> _code, string mainFnName);
 
 		#pragma region Visitor pattern
@@ -127,6 +126,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         fastMap<string, llvm::Constant*> ESLStrings;
         fastMap<string, llvm::Type*> namedTypes;
         DebugEmitter debugEmitter;
+        errorHandler::ErrorHandler& errHandler;
 
 
         std::unique_ptr<llvm::LLVMContext> ctx;

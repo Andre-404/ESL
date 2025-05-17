@@ -84,7 +84,7 @@ string SemanticAnalyzer::highlight(vector<ESLModule *> &_units, ESLModule* unitT
 
 string SemanticAnalyzer::generateDiagnostics(vector<ESLModule *> &_units){
     units = _units;
-    vector<string> previousErrors = errorHandler::convertCompilerErrorsToJson();
+    vector<string> previousErrors;
     for (ESLModule *unit: units) {
         curUnit = unit;
         for (const auto decl: unit->topDeclarations) {

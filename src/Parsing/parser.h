@@ -3,6 +3,10 @@
 #include "macroExpander.h"
 #include <initializer_list>
 
+namespace errorHandler{
+    class ErrorHandler;
+}
+
 namespace AST {
 	using std::unique_ptr;
 	class Parser;
@@ -53,7 +57,7 @@ namespace AST {
 
 	class Parser {
 	public:
-		Parser();
+		Parser(errorHandler::ErrorHandler& errorH);
         vector<ASTModule> parse(vector<ESLModule*>& modules);
 	private:
 		ASTProbe probe;
@@ -61,6 +65,7 @@ namespace AST {
 
         vector<Token>* currentContainer;
         int currentPtr;
+        errorHandler::ErrorHandler& errHandler;
 
 		unordered_map<TokenType, std::pair<int, PrefixFunc>> prefixParselets;
 		unordered_map<TokenType, std::pair<int, InfixFunc>> infixParselets;

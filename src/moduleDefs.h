@@ -74,7 +74,7 @@ struct Span {
         while(lineEnd < sourceFile->sourceFile.size() && sourceFile->sourceFile[lineEnd] != '\n') lineEnd++;
         lineEnd--;
 
-        return std::string_view(sourceFile->sourceFile.data(), lineEnd - lineStart);
+        return std::string_view(sourceFile->sourceFile.data()+lineStart, lineEnd - lineStart+1);
     }
     int computeLine(){
         int i = start;
