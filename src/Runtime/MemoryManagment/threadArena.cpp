@@ -13,23 +13,43 @@
 
 #define LOCAL_BYTE_CACHE 1024*16 //16Kb
 
+#if ((defined(__APPLE__) || defined(__HAIKU__)) && ENABLE_PRELOAD) || defined(__TINYC__)
+static pthread_key_t _memory_thread_heap;
+#else
+#  ifdef _MSC_VER
+#    define _Thread_local __declspec(thread)
+#    define TLS_MODEL
+#  else
+#    ifndef __HAIKU__
+#      define TLS_MODEL __attribute__((tls_model("initial-exec")))
+#    else
+#      define TLS_MODEL
+#    endif
+#    if !defined(__clang__) && defined(__GNUC__)
+#      define _Thread_local __thread
+#    endif
+#  endif
+static _Thread_local memory::ThreadArena* arena TLS_MODEL = nullptr;
+#endif
+
 using namespace memory;
 
-[[gnu::always_inline]] memory::ThreadArena& memory::getLocalArena(ThreadLocalData* threadData){
-    if(!threadData->arena)[[unlikely]]{
-        threadData->arena = new memory::ThreadArena();
-        rpmalloc_thread_initialize();
-    }
-    return *threadData->arena;
+[[clang::always_inline]] memory::ThreadArena& memory::getLocalArena(){
+    return *arena;
+}
+
+void memory::initLocalArena(){
+    arena = new memory::ThreadArena();
+    rpmalloc_thread_initialize();
 }
 
 // Upon thread death, if it allocated some pages move them to a global graveyard and remove the stack start
-[[gnu::always_inline]] void memory::deleteLocalArena(ThreadLocalData* threadData){
-    if(threadData->arena) {
+[[clang::always_inline]] void memory::deleteLocalArena(){
+    if(arena) {
         // TODO: Both of these operations needs to lock their respective mutexes, maybe try making it use only 1?
-        gc->pageManager.moveArenaPagesToGraveyard(*threadData->arena);
+        gc->pageManager.moveArenaPagesToGraveyard(*arena);
         gc->removeStackStart(std::this_thread::get_id());
-        delete threadData->arena;
+        delete arena;
         rpmalloc_thread_finalize(1);
     }
 }

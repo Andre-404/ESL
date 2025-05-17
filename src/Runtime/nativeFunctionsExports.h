@@ -9,33 +9,33 @@ using namespace object;
 
 #define EXPORT extern "C" DLLEXPORT
 
-EXPORT Value print(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value x){
+EXPORT Value print(ObjClosure* ptr, Value x){
     std::cout<< valueHelpers::toString(x)<<std::endl;
     return encodeNil();
 }
 
-EXPORT Value ms_since_epoch(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+EXPORT Value ms_since_epoch(ObjClosure* ptr){
     double duration = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     return encodeNumber(duration);
 }
 
-EXPORT Value arr_push(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value arr, Value top){
+EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
     asArray(arr)->containsObjects |= isObj(top);
-    asArray(arr)->push(top, memory::getLocalArena(threadData));
+    asArray(arr)->push(top, memory::getLocalArena());
     return arr;
 }
 
-EXPORT Value input(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+EXPORT Value input(ObjClosure* ptr){
     string in;
     std::getline(std::cin, in);
-    return encodeObj(ObjString::createStr((char*)in.c_str(), memory::getLocalArena(threadData)));
+    return encodeObj(ObjString::createStr((char*)in.c_str(), memory::getLocalArena()));
 }
 
-EXPORT Value random_num(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+EXPORT Value random_num(ObjClosure* ptr){
     return encodeNumber(rand());
 }
 
-EXPORT Value as_number(memory::ThreadLocalData* threadData, ObjClosure* ptr, Value num){
+EXPORT Value as_number(ObjClosure* ptr, Value num){
     if (isNumber(num)) { return num; }
     if (!isString(num)){
         std::cerr << "Cannot convert value to number.\n"; 
@@ -51,12 +51,12 @@ EXPORT Value as_number(memory::ThreadLocalData* threadData, ObjClosure* ptr, Val
 }
 
 // doggy?
-EXPORT Value cpu_clock(memory::ThreadLocalData* threadData, ObjClosure* ptr){
+EXPORT Value cpu_clock(ObjClosure* ptr){
     return encodeNumber(std::clock());
 }
 
 // doggy?
-EXPORT Value clocks_per_sec(memory::ThreadLocalData*, ObjClosure* ptr){
+EXPORT Value clocks_per_sec(ObjClosure* ptr){
     return encodeNumber(CLOCKS_PER_SEC);
 }
 

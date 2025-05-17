@@ -15,7 +15,7 @@
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
 
-EXPORT NOINLINE void stopThread(memory::ThreadLocalData* threadData){
+EXPORT NOINLINE void stopThread(){
     if(!memory::gc) return;
     // Get stack end(lowest address) and then spill the registers to the stack
     jmp_buf jb;
@@ -23,7 +23,7 @@ EXPORT NOINLINE void stopThread(memory::ThreadLocalData* threadData){
     uintptr_t* stackEnd;
     __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
 
-    memory::gc->suspendThread(std::this_thread::get_id(), stackEnd, memory::getLocalArena(threadData));
+    memory::gc->suspendThread(std::this_thread::get_id(), stackEnd, memory::getLocalArena());
 }
 
 enum class runtimeErrorType : uint8_t{
@@ -82,16 +82,16 @@ EXPORT void runtimeError(const char* msg, uint8_t errType, uint64_t val1, uint64
     exit(64);
 }
 // Both values are known to be strings
-EXPORT Value strAdd(memory::ThreadLocalData* threadData, Value lhs, Value rhs){
-    return encodeObj(asString(lhs)->concat(asString(rhs), memory::getLocalArena(threadData)));
+EXPORT Value strAdd(Value lhs, Value rhs){
+    return encodeObj(asString(lhs)->concat(asString(rhs), memory::getLocalArena()));
 }
 
 EXPORT Value strCmp(Value lhs, Value rhs){
     return encodeBool(asString(lhs)->compare(asString(rhs)));
 }
 
-EXPORT Value createArr(memory::ThreadLocalData* threadData, uint32_t arrSize){
-    memory::ThreadArena& allocator = memory::getLocalArena(threadData);
+EXPORT Value createArr(uint32_t arrSize){
+    memory::ThreadArena& allocator = memory::getLocalArena();
     return encodeObj(new(allocator) object::ObjArray(arrSize, allocator));
 }
 
@@ -108,8 +108,8 @@ EXPORT void gcInit(uint64_t* gcFlag){
 }
 
 // hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString
-EXPORT Value createHashMap(memory::ThreadLocalData* threadData, int nFields, ...){
-    object::ObjHashMap* map = new(memory::getLocalArena(threadData)) object::ObjHashMap();
+EXPORT Value createHashMap(int nFields, ...){
+    object::ObjHashMap* map = new(memory::getLocalArena()) object::ObjHashMap();
     va_list ap;
     va_start(ap, nFields);
     for(int i=0; i<nFields; i++){
@@ -120,9 +120,9 @@ EXPORT Value createHashMap(memory::ThreadLocalData* threadData, int nFields, ...
     return encodeObj(map);
 }
 
-EXPORT Value createClosure(memory::ThreadLocalData* threadData, char* fn, int arity, char* name, int upvalCount, ...){
+EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...){
     ObjClosure* closure = static_cast<ObjClosure *>(
-            memory::getLocalArena(threadData).alloc(sizeof(ObjClosure) + upvalCount*sizeof(ObjFreevar*)));
+            memory::getLocalArena().alloc(sizeof(ObjClosure) + upvalCount*sizeof(ObjFreevar*)));
     closure->arity = arity;
     closure->name = name;
     closure->func = fn;
@@ -154,8 +154,8 @@ EXPORT void hashmapSetV(ObjHashMap* map, ObjString* str, Value v){
     map->fields.insert_or_assign(str, v);
 }
 
-EXPORT Obj* gcAlloc(memory::ThreadLocalData* threadData, int64_t bytes){
-    Obj* ptr = (Obj*)memory::getLocalArena(threadData).alloc(bytes);
+EXPORT Obj* gcAlloc(int64_t bytes){
+    Obj* ptr = (Obj*)memory::getLocalArena().alloc(bytes);
     ptr->type = +object::ObjType::DEALLOCATED;
     return ptr;
 }
@@ -175,10 +175,11 @@ EXPORT void createNewThread(wrapper llvmWrapper, int64_t* alloca){
 
 EXPORT void threadInit(uintptr_t* frameAddr){
     memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
+    memory::initLocalArena();
 }
 
-EXPORT void threadDestruct(memory::ThreadLocalData* threadData){
-    memory::deleteLocalArena(threadData);
+EXPORT void threadDestruct(){
+    memory::deleteLocalArena();
     memory::gc->removeStackStart(std::this_thread::get_id());
 }
 

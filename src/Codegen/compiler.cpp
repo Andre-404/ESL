@@ -109,7 +109,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             tempBuilder.SetInsertPointPastAllocas(inProgressFuncs.top().fn);
             // Creates a heap allocated free variable
             size_t freevarSize = curModule->getDataLayout().getTypeAllocSize(namedTypes["ObjFreevar"]);
-            llvm::Value* var = builder.CreateCall(safeGetFunc("gcAlloc"), {getThreadData(), builder.getInt64(freevarSize)}, decl->dbgInfo.varName.getLexeme());
+            llvm::Value* var = builder.CreateCall(safeGetFunc("gcAlloc"), { builder.getInt64(freevarSize)}, decl->dbgInfo.varName.getLexeme());
             // Get pointers to obj type field and payload field
             llvm::Value* objTypePtr = builder.CreateInBoundsGEP(namedTypes["Obj"], var, {builder.getInt32(0), builder.getInt32(1)});
             llvm::Value* storedValPtr = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjFreevar"], var, 0, 1);
@@ -209,7 +209,7 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
             auto castrhs = ESLValTo(rhs, builder.getDoubleTy());
             return CastToESLVal(builder.CreateFAdd(castlhs, castrhs, "addtmp"));
         }else if(exprIsType(expr->lhs, expr->lhs, types::getBasicType(types::TypeFlag::STRING))){
-            return builder.CreateCall(safeGetFunc("strAdd"), {getThreadData(), lhs, rhs});
+            return builder.CreateCall(safeGetFunc("strAdd"), {lhs, rhs});
         }else return codegenBinaryAdd(lhs, rhs, expr->dbgInfo.op);
     }
     // If both lhs and rhs are known to be numbers at compile time there's no need for runtime checks
@@ -308,7 +308,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
 
 llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.brace1);
-    vector<llvm::Value*> args = {getThreadData(), builder.getInt32(expr->fields.size())};
+    vector<llvm::Value*> args = {builder.getInt32(expr->fields.size())};
     // For each field, compile it and get the constant of the field name
     int i = 0;
     for (auto entry : expr->fields) {
@@ -328,7 +328,7 @@ llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
         vals.push_back(mem->codegen(this));
     }
     auto arrNum = builder.getInt32(vals.size());
-    auto arr = builder.CreateCall(safeGetFunc("createArr"), {getThreadData(), arrNum}, "array");
+    auto arr = builder.CreateCall(safeGetFunc("createArr"), {arrNum}, "array");
     // I think this should be faster than passing everything to "createArr", but I could be wrong
     llvm::Value* arrPtr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "obj.arr.ptr");
     llvm::Value* storagePtr = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjArray"], arrPtr, 0, 3);
@@ -518,8 +518,8 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     bool opt = exprIsComplexType(expr->callee, types::TypeFlag::FUNCTION);
     llvm::Value* closureVal = expr->callee->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.paren1);
-    // First two params of every function are reserved for: threadLocalData ptr, closure ptr
-    vector<llvm::Value*> args = {getThreadData(), closureVal};
+    // First param of every function is reserved for closure ptr
+    vector<llvm::Value*> args = {closureVal};
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
 
     if(!opt) {
@@ -541,7 +541,7 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     auto inst = expr->inst->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.method);
 
-    vector<llvm::Value*> args = {getThreadData()};
+    vector<llvm::Value*> args = {};
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
 
     if(typeEnv[expr->inst->exprType]->type == types::TypeFlag::INSTANCE) {
@@ -562,7 +562,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     // Instead of initializing instance in some runtime function, we request memory, copy the template and adjust pointers
     // benefit of this is the template already has all the fields nulled, so we don't have to do this at every instantiation
     size_t instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
-    llvm::CallInst* memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {getThreadData(), builder.getInt64(instSize)});
+    llvm::CallInst* memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt64(instSize)});
 
     // All the gc info about an object is stored in the first 16 bits of the object
     auto objInfo = builder.CreateLoad(builder.getInt16Ty(), memptr);
@@ -580,7 +580,7 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
                                                                  builder.getInt32(fnty.second));
         // Need to tag the method
         ptr = constObjToVal(ptr, +object::ObjType::CLOSURE);
-        vector<llvm::Value*> args = {getThreadData(), ptr, inst};
+        vector<llvm::Value*> args = {ptr, inst};
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
         return builder.CreateCall(fn, args);
     }else{
@@ -686,7 +686,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     inProgressFuncs.emplace(startFuncDef(expr->fn->name, expr->fn->fnTy, expr->dbgInfo.keyword));
 
     // Essentially pushes all freevars to the machine stack, the pointer to ObjFreevar is stored in the vector 'freevars'
-    llvm::Value* cl = builder.CreateCall(safeGetFunc("decodeClosure"), inProgressFuncs.top().fn->getArg(1), "closure");
+    llvm::Value* cl = builder.CreateCall(safeGetFunc("decodeClosure"), inProgressFuncs.top().fn->getArg(0), "closure");
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
         llvm::Value* freevarPtr = builder.CreateGEP(namedTypes["ObjClosure"], cl, builder.getInt32(1));
@@ -714,7 +714,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
 
     // Every function is converted to a closure(if even it has 0 freevars for ease of use when calling)
     // If expr->freevars.size() is 0 then no array for freevars is allocated
-    vector<llvm::Value*> closureConstructorArgs = {getThreadData(), typeErasedFn, arity, name, builder.getInt32(expr->freevars.size())};
+    vector<llvm::Value*> closureConstructorArgs = {typeErasedFn, arity, name, builder.getInt32(expr->freevars.size())};
 
     // Freevars are gathered after switching to the enclosing function
     for(int i = 0; i < expr->freevars.size(); i++){
@@ -835,7 +835,7 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
     if(stmt->afterLoopExpr) stmt->afterLoopExpr->codegen(this);
     // Only jump to condition if the main body doesn't terminate already(eg. an unconditional break stmt at the end of loop)
     if(!stmt->loopBody.terminates){
-        builder.CreateCall(safeGetFunc("safepoint_poll"), getThreadData());
+        builder.CreateCall(safeGetFunc("safepoint_poll"));
         builder.CreateBr(headerBB);
     }
 
@@ -931,9 +931,10 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     llvm::GlobalVariable* klass = new llvm::GlobalVariable(*curModule, obj->getType(), false,
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
     klass->setAlignment(llvm::Align(16));
-    llvm::ArrayRef<llvm::Constant*> idx = {builder.getInt32(0), builder.getInt32(1)};
     llvm::Type* type = obj->getType();
-    llvm::Constant* methodArrPtr = llvm::ConstantExpr::getInBoundsGetElementPtr(type, klass, idx);
+    // ArrayRef can't be taken out into its own thing because it causes a segfault for some reason
+    llvm::Constant* methodArrPtr = llvm::ConstantExpr::getInBoundsGetElementPtr(type, klass,
+                                                                                llvm::ArrayRef<llvm::Constant*>({builder.getInt32(0), builder.getInt32(1)}));
     // Associates a full class name with the class object and instance template
     classes[stmt->fullName] = Class(klass, createInstanceTemplate(klass, stmt->fields.size()),
                                     stmt->classType, methods, methodArrPtr);
@@ -1061,7 +1062,7 @@ void Compiler::declareFunctions(){
 
 void Compiler::createMainEntrypoint(string entrypointName){
     // Create internal entrypoint function, takes in the thread data ptr
-    llvm::FunctionType* entryFT = llvm::FunctionType::get(builder.getVoidTy(),{builder.getPtrTy()}, false);
+    llvm::FunctionType* entryFT = llvm::FunctionType::get(builder.getVoidTy(),false);
     auto entryFn = llvm::Function::Create(entryFT, llvm::Function::PrivateLinkage, "entrypoint", curModule.get());
     setFuncAttrs(ESLFuncAttrs, entryFn);
     entryFn->setGC("statepoint-example");
@@ -1076,10 +1077,7 @@ void Compiler::createMainEntrypoint(string entrypointName){
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", tmpfn);
     builder.SetInsertPoint(BB);
 
-    llvm::Value* alloca = builder.CreateAlloca(builder.getPtrTy(), builder.getInt64(1), "thread.data");
-    builder.CreateStore(builder.getInt64(0), alloca);
-
-    auto call = builder.CreateCall(entryFn, alloca);
+    auto call = builder.CreateCall(entryFn);
     builder.CreateCall(safeGetFunc("exit"), builder.getInt32(0));
     builder.CreateRet(builder.getInt32(0));
     llvm::verifyFunction(*tmpfn);
@@ -1283,7 +1281,7 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Toke
                           getObjectTypeMasks(object::ObjType::STRING));
     // Type check creates new blocks
     addStringBB = builder.GetInsertBlock();
-    auto stringAddRes = builder.CreateCall(safeGetFunc("strAdd"), {getThreadData(), lhs, rhs,});
+    auto stringAddRes = builder.CreateCall(safeGetFunc("strAdd"), {lhs, rhs,});
     builder.CreateBr(mergeBB);
 
     // Final destination for both branches, if both values were numbers or strings(meaning no error was thrown)
@@ -1500,7 +1498,7 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
     // First argument is ALWAYS the thread data ptr, and second is obj closure ptr
-    int argIndex = 2;
+    int argIndex = 1;
     for (auto var : args) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
@@ -1509,7 +1507,7 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
             builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), varPtr);
         }else{
             size_t freevarSize = curModule->getDataLayout().getTypeAllocSize(namedTypes["ObjFreevar"]);
-            varPtr = builder.CreateCall(safeGetFunc("gcAlloc"), {getThreadData(), builder.getInt64(freevarSize)}, var->dbgInfo.varName.getLexeme());
+            varPtr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt64(freevarSize)}, var->dbgInfo.varName.getLexeme());
             llvm::Value* objType = builder.CreateInBoundsGEP(namedTypes["Obj"], varPtr, {builder.getInt32(0), builder.getInt32(1)});
             builder.CreateStore(builder.getInt8(+object::ObjType::FREEVAR), objType);
             // first index: access to the structure that's being pointed to,
@@ -1753,7 +1751,7 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
     builder.SetInsertPoint(BB);
     declareFuncArgs(method.code->args);
     createInstClassCheck(fmt::format("Expected instance of class '{}', got '{}'.", classname, "{}"),
-                         inProgressFuncs.top().fn->getArg(2), subClassIdxStart, subClassIdxEnd);
+                         inProgressFuncs.top().fn->getArg(1), subClassIdxStart, subClassIdxEnd);
 
     for(auto s : method.code->block.stmts){
         s->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
@@ -1967,7 +1965,7 @@ llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, C
         closure = constObjToVal(closure, +object::ObjType::CLOSURE);
         llvm::Function* fn = functions[typeEnv[klass.ty->methods[field].first]];
         // Insert at begin + 1 to skip the thread data ptr
-        callArgs.insert(callArgs.begin()+1, {closure, inst});
+        callArgs.insert(callArgs.begin(), {closure, inst});
         return fn;
     }else if(klass.ty->fields.contains(field)){
         // Index into the array of fields of the instance
@@ -1981,7 +1979,7 @@ llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, C
         llvm::Value* fieldPtr = builder.CreateInBoundsGEP(getESLValType(), ptr, {arrIdx});
         llvm::Value* closure = builder.CreateLoad(getESLValType(), fieldPtr);
         // Skip thread data ptr that is passed to every function
-        callArgs.insert(callArgs.begin()+1, closure);
+        callArgs.insert(callArgs.begin(), closure);
         // Arg check doesn't take closure into account
         return setupUnoptCall(closure, callArgs.size(), dbg);
     }else{
@@ -2013,9 +2011,9 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
     auto field =  builder.CreateLoad(getESLValType(), fieldPtr);
     // Erases closure from args list because they are needed for method calling below
     // Skip over thread data ptr that is passed as the first arg
-    args.insert(args.begin()+1, field);
+    args.insert(args.begin(), field);
     llvm::CallInst* callres1 = builder.CreateCall(setupUnoptCall(field, args.size(), dbg),  args);
-    args.erase(args.begin()+1);
+    args.erase(args.begin());
     fieldBB = builder.GetInsertBlock();
     builder.CreateBr(mergeBB);
 
@@ -2027,7 +2025,7 @@ llvm::Value* Compiler::unoptimizedInvoke(llvm::Value* encodedInst, string fieldN
     // Since this is a raw ObjClosure pointer we tag it first
     auto method = builder.CreateCall(safeGetFunc("encodeObj"), {val, builder.getInt64(+object::ObjType::CLOSURE)});
     // Skip over thread data ptr that is passed as the first arg
-    args.insert(args.begin()+1, {method, encodedInst});
+    args.insert(args.begin(), {method, encodedInst});
     llvm::CallInst* callres2 = builder.CreateCall(setupUnoptCall(method, args.size(), dbg), args);
     methodBB = builder.GetInsertBlock();
     builder.CreateBr(mergeBB);
@@ -2065,15 +2063,11 @@ llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int 
     store->setAtomic(llvm::AtomicOrdering::Release);
     store->setAlignment(llvm::Align(8));
 
-    llvm::Value* threadData = builder.CreateAlloca(builder.getPtrTy(), builder.getInt64(1), "thread.data");
-    builder.CreateStore(builder.getInt64(0), threadData);
-    args.insert(args.begin(), threadData);
-
     llvm::Value* frameAddr = builder.CreateIntrinsic(builder.getPtrTy(), llvm::Intrinsic::frameaddress, {builder.getInt32(0)});
     builder.CreateCall(safeGetFunc("threadInit"), {frameAddr});
 
     builder.CreateCall(funcType, funcPtr, args);
-    builder.CreateCall(safeGetFunc("threadDestruct"), threadData);
+    builder.CreateCall(safeGetFunc("threadDestruct"));
     builder.CreateRet(llvm::ConstantPointerNull::get(builder.getPtrTy()));
     llvm::verifyFunction(*fn);
 
@@ -2274,12 +2268,6 @@ void Compiler::createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llv
     sw->setMetadata(llvm::LLVMContext::MD_prof, WeightsNode);
 }
 
-
-
-
-llvm::Value* Compiler::getThreadData(){
-    return inProgressFuncs.top().fn->getArg(0);
-}
 // All of these functions are noops but are needed because of llvms type system
 llvm::Value* Compiler::ESLValTo(llvm::Value* val, llvm::Type* ty){
     if(ty->isPointerTy()){

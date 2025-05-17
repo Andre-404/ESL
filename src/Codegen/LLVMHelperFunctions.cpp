@@ -81,13 +81,13 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     wrapFn(CREATE_FUNC(exit, false, TYPE(Void), TYPE(Int32)));
 
     // ret: Value, args: lhs, rhs - both are known to be strings
-    wrapFn(CREATE_FUNC(strAdd, false, eslValTy, builder.getPtrTy(), eslValTy, eslValTy));
+    wrapFn(CREATE_FUNC(strAdd, false, eslValTy, eslValTy, eslValTy));
     fn = wrapFn(CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy));
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
     // Invoked by gc.safepoint
-    wrapFn(CREATE_FUNC(stopThread, false, TYPE(Void), builder.getPtrTy()));
+    wrapFn(CREATE_FUNC(stopThread, false, TYPE(Void)));
     // ret: Value, args: arr size
-    wrapFn(CREATE_FUNC(createArr, false, eslValTy, builder.getPtrTy(), TYPE(Int32)));
+    wrapFn(CREATE_FUNC(createArr, false, eslValTy, TYPE(Int32)));
     fn = wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
     fn = wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
@@ -97,7 +97,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     wrapFn(CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy));
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     wrapFn(CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy)));
-    fn = wrapFn(CREATE_FUNC(gcAlloc, false, types["ObjPtr"], builder.getPtrTy(), TYPE(Int64)));
+    fn = wrapFn(CREATE_FUNC(gcAlloc, false, types["ObjPtr"], TYPE(Int64)));
     fn->addFnAttr(llvm::Attribute::get(*ctx, "allockind", "alloc"));
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::NoCallback);
@@ -115,9 +115,9 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addRetAttr(llvm::Attribute::NoUndef);
     // First argument is number of field, which is then followed by n*2 Value-s
     // Pairs of Values for fields look like this: {Value(string), Value(val)}
-    wrapFn(CREATE_FUNC(createHashMap, true, eslValTy, builder.getPtrTy(), TYPE(Int32)));
+    wrapFn(CREATE_FUNC(createHashMap, true, eslValTy, TYPE(Int32)));
     // Creates a function enclosed in a closure, args: function ptr, arity, name, num of freevars, followed by n freevars
-    wrapFn(CREATE_FUNC(createClosure, true, eslValTy, builder.getPtrTy(), PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32)));
+    wrapFn(CREATE_FUNC(createClosure, true, eslValTy, PTR_TY(TYPE(Int8)), TYPE(Int8), PTR_TY(TYPE(Int8)), TYPE(Int32)));
     // ret: Value, args: ObjHashmap, ObjString that will be used as an index into the map
     wrapFn(CREATE_FUNC(hashmapGetV, false, eslValTy, types["ObjPtr"], types["ObjPtr"]));
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
@@ -128,7 +128,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: void, args: frame address
     wrapFn(CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy()));
     // ret: void, args: threadData ptr
-    wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), builder.getPtrTy()));
+    wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), ));
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
@@ -239,7 +239,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
     // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
     [&]{
-        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), builder.getPtrTy(), false), llvm::Function::ExternalLinkage, "safepoint_poll", module.get());
+        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "safepoint_poll", module.get());
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
         builder.SetInsertPoint(BB);
         llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
@@ -254,7 +254,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        auto call = builder.CreateCall(module->getFunction("stopThread"), F->getArg(0));
+        auto call = builder.CreateCall(module->getFunction("stopThread"));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
