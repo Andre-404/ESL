@@ -11,6 +11,12 @@
 #include "llvm/TargetParser/Host.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Transforms/Scalar/PlaceSafepoints.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Type.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Constants.h"
 
 #include <unordered_set>
 #include <iostream>
@@ -926,7 +932,8 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
                                                            llvm::GlobalVariable::PrivateLinkage, obj);
     klass->setAlignment(llvm::Align(16));
     llvm::ArrayRef<llvm::Constant*> idx = {builder.getInt32(0), builder.getInt32(1)};
-    llvm::Constant* methodArrPtr = llvm::ConstantExpr::getInBoundsGetElementPtr(obj->getType(), klass, idx);
+    llvm::Type* type = obj->getType();
+    llvm::Constant* methodArrPtr = llvm::ConstantExpr::getInBoundsGetElementPtr(type, klass, idx);
     // Associates a full class name with the class object and instance template
     classes[stmt->fullName] = Class(klass, createInstanceTemplate(klass, stmt->fields.size()),
                                     stmt->classType, methods, methodArrPtr);

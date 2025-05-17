@@ -1,6 +1,5 @@
 #pragma once
 
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "../../common.h"

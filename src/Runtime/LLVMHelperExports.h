@@ -5,8 +5,6 @@
 #include "MemoryManagment/garbageCollector.h"
 #include <csetjmp>
 #include <stdarg.h>
-#include "../Includes/rpmalloc/rpmalloc.h"
-#include <format>
 #include "JIT/JIT.h"
 #include <unwind.h>
 #include <pthread.h>

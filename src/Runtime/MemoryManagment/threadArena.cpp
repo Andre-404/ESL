@@ -1,15 +1,15 @@
 #include "threadArena.h"
-#include "../../ErrorHandling/errorHandler.h"
 #include "../../Includes/fmt/format.h"
 #include "../Objects/objects.h"
 #include "garbageCollector.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
+
 #ifdef _WIN32
 #include <memoryapi.h>
 #else
 #include <sys/mman.h>
 #endif
-#include <pthread.h>
+
 
 #define LOCAL_BYTE_CACHE 1024*16 //16Kb
 

@@ -7,10 +7,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
-#include <stack>
 #include <condition_variable>
-#include <array>
-#include <variant>
 
 #ifdef _MSC_VER
 // When getStackPointer is called the return address is rsp

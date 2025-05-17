@@ -1,8 +1,6 @@
 #pragma once
-
 #include <array>
 #include "../../AST/ASTDefs.h"
-#include <unordered_set>
 // Identifies types of variable declarations(and function arguments)
 // Variable declarations can be: global, local, upvalue
 // Function arguments can be: local, upvalue

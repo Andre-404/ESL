@@ -4,8 +4,6 @@
 #include <fstream>
 #include <stdio.h>
 #include <shared_mutex>
-#include <future>
-#include <thread>
 
 namespace memory{
     class ThreadArena;

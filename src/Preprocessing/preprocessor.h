@@ -1,8 +1,6 @@
 #pragma once
 #include "scanner.h"
 #include <unordered_map>
-#include <memory>
-#include <tuple>
 
 
 namespace errorHandler{

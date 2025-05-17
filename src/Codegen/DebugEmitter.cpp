@@ -1,4 +1,5 @@
 #include "DebugEmitter.h"
+#include "llvm/IR/DebugInfo.h"
 using namespace compileCore;
 
 DebugEmitter::DebugEmitter(llvm::Module& module, File& file, bool isOpt){

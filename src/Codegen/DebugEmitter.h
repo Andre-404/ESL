@@ -1,13 +1,18 @@
 #pragma once
-#include "llvm/IR/DIBuilder.h"
-#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Module.h"
 #include "../common.h"
 #include "../Includes/unorderedDense.h"
 #include "../moduleDefs.h"
 #include "../TypedAST/Types.h"
 
+namespace llvm{
+    class DIScope;
+    class DIType;
+    class DIFile;
+    class DICompileUnit;
+}
 
 namespace compileCore{
     class DebugEmitter {

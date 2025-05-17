@@ -1,16 +1,10 @@
 #include "JIT.h"
-#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
-#include "llvm/ExecutionEngine/SectionMemoryManager.h"
-#include "llvm/ExecutionEngine/RuntimeDyld.h"
-#include "llvm/Object/COFF.h"
-#include "llvm/Object/SymbolSize.h"
 #include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "SEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
 #include "DebugInfoPlugin.h"
 #include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
-#include "../../ErrorHandling/errorHandler.h"
 
 ESLJIT* ESLJIT::global = nullptr;
 // JIT needs this if an alloca happens and for some reason it doesn't pick it up from libgcc

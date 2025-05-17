@@ -1,8 +1,6 @@
 #include "parser.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
-#include "../SemanticAnalysis/semanticAnalyzer.h"
-#include <assert.h>
 
 using std::make_shared;
 using namespace AST;
@@ -527,18 +525,19 @@ shared_ptr<ClassDecl> Parser::classDecl() {
                     }
                     consume(TokenType::COMMA, "Expected ',' before next field or ';'.");
                 }while(!check(TokenType::RIGHT_BRACE) && !isAtEnd());
+                continue;
             }
-            Token override = match(TokenType::OVERRIDE) ? previous() : Token();
+            Token overrides = match(TokenType::OVERRIDE) ? previous() : Token();
 
             if (match(TokenType::FN)) {
-                auto decl = funcDecl();;
+                auto decl = funcDecl();
                 // Implicitly declare "this"
                 // TODO: 4. maybe add token source pos?
                 decl->args.insert(decl->args.begin(), ASTVar(Token(TokenType::IDENTIFIER, "this")));
                 // If TokenType of override is NONE(the token is default constructed) then this function doesn't override
-                methods.emplace_back(isPublic, override, decl);
+                methods.emplace_back(isPublic, overrides, decl);
             }else {
-                if(override.type == TokenType::NONE) throw error(override, "Expected a method definition after 'override'");
+                if(overrides.type == TokenType::NONE) throw error(overrides, "Expected a method definition after 'override'");
                 throw error(peek(), "Expected field or method declaration.");
             }
         }
@@ -568,7 +567,7 @@ ASTNodePtr Parser::statement() {
             case TokenType::SWITCH: return switchStmt();
             case TokenType::RETURN: return returnStmt();
             case TokenType::SPAWN: return spawnStmt();
-            default: assert(false && "Unreachable");
+            default: break;
         }
     }
     return exprStmt();

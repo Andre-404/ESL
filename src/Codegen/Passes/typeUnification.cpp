@@ -1,5 +1,6 @@
 #include "typeUnification.h"
 #include "ASTToTypedAST.h"
+#include <unordered_set>
 
 using namespace typedAST;
 using namespace passes::typeUnification;

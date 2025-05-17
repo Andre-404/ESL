@@ -1,12 +1,9 @@
 #include "garbageCollector.h"
-#include "../../ErrorHandling/errorHandler.h"
 #include "../../Includes/fmt/format.h"
 #include "../Objects/objects.h"
 #include "../Values/valueHelpersInline.cpp"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 #include <algorithm>
-#include <execution>
-#include <sys/stat.h>
 #include <variant>
 #include <csetjmp>
 

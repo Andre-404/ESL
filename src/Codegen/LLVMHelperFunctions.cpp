@@ -1,19 +1,14 @@
 #include "LLVMHelperFunctions.h"
 #include "../Runtime/LLVMHelperExports.h"
 #include "../Runtime/nativeFunctionsExports.h"
-
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/ModRef.h"
-
-#include <unordered_set>
-#include <iostream>
+#include "llvm/IR/Module.h"
+#include "llvm/IR/LLVMContext.h"
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get())

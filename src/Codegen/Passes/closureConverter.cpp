@@ -2,12 +2,8 @@
 #include <unordered_set>
 #include <iostream>
 #include "../../Includes/fmt/format.h"
-#include "../../ErrorHandling/errorHandler.h"
-#include "../../Runtime/Values/valueHelpersInline.cpp"
 
 using namespace closureConversion;
-using namespace object;
-using namespace valueHelpers;
 
 
 #pragma region Visitor

@@ -2,7 +2,6 @@
 #include "../../ErrorHandling/errorHandler.h"
 #include "../../Includes/fmt/format.h"
 #include <unordered_map>
-#include <unordered_set>
 
 using namespace AST;
 
