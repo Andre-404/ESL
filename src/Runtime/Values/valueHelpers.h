@@ -38,6 +38,7 @@ constexpr uint64_t mask_signature =     0xffff000000000000ull;
 constexpr uint64_t mask_payload_obj =   0x0000fffffffffff0ull;
 constexpr uint64_t mask_payload_type =  0x000000000000000full;
 // 51st bit is set to 1 to avoid Intels “QNaN Floating-Point Indefinite”
+// Which leaves 3 bits for the payload type: sign bit, 50th and 49th bit
 constexpr uint64_t mask_qnan =          0x7ffc000000000000ull;
 
 // Types

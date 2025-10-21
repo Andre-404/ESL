@@ -231,7 +231,7 @@ void SemanticVerifier::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     if (switchDepth == 0) errHandler.reportError("Cannot use 'advance' outside of switch statements.", stmt->keyword);
 }
 void SemanticVerifier::visitReturnStmt(AST::ReturnStmt* stmt) {
-    stmt->expr->accept(this);
+    if (stmt->expr) stmt->expr->accept(this);
 }
 // Checks for duplicate aliases within the same module
 void SemanticVerifier::checkAliasConflict(ASTModule& module){

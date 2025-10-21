@@ -142,5 +142,5 @@ void ASTOptimizer::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     // Nothing
 }
 void ASTOptimizer::visitReturnStmt(AST::ReturnStmt* stmt) {
-    stmt->expr->accept(this);
+    if (stmt->expr) stmt->expr->accept(this);
 }

@@ -1048,7 +1048,7 @@ void Compiler::declareFunctions(){
         if(type->type != types::TypeFlag::FUNCTION || functions.contains(type)) continue;
         std::shared_ptr<types::FunctionType> fnType = std::reinterpret_pointer_cast<types::FunctionType>(type);
         // First argument is always the thread data ptr
-        vector<llvm::Type*> params = {builder.getPtrTy()};
+        vector<llvm::Type*> params {};
         // Second argument is always the closure structure
         for(int i = 0; i < fnType->argCount + 1; i++) params.push_back(getESLValType());
         llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
