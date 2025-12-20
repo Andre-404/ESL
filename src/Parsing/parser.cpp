@@ -581,7 +581,7 @@ shared_ptr<ExprStmt> Parser::exprStmt() {
 
 shared_ptr<SpawnStmt> Parser::spawnStmt(){
     Token keyword = previous();
-    ASTNodePtr expr = expression(+Precedence::CALL-1);
+    ASTNodePtr expr = expression(+Precedence::CALL);
     Token paren1 = consume(TokenType::LEFT_PAREN, "Expected call after spawn");
     expr = parseCall(this, expr, paren1);
     consume(TokenType::SEMICOLON, "Expected ';' after call.");
