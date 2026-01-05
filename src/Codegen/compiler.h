@@ -72,9 +72,8 @@ class Compiler : public typedAST::TypedASTCodegen {
 		// Passed to the VM, used for highlighting runtime errors, managed by the VM
 		vector<File*> sourceFiles;
 
-		Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv,
-                 fastMap<string, std::pair<int, int>>& _classHierarchy, fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL,
-                 errorHandler::ErrorHandler& errHandler);
+		Compiler(vector<File*>& _srcFiles, fastMap<string, std::pair<int, int>>& _classHierarchy,
+                 fastMap<string, types::tyPtr>& natives, const llvm::DataLayout& DL, errorHandler::ErrorHandler& errHandler);
         llvm::orc::ThreadSafeModule compile(std::shared_ptr<typedAST::Function> _code, string mainFnName);
 
 		#pragma region Visitor pattern
@@ -109,9 +108,6 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* visitScopeBlock(typedAST::ScopeEdge* stmt) override;
 		#pragma endregion 
 	private:
-        // Collapsed type environment, "exprType" inside of expressions is an index into a list of types in the environment
-        vector<types::tyPtr> typeEnv;
-
         // Integers are uuids of VarDecl instances
         fastMap<uInt64, llvm::Value*> variables;
 
@@ -143,7 +139,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         void setupModule(const llvm::DataLayout& DL);
         void optimizeModule(llvm::Module& module);
         // Declares both user and native functions
-        void declareFunctions();
+        llvm::Function* declareFunction(const std::shared_ptr<types::FunctionType> fnTy);
         void createMainEntrypoint(string entrypointName);
 
         #pragma region Helpers
@@ -165,7 +161,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const typedAST::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
-        llvm::Value* codegenNeg(llvm::Value* rhs, const types::tyVarIdx type, const typedAST::UnaryOp op, const Token dbg);
+        llvm::Value* codegenNeg(llvm::Value* rhs, const types::tyPtr type, const typedAST::UnaryOp op, const Token dbg);
         void codegenBlock(const typedAST::Block& block);
         llvm::Value *codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr, const Token dbg);
         llvm::Value *codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr, Token dbg);
@@ -233,7 +229,7 @@ class Compiler : public typedAST::TypedASTCodegen {
         llvm::Function* safeGetFunc(const string& name);
         void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
-        void generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives);
+        void generateNativeFuncs(fastMap<string, types::tyPtr>& natives);
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);;
 
         #pragma endregion

@@ -165,7 +165,7 @@ namespace typedAST{
 
     class TypedASTExpr : public TypedASTNode{
     public:
-        types::tyVarIdx exprType;
+        types::tyPtr exprType;
 
         virtual ~TypedASTExpr() {};
         virtual void accept(TypedASTVisitor* vis) = 0;
@@ -183,15 +183,13 @@ namespace typedAST{
     class VarDecl : public TypedASTNode{
     public:
         VarType varType;
-        types::tyVarIdx possibleTypes;
         AST::VarDeclDebugInfo dbgInfo;
         uInt64 uuid;
         static inline uInt64 instanceCount = 0;
 
-        VarDecl(VarType _varType, types::tyVarIdx _possibleTypes){
+        VarDecl(VarType _varType){
             varType = _varType;
             uuid = instanceCount++;
-            possibleTypes = _possibleTypes;
             type = NodeType::VAR_DECL;
         }
         ~VarDecl() {};
@@ -209,7 +207,7 @@ namespace typedAST{
 
         VarRead(shared_ptr<VarDecl> _varPtr, AST::VarReadDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             varPtr = _varPtr;
-            exprType = varPtr->possibleTypes;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::VAR_READ;
         }
         ~VarRead() {};
@@ -245,7 +243,7 @@ namespace typedAST{
         string nativeName;
         AST::VarReadDebugInfo dbgInfo;
 
-        VarReadNative(string name, types::tyVarIdx _heldType, AST::VarReadDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        VarReadNative(string name, types::tyPtr _heldType, AST::VarReadDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             nativeName = name;
             exprType = _heldType;
             type = NodeType::VAR_NATIVE_READ;
@@ -279,12 +277,12 @@ namespace typedAST{
         exprPtr rhs;
         AST::BinaryExprDebugInfo dbgInfo;
 
-        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo)
+        ArithmeticExpr(exprPtr _lhs, exprPtr _rhs, ArithmeticOp _op, AST::BinaryExprDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::ARITHEMTIC;
         }
         ~ArithmeticExpr() {};
@@ -313,12 +311,12 @@ namespace typedAST{
         exprPtr rhs;
         AST::BinaryExprDebugInfo dbgInfo;
 
-        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo)
+        ComparisonExpr(exprPtr _lhs, exprPtr _rhs, ComparisonOp _op, AST::BinaryExprDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             lhs = _lhs;
             rhs = _rhs;
             opType = _op;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::COMPARISON;
         }
         ~ComparisonExpr() {};
@@ -336,10 +334,10 @@ namespace typedAST{
         string className;
         AST::BinaryExprDebugInfo dbgInfo;
 
-        InstanceofExpr(exprPtr _lhs, string _className, types::tyVarIdx _exprTy, AST::BinaryExprDebugInfo _dbgInfo): dbgInfo(_dbgInfo){
+        InstanceofExpr(exprPtr _lhs, string _className, AST::BinaryExprDebugInfo _dbgInfo): dbgInfo(_dbgInfo){
                 lhs = _lhs;
                 className = _className;
-                exprType = _exprTy;
+                exprType = types::getBasicType(types::TypeFlag::ANY);
                 type = NodeType::INSTANCEOF;
         }
         ~InstanceofExpr() {};
@@ -368,11 +366,11 @@ namespace typedAST{
         exprPtr rhs;
         AST::UnaryExprDebugInfo dbgInfo;
 
-        UnaryExpr(exprPtr _rhs, UnaryOp _op, types::tyVarIdx _exprTy, AST::UnaryExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        UnaryExpr(exprPtr _rhs, UnaryOp _op, AST::UnaryExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             rhs = _rhs;
             opType = _op;
             type = NodeType::UNARY;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
         }
         ~UnaryExpr() {};
         void accept(TypedASTVisitor* vis) override{
@@ -389,10 +387,10 @@ namespace typedAST{
         std::variant<double, bool, void*, string> val;
         AST::LiteralDebugInfo dbgInfo;
 
-        LiteralExpr(std::variant<double, bool, void*, string> variant, types::tyVarIdx _exprTy, AST::LiteralDebugInfo _dbgInfo)
+        LiteralExpr(std::variant<double, bool, void*, string> variant, AST::LiteralDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             val = variant;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::LITERAL;
         }
         ~LiteralExpr() {};
@@ -410,10 +408,10 @@ namespace typedAST{
         vector<std::pair<string, exprPtr>> fields;
         AST::StructLiteralDebugInfo dbgInfo;
 
-        HashmapExpr(vector<std::pair<string, exprPtr>> _fields, types::tyVarIdx _exprTy, AST::StructLiteralDebugInfo _dbgInfo)
+        HashmapExpr(vector<std::pair<string, exprPtr>> _fields, AST::StructLiteralDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             fields = _fields;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::HASHMAP;
         }
         ~HashmapExpr() {};
@@ -429,9 +427,9 @@ namespace typedAST{
         vector<exprPtr> fields;
         AST::ArrayLiteralDebugInfo dbgInfo;
 
-        ArrayExpr(vector<exprPtr> _fields, types::tyVarIdx _exprTy, AST::ArrayLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        ArrayExpr(vector<exprPtr> _fields, AST::ArrayLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fields = _fields;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::ARRAY;
         }
         ~ArrayExpr() {};
@@ -449,11 +447,11 @@ namespace typedAST{
         exprPtr field;
         AST::CollectionAccessDebugInfo dbgInfo;
 
-        CollectionGet(exprPtr _collection, exprPtr _field, types::tyVarIdx _exprTy, AST::CollectionAccessDebugInfo _dbgInfo)
+        CollectionGet(exprPtr _collection, exprPtr _field, AST::CollectionAccessDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             collection = _collection;
             field = _field;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::COLLECTION_GET;
         }
         ~CollectionGet() {};
@@ -508,12 +506,12 @@ namespace typedAST{
         exprPtr elseExpr;
         AST::ConditionalExprDebugInfo dbgInfo;
 
-        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr, types::tyVarIdx _exprTy, AST::ConditionalExprDebugInfo _dbgInfo)
+        ConditionalExpr(exprPtr _cond, exprPtr _thenExpr, exprPtr _elseExpr, AST::ConditionalExprDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             cond = _cond;
             thenExpr = _thenExpr;
             elseExpr = _elseExpr;
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::CONDITIONAL;
         }
         ~ConditionalExpr() {};
@@ -531,11 +529,11 @@ namespace typedAST{
         vector<exprPtr> args;
         AST::CallExprDebugInfo dbgInfo;
 
-        CallExpr(exprPtr _callee, vector<exprPtr> _args, types::tyVarIdx _callDeferred, AST::CallExprDebugInfo _dbgInfo)
+        CallExpr(exprPtr _callee, vector<exprPtr> _args, AST::CallExprDebugInfo _dbgInfo)
         : dbgInfo(_dbgInfo){
             callee = _callee;
             args = _args;
-            exprType = _callDeferred;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::CALL;
         }
         ~CallExpr() {};
@@ -553,13 +551,11 @@ namespace typedAST{
         string field;
         AST::InvokeExprDebugInfo dbgInfo;
 
-        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, types::tyVarIdx _exprTy,
-                   AST::InvokeExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        InvokeExpr(exprPtr _inst, string _field, vector<exprPtr> _args, AST::InvokeExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             inst = _inst;
             field = _field;
             args = _args;
-            // TODO: actually do type inference on this
-            exprType = _exprTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::INVOKE;
         }
         ~InvokeExpr() {};
@@ -576,10 +572,10 @@ namespace typedAST{
         vector<exprPtr> args;
         AST::NewExprDebugInfo dbgInfo;
 
-        NewExpr(string _className, vector<exprPtr> _args, types::tyVarIdx _instType, AST::NewExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        NewExpr(string _className, vector<exprPtr> _args, AST::NewExprDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             className = _className;
             args = _args;
-            exprType = _instType;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::NEW;
         }
         ~NewExpr() {};
@@ -624,9 +620,9 @@ namespace typedAST{
         AST::FuncLiteralDebugInfo dbgInfo;
 
         CreateClosureExpr(std::shared_ptr<Function> _fn, vector<std::pair<shared_ptr<VarDecl>, shared_ptr<VarDecl>>> _freevars,
-                          types::tyVarIdx ty, AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+                          AST::FuncLiteralDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             fn = _fn;
-            exprType = ty;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             freevars = _freevars;
             type = NodeType::CLOSURE;
         }
@@ -850,10 +846,10 @@ namespace typedAST{
         string field;
         AST::InstGetDebugInfo dbgInfo;
 
-        InstGet(exprPtr _instance, string _field, types::tyVarIdx _instGetTy, AST::InstGetDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
+        InstGet(exprPtr _instance, string _field, AST::InstGetDebugInfo _dbgInfo) : dbgInfo(_dbgInfo){
             instance = _instance;
             field = _field;
-            exprType = _instGetTy;
+            exprType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::INST_GET;
         }
         ~InstGet() {};

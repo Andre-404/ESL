@@ -6,9 +6,9 @@ namespace errorHandler{
 }
 
 namespace AST {
-    class SemanticVerifier : public Visitor {
+    class ASTVerifier : public Visitor {
     public:
-        SemanticVerifier(errorHandler::ErrorHandler& errHandler);
+        ASTVerifier(errorHandler::ErrorHandler& errHandler);
         void process(vector<ASTModule>& units);
 #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;

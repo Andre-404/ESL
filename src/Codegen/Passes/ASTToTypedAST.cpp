@@ -2,7 +2,7 @@
 #include "../../AST/ASTProbe.h"
 #include "../../Includes/fmt/format.h"
 #include "../../ErrorHandling/errorHandler.h"
-#include "typeUnification.h"
+#include "../../TypedAST/Types.h"
 
 using namespace passes;
 using namespace typedASTParser;
@@ -15,7 +15,6 @@ ASTTransformer::ASTTransformer(vector<AST::ASTModule> &_units, errorHandler::Err
     currentClass = nullptr;
     returnedExpr = nullptr;
     transformedAST = false;
-    addBasicTypes();
 }
 
 std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
@@ -44,21 +43,12 @@ ASTTransformer::run(std::unordered_map<AST::FuncLiteral*, vector<closureConversi
     return std::make_pair(fn, sourceFiles);
 }
 
-vector<types::tyPtr> ASTTransformer::getTypeEnv(){
-    if(!transformedAST){
-        std::cout<<"Tried to retrieve the type environment before running the transformer, exiting...\n";
-        exit(64);
-    }
-    typeUnification::TypeUnificator unificator;
-    return unificator.run(typeEnv);
-}
-
 ankerl::unordered_dense::map<string, std::pair<int, int>> ASTTransformer::getClassHierarchy(){
     computeClassHierarchy::ComputeClassHierarchyPass pass;
     return pass.run(classNodes);
 }
 
-ankerl::unordered_dense::map<string, types::tyVarIdx>& ASTTransformer::getNativeFuncTypes(){
+ankerl::unordered_dense::map<string, types::tyPtr>& ASTTransformer::getNativeFuncTypes(){
     return nativesTypes;
 }
 
@@ -95,18 +85,6 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
 
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
         returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, field, toStore, operationType, dbg);
-        // TODO: actually do type inference
-        switch(operationType){
-            case typedAST::SetType::SET: break;
-            case typedAST::SetType::ADD_SET:{
-                auto ty = createEmptyTy();
-                addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(getBasicType(types::TypeFlag::ANY), toStore->exprType));
-                returnedExpr->exprType = ty;
-                break;
-            }
-            default: returnedExpr->exprType = getBasicType(types::TypeFlag::NUMBER);
-        }
-        return;
     }
     // Tries to resolve this.field = expr if we're currently inside a method
     auto resolved = tryResolveThis(expr, operationType);
@@ -123,26 +101,13 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
     }
 
     returnedExpr = resolved;
-
-    switch(operationType){
-        case typedAST::SetType::SET: break;
-        case typedAST::SetType::ADD_SET:{
-            auto fieldty = getInstFieldTy(resolved->instance->exprType, resolved->field);
-            auto ty = createEmptyTy();
-            addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(fieldty, resolved->toStore->exprType));
-            returnedExpr->exprType = ty;
-            break;
-        }
-        default: returnedExpr->exprType = getBasicType(types::TypeFlag::NUMBER);
-    }
 }
 void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
         auto collection = evalASTExpr(expr->callee);
         auto field = evalASTExpr(expr->field);
         auto dbg = AST::CollectionAccessDebugInfo(expr->accessor);
-        auto ty = getBasicType(types::TypeFlag::ANY);
-        returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, field, ty, dbg);
+        returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, field, dbg);
         return;
     }
 
@@ -155,10 +120,8 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     // Guaranteed to be a literal
     Token field = probeToken(expr->field);
     auto inst = evalASTExpr(expr->callee);
-    // If inst->exprType is known to be a single type(determined through type inference) InstGetFieldTyConstraint will return ty of the field
-    auto fieldty = getInstFieldTy(inst->exprType, field.getLexeme());
     auto dbg = AST::InstGetDebugInfo(field, expr->accessor);
-    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field.getLexeme(), fieldty, dbg);
+    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field.getLexeme(), dbg);
 }
 
 void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
@@ -166,13 +129,9 @@ void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
     auto thenBranch = evalASTExpr(expr->mhs);
     auto elseBranch = evalASTExpr(expr->rhs);
 
-    auto ty = createEmptyTy();
-    addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(thenBranch->exprType));
-    addTypeConstraint(ty, std::make_shared<types::AddTyConstraint>(elseBranch->exprType));
-
     auto dbg = AST::ConditionalExprDebugInfo(expr->questionmark, expr->colon);
 
-    returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch, dbg);
 }
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
@@ -210,13 +169,8 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::BITSHIFT_LEFT: op = typedAST::ArithmeticOp::BITSHIFT_L; break;
                 case TokenType::BITSHIFT_RIGHT: op = typedAST::ArithmeticOp::BITSHIFT_R; break;
             }
-            types::tyVarIdx exprType = getBasicType(types::TypeFlag::NUMBER);
-            if(op == typedAST::ArithmeticOp::ADD){
-                auto ty = createEmptyTy();
-                addTypeConstraint(ty, std::make_shared<types::ComputeAddTysConstraint>(lhs->exprType, rhs->exprType));
-                exprType = ty;
-            }
-            returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op, exprType, dbg);
+            returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op, dbg);
+
             return;
         }
         case TokenType::BANG_EQUAL:
@@ -239,7 +193,7 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
                 case TokenType::AND: op = typedAST::ComparisonOp::AND; break;
                 case TokenType::OR: op = typedAST::ComparisonOp::OR; break;
             }
-            returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, getBasicType(types::TypeFlag::BOOL), dbg);
+            returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, dbg);
             return;
         }
     }
@@ -247,31 +201,22 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
 void ASTTransformer::visitUnaryExpr(AST::UnaryExpr* expr) {
     auto rhs = evalASTExpr(expr->right);
     typedAST::UnaryOp op;
-    types::tyVarIdx ty = getBasicType(types::TypeFlag::NUMBER);
 
     switch(expr->op.type){
         case TokenType::TILDA: op = typedAST::UnaryOp::BIN_NEG; break;
-        case TokenType::BANG: {
-            op = typedAST::UnaryOp::NEG;
-            ty = getBasicType(types::TypeFlag::BOOL);
-            break;
-        }
+        case TokenType::BANG: op = typedAST::UnaryOp::NEG; break;
         case TokenType::MINUS: op = typedAST::UnaryOp::FNEG; break;
         case TokenType::INCREMENT: op = expr->isPrefix ? typedAST::UnaryOp::INC_PRE : typedAST::UnaryOp::INC_POST; break;
         case TokenType::DECREMENT: op = expr->isPrefix ? typedAST::UnaryOp::DEC_PRE : typedAST::UnaryOp::DEC_POST; break;
     }
     auto dbg = AST::UnaryExprDebugInfo(expr->op);
-    returnedExpr = std::make_shared<typedAST::UnaryExpr>(rhs, op, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::UnaryExpr>(rhs, op, dbg);
 }
 
 void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
     auto callee = evalASTExpr(expr->callee);
     vector<typedAST::exprPtr> args;
-    vector<types::tyVarIdx> argTypes;
-    for(auto arg : expr->args){
-        args.push_back(evalASTExpr(arg));
-        argTypes.push_back(args.back()->exprType);
-    }
+    for(auto arg : expr->args) args.push_back(evalASTExpr(arg));
 
     auto tryInvoke = tryConvertToInvoke(callee, args, expr->paren1, expr->paren2);
     if(tryInvoke) {
@@ -279,12 +224,9 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
         return;
     }
 
-    auto ty = createEmptyTy();
-    addTypeConstraint(ty, std::make_shared<types::CallResTyConstraint>(callee->exprType));
-
     auto dbg = AST::CallExprDebugInfo(expr->paren1, expr->paren2);
 
-    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, dbg);
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto klass = getClassInfoFromExpr(expr->call->callee);
@@ -292,15 +234,12 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     for(auto arg : expr->call->args){
         args.push_back(evalASTExpr(arg));
     }
-    // getClassFromExpr will throw an error if it doesn't find a class,
-    // so callee.valPtr is guaranteed to be a constrained to a types::ClassType
-    auto instTy = addType(std::make_shared<types::InstanceType>(klass->classTy));
     Token className = probeToken(expr->call->callee);
 
     auto dbg = AST::NewExprDebugInfo(expr->keyword, className, expr->call->paren1, expr->call->paren2);
     auto varDbg = AST::VarReadDebugInfo(className);
 
-    returnedExpr = std::make_shared<typedAST::NewExpr>(klass->mangledName, args, instTy, dbg);
+    returnedExpr = std::make_shared<typedAST::NewExpr>(klass->mangledName, args,dbg);
 }
 
 void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
@@ -308,11 +247,10 @@ void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
     for(auto field : expr->members){
         fields.push_back(evalASTExpr(field));
     }
-    auto arrTy = std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY));
 
     auto dbg = AST::ArrayLiteralDebugInfo(expr->bracket1, expr->bracket2);
 
-    returnedExpr = std::make_shared<typedAST::ArrayExpr>(fields, addType(arrTy), dbg);
+    returnedExpr = std::make_shared<typedAST::ArrayExpr>(fields, dbg);
 }
 void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
     vector<std::pair<string, typedAST::exprPtr>> fields;
@@ -326,11 +264,10 @@ void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
         fieldsDbg.emplace_back(field.name, field.colon);
         fields.emplace_back(temp, evalASTExpr(field.expr));
     }
-    auto hashmapTy = std::make_shared<types::HashMapType>(getBasicType(types::TypeFlag::ANY));
 
     auto dbg = AST::StructLiteralDebugInfo(expr->brace1, fieldsDbg, expr->brace2);
 
-    returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields, addType(hashmapTy), dbg);
+    returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields, dbg);
 }
 
 static string convertBackSlashToEscape(string input)
@@ -361,7 +298,6 @@ static string convertBackSlashToEscape(string input)
     return output;
 }
 void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
-    types::tyVarIdx ty;
     std::variant<double, bool, void*, string> variant;
     switch(expr->token.type){
         case TokenType::STRING:{
@@ -370,23 +306,19 @@ void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
             temp.erase(temp.size() - 1, 1);
             temp = convertBackSlashToEscape(temp);
             variant = temp;
-            ty = getBasicType(types::TypeFlag::STRING);
             break;
         }
         case TokenType::NUMBER:{
             variant = std::stod(expr->token.getLexeme());
-            ty = getBasicType(types::TypeFlag::NUMBER);
             break;
         }
         case TokenType::TRUE:
         case TokenType::FALSE:{
             variant = expr->token.type == TokenType::TRUE;
-            ty = getBasicType(types::TypeFlag::BOOL);
             break;
         }
         case TokenType::NIL:{
             variant = nullptr;
-            ty = getBasicType(types::TypeFlag::NIL);
             break;
         }
         case TokenType::IDENTIFIER:{
@@ -401,7 +333,7 @@ void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
         default: break; // Unreachable
     }
     auto dbg = AST::LiteralDebugInfo(expr->token);
-    returnedExpr = std::make_shared<typedAST::LiteralExpr>(variant, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::LiteralExpr>(variant, dbg);
 }
 
 static string classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass);
@@ -410,7 +342,7 @@ static int anonFuncCounter = 0;
 void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     auto freevars = freevarMap.at(expr);
 
-    auto ty = createNewFunc("anonfunc." + std::to_string(anonFuncCounter++), expr->arity, FuncType::TYPE_FUNC, freevars.size() > 0);
+    createNewFunc("anonfunc." + std::to_string(anonFuncCounter++), expr->arity, FuncType::TYPE_FUNC);
 
     // Upvalues are gathered from the enclosing function
     for(int i = 0; i < freevars.size(); i++){
@@ -422,8 +354,7 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
         if(freevar.isLocal) varToCapturePtr = current->enclosing->locals[freevar.index].ptr;
         else varToCapturePtr = current->enclosing->freevars[freevar.index].ptr;
 
-        // Kinda hacky, but it makes sure to propagate possible types of freevars when type inferring
-        freevarPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varToCapturePtr->possibleTypes);
+        freevarPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR);
         // Sets upvalue in CurrentChunkInfo, used when resolving freevars in readVar and storeToVar
         current->freevars.emplace_back(freevar.name, freevarPtr);
         // Sets up the (enclosing var -> upvalue) pairs
@@ -443,7 +374,9 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
 
     auto dbg = AST::FuncLiteralDebugInfo(expr->keyword, params);
 
-    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, fvars, ty, dbg);
+    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, fvars, dbg);
+    func->fnTy = std::make_shared<types::FunctionType>(params.size(), types::getBasicType(types::TypeFlag::ANY), freevars.size() > 0);
+    returnedExpr->exprType = func->fnTy;
 }
 // Checks if 'symbol' exists in a module which was imported with the alias 'moduleAlias',
 // If it exists return varPtr which holds the pointer to the global
@@ -485,14 +418,14 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
     varPtr var;
     if(decl->var.type == AST::ASTVarType::GLOBAL){
-        var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::VAR, -1);
-    }else var = declareLocalVar(decl->var, -1);
+        var = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::VAR);
+    }else var = declareLocalVar(decl->var);
 
     // Compile the right side of the declaration, if there is no right side, the variable is initialized as nil
 
     auto dbg = AST::LiteralDebugInfo(Token()); // Never used
 
-    typedAST::exprPtr initializer = std::make_shared<typedAST::LiteralExpr>(nullptr, getBasicType(types::TypeFlag::NIL), dbg);
+    typedAST::exprPtr initializer = std::make_shared<typedAST::LiteralExpr>(nullptr, dbg);
     if (decl->value != nullptr) {
         initializer = evalASTExpr(decl->value);
     }
@@ -508,9 +441,9 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     string fullGlobalSymbol = computeFullSymbol(decl->getName().getLexeme(), curUnitIndex);
-    auto ty = createNewFunc("func." + fullGlobalSymbol, decl->args.size(), FuncType::TYPE_FUNC, false);
+    createNewFunc("func." + fullGlobalSymbol, decl->args.size(), FuncType::TYPE_FUNC);
 
-    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION, ty);
+    varPtr name = declareGlobalVar(fullGlobalSymbol, AST::ASTDeclType::FUNCTION);
     // Defining the function here to allow for recursion
     defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
@@ -526,19 +459,17 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     for(auto arg : decl->args) params.push_back(arg.name);
     auto dbg = AST::FuncDeclDebugInfo(decl->keyword, decl->name, params);
 
-
+    func->fnTy = std::make_shared<types::FunctionType>(params.size(), types::getBasicType(types::TypeFlag::ANY), false);
     nodesToReturn = {name, std::make_shared<typedAST::FuncDecl>(func, dbg, name->uuid)};
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
 
-    auto classTyIdx = addType(classTy);
-
     string fullGlobalSymbol = computeFullSymbol(decl->getName().getLexeme(), curUnitIndex);
 
     classTy->name = fullGlobalSymbol;
 
-    currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy, classTyIdx);
+    currentClass = std::make_shared<ClassChunkInfo>(fullGlobalSymbol, classTy);
     globalClasses.insert_or_assign(fullGlobalSymbol, currentClass);
     classNodes.insert_or_assign(fullGlobalSymbol, computeClassHierarchy::ClassNode());
 
@@ -584,8 +515,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 
         // Creates new type for each method(if it's an override then just override the field in classTy)
         auto methodTy = std::make_shared<types::FunctionType>(method.method->args.size(),
-                                                              createEmptyTy(), false);
-        auto tyIdx = addType(methodTy);
+                                                              getBasicType(types::TypeFlag::ANY), false);
         methodTys.push_back(methodTy);
 
 
@@ -594,7 +524,7 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
             methodArrIndex = currentClass->classTy->methods[str].second;
         }
 
-        classTy->methods.insert_or_assign(str, std::make_pair(tyIdx, methodArrIndex));
+        classTy->methods.insert_or_assign(str, std::make_pair(methodTy, methodArrIndex));
     }
 
     // Process the methods after forward declaring the fields
@@ -779,8 +709,7 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
     }
     typedAST::exprPtr expr = nullptr;
     if(stmt->expr) expr = evalASTExpr(stmt->expr);
-    else expr = std::make_shared<typedAST::LiteralExpr>(nullptr, getBasicType(types::TypeFlag::NIL), AST::LiteralDebugInfo(Token()));
-    addTypeConstraint(current->func->fnTy->retType, std::make_shared<types::AddTyConstraint>(expr->exprType));
+    else expr = std::make_shared<typedAST::LiteralExpr>(nullptr, AST::LiteralDebugInfo(Token()));
 
     auto dbg = AST::ReturnStmtDebugInfo(stmt->keyword);
 
@@ -845,19 +774,14 @@ varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
     return nullptr;
 }
 
-varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx defaultTy){
+varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclType type){
     typedAST::VarType varty;
     switch(type){
         case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL; break;
         case AST::ASTDeclType::FUNCTION: varty = typedAST::VarType::GLOBAL_FUNC; break;
         case AST::ASTDeclType::CLASS: break; // Unreachable
     }
-    varPtr var;
-    if(defaultTy != -1) {
-        var = std::make_shared<typedAST::VarDecl>(varty, defaultTy);
-    }else{
-        var = std::make_shared<typedAST::VarDecl>(varty, createEmptyTy());
-    }
+    varPtr var = std::make_shared<typedAST::VarDecl>(varty);
     globals.insert_or_assign(name, Globalvar(var));
     return var;
 }
@@ -868,7 +792,7 @@ void ASTTransformer::defineGlobalVar(const string& name, AST::VarDeclDebugInfo d
 }
 
 // Makes sure the compiler is aware that a stack slot is occupied by this local variable
-varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var, const types::tyVarIdx defaultTy) {
+varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var) {
     for(int i = current->locals.size() - 1; i >= 0; i--){
         Local& local = current->locals[i];
         if (local.depth != -1 && local.depth < current->scopeDepth) {
@@ -879,21 +803,16 @@ varPtr ASTTransformer::declareLocalVar(const AST::ASTVar& var, const types::tyVa
             error(var.name, "Already a variable with this name in this scope.");
         }
     }
-    return addLocal(var, defaultTy);
+    return addLocal(var);
 }
 void ASTTransformer::defineLocalVar(AST::VarDeclDebugInfo dbgInfo){
     current->locals.back().depth = current->scopeDepth;
     current->locals.back().ptr->dbgInfo = dbgInfo;
 }
-varPtr ASTTransformer::addLocal(const AST::ASTVar& var, const types::tyVarIdx defaultTy){
+varPtr ASTTransformer::addLocal(const AST::ASTVar& var){
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
-    auto varTy = defaultTy == -1 ? createEmptyTy() : defaultTy;
-    if(!local.isUpval) {
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::LOCAL, varTy);
-    }else{
-        local.ptr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR, varTy);
-    }
+    local.ptr = std::make_shared<typedAST::VarDecl>(!local.isUpval ? typedAST::VarType::LOCAL : typedAST::VarType::FREEVAR);
     return local.ptr;
 }
 
@@ -958,12 +877,10 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
 
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
-        addTypeConstraint(valPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(valPtr, toStore, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         varPtr upvalPtr = current->freevars[argIndex].ptr;
-        addTypeConstraint(upvalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
     }
 
@@ -976,7 +893,6 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
     }
     varPtr globalPtr = resolveGlobal(name, true);
     if(globalPtr){
-        addTypeConstraint(globalPtr->possibleTypes, std::make_shared<types::AddTyConstraint>(toStore->exprType));
         return std::make_shared<typedAST::VarStore>(globalPtr, toStore, dbg);
     }
     auto it = nativesTypes.find(name.getLexeme());
@@ -1021,10 +937,9 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(Token endLoc){
         else {
             ret = std::make_shared<typedAST::ReturnStmt>(
                     std::make_shared<typedAST::LiteralExpr>(
-                            nullptr, getBasicType(types::TypeFlag::NIL),AST::LiteralDebugInfo(Token())),
+                            nullptr, AST::LiteralDebugInfo(Token())),
                     AST::ReturnStmtDebugInfo(Token()));
         }
-        addTypeConstraint(current->func->fnTy->retType, std::make_shared<types::AddTyConstraint>(ret->expr->exprType));
         current->func->block.stmts.push_back(ret);
         current->func->block.terminates = true;
     }
@@ -1050,25 +965,12 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(Token endLoc){
 }
 void ASTTransformer::declareFuncArgs(vector<AST::ASTVar>& args){
     for (AST::ASTVar& var : args) {
-        types::tyVarIdx ty;
-        // 'this' is of a known type so annotate it to enable optimizations,
-        // currentClass is not null because 'this' can only appear as an argument in methods
-        if(var.name.getLexeme() == "this"){
-            ty = addType(std::make_shared<types::InstanceType>(currentClass->classTy));
-        }else{
-            // Set the type of the other arguments
-            ty = getBasicType(types::TypeFlag::ANY);
-        }
-        current->func->args.push_back(declareLocalVar(var, ty));
+        current->func->args.push_back(declareLocalVar(var));
         defineLocalVar(AST::VarDeclDebugInfo(Token(), var.name));
     }
 }
-types::tyVarIdx ASTTransformer::createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure){
-    std::shared_ptr<types::FunctionType> fnTy = std::make_shared<types::FunctionType>(arity, createEmptyTy(), isClosure);
-    auto idx = addType(fnTy);
+void ASTTransformer::createNewFunc(const string name, const int arity, const FuncType fnKind){
     current = new CurrentChunkInfo(current, fnKind, name);
-    current->func->fnTy = fnTy;
-    return idx;
 }
 
 // Classes and methods
@@ -1096,16 +998,10 @@ typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const
 }
 std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
                                                                          const Token paren1, const Token paren2){
-    vector<types::tyVarIdx> argTys;
-    for(auto arg : args){
-        argTys.push_back(arg->exprType);
-    }
     if(callee->type == typedAST::NodeType::INST_GET){
         std::shared_ptr<typedAST::InstGet> casted = std::reinterpret_pointer_cast<typedAST::InstGet>(callee);
-        auto invokeTy = createEmptyTy();
-        addTypeConstraint(invokeTy, std::make_shared<types::CallResTyConstraint>(casted->exprType));
         auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.field, paren1, paren2);
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, invokeTy, dbg);
+        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, dbg);
     }
     return nullptr;
 }
@@ -1129,8 +1025,7 @@ std::shared_ptr<typedAST::InstanceofExpr> ASTTransformer::createInstanceofExpr(t
         error(dbg.op, "Expected class identifier on right side.");
     }
     std::shared_ptr<ClassChunkInfo> info = getClassInfoFromExpr(rhs);
-    typedAST::InstanceofExpr a (lhs, info->mangledName, getBasicType(types::TypeFlag::BOOL), dbg);
-    return std::make_shared<typedAST::InstanceofExpr>(lhs, info->mangledName, getBasicType(types::TypeFlag::BOOL), dbg);
+    return std::make_shared<typedAST::InstanceofExpr>(lhs, info->mangledName, dbg);
 }
 
 void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides){
@@ -1183,17 +1078,15 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     // If this class containes fieldName, transform fieldname -> this.fieldName
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res,  dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
-        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
     }
     return nullptr;
 }
@@ -1277,17 +1170,15 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     auto res = classContainsField(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(_this);
-        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(_this);
-        auto fieldty = getInstFieldTy(readThis->exprType, res);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, fieldty, dbg);
+        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
     // Never hit
@@ -1405,35 +1296,6 @@ vector<typedAST::nodePtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNo
     return tmp;
 }
 
-types::tyVarIdx ASTTransformer::addType(types::tyPtr ty){
-    typeEnv.emplace_back(ty, vector<std::shared_ptr<types::TypeConstraint>>());
-    return typeEnv.size() - 1;
-}
-types::tyVarIdx ASTTransformer::createEmptyTy(){
-    return addType(nullptr);
-}
-void ASTTransformer::addTypeConstraint(const types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint){
-    typeEnv[ty].second.push_back(constraint);
-}
-types::tyVarIdx ASTTransformer::getBasicType(const types::TypeFlag ty){
-    return static_cast<types::tyVarIdx>(ty);
-}
-void ASTTransformer::addBasicTypes(){
-    addType(types::getBasicType(types::TypeFlag::NIL));
-    addType(types::getBasicType(types::TypeFlag::BOOL));
-    addType(types::getBasicType(types::TypeFlag::NUMBER));
-    addType(types::getBasicType(types::TypeFlag::STRING));
-    addType(types::getBasicType(types::TypeFlag::MUTEX));
-    addType(types::getBasicType(types::TypeFlag::FILE));
-    addType(types::getBasicType(types::TypeFlag::ANY));
-}
-
-types::tyVarIdx ASTTransformer::getInstFieldTy(const types::tyVarIdx possibleInstTy, string field){
-    auto ty = createEmptyTy();
-    addTypeConstraint(ty, std::make_shared<types::InstGetFieldTyConstraint>(possibleInstTy, field));
-    return ty;
-}
-
 CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName) {
     enclosing = _enclosing;
     type = _type;
@@ -1442,15 +1304,16 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type,
     func->name = funcName;
 }
 
-void ASTTransformer::createNativeFn(string name, int arity, types::tyVarIdx retTy){
+void ASTTransformer::createNativeFn(string name, int arity, types::tyPtr retTy){
     std::shared_ptr<types::FunctionType> ty = std::make_shared<types::FunctionType>(arity, retTy, false);
-    nativesTypes.insert_or_assign(name, addType(ty));
+    nativesTypes.insert_or_assign(name, ty);
 }
 
 void ASTTransformer::declareNativeFunctions(){
+    using namespace types;
     createNativeFn("print", 1, getBasicType(types::TypeFlag::NIL));
     createNativeFn("ms_since_epoch", 0, getBasicType(types::TypeFlag::NUMBER));
-    createNativeFn("arr_push", 2, addType(std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY))));
+    createNativeFn("arr_push", 2, std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY)));
     createNativeFn("input", 0, getBasicType(types::TypeFlag::STRING));
     createNativeFn("as_number", 1, getBasicType(types::TypeFlag::NUMBER));
     createNativeFn("cpu_clock", 0, getBasicType(types::TypeFlag::NUMBER));

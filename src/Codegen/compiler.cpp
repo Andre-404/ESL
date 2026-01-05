@@ -46,17 +46,15 @@ static inline std::tuple<uint64_t, uint64_t, bool> getNullTypeMasks(){
 
 using namespace compileCore;
 
-Compiler::Compiler(vector<File*>& _srcFiles, vector<types::tyPtr>& _tyEnv, fastMap<string, std::pair<int, int>>& _classHierarchy,
-                   fastMap<string, types::tyVarIdx>& natives, const llvm::DataLayout& DL, errorHandler::ErrorHandler& errHandler)
+Compiler::Compiler(vector<File*>& _srcFiles, fastMap<string, std::pair<int, int>>& _classHierarchy,
+                   fastMap<string, types::tyPtr>& natives, const llvm::DataLayout& DL, errorHandler::ErrorHandler& errHandler)
     : ctx(std::make_unique<llvm::LLVMContext>()), builder(llvm::IRBuilder<>(*ctx)), errHandler(errHandler) {
     sourceFiles = _srcFiles;
-    typeEnv = _tyEnv;
     classHierarchy = _classHierarchy;
 
     setupModule(DL);
     debugEmitter = DebugEmitter(*curModule, *sourceFiles.back(), true);
     llvmHelpers::addHelperFunctionsToModule(curModule, ctx, builder, namedTypes);
-    declareFunctions();
     generateNativeFuncs(natives);
 }
 
@@ -527,8 +525,8 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
         llvm::FunctionCallee indirectFn = setupUnoptCall(closureVal, args.size(), expr->dbgInfo.paren1);
         return builder.CreateCall(indirectFn, args);
     }
-
-    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
+    // Safe because of opt
+    auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(expr->callee->exprType);
     // TODO: this should be done in a separate pass
     if(funcType->argCount != expr->args.size()){
         errHandler.reportError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
@@ -544,8 +542,8 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     vector<llvm::Value*> args = {};
     for(auto arg : expr->args) args.push_back(arg->codegen(this));
 
-    if(typeEnv[expr->inst->exprType]->type == types::TypeFlag::INSTANCE) {
-        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->inst->exprType])->klass->name];
+    if(exprIsComplexType(expr->inst, types::TypeFlag::INSTANCE)) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(expr->inst->exprType)->klass->name];
         // args get modified to include closure and instance(if needed)
         llvm::FunctionCallee func = optimizeInvoke(inst, expr->field, klass, args, expr->dbgInfo.method);
         return builder.CreateCall(func, args);
@@ -574,8 +572,8 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
     inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst, builder.getInt64(+object::ObjType::INSTANCE)});
     // If there is a constructor declared in this class, call it
     if(klass.ty->methods.contains(name)){
-        std::pair<types::tyVarIdx, uInt64> fnty = klass.ty->methods[name];
-        auto fn  = functions[typeEnv[fnty.first]];
+        std::pair<types::tyPtr, uInt64> fnty = klass.ty->methods[name];
+        auto fn  = functions[fnty.first];
         auto ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(namedTypes["ObjClosureAligned"], klass.methodArrPtr,
                                                                  builder.getInt32(fnty.second));
         // Need to tag the method
@@ -606,7 +604,8 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
             // -1 because arg checking doesn't take closure ptr into account
             callee = setupUnoptCall(closureVal, args.size(), expr->dbgInfo.paren1);
         }else{
-            auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[expr->callee->exprType]);
+            // Safe cast because of opt
+            auto funcType = std::reinterpret_pointer_cast<types::FunctionType>(expr->callee->exprType);
             // TODO: this should be done in a separate pass
             if(funcType->argCount != expr->args.size()){
                 errHandler.reportError(fmt::format("Function expects {} parameters, got {} arguments.", funcType->argCount, expr->args.size()),
@@ -624,8 +623,8 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
         for(auto arg : expr->args) args.push_back(arg->codegen(this));
         debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
 
-        if(typeEnv[expr->inst->exprType]->type == types::TypeFlag::INSTANCE) {
-            auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->inst->exprType])->klass->name];
+        if(exprIsComplexType(expr->inst, types::TypeFlag::INSTANCE)) {
+            auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(expr->inst->exprType)->klass->name];
             // args get modified to include closure and instance(if needed)
             llvm::FunctionCallee func = optimizeInvoke(encodedInst, expr->field, klass, args, expr->dbgInfo.method);
             setupThreadCreation(func, args);
@@ -678,7 +677,6 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
     }
     return nullptr; // Stmts return nullptr on codegen
 }
-
 
 llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
@@ -915,8 +913,8 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
             methods[i++] = parentMethod;
         }
     }
-    for(auto [mName, method] : stmt->methods){
-        llvm::Function* methodFn = functions[method.first.code->fnTy];
+    for(auto& [mName, method] : stmt->methods){
+        llvm::Function* methodFn = declareFunction(method.first.code->fnTy);
         methodFn->setName(stmt->fullName + mName);
         // Creates an ObjClosure associated with this method
         methods[method.second] = createMethodObj(method.first, methodFn);
@@ -939,7 +937,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     classes[stmt->fullName] = Class(klass, createInstanceTemplate(klass, stmt->fields.size()),
                                     stmt->classType, methods, methodArrPtr);
 
-    for(auto [mName, method] : stmt->methods){
+    for(auto& [mName, method] : stmt->methods){
         codegenMethod(stmt->fullName, method.first, subClassIdxStart, subClassIdxEnd);
     }
     return nullptr; // Stmts return nullptr on codegen
@@ -948,8 +946,8 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
 llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     auto inst = expr->instance->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
-    if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
-        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+    if(exprIsComplexType(expr->instance, types::TypeFlag::INSTANCE)) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(expr->instance->exprType)->klass->name];
         return optimizeInstGet(inst, expr->field, klass);
     }
     // Creates the switch which returns either method or field
@@ -959,8 +957,8 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     auto inst = expr->instance->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
     llvm::Value* fieldPtr = nullptr;
-    if(typeEnv[expr->instance->exprType]->type == types::TypeFlag::INSTANCE) {
-        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+    if(exprIsComplexType(expr->instance, types::TypeFlag::INSTANCE)) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(expr->instance->exprType)->klass->name];
         fieldPtr = getOptInstFieldPtr(inst, klass, expr->field);
     }else{
         fieldPtr = getUnoptInstFieldPtr(inst, expr->field, expr->dbgInfo.field);
@@ -1043,21 +1041,18 @@ void Compiler::optimizeModule(llvm::Module& module){
     curModule->print(llvm::errs(), nullptr);
 }
 
-void Compiler::declareFunctions(){
-    for(types::tyPtr type: typeEnv){
-        if(type->type != types::TypeFlag::FUNCTION || functions.contains(type)) continue;
-        std::shared_ptr<types::FunctionType> fnType = std::reinterpret_pointer_cast<types::FunctionType>(type);
-        // First argument is always the thread data ptr
-        vector<llvm::Type*> params {};
-        // Second argument is always the closure structure
-        for(int i = 0; i < fnType->argCount + 1; i++) params.push_back(getESLValType());
-        llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
-        auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "thunk", curModule.get());
-        setFuncAttrs(ESLFuncAttrs, tmp);
-        tmp->setGC("statepoint-example");
-        // Creates a connection between function types and functions
-        functions.insert_or_assign(fnType, tmp);
-    }
+llvm::Function* Compiler::declareFunction(const std::shared_ptr<types::FunctionType> fnType){
+    // First argument is always the thread data ptr
+    vector<llvm::Type*> params {};
+    // Second argument is always the closure structure
+    for(int i = 0; i < fnType->argCount + 1; i++) params.push_back(getESLValType());
+    llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
+    auto tmp = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "thunk", curModule.get());
+    setFuncAttrs(ESLFuncAttrs, tmp);
+    tmp->setGC("statepoint-example");
+    // Creates a connection between function types and functions
+    functions.insert_or_assign(fnType, tmp);
+    return tmp;
 }
 
 void Compiler::createMainEntrypoint(string entrypointName){
@@ -1093,13 +1088,13 @@ void Compiler::createMainEntrypoint(string entrypointName){
 
 // Compile time type checking
 bool Compiler::exprIsType(const typedExprPtr expr, const types::tyPtr ty){
-    return typeEnv[expr->exprType] == ty;
+    return expr->exprType == ty;
 }
 bool Compiler::exprIsType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty) {
     return exprIsType(expr1, ty) && exprIsType(expr2, ty);
 }
 bool Compiler::exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag){
-    return typeEnv[expr->exprType]->type == flag;
+    return expr->exprType->type == flag;
 }
 
 
@@ -1399,10 +1394,10 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     PN->addIncoming(strCmpRes, cmpStrBB);
     return PN;
 }
-llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyVarIdx type, typedAST::UnaryOp op, Token dbg){
+llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyPtr type, typedAST::UnaryOp op, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
-    if(typeEnv[type] != types::getBasicType(types::TypeFlag::NUMBER)){
+    if(type != types::getBasicType(types::TypeFlag::NUMBER)){
         string err = fmt::format("Operator '{}' expects a number, got '{}'.", dbg.getLexeme(), "{}");
         createTypeCheckUnary(err, rhs, getNumberTypeMasks());
     }
@@ -1456,8 +1451,8 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
 
     llvm::Value* fieldPtr = nullptr;
     // If type of instance if known optimize getting pointer to field
-    if(exprIsType(expr->instance, types::getBasicType(types::TypeFlag::INSTANCE))) {
-        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(typeEnv[expr->instance->exprType])->klass->name];
+    if(exprIsComplexType(expr->instance, types::TypeFlag::INSTANCE)) {
+        auto &klass = classes[std::reinterpret_pointer_cast<types::InstanceType>(expr->instance->exprType)->klass->name];
         fieldPtr = getOptInstFieldPtr(inst, klass, expr->field);
     }else{
         fieldPtr = getUnoptInstFieldPtr(inst, expr->field, expr->dbgInfo.field);
@@ -1479,7 +1474,7 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
 
 // Function codegen helpers
 llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc){
-    llvm::Function* fn = functions[fnTy];
+    auto fn = declareFunction(fnTy);
     fn->setName(name);
     debugEmitter.addNewFunc(builder, fn, *fnTy, loc);
 
@@ -1490,7 +1485,7 @@ llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<
 llvm::FunctionType* Compiler::getFuncType(int argCount){
     vector<llvm::Type*> params = {builder.getPtrTy()};
     // First argument is always the closure structure;
-    for(int i = 0; i < argCount+1; i++) params.push_back(getESLValType());
+    for(int i = 0; i < argCount; i++) params.push_back(getESLValType());
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
     return fty;
 }
@@ -1525,11 +1520,10 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
 llvm::FunctionCallee Compiler::setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg){
     createTypeCheckUnary("Expected a function for a callee, got '{}'.", closureVal, getObjectTypeMasks(object::ObjType::CLOSURE));
 
-    // argc-2
-    string err = fmt::format("Function being called with {} arguments when it accepts {}.", "{}", argc-2);
-    createArgCountCheck(err, closureVal, argc-2);
+    string err = fmt::format("Function {} being called with {} arguments when it accepts {}.", "{}", argc-1, "{}");
+    createArgCountCheck(err, closureVal, argc-1);
     auto closurePtr = builder.CreateCall(safeGetFunc("decodeClosure"), closureVal);
-    return getBitcastFunc(closurePtr, argc-2);
+    return getBitcastFunc(closurePtr, argc-1);
 }
 
 void Compiler::createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg){
@@ -1963,7 +1957,7 @@ llvm::FunctionCallee Compiler::optimizeInvoke(llvm::Value* inst, string field, C
         closure = llvm::ConstantExpr::getBitCast(closure, builder.getPtrTy());
         // Closures in class are stored as raw pointers, tag them and then pass to method
         closure = constObjToVal(closure, +object::ObjType::CLOSURE);
-        llvm::Function* fn = functions[typeEnv[klass.ty->methods[field].first]];
+        llvm::Function* fn = functions[klass.ty->methods[field].first];
         // Insert at begin + 1 to skip the thread data ptr
         callArgs.insert(callArgs.begin(), {closure, inst});
         return fn;
@@ -2224,10 +2218,10 @@ llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr
     return toStore;
 }
 
-void Compiler::generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives){
-    auto addNativeFn = [&](string name, int argc, types::tyPtr type){
+void Compiler::generateNativeFuncs(fastMap<string, types::tyPtr>& natives){
+    auto addNativeFn = [&](string name, int argc, std::shared_ptr<types::FunctionType> type){
         // Every function is declared in generateNativeFuncs, natives need to fix up the linkage
-        llvm::Function* func = functions[type];
+        llvm::Function* func = declareFunction(type);
         func->setLinkage(llvm::Function::ExternalLinkage);
         func->setName(name);
 
@@ -2244,9 +2238,12 @@ void Compiler::generateNativeFuncs(fastMap<string, types::tyVarIdx>& natives){
         llvm::Constant* fnLoc = storeConstObj(fnC);
         return constObjToVal(fnLoc, +object::ObjType::CLOSURE);
     };
-    for(std::pair<string, types::tyVarIdx> p : natives){
-        auto fnTy = std::reinterpret_pointer_cast<types::FunctionType>(typeEnv[p.second]);
-        nativeFunctions[p.first] = addNativeFn(p.first, fnTy->argCount, fnTy);
+    for(auto& [name, type] : natives){
+        if (type->type == types::TypeFlag::FUNCTION) {
+            auto fnTy = std::reinterpret_pointer_cast<types::FunctionType>(type);
+            nativeFunctions[name] = addNativeFn(name, fnTy->argCount, fnTy);
+        }
+
     }
 }
 // Assumes first weight is for default case

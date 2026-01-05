@@ -75,7 +75,7 @@ namespace typedASTParser{
 
         std::shared_ptr<ClassChunkInfo> parent;
 
-        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy, types::tyVarIdx _classTypeIdx)
+        ClassChunkInfo(string _name, std::shared_ptr<types::ClassType> _classTy)
             : mangledName(_name){
             parent = nullptr;
             classTy = _classTy;
@@ -111,10 +111,8 @@ namespace typedASTParser{
         std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
         run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
 
-        vector<types::tyPtr> getTypeEnv();
-
         ankerl::unordered_dense::map<string, std::pair<int, int>> getClassHierarchy();
-        ankerl::unordered_dense::map<string, types::tyVarIdx>& getNativeFuncTypes();
+        ankerl::unordered_dense::map<string, types::tyPtr>& getNativeFuncTypes();
 
 #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
@@ -162,9 +160,7 @@ namespace typedASTParser{
         ankerl::unordered_dense::map<string, Globalvar> globals;
 
         unordered_map<string, std::shared_ptr<ClassChunkInfo>> globalClasses;
-        ankerl::unordered_dense::map<string, types::tyVarIdx> nativesTypes;
-        // Empty constraint set means type is collapsed
-        vector<std::pair<types::tyPtr, vector<std::shared_ptr<types::TypeConstraint>>>> typeEnv;
+        ankerl::unordered_dense::map<string, types::tyPtr> nativesTypes;
         ankerl::unordered_dense::map<string, computeClassHierarchy::ClassNode> classNodes;
 
         vector<typedAST::nodePtr> nodesToReturn;
@@ -178,13 +174,13 @@ namespace typedASTParser{
         varPtr checkSymbol(const Token symbol);
         // Given a token and whether the operation is assigning or reading a variable, determines the correct symbol to use
         varPtr resolveGlobal(const Token symbol, const bool canAssign);
-        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type, const types::tyVarIdx defaultTy);
+        varPtr declareGlobalVar(const string& name, const AST::ASTDeclType type);
         void defineGlobalVar(const string& name, AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr declareLocalVar(const AST::ASTVar& name, const types::tyVarIdx defaultTy);
+        varPtr declareLocalVar(const AST::ASTVar& name);
         void defineLocalVar(AST::VarDeclDebugInfo dbgInfo);
 
-        varPtr addLocal(const AST::ASTVar& name, const types::tyVarIdx defaultTy);
+        varPtr addLocal(const AST::ASTVar& name);
         int resolveLocal(const Token name);
 
         int resolveUpvalue(const Token name);
@@ -197,7 +193,7 @@ namespace typedASTParser{
         // Functions
         std::shared_ptr<typedAST::Function> endFuncDecl(Token endLoc);
         void declareFuncArgs(vector<AST::ASTVar>& args);
-        types::tyVarIdx createNewFunc(const string name, const int arity, const FuncType fnKind, const bool isClosure);
+        void createNewFunc(const string name, const int arity, const FuncType fnKind);
 
         // Classes and methods
         typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
@@ -219,14 +215,6 @@ namespace typedASTParser{
         std::shared_ptr<typedAST::InstGet> tryResolveThis(AST::FieldAccessExpr* expr);
         std::shared_ptr<typedAST::InstSet> tryResolveThis(AST::SetExpr* expr, typedAST::SetType operationTy);
 
-        // Type stuff
-        types::tyVarIdx addType(types::tyPtr ty);
-        types::tyVarIdx createEmptyTy();
-        void addTypeConstraint(const types::tyVarIdx ty, std::shared_ptr<types::TypeConstraint> constraint);
-        types::tyVarIdx getBasicType(const types::TypeFlag ty);
-        void addBasicTypes();
-        types::tyVarIdx getInstFieldTy(const types::tyVarIdx possibleInstTy, string field);
-
         // Misc
         Token syntheticToken(const string& str);
         void error(const Token token, const string& msg) noexcept(false);
@@ -238,7 +226,7 @@ namespace typedASTParser{
         typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
         vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
-        void createNativeFn(string name, int arity, types::tyVarIdx retTy);
+        void createNativeFn(string name, int arity, types::tyPtr retTy);
         void declareNativeFunctions();
         #pragma endregion
     };
