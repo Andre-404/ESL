@@ -58,7 +58,7 @@ Compiler::Compiler(vector<File*>& _srcFiles, fastMap<string, std::pair<int, int>
     generateNativeFuncs(natives);
 }
 
-llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function> _code, string mainFnName){
+llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _code, string mainFnName){
     createMainEntrypoint(mainFnName);
     try {
         for (auto stmt: _code->block.stmts) {
@@ -90,10 +90,10 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<typedAST::Function
 }
 
 
-llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
+llvm::Value* Compiler::visitVarDecl(CFG::VarDecl* decl) {
     debugEmitter.emitNewLocation(builder, decl->dbgInfo.varName);
     switch(decl->varType){
-        case typedAST::VarType::LOCAL:{
+        case CFG::VarType::LOCAL:{
             // Alloca at the beginning of the function to make use of mem2reg pass
             llvm::IRBuilder<> tempBuilder(*ctx);
             tempBuilder.SetInsertPointPastAllocas(inProgressFuncs.top().fn);
@@ -102,7 +102,7 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             debugEmitter.addLocalVarDecl(builder, tmp, decl->dbgInfo.varName, false);
             break;
         }
-        case typedAST::VarType::FREEVAR:{
+        case CFG::VarType::FREEVAR:{
             llvm::IRBuilder<> tempBuilder(*ctx);
             tempBuilder.SetInsertPointPastAllocas(inProgressFuncs.top().fn);
             // Creates a heap allocated free variable
@@ -118,15 +118,15 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
             debugEmitter.addLocalVarDecl(builder, var, decl->dbgInfo.varName, false);
             break;
         }
-        case typedAST::VarType::GLOBAL_FUNC:
-        case typedAST::VarType::GLOBAL:{
+        case CFG::VarType::GLOBAL_FUNC:
+        case CFG::VarType::GLOBAL:{
             string varName = decl->dbgInfo.varName.getLexeme() + std::to_string(decl->uuid);
             llvm::GlobalVariable* gvar = new llvm::GlobalVariable(*curModule, getESLValType(), false,
                                                                   llvm::GlobalVariable::PrivateLinkage,
                                                                   ConstCastToESLVal(builder.getInt64(mask_signature_null)),varName);
             gvar->setAlignment(llvm::Align::Of<Value>());
             // Globals aren't on the stack, so they need to be marked for GC collection separately
-            if(decl->varType == typedAST::VarType::GLOBAL) {
+            if(decl->varType == CFG::VarType::GLOBAL) {
                 builder.CreateCall(safeGetFunc("addGCRoot"), gvar);
             }
             variables.insert_or_assign(decl->uuid, gvar);
@@ -139,28 +139,28 @@ llvm::Value* Compiler::visitVarDecl(typedAST::VarDecl* decl) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitVarRead(typedAST::VarRead* expr) {
+llvm::Value* Compiler::visitVarRead(CFG::VarRead* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     return codegenVarRead(expr->varPtr);
 }
-llvm::Value* Compiler::visitVarStore(typedAST::VarStore* expr) {
+llvm::Value* Compiler::visitVarStore(CFG::VarStore* expr) {
     llvm::Value* valToStore = expr->toStore->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     return codegenVarStore(expr->varPtr, valToStore);
 }
-llvm::Value* Compiler::visitVarReadNative(typedAST::VarReadNative* expr) {
+llvm::Value* Compiler::visitVarReadNative(CFG::VarReadNative* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.varName);
     // Since native variables are known at compile time reading them is noop
     return nativeFunctions[expr->nativeName];
 }
 
-static bool isFloatingPointOp(typedAST::ArithmeticOp op){
-    return op == typedAST::ArithmeticOp::SUB || op == typedAST::ArithmeticOp::MUL ||
-           op == typedAST::ArithmeticOp::DIV || op == typedAST::ArithmeticOp::MOD;
+static bool isFloatingPointOp(CFG::ArithmeticOp op){
+    return op == CFG::ArithmeticOp::SUB || op == CFG::ArithmeticOp::MUL ||
+           op == CFG::ArithmeticOp::DIV || op == CFG::ArithmeticOp::MOD;
 }
 
-static llvm::Value* compileArithmeticOp(typedAST::ArithmeticOp op, llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs){
-    using typedAST::ArithmeticOp;
+static llvm::Value* compileArithmeticOp(CFG::ArithmeticOp op, llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs){
+    using CFG::ArithmeticOp;
     llvm::Value* ilhs = nullptr;
     llvm::Value* irhs = nullptr;
     if(!isFloatingPointOp(op)){
@@ -194,8 +194,8 @@ static llvm::Value* compileArithmeticOp(typedAST::ArithmeticOp op, llvm::IRBuild
     return val;
 }
 
-llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
-    using typedAST::ArithmeticOp;
+llvm::Value* Compiler::visitArithmeticExpr(CFG::ArithmeticExpr* expr) {
+    using CFG::ArithmeticOp;
     llvm::Value* lhs = expr->lhs->codegen(this);
     llvm::Value* rhs = expr->rhs->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
@@ -224,8 +224,8 @@ llvm::Value* Compiler::visitArithmeticExpr(typedAST::ArithmeticExpr* expr) {
     llvm::Value* val = compileArithmeticOp(expr->opType, builder, lhs, rhs);
     return CastToESLVal(val);
 }
-llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
-    using typedAST::ComparisonOp;
+llvm::Value* Compiler::visitComparisonExpr(CFG::ComparisonExpr* expr) {
+    using CFG::ComparisonOp;
     // Special cases of comparison operators that don't use numbers
     if(expr->opType == ComparisonOp::OR || expr->opType == ComparisonOp::AND){
         return codegenLogicOps(expr->lhs, expr->rhs, expr->opType);
@@ -256,7 +256,7 @@ llvm::Value* Compiler::visitComparisonExpr(typedAST::ComparisonExpr* expr) {
     }
     return builder.CreateCall(safeGetFunc("encodeBool"), val);
 }
-llvm::Value* Compiler::visitInstanceofExpr(typedAST::InstanceofExpr* expr){
+llvm::Value* Compiler::visitInstanceofExpr(CFG::InstanceofExpr* expr){
     llvm::Value* inst = expr->lhs->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
 
@@ -264,8 +264,8 @@ llvm::Value* Compiler::visitInstanceofExpr(typedAST::InstanceofExpr* expr){
     return builder.CreateCall(safeGetFunc("isInstAndClass"),
                               {inst, builder.getInt32(subclassesInterval.first), builder.getInt32(subclassesInterval.second)});
 }
-llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
-    using typedAST::UnaryOp;
+llvm::Value* Compiler::visitUnaryExpr(CFG::UnaryExpr* expr) {
+    using CFG::UnaryOp;
     if(expr->opType == UnaryOp::NEG){
         llvm::Value* rhs = expr->rhs->codegen(this);
         debugEmitter.emitNewLocation(builder, expr->dbgInfo.op);
@@ -284,7 +284,7 @@ llvm::Value* Compiler::visitUnaryExpr(typedAST::UnaryExpr* expr) {
     }
 }
 
-llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
+llvm::Value* Compiler::visitLiteralExpr(CFG::LiteralExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.literal);
     switch(expr->val.index()){
         case 0: {
@@ -304,7 +304,7 @@ llvm::Value* Compiler::visitLiteralExpr(typedAST::LiteralExpr* expr) {
     __builtin_unreachable();
 }
 
-llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
+llvm::Value* Compiler::visitHashmapExpr(CFG::HashmapExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.brace1);
     vector<llvm::Value*> args = {builder.getInt32(expr->fields.size())};
     // For each field, compile it and get the constant of the field name
@@ -319,7 +319,7 @@ llvm::Value* Compiler::visitHashmapExpr(typedAST::HashmapExpr* expr) {
 
     return builder.CreateCall(safeGetFunc("createHashMap"), args);
 }
-llvm::Value* Compiler::visitArrayExpr(typedAST::ArrayExpr* expr) {
+llvm::Value* Compiler::visitArrayExpr(CFG::ArrayExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.bracket1);
     vector<llvm::Value*> vals;
     for(auto mem : expr->fields){
@@ -358,7 +358,7 @@ static llvm::Value* collectionTypeCheck(llvm::IRBuilder<>& builder, llvm::Value*
     return num;
 }
 
-llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
+llvm::Value* Compiler::visitCollectionGet(CFG::CollectionGet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.accessor);
@@ -412,7 +412,7 @@ llvm::Value* Compiler::visitCollectionGet(typedAST::CollectionGet* expr) {
 
 }
 
-llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
+llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     llvm::Value* collection = expr->collection->codegen(this);
     llvm::Value* field = expr->field->codegen(this);
     llvm::Value* val = expr->toStore->codegen(this);
@@ -470,7 +470,7 @@ llvm::Value* Compiler::visitCollectionSet(typedAST::CollectionSet* expr) {
     return phi;
 }
 
-llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
+llvm::Value* Compiler::visitConditionalExpr(CFG::ConditionalExpr* expr) {
     auto condtmp = expr->cond->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.questionmark);
     llvm::Value* cond = nullptr;
@@ -512,7 +512,7 @@ llvm::Value* Compiler::visitConditionalExpr(typedAST::ConditionalExpr* expr) {
     return PN;
 }
 
-llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
+llvm::Value* Compiler::visitCallExpr(CFG::CallExpr* expr) {
     bool opt = exprIsComplexType(expr->callee, types::TypeFlag::FUNCTION);
     llvm::Value* closureVal = expr->callee->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.paren1);
@@ -535,7 +535,7 @@ llvm::Value* Compiler::visitCallExpr(typedAST::CallExpr* expr) {
     }
     return builder.CreateCall(functions[funcType], args, "call.res");
 }
-llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
+llvm::Value* Compiler::visitInvokeExpr(CFG::InvokeExpr* expr) {
     auto inst = expr->inst->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.method);
 
@@ -553,7 +553,7 @@ llvm::Value* Compiler::visitInvokeExpr(typedAST::InvokeExpr* expr) {
     return unoptimizedInvoke(inst, expr->field, args, expr->dbgInfo.method);
 }
 
-llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
+llvm::Value* Compiler::visitNewExpr(CFG::NewExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.keyword);
     Class& klass = classes[expr->className];
     string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
@@ -588,10 +588,10 @@ llvm::Value* Compiler::visitNewExpr(typedAST::NewExpr* expr) {
 }
 
 //TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
-llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
+llvm::Value* Compiler::visitSpawnStmt(CFG::SpawnStmt* stmt){
     // func being nonnull means we got optimized function
-    if(stmt->call->type == typedAST::NodeType::CALL){
-        std::shared_ptr<typedAST::CallExpr> expr = std::reinterpret_pointer_cast<typedAST::CallExpr>(stmt->call);
+    if(stmt->call->type == CFG::NodeType::CALL){
+        std::shared_ptr<CFG::CallExpr> expr = std::reinterpret_pointer_cast<CFG::CallExpr>(stmt->call);
         bool opt = exprIsComplexType(expr->callee, types::TypeFlag::FUNCTION);
         llvm::FunctionCallee callee;
         llvm::Value* closureVal = expr->callee->codegen(this);
@@ -616,7 +616,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
         }
         setupThreadCreation(callee, args);
     }else{ // Must be NodeType::INVOKE
-        std::shared_ptr<typedAST::InvokeExpr> expr = std::reinterpret_pointer_cast<typedAST::InvokeExpr>(stmt->call);
+        std::shared_ptr<CFG::InvokeExpr> expr = std::reinterpret_pointer_cast<CFG::InvokeExpr>(stmt->call);
         auto encodedInst = expr->inst->codegen(this);
 
         vector<llvm::Value*> args;
@@ -678,7 +678,7 @@ llvm::Value* Compiler::visitSpawnStmt(typedAST::SpawnStmt* stmt){
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr) {
+llvm::Value* Compiler::visitCreateClosureExpr(CFG::CreateClosureExpr* expr) {
     // Creating a new compilerInfo sets us up with a clean slate for writing IR, the enclosing functions info
     // is stored in parserCurrent->enclosing
     inProgressFuncs.emplace(startFuncDef(expr->fn->name, expr->fn->fnTy, expr->dbgInfo.keyword));
@@ -726,7 +726,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(typedAST::CreateClosureExpr* expr)
     return builder.CreateCall(safeGetFunc("createClosure"), closureConstructorArgs);
 }
 
-llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
+llvm::Value* Compiler::visitFuncDecl(CFG::FuncDecl* stmt) {
     inProgressFuncs.emplace(startFuncDef(stmt->fn->name, stmt->fn->fnTy, stmt->dbgInfo.name));
 
     declareFuncArgs(stmt->fn->args);
@@ -761,23 +761,28 @@ llvm::Value* Compiler::visitFuncDecl(typedAST::FuncDecl* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitReturnStmt(typedAST::ReturnStmt* stmt) {
+llvm::Value* Compiler::visitExprStmt(CFG::ExprStmt* stmt) {
+    stmt->expr->codegen(this);
+    return nullptr;
+}
+
+llvm::Value* Compiler::visitReturnStmt(CFG::ReturnStmt* stmt) {
     debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
     builder.CreateRet(stmt->expr->codegen(this));
     return nullptr; // Stmts return nullptr on codegen
 }
-llvm::Value* Compiler::visitUncondJump(typedAST::UncondJump* stmt) {
+llvm::Value* Compiler::visitUncondJump(CFG::UncondJump* stmt) {
     debugEmitter.emitNewLocation(builder, stmt->dbgInfo.keyword);
     switch(stmt->jmpType){
-        case typedAST::JumpType::BREAK: builder.CreateBr(breakJumpDest.top()); break;
-        case typedAST::JumpType::CONTINUE: builder.CreateBr(continueJumpDest.top()); break;
-        case typedAST::JumpType::ADVANCE: builder.CreateBr(advanceJumpDest.top()); break;
+        case CFG::JumpType::BREAK: builder.CreateBr(breakJumpDest.top()); break;
+        case CFG::JumpType::CONTINUE: builder.CreateBr(continueJumpDest.top()); break;
+        case CFG::JumpType::ADVANCE: builder.CreateBr(advanceJumpDest.top()); break;
         default: __builtin_unreachable();
     }
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitIfStmt(typedAST::IfStmt* stmt) {
+llvm::Value* Compiler::visitIfStmt(CFG::IfStmt* stmt) {
     auto condtmp = stmt->cond->codegen(this);
     llvm::Value* cond;
     if(exprIsType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL))){
@@ -806,7 +811,7 @@ llvm::Value* Compiler::visitIfStmt(typedAST::IfStmt* stmt) {
     builder.SetInsertPoint(mergeBB);
     return nullptr; // Stmts return nullptr on codegen
 }
-llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
+llvm::Value* Compiler::visitWhileStmt(CFG::WhileStmt* stmt) {
     bool canOptimize = stmt->cond ? exprIsType(stmt->cond, types::getBasicType(types::TypeFlag::BOOL)) : true;
     auto decodeFn = canOptimize ? safeGetFunc("decodeBool") : safeGetFunc("isTruthy");
 
@@ -846,7 +851,7 @@ llvm::Value* Compiler::visitWhileStmt(typedAST::WhileStmt* stmt) {
 
     return nullptr; // Stmts return nullptr on codegen
 }
-llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
+llvm::Value* Compiler::visitSwitchStmt(CFG::SwitchStmt* stmt) {
     auto compVal = stmt->cond->codegen(this);
     // Switch directly compares Int64 contents to determine equality, this should work for most ints represented as doubles(i hope)
     compVal = ESLValTo(compVal, builder.getInt64Ty());
@@ -894,7 +899,7 @@ llvm::Value* Compiler::visitSwitchStmt(typedAST::SwitchStmt* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
+llvm::Value* Compiler::visitClassDecl(CFG::ClassDecl* stmt) {
     auto name = createConstStr(stmt->fullName);
     auto fieldsLen = builder.getInt16(stmt->classType->fields.size());
     auto methodsLen = builder.getInt16(stmt->classType->methods.size());
@@ -943,7 +948,7 @@ llvm::Value* Compiler::visitClassDecl(typedAST::ClassDecl* stmt) {
     return nullptr; // Stmts return nullptr on codegen
 }
 
-llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
+llvm::Value* Compiler::visitInstGet(CFG::InstGet* expr) {
     auto inst = expr->instance->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
     if(exprIsComplexType(expr->instance, types::TypeFlag::INSTANCE)) {
@@ -953,7 +958,7 @@ llvm::Value* Compiler::visitInstGet(typedAST::InstGet* expr) {
     // Creates the switch which returns either method or field
     return instGetUnoptimized(inst, expr->field, expr->dbgInfo.accessor);
 }
-llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
+llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
     auto inst = expr->instance->codegen(this);
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.field);
     llvm::Value* fieldPtr = nullptr;
@@ -965,10 +970,10 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     }
     auto val = expr->toStore->codegen(this);
 
-    if(expr->operationType == typedAST::SetType::SET){
+    if(expr->operationType == CFG::SetType::SET){
         builder.CreateStore(val, fieldPtr);
         return val;
-    }else if(expr->operationType == typedAST::SetType::ADD_SET){
+    }else if(expr->operationType == CFG::SetType::ADD_SET){
         // Special case because of strings
         auto storedVal = builder.CreateLoad(getESLValType(), fieldPtr);
         val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
@@ -990,14 +995,14 @@ llvm::Value* Compiler::visitInstSet(typedAST::InstSet* expr) {
     return val;
 }
 
-llvm::Value* Compiler::visitScopeBlock(typedAST::ScopeEdge* stmt) {
+llvm::Value* Compiler::visitScopeBlock(CFG::ScopeEdge* stmt) {
     // Erases local variables which will no longer be used, done to keep memory usage at least somewhat reasonable
     for(auto uuid : stmt->toPop){
         variables.erase(uuid);
     }
     // TODO: very hacky, but macroExpander creates synthetic scopes that shouldn't be a part of debug info
     if(stmt->location.isSynthetic) return nullptr;
-    if(stmt->edgeType == typedAST::ScopeEdgeType::START) debugEmitter.addScope(builder, stmt->location);
+    if(stmt->edgeType == CFG::ScopeEdgeType::START) debugEmitter.addScope(builder, stmt->location);
     else debugEmitter.popScope(builder, stmt->location);
     return nullptr; // Stmts return nullptr on codegen
 }
@@ -1288,7 +1293,7 @@ llvm::Value* Compiler::codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Toke
     phi->addIncoming(stringAddRes, addStringBB);
     return phi;
 }
-llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExprPtr expr2, const typedAST::ComparisonOp op){
+llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExprPtr expr2, const CFG::ComparisonOp op){
     bool canOptimize = exprIsType(expr1, expr2, types::getBasicType(types::TypeFlag::BOOL));
     auto castToBool = canOptimize ? safeGetFunc("decodeBool") : safeGetFunc("isTruthy");
 
@@ -1303,7 +1308,7 @@ llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExpr
     // For 'or' operator if lhs is false we eval rhs
     // For 'and' operator if lhs is true we eval rhs
     llvm::Value* lhs = builder.CreateCall(castToBool, expr1->codegen(this));
-    builder.CreateCondBr(op == typedAST::ComparisonOp::OR ? builder.CreateNot(lhs) : lhs, evalRhsBB, mergeBB);
+    builder.CreateCondBr(op == CFG::ComparisonOp::OR ? builder.CreateNot(lhs) : lhs, evalRhsBB, mergeBB);
 
     // If lhs is false(or in the case of 'and' operator true) eval rhs and then go into mergeBB
     builder.SetInsertPoint(evalRhsBB);
@@ -1315,11 +1320,11 @@ llvm::Value* Compiler::codegenLogicOps(const typedExprPtr expr1, const typedExpr
     func->insert(func->end(), mergeBB);
     builder.SetInsertPoint(mergeBB);
 
-    llvm::PHINode *PN = builder.CreatePHI(builder.getInt1Ty(), 2, op == typedAST::ComparisonOp::OR ? "lortmp" : "landtmp");
+    llvm::PHINode *PN = builder.CreatePHI(builder.getInt1Ty(), 2, op == CFG::ComparisonOp::OR ? "lortmp" : "landtmp");
 
     // If we're coming from the originalBB and the operator is 'or' it means that lhs is true, and thus the entire expression is true
     // For 'and' it's the opposite, if lhs is false, then the entire expression is false
-    PN->addIncoming(builder.getInt1(op == typedAST::ComparisonOp::OR ? true : false), originalBB);
+    PN->addIncoming(builder.getInt1(op == CFG::ComparisonOp::OR ? true : false), originalBB);
     // For both operators, if control flow is coming from evalRhsBB rhs becomes the value of the entire expression
     PN->addIncoming(rhs, evalRhsBB);
 
@@ -1394,7 +1399,7 @@ llvm::Value* Compiler::codegenCmp(const typedExprPtr expr1, const typedExprPtr e
     PN->addIncoming(strCmpRes, cmpStrBB);
     return PN;
 }
-llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyPtr type, typedAST::UnaryOp op, Token dbg){
+llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyPtr type, CFG::UnaryOp op, Token dbg){
     llvm::Function *F = builder.GetInsertBlock()->getParent();
     // If rhs is known to be a number, no need for the type check
     if(type != types::getBasicType(types::TypeFlag::NUMBER)){
@@ -1402,7 +1407,7 @@ llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyPtr type, typ
         createTypeCheckUnary(err, rhs, getNumberTypeMasks());
     }
     // For binary negation, the casting is as follows Value -> double -> int64 -> double -> Value
-    if(op == typedAST::UnaryOp::BIN_NEG){
+    if(op == CFG::UnaryOp::BIN_NEG){
         // Cast value to double, then convert to signed 64bit integer and negate
         auto tmp = ESLValTo(rhs, builder.getDoubleTy());
         auto negated = builder.CreateNot(builder.CreateFPToSI(tmp, builder.getInt64Ty()),"bin.neg.tmp");
@@ -1414,23 +1419,23 @@ llvm::Value* Compiler::codegenNeg(llvm::Value* rhs, const types::tyPtr type, typ
         return CastToESLVal(builder.CreateFNeg(tmp, "fneg.tmp"));
     }
 }
-void Compiler::codegenBlock(const typedAST::Block& block){
+void Compiler::codegenBlock(const CFG::Block& block){
     for(auto stmt : block.stmts){
         stmt->codegen(this);
     }
 }
-llvm::Value * Compiler::codegenIncrement(const typedAST::UnaryOp op, const typedExprPtr expr, const Token dbg) {
+llvm::Value * Compiler::codegenIncrement(const CFG::UnaryOp op, const typedExprPtr expr, const Token dbg) {
     // No array/hashmap field access because it's too complicated
-    if(expr->type == typedAST::NodeType::VAR_READ){
-        return codegenVarIncrement(op, std::reinterpret_pointer_cast<typedAST::VarRead>(expr), dbg);
-    }else if(expr->type == typedAST::NodeType::INST_GET){
-        return codegenInstIncrement(op, std::reinterpret_pointer_cast<typedAST::InstGet>(expr), dbg);
+    if(expr->type == CFG::NodeType::VAR_READ){
+        return codegenVarIncrement(op, std::reinterpret_pointer_cast<CFG::VarRead>(expr), dbg);
+    }else if(expr->type == CFG::NodeType::INST_GET){
+        return codegenInstIncrement(op, std::reinterpret_pointer_cast<CFG::InstGet>(expr), dbg);
     }
     // TODO: error
     errHandler.reportUnrecoverableError("Unreachable code reached during compilation.");
 }
 // Reuses var read and var store
-llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::VarRead> expr, Token dbg) {
+llvm::Value * Compiler::codegenVarIncrement(const CFG::UnaryOp op, const std::shared_ptr<CFG::VarRead> expr, Token dbg) {
     llvm::Value* val = codegenVarRead(expr->varPtr);
     debugEmitter.emitNewLocation(builder, dbg);
     // Right now we can only increment numbers, maybe change this when adding iterators?
@@ -1440,13 +1445,13 @@ llvm::Value * Compiler::codegenVarIncrement(const typedAST::UnaryOp op, const st
     }
     llvm::Value* res = ESLValTo(val, builder.getDoubleTy());
 
-    if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
+    if(op == CFG::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
     else res = builder.CreateFSub(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
     res = CastToESLVal(res);
     codegenVarStore(expr->varPtr, res);
     return val;
 }
-llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const std::shared_ptr<typedAST::InstGet> expr, Token dbg) {
+llvm::Value * Compiler::codegenInstIncrement(const CFG::UnaryOp op, const std::shared_ptr<CFG::InstGet> expr, Token dbg) {
     auto inst = expr->instance->codegen(this);
 
     llvm::Value* fieldPtr = nullptr;
@@ -1464,7 +1469,7 @@ llvm::Value * Compiler::codegenInstIncrement(const typedAST::UnaryOp op, const s
     createTypeCheckUnary(err, storedField, getNumberTypeMasks());
 
     llvm::Value* res = ESLValTo(storedField, builder.getDoubleTy());
-    if(op == typedAST::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
+    if(op == CFG::UnaryOp::INC_POST) res = builder.CreateFAdd(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
     else res = builder.CreateFSub(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
 
     res = CastToESLVal(res);
@@ -1489,7 +1494,7 @@ llvm::FunctionType* Compiler::getFuncType(int argCount){
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
     return fty;
 }
-void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>& args){
+void Compiler::declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args){
     // We define the args as locals, when the function is called, the args will be sitting on the stack in order
     // We just assign those positions to each arg
     // First argument is ALWAYS the thread data ptr, and second is obj closure ptr
@@ -1497,7 +1502,7 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<typedAST::VarDecl>>&
     for (auto var : args) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
-        if(var->varType == typedAST::VarType::LOCAL){
+        if(var->varType == CFG::VarType::LOCAL){
             varPtr = builder.CreateAlloca(getESLValType(), nullptr, var->dbgInfo.varName.getLexeme());
             builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), varPtr);
         }else{
@@ -1559,29 +1564,29 @@ llvm::FunctionCallee Compiler::getBitcastFunc(llvm::Value* closurePtr, const int
     return llvm::FunctionCallee(fnTy, fnPtr);
 }
 
-llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, typedAST::SetType opTy, Token dbg){
+llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, CFG::SetType opTy, Token dbg){
     auto num1 = ESLValTo(storedVal, builder.getDoubleTy());
     auto num2 = ESLValTo(newVal, builder.getDoubleTy());
     switch(opTy){
-        case typedAST::SetType::ADD_SET:
+        case CFG::SetType::ADD_SET:
             return builder.CreateFAdd(num1, num2);
-        case typedAST::SetType::SUB_SET:
+        case CFG::SetType::SUB_SET:
             return builder.CreateFSub(num1, num2);
-        case typedAST::SetType::MUL_SET:
+        case CFG::SetType::MUL_SET:
             return builder.CreateFMul(num1, num2);
-        case typedAST::SetType::DIV_SET:
+        case CFG::SetType::DIV_SET:
             return builder.CreateFDiv(num1, num2);
-        case typedAST::SetType::REM_SET:
+        case CFG::SetType::REM_SET:
             return builder.CreateFRem(num1, num2);
-        case typedAST::SetType::AND_SET:
+        case CFG::SetType::AND_SET:
             num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateUIToFP(builder.CreateAnd(num1, num2), builder.getDoubleTy());
-        case typedAST::SetType::OR_SET:
+        case CFG::SetType::OR_SET:
             num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateUIToFP(builder.CreateOr(num1, num2), builder.getDoubleTy());
-        case typedAST::SetType::XOR_SET:
+        case CFG::SetType::XOR_SET:
             num1 = builder.CreateFPToUI(num1, builder.getInt64Ty());
             num2 = builder.CreateFPToUI(num2, builder.getInt64Ty());
             return builder.CreateUIToFP(builder.CreateXor(num1, num2), builder.getDoubleTy());
@@ -1616,7 +1621,7 @@ llvm::Value* Compiler::getMapElement(llvm::Value* map, llvm::Value* field, bool 
 }
 
 llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
-                                     typedAST::SetType opTy, Token dbg){
+                                     CFG::SetType opTy, Token dbg){
     if(!optIdx) createTypeCheckUnary("Array accessor must be a number, got '{}'.", index, getNumberTypeMasks());
 
     createArrBoundsCheck("Index {} outside of array range, array size is {}.", arr, index);
@@ -1629,10 +1634,10 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     arr = builder.CreateConstInBoundsGEP1_32(namedTypes["ObjArrayStorage"], arr, 1, "data.ptr");
     llvm::Value* ptr = builder.CreateGEP(getESLValType(), arr, index);
 
-    if(opTy == typedAST::SetType::SET){
+    if(opTy == CFG::SetType::SET){
         builder.CreateStore(val, ptr);
         return val;
-    }else if(opTy == typedAST::SetType::ADD_SET){
+    }else if(opTy == CFG::SetType::ADD_SET){
         // Special case because of strings
         auto storedVal = builder.CreateLoad(getESLValType(), ptr);
         val = codegenBinaryAdd(storedVal, val, dbg);
@@ -1651,17 +1656,17 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     return val;
 }
 llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
-                                     typedAST::SetType opTy, Token dbg){
+                                     CFG::SetType opTy, Token dbg){
     if(!optIdx) createTypeCheckUnary("Map accessor must be a string, got '{}'.", field,
                                   getObjectTypeMasks(object::ObjType::STRING));
 
     map = builder.CreateCall(safeGetFunc("decodeObj"), map);
     field = builder.CreateCall(safeGetFunc("decodeObj"), field);
 
-    if(opTy == typedAST::SetType::SET){
+    if(opTy == CFG::SetType::SET){
         builder.CreateCall(safeGetFunc("hashmapSetV"), {map, field, val});
         return val;
-    }else if(opTy == typedAST::SetType::ADD_SET){
+    }else if(opTy == CFG::SetType::ADD_SET){
         // Special case because of strings
         auto storedVal = builder.CreateCall(safeGetFunc("hashmapGetV"), {map, field});
         val = codegenBinaryAdd(storedVal, val, dbg);
@@ -1737,7 +1742,7 @@ llvm::Function* Compiler::createStrToIdxFunc(std::shared_ptr<types::ClassType> c
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
     return fn;
 }
-void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd){
+void Compiler::codegenMethod(string classname, CFG::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd){
     llvm::Function* methodFn = functions[method.code->fnTy];
     inProgressFuncs.emplace(methodFn);
     debugEmitter.addNewFunc(builder, methodFn, *method.code->fnTy, method.dbg.name);
@@ -1760,7 +1765,7 @@ void Compiler::codegenMethod(string classname, typedAST::ClassMethod& method, ll
     builder.SetInsertPoint(&inProgressFuncs.top().fn->back());
 }
 
-llvm::Constant* Compiler::createMethodObj(typedAST::ClassMethod& method, llvm::Function* methodPtr){
+llvm::Constant* Compiler::createMethodObj(CFG::ClassMethod& method, llvm::Function* methodPtr){
     // Every function is converted to a closure(if even it has 0 freevars) for ease of use when calling
     // Methods can't have freevars
     auto typeErasedFn = llvm::ConstantExpr::getBitCast(methodPtr, builder.getPtrTy());
@@ -2172,12 +2177,12 @@ llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj, uint8_t type){
     return ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, builder.getInt64(mask_signature_obj | type)));
 }
 
-llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr){
+llvm::Value* Compiler::codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr){
     switch(varPtr->varType){
-        case typedAST::VarType::LOCAL:{
+        case CFG::VarType::LOCAL:{
             return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.local");
         }
-        case typedAST::VarType::FREEVAR:{
+        case CFG::VarType::FREEVAR:{
             llvm::Value* upvalPtr = variables.at(varPtr->uuid);
             // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
             // second index: gets the second element of the ObjFreevar struct
@@ -2185,8 +2190,8 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr)
             auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevar.addr");
             return builder.CreateLoad(getESLValType(), tmpEle, "load.freevar");
         }
-        case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:{
+        case CFG::VarType::GLOBAL:
+        case CFG::VarType::GLOBAL_FUNC:{
             return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.gvar");
         }
     }
@@ -2194,13 +2199,13 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<typedAST::VarDecl> varPtr)
     __builtin_unreachable();
 }
 
-llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr, llvm::Value* toStore){
+llvm::Value* Compiler::codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore){
     switch(varPtr->varType){
-        case typedAST::VarType::LOCAL:{
+        case CFG::VarType::LOCAL:{
             builder.CreateStore(toStore, variables.at(varPtr->uuid));
             break;
         }
-        case typedAST::VarType::FREEVAR:{
+        case CFG::VarType::FREEVAR:{
             llvm::Value* freevarPtr = variables.at(varPtr->uuid);
             // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
             // second index: gets the ref to the second element of the ObjFreevar struct
@@ -2209,8 +2214,8 @@ llvm::Value* Compiler::codegenVarStore(std::shared_ptr<typedAST::VarDecl> varPtr
             builder.CreateStore(toStore, tmpEle);
             break;
         }
-        case typedAST::VarType::GLOBAL:
-        case typedAST::VarType::GLOBAL_FUNC:{
+        case CFG::VarType::GLOBAL:
+        case CFG::VarType::GLOBAL_FUNC:{
             builder.CreateStore(toStore, variables.at(varPtr->uuid));
             break;
         }

@@ -18,7 +18,7 @@ namespace typedASTParser{
         TYPE_SCRIPT,
     };
 
-    using varPtr = std::shared_ptr<typedAST::VarDecl>;
+    using varPtr = std::shared_ptr<CFG::VarDecl>;
 
     struct Local {
         string name;
@@ -42,7 +42,7 @@ namespace typedASTParser{
         string name = "";
         varPtr ptr = nullptr;
 
-        Upvalue(string _name, std::shared_ptr<typedAST::VarDecl> _val) : name(_name), ptr(_val) {}
+        Upvalue(string _name, std::shared_ptr<CFG::VarDecl> _val) : name(_name), ptr(_val) {}
     };
 
 
@@ -50,11 +50,11 @@ namespace typedASTParser{
     struct CurrentChunkInfo {
         // For closures
         CurrentChunkInfo* enclosing;
-        std::shared_ptr<typedAST::Function> func;
+        std::shared_ptr<CFG::Function> func;
         FuncType type;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure,
         // second is to the VarDecl used inside this function
-        vector<std::pair<std::shared_ptr<typedAST::VarDecl>, std::shared_ptr<typedAST::VarDecl>>> freevarPtrs;
+        vector<std::pair<std::shared_ptr<CFG::VarDecl>, std::shared_ptr<CFG::VarDecl>>> freevarPtrs;
 
         int line;
         int scopeDepth;
@@ -69,7 +69,7 @@ namespace typedASTParser{
         // Int is index of that field/method after linearization
         // For fields index is into array in ObjInstance, and methods index is index into methods array of ObjClass
         std::unordered_map<string, int> fields;
-        std::unordered_map<string, std::pair<typedAST::ClassMethod, int>> methods;
+        std::unordered_map<string, std::pair<CFG::ClassMethod, int>> methods;
         std::shared_ptr<types::ClassType> classTy;
         const string mangledName;
 
@@ -95,7 +95,7 @@ namespace typedASTParser{
         varPtr valPtr;
         bool isDefined;
 
-        Globalvar(std::shared_ptr<typedAST::VarDecl> _val) {
+        Globalvar(std::shared_ptr<CFG::VarDecl> _val) {
             valPtr = _val;
             isDefined = false;
         }
@@ -108,7 +108,7 @@ namespace typedASTParser{
         bool hadError;
 
         ASTTransformer(vector<AST::ASTModule> &_units, errorHandler::ErrorHandler& errHandler);
-        std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
+        std::pair<std::shared_ptr<CFG::Function>, vector<File*>>
         run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> freevarMap);
 
         ankerl::unordered_dense::map<string, std::pair<int, int>> getClassHierarchy();
@@ -163,8 +163,8 @@ namespace typedASTParser{
         ankerl::unordered_dense::map<string, types::tyPtr> nativesTypes;
         ankerl::unordered_dense::map<string, computeClassHierarchy::ClassNode> classNodes;
 
-        vector<typedAST::nodePtr> nodesToReturn;
-        typedAST::exprPtr returnedExpr;
+        vector<CFG::nodePtr> nodesToReturn;
+        CFG::exprPtr returnedExpr;
 
         errorHandler::ErrorHandler& errHandler;
 
@@ -185,35 +185,35 @@ namespace typedASTParser{
 
         int resolveUpvalue(const Token name);
 
-        typedAST::exprPtr readVar(const Token name);
-        typedAST::exprPtr storeToVar(const Token name, const Token op, typedAST::exprPtr toStore);
+        CFG::exprPtr readVar(const Token name);
+        CFG::exprPtr storeToVar(const Token name, const Token op, CFG::exprPtr toStore);
 
-        std::shared_ptr<typedAST::ScopeEdge> beginScope(Token location);
-        std::shared_ptr<typedAST::ScopeEdge> endScope(Token location);
+        std::shared_ptr<CFG::ScopeEdge> beginScope(Token location);
+        std::shared_ptr<CFG::ScopeEdge> endScope(Token location);
         // Functions
-        std::shared_ptr<typedAST::Function> endFuncDecl(Token endLoc);
+        std::shared_ptr<CFG::Function> endFuncDecl(Token endLoc);
         void declareFuncArgs(vector<AST::ASTVar>& args);
         void createNewFunc(const string name, const int arity, const FuncType fnKind);
 
         // Classes and methods
-        typedAST::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
-                                           std::shared_ptr<types::FunctionType> fnTy);
-        std::shared_ptr<typedAST::InvokeExpr> tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
-                                                                 const Token paren1, const Token paren2);
+        CFG::ClassMethod createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
+                                      std::shared_ptr<types::FunctionType> fnTy);
+        std::shared_ptr<CFG::InvokeExpr> tryConvertToInvoke(CFG::exprPtr callee, vector<CFG::exprPtr>& args,
+                                                            const Token paren1, const Token paren2);
         void detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides);
         void processMethods(const string className, vector<AST::ClassMethod>& methods,
                             vector<std::shared_ptr<types::FunctionType>>& methodTys);
-        std::shared_ptr<typedAST::InstanceofExpr> createInstanceofExpr(typedAST::exprPtr lhs, AST::ASTNodePtr rhs, AST::BinaryExprDebugInfo dbg);
+        std::shared_ptr<CFG::InstanceofExpr> createInstanceofExpr(CFG::exprPtr lhs, AST::ASTNodePtr rhs, AST::BinaryExprDebugInfo dbg);
 
         // Resolve implicit object field access
-        std::shared_ptr<typedAST::InstGet> resolveClassFieldRead(const Token name);
-        std::shared_ptr<typedAST::InstSet> resolveClassFieldStore(const Token name, typedAST::exprPtr toStore, const Token op);
+        std::shared_ptr<CFG::InstGet> resolveClassFieldRead(const Token name);
+        std::shared_ptr<CFG::InstSet> resolveClassFieldStore(const Token name, CFG::exprPtr toStore, const Token op);
         Globalvar& getClassFromExpr(AST::ASTNodePtr expr);
         std::shared_ptr<ClassChunkInfo> getClassInfoFromExpr(AST::ASTNodePtr expr);
 
         // Resolve public/private fields when this.field in encountered in code
-        std::shared_ptr<typedAST::InstGet> tryResolveThis(AST::FieldAccessExpr* expr);
-        std::shared_ptr<typedAST::InstSet> tryResolveThis(AST::SetExpr* expr, typedAST::SetType operationTy);
+        std::shared_ptr<CFG::InstGet> tryResolveThis(AST::FieldAccessExpr* expr);
+        std::shared_ptr<CFG::InstSet> tryResolveThis(AST::SetExpr* expr, CFG::SetType operationTy);
 
         // Misc
         Token syntheticToken(const string& str);
@@ -222,10 +222,10 @@ namespace typedASTParser{
         vector<std::variant<double, bool, void*, string>> getCaseConstants(vector<Token> constants);
         string computeFullSymbol(string symbol, int moduleIndex);
 
-        typedAST::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
-        typedAST::Block parseStmtToBlock(AST::ASTNodePtr stmt);
-        typedAST::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
-        vector<typedAST::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
+        CFG::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
+        CFG::Block parseStmtToBlock(AST::ASTNodePtr stmt);
+        CFG::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
+        vector<CFG::stmtPtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
         void createNativeFn(string name, int arity, types::tyPtr retTy);
         void declareNativeFunctions();
         #pragma endregion

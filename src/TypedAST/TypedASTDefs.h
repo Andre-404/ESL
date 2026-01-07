@@ -12,7 +12,7 @@ namespace llvm{
     class Value;
 }
 
-namespace typedAST{
+namespace CFG{
     using std::shared_ptr;
     enum class NodeType{
         VAR_DECL,
@@ -77,6 +77,7 @@ namespace typedAST{
     class SpawnStmt;
     class CreateClosureExpr;
     class FuncDecl;
+    class ExprStmt;
     class ReturnStmt;
     class UncondJump;
     class IfStmt;
@@ -87,7 +88,7 @@ namespace typedAST{
     class InstSet;
     class ScopeEdge;
 
-    class TypedASTVisitor{
+    class CFGVisitor{
     public:
         virtual void visitVarDecl(VarDecl* decl) = 0;
         virtual void visitVarRead(VarRead* expr) = 0;
@@ -109,6 +110,7 @@ namespace typedAST{
         virtual void visitSpawnStmt(SpawnStmt* stmt) = 0;
         virtual void visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
         virtual void visitFuncDecl(FuncDecl* decl) = 0;
+        virtual void visitExprStmt(ExprStmt* stmt) = 0;
         virtual void visitReturnStmt(ReturnStmt* stmt) = 0;
         virtual void visitUncondJump(UncondJump* stmt) = 0;
         virtual void visitIfStmt(IfStmt* stmt) = 0;
@@ -120,7 +122,7 @@ namespace typedAST{
         virtual void visitScopeBlock(ScopeEdge* stmt) = 0;
     };
 
-    class TypedASTCodegen{
+    class CFGCodeGen{
     public:
         virtual llvm::Value* visitVarDecl(VarDecl* decl) = 0;
         virtual llvm::Value* visitVarRead(VarRead* expr) = 0;
@@ -142,6 +144,7 @@ namespace typedAST{
         virtual llvm::Value* visitSpawnStmt(SpawnStmt* stmt) = 0;
         virtual llvm::Value* visitCreateClosureExpr(CreateClosureExpr* expr) = 0;
         virtual llvm::Value* visitFuncDecl(FuncDecl* decl) = 0;
+        virtual llvm::Value* visitExprStmt(ExprStmt* stmt) = 0;
         virtual llvm::Value* visitReturnStmt(ReturnStmt* stmt) = 0;
         virtual llvm::Value* visitUncondJump(UncondJump* stmt) = 0;
         virtual llvm::Value* visitIfStmt(IfStmt* stmt) = 0;
@@ -153,25 +156,33 @@ namespace typedAST{
         virtual llvm::Value* visitScopeBlock(ScopeEdge* stmt) = 0;
     };
 
-    class TypedASTNode {
+    class CFGNode {
     public:
         NodeType type;
 
-        virtual ~TypedASTNode() {};
-        virtual void accept(TypedASTVisitor* vis) = 0;
-        virtual llvm::Value* codegen(TypedASTCodegen* vis) = 0;
+        virtual ~CFGNode() {};
+        virtual void accept(CFGVisitor* vis) = 0;
+        virtual llvm::Value* codegen(CFGCodeGen* vis) = 0;
     };
-    using nodePtr = shared_ptr<TypedASTNode>;
+    using nodePtr = shared_ptr<CFGNode>;
 
-    class TypedASTExpr : public TypedASTNode{
+    class TypedExpr : public CFGNode{
     public:
         types::tyPtr exprType;
 
-        virtual ~TypedASTExpr() {};
-        virtual void accept(TypedASTVisitor* vis) = 0;
-        virtual llvm::Value* codegen(TypedASTCodegen* vis) = 0;
+        virtual ~TypedExpr() {};
+        virtual void accept(CFGVisitor* vis) = 0;
+        virtual llvm::Value* codegen(CFGCodeGen* vis) = 0;
     };
-    using exprPtr = shared_ptr<TypedASTExpr>;
+    using exprPtr = shared_ptr<TypedExpr>;
+
+    // Only keep track of antecedents to build a reverse CFG
+    class CFGStmt : public CFGNode {
+    public:
+        std::vector<std::shared_ptr<CFGStmt>> antecedents;
+    };
+
+    using stmtPtr = shared_ptr<CFGStmt>;
 
     enum class VarType{
         LOCAL,
@@ -180,7 +191,7 @@ namespace typedAST{
         // To optimize calling functions/instantiating classes
         GLOBAL_FUNC
     };
-    class VarDecl : public TypedASTNode{
+    class VarDecl : public CFGStmt{
     public:
         VarType varType;
         AST::VarDeclDebugInfo dbgInfo;
@@ -193,14 +204,14 @@ namespace typedAST{
             type = NodeType::VAR_DECL;
         }
         ~VarDecl() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitVarDecl(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitVarDecl(this);
         }
     };
-    class VarRead : public TypedASTExpr{
+    class VarRead : public TypedExpr{
     public:
         shared_ptr<VarDecl> varPtr;
         AST::VarReadDebugInfo dbgInfo;
@@ -211,14 +222,14 @@ namespace typedAST{
             type = NodeType::VAR_READ;
         }
         ~VarRead() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitVarRead(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitVarRead(this);
         }
     };
-    class VarStore : public TypedASTExpr{
+    class VarStore : public TypedExpr{
     public:
         shared_ptr<VarDecl> varPtr;
         exprPtr toStore;
@@ -231,14 +242,14 @@ namespace typedAST{
             type = NodeType::VAR_STORE;
         }
         ~VarStore() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitVarStore(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitVarStore(this);
         }
     };
-    class VarReadNative : public TypedASTExpr{
+    class VarReadNative : public TypedExpr{
     public:
         string nativeName;
         AST::VarReadDebugInfo dbgInfo;
@@ -249,10 +260,10 @@ namespace typedAST{
             type = NodeType::VAR_NATIVE_READ;
         }
         ~VarReadNative() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitVarReadNative(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitVarReadNative(this);
         }
     };
@@ -270,7 +281,7 @@ namespace typedAST{
         BITSHIFT_L,
         BITSHIFT_R,
     };
-    class ArithmeticExpr : public TypedASTExpr{
+    class ArithmeticExpr : public TypedExpr{
     public:
         ArithmeticOp opType;
         exprPtr lhs;
@@ -286,10 +297,10 @@ namespace typedAST{
             type = NodeType::ARITHEMTIC;
         }
         ~ArithmeticExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitArithmeticExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitArithmeticExpr(this);
         }
     };
@@ -304,7 +315,7 @@ namespace typedAST{
         AND,
         OR
     };
-    class ComparisonExpr : public TypedASTExpr{
+    class ComparisonExpr : public TypedExpr{
     public:
         ComparisonOp opType;
         exprPtr lhs;
@@ -320,15 +331,15 @@ namespace typedAST{
             type = NodeType::COMPARISON;
         }
         ~ComparisonExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitComparisonExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitComparisonExpr(this);
         }
     };
 
-    class InstanceofExpr : public TypedASTExpr{
+    class InstanceofExpr : public TypedExpr{
     public:
         exprPtr lhs;
         string className;
@@ -341,10 +352,10 @@ namespace typedAST{
                 type = NodeType::INSTANCEOF;
         }
         ~InstanceofExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitInstanceofExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitInstanceofExpr(this);
         }
     };
@@ -360,7 +371,7 @@ namespace typedAST{
         FNEG,
         BIN_NEG,
     };
-    class UnaryExpr : public TypedASTExpr{
+    class UnaryExpr : public TypedExpr{
     public:
         UnaryOp opType;
         exprPtr rhs;
@@ -373,15 +384,15 @@ namespace typedAST{
             exprType = types::getBasicType(types::TypeFlag::ANY);
         }
         ~UnaryExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitUnaryExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitUnaryExpr(this);
         }
     };
 
-    class LiteralExpr : public TypedASTExpr{
+    class LiteralExpr : public TypedExpr{
     public:
         // int is used to signal a nil value
         std::variant<double, bool, void*, string> val;
@@ -394,15 +405,15 @@ namespace typedAST{
             type = NodeType::LITERAL;
         }
         ~LiteralExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitLiteralExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitLiteralExpr(this);
         }
     };
 
-    class HashmapExpr : public TypedASTExpr{
+    class HashmapExpr : public TypedExpr{
     public:
         // Fields sorted in the order they appear in, important to eval them in that order
         vector<std::pair<string, exprPtr>> fields;
@@ -415,14 +426,14 @@ namespace typedAST{
             type = NodeType::HASHMAP;
         }
         ~HashmapExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitHashmapExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitHashmapExpr(this);
         }
     };
-    class ArrayExpr : public TypedASTExpr{
+    class ArrayExpr : public TypedExpr{
     public:
         vector<exprPtr> fields;
         AST::ArrayLiteralDebugInfo dbgInfo;
@@ -433,15 +444,15 @@ namespace typedAST{
             type = NodeType::ARRAY;
         }
         ~ArrayExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitArrayExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitArrayExpr(this);
         }
     };
 
-    class CollectionGet : public TypedASTExpr{
+    class CollectionGet : public TypedExpr{
     public:
         exprPtr collection;
         exprPtr field;
@@ -455,10 +466,10 @@ namespace typedAST{
             type = NodeType::COLLECTION_GET;
         }
         ~CollectionGet() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitCollectionGet(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitCollectionGet(this);
         }
     };
@@ -473,7 +484,7 @@ namespace typedAST{
         OR_SET,
         XOR_SET,
     };
-    class CollectionSet : public TypedASTExpr{
+    class CollectionSet : public TypedExpr{
     public:
         exprPtr collection;
         exprPtr field;
@@ -491,15 +502,15 @@ namespace typedAST{
             type = NodeType::COLLECTION_SET;
         }
         ~CollectionSet() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitCollectionSet(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitCollectionSet(this);
         }
     };
 
-    class ConditionalExpr : public TypedASTExpr{
+    class ConditionalExpr : public TypedExpr{
     public:
         exprPtr cond;
         exprPtr thenExpr;
@@ -515,15 +526,15 @@ namespace typedAST{
             type = NodeType::CONDITIONAL;
         }
         ~ConditionalExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitConditionalExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitConditionalExpr(this);
         }
     };
 
-    class CallExpr : public TypedASTExpr{
+    class CallExpr : public TypedExpr{
     public:
         exprPtr callee;
         vector<exprPtr> args;
@@ -537,14 +548,14 @@ namespace typedAST{
             type = NodeType::CALL;
         }
         ~CallExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitCallExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitCallExpr(this);
         }
     };
-    class InvokeExpr : public TypedASTExpr{
+    class InvokeExpr : public TypedExpr{
     public:
         exprPtr inst;
         vector<exprPtr> args;
@@ -559,14 +570,14 @@ namespace typedAST{
             type = NodeType::INVOKE;
         }
         ~InvokeExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitInvokeExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitInvokeExpr(this);
         }
     };
-    class NewExpr : public TypedASTExpr{
+    class NewExpr : public TypedExpr{
     public:
         string className;
         vector<exprPtr> args;
@@ -579,16 +590,16 @@ namespace typedAST{
             type = NodeType::NEW;
         }
         ~NewExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitNewExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitNewExpr(this);
         }
     };
 
     struct Block{
-        vector<nodePtr> stmts;
+        vector<stmtPtr> stmts;
         // If this block terminates no need to put a br instruction at the end of it when emitting IR
         bool terminates;
         Block(){
@@ -611,7 +622,7 @@ namespace typedAST{
         }
     };
 
-    class CreateClosureExpr : public TypedASTExpr{
+    class CreateClosureExpr : public TypedExpr{
     public:
         std::shared_ptr<Function> fn;
         // First ptr is pointer to the VarDecl from an outer function to store to the closure(can be local/freevar),
@@ -627,14 +638,14 @@ namespace typedAST{
             type = NodeType::CLOSURE;
         }
         ~CreateClosureExpr() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitCreateClosureExpr(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitCreateClosureExpr(this);
         }
     };
-    class FuncDecl : public TypedASTNode{
+    class FuncDecl : public CFGStmt{
     public:
         std::shared_ptr<Function> fn;
         AST::FuncDeclDebugInfo dbgInfo;
@@ -647,15 +658,28 @@ namespace typedAST{
             type = NodeType::FUNC_DECL;
         }
         ~FuncDecl() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitFuncDecl(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitFuncDecl(this);
         }
     };
 
-    class SpawnStmt : public TypedASTNode{
+    class ExprStmt : public CFGStmt {
+    public:
+        exprPtr expr;
+
+        ExprStmt(exprPtr _expr) : expr(_expr) {}
+        void accept(CFGVisitor* vis) override{
+            vis->visitExprStmt(this);
+        }
+        llvm::Value* codegen(CFGCodeGen* vis) override{
+            return vis->visitExprStmt(this);
+        }
+    };
+
+    class SpawnStmt : public CFGStmt{
     public:
         bool isInvoke;
         exprPtr call;
@@ -667,15 +691,15 @@ namespace typedAST{
             type = NodeType::SPAWN;
         }
         ~SpawnStmt() {};
-        void accept(TypedASTVisitor* vis){
+        void accept(CFGVisitor* vis){
             vis->visitSpawnStmt(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) {
+        llvm::Value* codegen(CFGCodeGen* vis) {
             return vis->visitSpawnStmt(this);
         }
     };
 
-    class ReturnStmt : public TypedASTNode{
+    class ReturnStmt : public CFGStmt{
     public:
         exprPtr expr;
         AST::ReturnStmtDebugInfo dbgInfo;
@@ -685,10 +709,10 @@ namespace typedAST{
             type = NodeType::RETURN;
         }
         ~ReturnStmt() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitReturnStmt(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitReturnStmt(this);
         }
     };
@@ -698,7 +722,7 @@ namespace typedAST{
         CONTINUE,
         ADVANCE
     };
-    class UncondJump : public TypedASTNode{
+    class UncondJump : public CFGStmt{
     public:
         JumpType jmpType;
         AST::UncondJmpDebugInfo dbgInfo;
@@ -708,15 +732,15 @@ namespace typedAST{
             type = NodeType::UNCOND_JMP;
         }
         ~UncondJump() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitUncondJump(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitUncondJump(this);
         }
     };
 
-    class IfStmt : public TypedASTNode{
+    class IfStmt : public CFGStmt{
     public:
         exprPtr cond;
         Block thenBlock;
@@ -730,14 +754,14 @@ namespace typedAST{
             type = NodeType::IF;
         }
         ~IfStmt() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitIfStmt(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitIfStmt(this);
         }
     };
-    class WhileStmt : public TypedASTNode{
+    class WhileStmt : public CFGStmt{
     public:
         exprPtr cond;
         Block loopBody;
@@ -752,15 +776,15 @@ namespace typedAST{
             type = NodeType::WHILE;
         }
         ~WhileStmt() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitWhileStmt(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitWhileStmt(this);
         }
     };
 
-    class SwitchStmt : public TypedASTNode{
+    class SwitchStmt : public CFGStmt{
     public:
         exprPtr cond;
         // Each constant has a literal and the index of the case it leads to
@@ -782,10 +806,10 @@ namespace typedAST{
             type = NodeType::SWITCH;
         }
         ~SwitchStmt() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitSwitchStmt(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitSwitchStmt(this);
         }
     };
@@ -803,7 +827,7 @@ namespace typedAST{
         }
     };
 
-    class ClassDecl : public TypedASTNode{
+    class ClassDecl : public CFGStmt{
     public:
         // Privates are prefixed with "priv."
         // Int is index of that field/method after linearization
@@ -829,10 +853,10 @@ namespace typedAST{
             type = NodeType::CLASS_DECL;
         }
         ~ClassDecl() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitClassDecl(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitClassDecl(this);
         }
         void inherit(std::shared_ptr<ClassDecl> parent){
@@ -840,7 +864,7 @@ namespace typedAST{
             fields = parent->fields;
         }
     };
-    class InstGet : public TypedASTExpr{
+    class InstGet : public TypedExpr{
     public:
         exprPtr instance;
         string field;
@@ -853,14 +877,14 @@ namespace typedAST{
             type = NodeType::INST_GET;
         }
         ~InstGet() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitInstGet(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitInstGet(this);
         }
     };
-    class InstSet : public TypedASTExpr{
+    class InstSet : public TypedExpr{
     public:
         exprPtr instance;
         string field;
@@ -878,10 +902,10 @@ namespace typedAST{
             type = NodeType::INST_SET;
         }
         ~InstSet() {};
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitInstSet(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitInstSet(this);
         }
 
@@ -893,7 +917,7 @@ namespace typedAST{
         END
     };
     // Used for better debug info and to know which variables to remove when exiting scope and for generating runtime debug info
-    class ScopeEdge : public TypedASTNode{
+    class ScopeEdge : public CFGStmt{
     public:
         ScopeEdgeType edgeType;
         Token location;
@@ -906,10 +930,10 @@ namespace typedAST{
             type = NodeType::BLOCK_EDGE;
         }
         ~ScopeEdge() {}
-        void accept(TypedASTVisitor* vis) override{
+        void accept(CFGVisitor* vis) override{
             vis->visitScopeBlock(this);
         }
-        llvm::Value* codegen(TypedASTCodegen* vis) override{
+        llvm::Value* codegen(CFGCodeGen* vis) override{
             return vis->visitScopeBlock(this);
         }
     };

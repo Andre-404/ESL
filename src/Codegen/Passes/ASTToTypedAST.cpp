@@ -17,7 +17,7 @@ ASTTransformer::ASTTransformer(vector<AST::ASTModule> &_units, errorHandler::Err
     transformedAST = false;
 }
 
-std::pair<std::shared_ptr<typedAST::Function>, vector<File*>>
+std::pair<std::shared_ptr<CFG::Function>, vector<File*>>
 ASTTransformer::run(std::unordered_map<AST::FuncLiteral*, vector<closureConversion::FreeVariable>> _freevarMap){
     freevarMap = _freevarMap;
     current = new CurrentChunkInfo(nullptr, FuncType::TYPE_SCRIPT, "func.main");
@@ -65,17 +65,17 @@ void ASTTransformer::visitAssignmentExpr(AST::AssignmentExpr* expr){
 }
 void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
     // Needed because transforming a.b += 2 to a.b = a.b + 2 is illegal since eval-ing a could have side effects
-    typedAST::SetType operationType;
+    CFG::SetType operationType;
     switch(expr->op.type){
-        case TokenType::EQUAL: operationType = typedAST::SetType::SET; break;
-        case TokenType::PLUS_EQUAL: operationType = typedAST::SetType::ADD_SET; break;
-        case TokenType::MINUS_EQUAL: operationType = typedAST::SetType::SUB_SET; break;
-        case TokenType::STAR_EQUAL: operationType = typedAST::SetType::MUL_SET; break;
-        case TokenType::SLASH_EQUAL: operationType = typedAST::SetType::DIV_SET; break;
-        case TokenType::PERCENTAGE_EQUAL: operationType = typedAST::SetType::REM_SET; break;
-        case TokenType::BITWISE_AND_EQUAL: operationType = typedAST::SetType::AND_SET; break;
-        case TokenType::BITWISE_OR_EQUAL: operationType = typedAST::SetType::OR_SET; break;
-        case TokenType::BITWISE_XOR_EQUAL: operationType = typedAST::SetType::XOR_SET; break;
+        case TokenType::EQUAL: operationType = CFG::SetType::SET; break;
+        case TokenType::PLUS_EQUAL: operationType = CFG::SetType::ADD_SET; break;
+        case TokenType::MINUS_EQUAL: operationType = CFG::SetType::SUB_SET; break;
+        case TokenType::STAR_EQUAL: operationType = CFG::SetType::MUL_SET; break;
+        case TokenType::SLASH_EQUAL: operationType = CFG::SetType::DIV_SET; break;
+        case TokenType::PERCENTAGE_EQUAL: operationType = CFG::SetType::REM_SET; break;
+        case TokenType::BITWISE_AND_EQUAL: operationType = CFG::SetType::AND_SET; break;
+        case TokenType::BITWISE_OR_EQUAL: operationType = CFG::SetType::OR_SET; break;
+        case TokenType::BITWISE_XOR_EQUAL: operationType = CFG::SetType::XOR_SET; break;
     }
 
     if(expr->accessor.type == TokenType::LEFT_BRACKET){
@@ -84,7 +84,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
         auto toStore = evalASTExpr(expr->value);
 
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
-        returnedExpr = std::make_shared<typedAST::CollectionSet>(collection, field, toStore, operationType, dbg);
+        returnedExpr = std::make_shared<CFG::CollectionSet>(collection, field, toStore, operationType, dbg);
     }
     // Tries to resolve this.field = expr if we're currently inside a method
     auto resolved = tryResolveThis(expr, operationType);
@@ -97,7 +97,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
         auto instance = evalASTExpr(expr->callee);
         auto toStore = evalASTExpr(expr->value);
 
-        resolved = std::make_shared<typedAST::InstSet>(instance, field.getLexeme(), toStore, operationType, dbg);
+        resolved = std::make_shared<CFG::InstSet>(instance, field.getLexeme(), toStore, operationType, dbg);
     }
 
     returnedExpr = resolved;
@@ -107,7 +107,7 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
         auto collection = evalASTExpr(expr->callee);
         auto field = evalASTExpr(expr->field);
         auto dbg = AST::CollectionAccessDebugInfo(expr->accessor);
-        returnedExpr = std::make_shared<typedAST::CollectionGet>(collection, field, dbg);
+        returnedExpr = std::make_shared<CFG::CollectionGet>(collection, field, dbg);
         return;
     }
 
@@ -121,7 +121,7 @@ void ASTTransformer::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     Token field = probeToken(expr->field);
     auto inst = evalASTExpr(expr->callee);
     auto dbg = AST::InstGetDebugInfo(field, expr->accessor);
-    returnedExpr = std::make_shared<typedAST::InstGet>(inst, field.getLexeme(), dbg);
+    returnedExpr = std::make_shared<CFG::InstGet>(inst, field.getLexeme(), dbg);
 }
 
 void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
@@ -131,7 +131,7 @@ void ASTTransformer::visitConditionalExpr(AST::ConditionalExpr* expr) {
 
     auto dbg = AST::ConditionalExprDebugInfo(expr->questionmark, expr->colon);
 
-    returnedExpr = std::make_shared<typedAST::ConditionalExpr>(cond, thenBranch, elseBranch, dbg);
+    returnedExpr = std::make_shared<CFG::ConditionalExpr>(cond, thenBranch, elseBranch, dbg);
 }
 void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
     auto dbg = AST::BinaryExprDebugInfo(expr->op);
@@ -155,21 +155,21 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::BITWISE_XOR:
         case TokenType::BITSHIFT_LEFT:
         case TokenType::BITSHIFT_RIGHT:{
-            typedAST::ArithmeticOp op;
+            CFG::ArithmeticOp op;
             switch(expr->op.type){
-                case TokenType::MINUS: op = typedAST::ArithmeticOp::SUB; break;
-                case TokenType::PLUS: op = typedAST::ArithmeticOp::ADD; break;
-                case TokenType::SLASH: op = typedAST::ArithmeticOp::DIV; break;
-                case TokenType::STAR: op = typedAST::ArithmeticOp::MUL; break;
-                case TokenType::PERCENTAGE: op = typedAST::ArithmeticOp::MOD; break;
-                case TokenType::DIV: op = typedAST::ArithmeticOp::IDIV; break;
-                case TokenType::BITWISE_AND: op = typedAST::ArithmeticOp::AND; break;
-                case TokenType::BITWISE_OR: op = typedAST::ArithmeticOp::OR; break;
-                case TokenType::BITWISE_XOR: op = typedAST::ArithmeticOp::XOR; break;
-                case TokenType::BITSHIFT_LEFT: op = typedAST::ArithmeticOp::BITSHIFT_L; break;
-                case TokenType::BITSHIFT_RIGHT: op = typedAST::ArithmeticOp::BITSHIFT_R; break;
+                case TokenType::MINUS: op = CFG::ArithmeticOp::SUB; break;
+                case TokenType::PLUS: op = CFG::ArithmeticOp::ADD; break;
+                case TokenType::SLASH: op = CFG::ArithmeticOp::DIV; break;
+                case TokenType::STAR: op = CFG::ArithmeticOp::MUL; break;
+                case TokenType::PERCENTAGE: op = CFG::ArithmeticOp::MOD; break;
+                case TokenType::DIV: op = CFG::ArithmeticOp::IDIV; break;
+                case TokenType::BITWISE_AND: op = CFG::ArithmeticOp::AND; break;
+                case TokenType::BITWISE_OR: op = CFG::ArithmeticOp::OR; break;
+                case TokenType::BITWISE_XOR: op = CFG::ArithmeticOp::XOR; break;
+                case TokenType::BITSHIFT_LEFT: op = CFG::ArithmeticOp::BITSHIFT_L; break;
+                case TokenType::BITSHIFT_RIGHT: op = CFG::ArithmeticOp::BITSHIFT_R; break;
             }
-            returnedExpr = std::make_shared<typedAST::ArithmeticExpr>(lhs, rhs, op, dbg);
+            returnedExpr = std::make_shared<CFG::ArithmeticExpr>(lhs, rhs, op, dbg);
 
             return;
         }
@@ -182,40 +182,40 @@ void ASTTransformer::visitBinaryExpr(AST::BinaryExpr* expr) {
         case TokenType::AND:
         case TokenType::OR:
         case TokenType::IS:{
-            typedAST::ComparisonOp op;
+            CFG::ComparisonOp op;
             switch(expr->op.type){
-                case TokenType::BANG_EQUAL: op = typedAST::ComparisonOp::NOT_EQUAL; break;
-                case TokenType::EQUAL_EQUAL: op = typedAST::ComparisonOp::EQUAL; break;
-                case TokenType::GREATER: op = typedAST::ComparisonOp::GREAT; break;
-                case TokenType::GREATER_EQUAL: op = typedAST::ComparisonOp::GREATEQ; break;
-                case TokenType::LESS: op = typedAST::ComparisonOp::LESS; break;
-                case TokenType::LESS_EQUAL: op = typedAST::ComparisonOp::LESSEQ; break;
-                case TokenType::AND: op = typedAST::ComparisonOp::AND; break;
-                case TokenType::OR: op = typedAST::ComparisonOp::OR; break;
+                case TokenType::BANG_EQUAL: op = CFG::ComparisonOp::NOT_EQUAL; break;
+                case TokenType::EQUAL_EQUAL: op = CFG::ComparisonOp::EQUAL; break;
+                case TokenType::GREATER: op = CFG::ComparisonOp::GREAT; break;
+                case TokenType::GREATER_EQUAL: op = CFG::ComparisonOp::GREATEQ; break;
+                case TokenType::LESS: op = CFG::ComparisonOp::LESS; break;
+                case TokenType::LESS_EQUAL: op = CFG::ComparisonOp::LESSEQ; break;
+                case TokenType::AND: op = CFG::ComparisonOp::AND; break;
+                case TokenType::OR: op = CFG::ComparisonOp::OR; break;
             }
-            returnedExpr = std::make_shared<typedAST::ComparisonExpr>(lhs, rhs, op, dbg);
+            returnedExpr = std::make_shared<CFG::ComparisonExpr>(lhs, rhs, op, dbg);
             return;
         }
     }
 }
 void ASTTransformer::visitUnaryExpr(AST::UnaryExpr* expr) {
     auto rhs = evalASTExpr(expr->right);
-    typedAST::UnaryOp op;
+    CFG::UnaryOp op;
 
     switch(expr->op.type){
-        case TokenType::TILDA: op = typedAST::UnaryOp::BIN_NEG; break;
-        case TokenType::BANG: op = typedAST::UnaryOp::NEG; break;
-        case TokenType::MINUS: op = typedAST::UnaryOp::FNEG; break;
-        case TokenType::INCREMENT: op = expr->isPrefix ? typedAST::UnaryOp::INC_PRE : typedAST::UnaryOp::INC_POST; break;
-        case TokenType::DECREMENT: op = expr->isPrefix ? typedAST::UnaryOp::DEC_PRE : typedAST::UnaryOp::DEC_POST; break;
+        case TokenType::TILDA: op = CFG::UnaryOp::BIN_NEG; break;
+        case TokenType::BANG: op = CFG::UnaryOp::NEG; break;
+        case TokenType::MINUS: op = CFG::UnaryOp::FNEG; break;
+        case TokenType::INCREMENT: op = expr->isPrefix ? CFG::UnaryOp::INC_PRE : CFG::UnaryOp::INC_POST; break;
+        case TokenType::DECREMENT: op = expr->isPrefix ? CFG::UnaryOp::DEC_PRE : CFG::UnaryOp::DEC_POST; break;
     }
     auto dbg = AST::UnaryExprDebugInfo(expr->op);
-    returnedExpr = std::make_shared<typedAST::UnaryExpr>(rhs, op, dbg);
+    returnedExpr = std::make_shared<CFG::UnaryExpr>(rhs, op, dbg);
 }
 
 void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
     auto callee = evalASTExpr(expr->callee);
-    vector<typedAST::exprPtr> args;
+    vector<CFG::exprPtr> args;
     for(auto arg : expr->args) args.push_back(evalASTExpr(arg));
 
     auto tryInvoke = tryConvertToInvoke(callee, args, expr->paren1, expr->paren2);
@@ -226,11 +226,11 @@ void ASTTransformer::visitCallExpr(AST::CallExpr* expr) {
 
     auto dbg = AST::CallExprDebugInfo(expr->paren1, expr->paren2);
 
-    returnedExpr = std::make_shared<typedAST::CallExpr>(callee, args, dbg);
+    returnedExpr = std::make_shared<CFG::CallExpr>(callee, args, dbg);
 }
 void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto klass = getClassInfoFromExpr(expr->call->callee);
-    vector<typedAST::exprPtr> args;
+    vector<CFG::exprPtr> args;
     for(auto arg : expr->call->args){
         args.push_back(evalASTExpr(arg));
     }
@@ -239,21 +239,21 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto dbg = AST::NewExprDebugInfo(expr->keyword, className, expr->call->paren1, expr->call->paren2);
     auto varDbg = AST::VarReadDebugInfo(className);
 
-    returnedExpr = std::make_shared<typedAST::NewExpr>(klass->mangledName, args,dbg);
+    returnedExpr = std::make_shared<CFG::NewExpr>(klass->mangledName, args, dbg);
 }
 
 void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
-    vector<typedAST::exprPtr> fields;
+    vector<CFG::exprPtr> fields;
     for(auto field : expr->members){
         fields.push_back(evalASTExpr(field));
     }
 
     auto dbg = AST::ArrayLiteralDebugInfo(expr->bracket1, expr->bracket2);
 
-    returnedExpr = std::make_shared<typedAST::ArrayExpr>(fields, dbg);
+    returnedExpr = std::make_shared<CFG::ArrayExpr>(fields, dbg);
 }
 void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
-    vector<std::pair<string, typedAST::exprPtr>> fields;
+    vector<std::pair<string, CFG::exprPtr>> fields;
     vector<AST::StructDbgInfoField> fieldsDbg;
 
     for(auto field : expr->fields){
@@ -267,7 +267,7 @@ void ASTTransformer::visitStructLiteralExpr(AST::StructLiteral* expr) {
 
     auto dbg = AST::StructLiteralDebugInfo(expr->brace1, fieldsDbg, expr->brace2);
 
-    returnedExpr = std::make_shared<typedAST::HashmapExpr>(fields, dbg);
+    returnedExpr = std::make_shared<CFG::HashmapExpr>(fields, dbg);
 }
 
 static string convertBackSlashToEscape(string input)
@@ -333,7 +333,7 @@ void ASTTransformer::visitLiteralExpr(AST::LiteralExpr* expr) {
         default: break; // Unreachable
     }
     auto dbg = AST::LiteralDebugInfo(expr->token);
-    returnedExpr = std::make_shared<typedAST::LiteralExpr>(variant, dbg);
+    returnedExpr = std::make_shared<CFG::LiteralExpr>(variant, dbg);
 }
 
 static string classContainsMethod(string publicField, std::shared_ptr<ClassChunkInfo> klass);
@@ -348,13 +348,13 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
     for(int i = 0; i < freevars.size(); i++){
         auto& freevar = freevars[i];
 
-        std::shared_ptr<typedAST::VarDecl> freevarPtr = nullptr;
-        std::shared_ptr<typedAST::VarDecl> varToCapturePtr = nullptr;
+        std::shared_ptr<CFG::VarDecl> freevarPtr = nullptr;
+        std::shared_ptr<CFG::VarDecl> varToCapturePtr = nullptr;
 
         if(freevar.isLocal) varToCapturePtr = current->enclosing->locals[freevar.index].ptr;
         else varToCapturePtr = current->enclosing->freevars[freevar.index].ptr;
 
-        freevarPtr = std::make_shared<typedAST::VarDecl>(typedAST::VarType::FREEVAR);
+        freevarPtr = std::make_shared<CFG::VarDecl>(CFG::VarType::FREEVAR);
         // Sets upvalue in CurrentChunkInfo, used when resolving freevars in readVar and storeToVar
         current->freevars.emplace_back(freevar.name, freevarPtr);
         // Sets up the (enclosing var -> upvalue) pairs
@@ -374,7 +374,7 @@ void ASTTransformer::visitFuncLiteral(AST::FuncLiteral* expr) {
 
     auto dbg = AST::FuncLiteralDebugInfo(expr->keyword, params);
 
-    returnedExpr = std::make_shared<typedAST::CreateClosureExpr>(func, fvars, dbg);
+    returnedExpr = std::make_shared<CFG::CreateClosureExpr>(func, fvars, dbg);
     func->fnTy = std::make_shared<types::FunctionType>(params.size(), types::getBasicType(types::TypeFlag::ANY), freevars.size() > 0);
     returnedExpr->exprType = func->fnTy;
 }
@@ -400,7 +400,7 @@ void ASTTransformer::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
     if(globals.contains(fullSymbol)){
         auto ptr = globals.at(fullSymbol).valPtr;
         auto dbg = AST::VarReadDebugInfo(expr->ident);
-        returnedExpr = std::make_shared<typedAST::VarRead>(ptr, dbg);
+        returnedExpr = std::make_shared<CFG::VarRead>(ptr, dbg);
         return;
     }else if(globalClasses.contains(fullSymbol)){
         error(symbol, fmt::format("Classes aren't first class values."));
@@ -425,7 +425,7 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
     auto dbg = AST::LiteralDebugInfo(Token()); // Never used
 
-    typedAST::exprPtr initializer = std::make_shared<typedAST::LiteralExpr>(nullptr, dbg);
+    CFG::exprPtr initializer = std::make_shared<CFG::LiteralExpr>(nullptr, dbg);
     if (decl->value != nullptr) {
         initializer = evalASTExpr(decl->value);
     }
@@ -436,7 +436,7 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
 
     auto toStore = storeToVar(decl->var.name, decl->op, initializer);
 
-    nodesToReturn = {var, toStore};
+    nodesToReturn = {var, std::make_shared<CFG::ExprStmt>(toStore)};
 }
 
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
@@ -460,7 +460,7 @@ void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
     auto dbg = AST::FuncDeclDebugInfo(decl->keyword, decl->name, params);
 
     func->fnTy = std::make_shared<types::FunctionType>(params.size(), types::getBasicType(types::TypeFlag::ANY), false);
-    nodesToReturn = {name, std::make_shared<typedAST::FuncDecl>(func, dbg, name->uuid)};
+    nodesToReturn = {name, std::make_shared<CFG::FuncDecl>(func, dbg, name->uuid)};
 }
 void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
     std::shared_ptr<types::ClassType> classTy = std::make_shared<types::ClassType>();
@@ -548,24 +548,24 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         methodsDbg.insert_or_assign(str, AST::MethodDebugInfo(m.override, m.method->keyword, m.method->name, params));
     }
 
-    auto klass = std::make_shared<typedAST::ClassDecl>(currentClass->classTy,
-                                                       dbg, fullGlobalSymbol, paren, currentClass->fields, currentClass->methods);
+    auto klass = std::make_shared<CFG::ClassDecl>(currentClass->classTy,
+                                                  dbg, fullGlobalSymbol, paren, currentClass->fields, currentClass->methods);
     nodesToReturn = {klass};
     currentClass = nullptr;
 }
 
 void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
-    nodesToReturn= {evalASTExpr(stmt->expr)};
+    nodesToReturn= { std::make_shared<CFG::ExprStmt>(evalASTExpr(stmt->expr)) };
 }
 void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
     auto call = evalASTExpr(stmt->callExpr);
-    nodesToReturn = {std::make_shared<typedAST::SpawnStmt>(call, call->type == typedAST::NodeType::INVOKE,
-                                                    AST::SpawnStmtDebugInfo(stmt->keyword))};
+    nodesToReturn = {std::make_shared<CFG::SpawnStmt>(call, call->type == CFG::NodeType::INVOKE,
+                                                      AST::SpawnStmtDebugInfo(stmt->keyword))};
 }
 void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
-    vector<typedAST::nodePtr> nodes = {beginScope(stmt->start)};
+    vector<CFG::nodePtr> nodes = {beginScope(stmt->start)};
     for(auto temp : stmt->statements){
-        vector<typedAST::nodePtr> nodesToInsert;
+        vector<CFG::nodePtr> nodesToInsert;
         try{
             nodesToInsert = evalASTStmt(temp);
         }catch(TransformerException e){
@@ -579,36 +579,36 @@ void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
 
 void ASTTransformer::visitIfStmt(AST::IfStmt* stmt) {
     auto cond = evalASTExpr(stmt->condition);
-    typedAST::Block thenBlock = parseStmtToBlock(stmt->thenBranch);
-    typedAST::Block elseBlock;
+    CFG::Block thenBlock = parseStmtToBlock(stmt->thenBranch);
+    CFG::Block elseBlock;
     if(stmt->elseBranch){
         elseBlock = parseStmtToBlock(stmt->elseBranch);
     }
 
     auto dbg = AST::IfStmtDebugInfo(stmt->keyword);
 
-    nodesToReturn = {std::make_shared<typedAST::IfStmt>(cond, thenBlock, elseBlock, dbg)};
+    nodesToReturn = {std::make_shared<CFG::IfStmt>(cond, thenBlock, elseBlock, dbg)};
 }
 void ASTTransformer::visitWhileStmt(AST::WhileStmt* stmt) {
     auto cond = evalASTExpr(stmt->condition);
-    typedAST::Block loopBody = parseStmtToBlock(stmt->body);
+    CFG::Block loopBody = parseStmtToBlock(stmt->body);
 
     auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
 
-    nodesToReturn = {std::make_shared<typedAST::WhileStmt>(cond, loopBody, dbg)};
+    nodesToReturn = {std::make_shared<CFG::WhileStmt>(cond, loopBody, dbg)};
 }
 void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     // Convert for to a while loop with "init" directly above it in a block
     auto scopeEdge1 = beginScope(stmt->keyword);
-    vector<typedAST::nodePtr> init;
-    typedAST::exprPtr cond = nullptr;
-    typedAST::exprPtr inc = nullptr;
+    vector<CFG::nodePtr> init;
+    CFG::exprPtr cond = nullptr;
+    CFG::exprPtr inc = nullptr;
     // Order of eval is important for types
     // Init can be a single statement(expr statement) or a var decl + var store
     if(stmt->init) init = evalASTStmt(stmt->init);
     if(stmt->condition) cond = evalASTExpr(stmt->condition);
 
-    typedAST::Block loopBody = parseStmtToBlock(stmt->body);
+    CFG::Block loopBody = parseStmtToBlock(stmt->body);
     if(stmt->increment) inc = evalASTExpr(stmt->increment);
 
     auto scopeEdge2 = endScope(stmt->keyword);
@@ -619,16 +619,16 @@ void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
 
     // AfterLoopExpr is special field that won't be part of the loop body, but in a basic block by itself
-    nodesToReturn.push_back(std::make_shared<typedAST::WhileStmt>(cond, loopBody, dbg, inc));
+    nodesToReturn.push_back(std::make_shared<CFG::WhileStmt>(cond, loopBody, dbg, inc));
     nodesToReturn.push_back(scopeEdge2);
 }
 void ASTTransformer::visitBreakStmt(AST::BreakStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::BREAK, dbg)};
+    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::BREAK, dbg)};
 }
 void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::CONTINUE, dbg)};
+    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::CONTINUE, dbg)};
 }
 
 vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstants(vector<Token> constants){
@@ -663,7 +663,7 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     auto cond = evalASTExpr(stmt->expr);
     vector<std::pair<std::variant<double, bool, void*, string>, int>> constants;
     // Used to check if switch stmt contains duplicate constants
-    vector<typedAST::Block> caseBlocks;
+    vector<CFG::Block> caseBlocks;
     int defaultBlockIdx = -1;
     int i = 0;
     bool containsString = false;
@@ -690,14 +690,14 @@ void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     }
     auto dbg = AST::SwitchStmtDebugInfo(stmt->keyword, cases);
 
-    nodesToReturn = {std::make_shared<typedAST::SwitchStmt>(cond, constants, caseBlocks, defaultBlockIdx, containsString, dbg)};
+    nodesToReturn = {std::make_shared<CFG::SwitchStmt>(cond, constants, caseBlocks, defaultBlockIdx, containsString, dbg)};
 }
 void ASTTransformer::visitCaseStmt(AST::CaseStmt* _case) {
     //Nothing, everything is handled in visitSwitchStmt
 }
 void ASTTransformer::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<typedAST::UncondJump>(typedAST::JumpType::ADVANCE, dbg)};
+    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::ADVANCE, dbg)};
 }
 
 void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
@@ -707,13 +707,13 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
     else if (current->type == FuncType::TYPE_CONSTRUCTOR) {
         error(stmt->keyword, "Can't return a value from a constructor.");
     }
-    typedAST::exprPtr expr = nullptr;
+    CFG::exprPtr expr = nullptr;
     if(stmt->expr) expr = evalASTExpr(stmt->expr);
-    else expr = std::make_shared<typedAST::LiteralExpr>(nullptr, AST::LiteralDebugInfo(Token()));
+    else expr = std::make_shared<CFG::LiteralExpr>(nullptr, AST::LiteralDebugInfo(Token()));
 
     auto dbg = AST::ReturnStmtDebugInfo(stmt->keyword);
 
-    nodesToReturn = {std::make_shared<typedAST::ReturnStmt>(expr, dbg)};
+    nodesToReturn = {std::make_shared<CFG::ReturnStmt>(expr, dbg)};
 }
 #pragma endregion
 
@@ -743,7 +743,7 @@ varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
         // Global is in this module
         if (it != globals.end()){
             Globalvar& var = it->second;
-            if(var.valPtr->varType == typedAST::VarType::GLOBAL_FUNC) error(symbol, "Cannot assign to a function.");
+            if(var.valPtr->varType == CFG::VarType::GLOBAL_FUNC) error(symbol, "Cannot assign to a function.");
 
             if(!var.isDefined){
                 error(symbol, fmt::format("Trying to access variable '{}' before it's initialized.", symbol.getLexeme()));
@@ -775,13 +775,13 @@ varPtr ASTTransformer::resolveGlobal(const Token symbol, const bool canAssign){
 }
 
 varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclType type){
-    typedAST::VarType varty;
+    CFG::VarType varty;
     switch(type){
-        case AST::ASTDeclType::VAR: varty = typedAST::VarType::GLOBAL; break;
-        case AST::ASTDeclType::FUNCTION: varty = typedAST::VarType::GLOBAL_FUNC; break;
+        case AST::ASTDeclType::VAR: varty = CFG::VarType::GLOBAL; break;
+        case AST::ASTDeclType::FUNCTION: varty = CFG::VarType::GLOBAL_FUNC; break;
         case AST::ASTDeclType::CLASS: break; // Unreachable
     }
-    varPtr var = std::make_shared<typedAST::VarDecl>(varty);
+    varPtr var = std::make_shared<CFG::VarDecl>(varty);
     globals.insert_or_assign(name, Globalvar(var));
     return var;
 }
@@ -812,7 +812,7 @@ void ASTTransformer::defineLocalVar(AST::VarDeclDebugInfo dbgInfo){
 varPtr ASTTransformer::addLocal(const AST::ASTVar& var){
     current->locals.emplace_back(var.name.getLexeme(), -1, var.type == AST::ASTVarType::FREEVAR);
     Local& local = current->locals.back();
-    local.ptr = std::make_shared<typedAST::VarDecl>(!local.isUpval ? typedAST::VarType::LOCAL : typedAST::VarType::FREEVAR);
+    local.ptr = std::make_shared<CFG::VarDecl>(!local.isUpval ? CFG::VarType::LOCAL : CFG::VarType::FREEVAR);
     return local.ptr;
 }
 
@@ -841,18 +841,18 @@ int ASTTransformer::resolveUpvalue(const Token name){
 
 // Order of checking:
 // locals->freevars->implicit object fields->globals->natives
-typedAST::exprPtr ASTTransformer::readVar(const Token name){
+CFG::exprPtr ASTTransformer::readVar(const Token name){
     auto dbg = AST::VarReadDebugInfo(name);
     int argIndex = resolveLocal(name);
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
-        return std::make_shared<typedAST::VarRead>(valPtr, dbg);
+        return std::make_shared<CFG::VarRead>(valPtr, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         varPtr upvalPtr = current->freevars[argIndex].ptr;
-        return std::make_shared<typedAST::VarRead>(upvalPtr, dbg);
+        return std::make_shared<CFG::VarRead>(upvalPtr, dbg);
     }
-    std::shared_ptr<typedAST::InstGet> implicitClassField = resolveClassFieldRead(name);
+    std::shared_ptr<CFG::InstGet> implicitClassField = resolveClassFieldRead(name);
     if(implicitClassField){
         if(current->type == FuncType::TYPE_FUNC){
             error(name, fmt::format("Cannot access fields without 'this' within a closure, use this.{}", name.getLexeme()));
@@ -861,30 +861,30 @@ typedAST::exprPtr ASTTransformer::readVar(const Token name){
     }
     varPtr globalPtr = resolveGlobal(name, false);
     if(globalPtr){
-        return std::make_shared<typedAST::VarRead>(globalPtr, dbg);
+        return std::make_shared<CFG::VarRead>(globalPtr, dbg);
     }
     string nativeName = name.getLexeme();
     auto it = nativesTypes.find(nativeName);
-    if(it != nativesTypes.end()) return std::make_shared<typedAST::VarReadNative>(nativeName, it->second, dbg);
+    if(it != nativesTypes.end()) return std::make_shared<CFG::VarReadNative>(nativeName, it->second, dbg);
 
     error(name, fmt::format("'{}' doesn't match any declared variable name or native function name.", nativeName));
     return nullptr;
 }
 
-typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, typedAST::exprPtr toStore){
+CFG::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, CFG::exprPtr toStore){
     int argIndex = resolveLocal(name);
     auto dbg = AST::VarStoreDebugInfo(name, op);
 
     if (argIndex != -1) {
         varPtr valPtr = current->locals[argIndex].ptr;
-        return std::make_shared<typedAST::VarStore>(valPtr, toStore, dbg);
+        return std::make_shared<CFG::VarStore>(valPtr, toStore, dbg);
     }
     else if ((argIndex = resolveUpvalue(name)) != -1) {
         varPtr upvalPtr = current->freevars[argIndex].ptr;
-        return std::make_shared<typedAST::VarStore>(upvalPtr, toStore, dbg);
+        return std::make_shared<CFG::VarStore>(upvalPtr, toStore, dbg);
     }
 
-    std::shared_ptr<typedAST::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, op);
+    std::shared_ptr<CFG::InstSet> implicitClassField = resolveClassFieldStore(name, toStore, op);
     if(implicitClassField){
         if(current->type == FuncType::TYPE_FUNC){
             error(name, fmt::format("Cannot access object fields within a closure without 'this', use this.{}", name.getLexeme()));
@@ -893,7 +893,7 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
     }
     varPtr globalPtr = resolveGlobal(name, true);
     if(globalPtr){
-        return std::make_shared<typedAST::VarStore>(globalPtr, toStore, dbg);
+        return std::make_shared<CFG::VarStore>(globalPtr, toStore, dbg);
     }
     auto it = nativesTypes.find(name.getLexeme());
     if(it != nativesTypes.end()) {
@@ -905,12 +905,12 @@ typedAST::exprPtr ASTTransformer::storeToVar(const Token name, const Token op, t
     return nullptr;
 }
 
-std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::beginScope(Token location){
+std::shared_ptr<CFG::ScopeEdge> ASTTransformer::beginScope(Token location){
     current->scopeDepth++;
-    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::START, location, vector<uInt64>());
+    return std::make_shared<CFG::ScopeEdge>(CFG::ScopeEdgeType::START, location, vector<uInt64>());
 }
 // Pop every variable that was declared in this scope
-std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(Token location){
+std::shared_ptr<CFG::ScopeEdge> ASTTransformer::endScope(Token location){
     // First lower the scope, the check for every var that is deeper than the parserCurrent scope
     current->scopeDepth--;
     // Store which variables to pop(store the VarDecl ptr)
@@ -920,23 +920,23 @@ std::shared_ptr<typedAST::ScopeEdge> ASTTransformer::endScope(Token location){
         toPop.push_back(current->locals.back().ptr->uuid);
         current->locals.pop_back();
     }
-    return std::make_shared<typedAST::ScopeEdge>(typedAST::ScopeEdgeType::END, location, toPop);
+    return std::make_shared<CFG::ScopeEdge>(CFG::ScopeEdgeType::END, location, toPop);
 }
 
 // Functions
-std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(Token endLoc){
+std::shared_ptr<CFG::Function> ASTTransformer::endFuncDecl(Token endLoc){
     // Get the function we've just transformed, delete its compiler info, and replace it with the enclosing functions compiler info
     // If function doesn't contain an explicit return stmt, add it to the end of the function
     if(!current->func->block.terminates){
-        std::shared_ptr<typedAST::ReturnStmt> ret = nullptr;
+        std::shared_ptr<CFG::ReturnStmt> ret = nullptr;
         // Constructors return must return the instance
         if(current->type == FuncType::TYPE_CONSTRUCTOR){
             auto _this = readVar(syntheticToken("this"));
-            ret = std::make_shared<typedAST::ReturnStmt>(_this, AST::ReturnStmtDebugInfo(Token()));
+            ret = std::make_shared<CFG::ReturnStmt>(_this, AST::ReturnStmtDebugInfo(Token()));
         }
         else {
-            ret = std::make_shared<typedAST::ReturnStmt>(
-                    std::make_shared<typedAST::LiteralExpr>(
+            ret = std::make_shared<CFG::ReturnStmt>(
+                    std::make_shared<CFG::LiteralExpr>(
                             nullptr, AST::LiteralDebugInfo(Token())),
                     AST::ReturnStmtDebugInfo(Token()));
         }
@@ -955,7 +955,7 @@ std::shared_ptr<typedAST::Function> ASTTransformer::endFuncDecl(Token endLoc){
     // Dead code elimination
     for(int i = func->block.stmts.size() - 1; i >= 0; i--){
         auto stmt = func->block.stmts[i];
-        if(stmt->type == typedAST::NodeType::RETURN || stmt->type == typedAST::NodeType::UNCOND_JMP){
+        if(stmt->type == CFG::NodeType::RETURN || stmt->type == CFG::NodeType::UNCOND_JMP){
             func->block.stmts.resize(i + 1);
             func->block.stmts.push_back(scopeEdge);
             break;
@@ -975,8 +975,8 @@ void ASTTransformer::createNewFunc(const string name, const int arity, const Fun
 
 // Classes and methods
 // Class name is for recognizing constructor
-typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
-                                                   std::shared_ptr<types::FunctionType> fnTy){
+CFG::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const Token overrideTok, const string className,
+                                              std::shared_ptr<types::FunctionType> fnTy){
 
     string fullGlobalSymbol = computeFullSymbol(className, curUnitIndex);
     FuncType type = FuncType::TYPE_METHOD;
@@ -994,14 +994,14 @@ typedAST::ClassMethod ASTTransformer::createMethod(AST::FuncDecl* _method, const
     auto func = endFuncDecl(_method->body->end);
     vector<Token> params;
     for(auto arg : _method->args) params.push_back(arg.name);
-    return typedAST::ClassMethod(func, AST::MethodDebugInfo(overrideTok, _method->keyword, _method->name, params));
+    return CFG::ClassMethod(func, AST::MethodDebugInfo(overrideTok, _method->keyword, _method->name, params));
 }
-std::shared_ptr<typedAST::InvokeExpr> ASTTransformer::tryConvertToInvoke(typedAST::exprPtr callee, vector<typedAST::exprPtr>& args,
-                                                                         const Token paren1, const Token paren2){
-    if(callee->type == typedAST::NodeType::INST_GET){
-        std::shared_ptr<typedAST::InstGet> casted = std::reinterpret_pointer_cast<typedAST::InstGet>(callee);
+std::shared_ptr<CFG::InvokeExpr> ASTTransformer::tryConvertToInvoke(CFG::exprPtr callee, vector<CFG::exprPtr>& args,
+                                                                    const Token paren1, const Token paren2){
+    if(callee->type == CFG::NodeType::INST_GET){
+        std::shared_ptr<CFG::InstGet> casted = std::reinterpret_pointer_cast<CFG::InstGet>(callee);
         auto dbg = AST::InvokeExprDebugInfo(casted->dbgInfo.accessor, casted->dbgInfo.field, paren1, paren2);
-        return std::make_shared<typedAST::InvokeExpr>(casted->instance, casted->field, args, dbg);
+        return std::make_shared<CFG::InvokeExpr>(casted->instance, casted->field, args, dbg);
     }
     return nullptr;
 }
@@ -1019,13 +1019,13 @@ void ASTTransformer::processMethods(const string className, vector<AST::ClassMet
     }
 }
 
-std::shared_ptr<typedAST::InstanceofExpr> ASTTransformer::createInstanceofExpr(typedAST::exprPtr lhs, AST::ASTNodePtr rhs,
-                                                                               AST::BinaryExprDebugInfo dbg){
+std::shared_ptr<CFG::InstanceofExpr> ASTTransformer::createInstanceofExpr(CFG::exprPtr lhs, AST::ASTNodePtr rhs,
+                                                                          AST::BinaryExprDebugInfo dbg){
     if(rhs->type != AST::ASTType::LITERAL && rhs->type != AST::ASTType::MODULE_ACCESS) {
         error(dbg.op, "Expected class identifier on right side.");
     }
     std::shared_ptr<ClassChunkInfo> info = getClassInfoFromExpr(rhs);
-    return std::make_shared<typedAST::InstanceofExpr>(lhs, info->mangledName, dbg);
+    return std::make_shared<CFG::InstanceofExpr>(lhs, info->mangledName, dbg);
 }
 
 void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides){
@@ -1069,7 +1069,7 @@ static string classContainsMethod(string publicField, std::shared_ptr<ClassChunk
     return "";
 }
 
-std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token name){
+std::shared_ptr<CFG::InstGet> ASTTransformer::resolveClassFieldRead(Token name){
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
     auto res = classContainsField(fieldName, currentClass);
@@ -1079,18 +1079,18 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::resolveClassFieldRead(Token n
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
 
-        return std::make_shared<typedAST::InstGet>(readThis, res,  dbg);
+        return std::make_shared<CFG::InstGet>(readThis, res, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(syntheticToken("this"));
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
+        return std::make_shared<CFG::InstGet>(readThis, res, dbg);
     }
     return nullptr;
 }
-std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(const Token name, typedAST::exprPtr toStore, const Token op) {
+std::shared_ptr<CFG::InstSet> ASTTransformer::resolveClassFieldStore(const Token name, CFG::exprPtr toStore, const Token op) {
     if(!currentClass) return nullptr;
     string fieldName = name.getLexeme();
     // Accessor doesn't exist in the source code so it doesn't have any debug info
@@ -1100,8 +1100,8 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::resolveClassFieldStore(const 
     if(!res.empty()){
         // Can safely use normal SET since evaling "this" twice has no side effects
         //TODO does this even do what it needs to?
-        auto operationType = typedAST::SetType::SET;
-        return std::make_shared<typedAST::InstSet>(readVar(syntheticToken("this")), res, toStore, operationType, dbg);
+        auto operationType = CFG::SetType::SET;
+        return std::make_shared<CFG::InstSet>(readVar(syntheticToken("this")), res, toStore, operationType, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1161,7 +1161,7 @@ static bool isLiteralThis(AST::ASTNodePtr ptr){
 static string demangleName(string mangled){
     return mangled.substr(mangled.rfind("."), mangled.size() - mangled.rfind("."));
 }
-std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAccessExpr* expr){
+std::shared_ptr<CFG::InstGet> ASTTransformer::tryResolveThis(AST::FieldAccessExpr* expr){
     if(!isLiteralThis(expr->callee)) return nullptr;
     Token _this = probeToken(expr->callee);
     Token name = probeToken(expr->field);
@@ -1171,20 +1171,20 @@ std::shared_ptr<typedAST::InstGet> ASTTransformer::tryResolveThis(AST::FieldAcce
     if(!res.empty()){
         auto readThis = readVar(_this);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
+        return std::make_shared<CFG::InstGet>(readThis, res, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
     if(!res.empty()){
         auto readThis = readVar(_this);
 
-        return std::make_shared<typedAST::InstGet>(readThis, res, dbg);
+        return std::make_shared<CFG::InstGet>(readThis, res, dbg);
     }
     error(name, fmt::format("Class '{}' doesn't contain this symbol", demangleName(currentClass->mangledName)));
     // Never hit
     return nullptr;
 }
-std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* expr, typedAST::SetType operationTy){
+std::shared_ptr<CFG::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* expr, CFG::SetType operationTy){
     if(!isLiteralThis(expr->callee)) return nullptr;
 
     Token _this = probeToken(expr->callee);
@@ -1194,7 +1194,7 @@ std::shared_ptr<typedAST::InstSet> ASTTransformer::tryResolveThis(AST::SetExpr* 
     if(!res.empty()){
         auto toStore = evalASTExpr(expr->value);
         auto dbg = AST::InstSetDebugInfo(name, expr->accessor, expr->op);
-        return std::make_shared<typedAST::InstSet>(readVar(_this), res, toStore, operationTy, dbg);
+        return std::make_shared<CFG::InstSet>(readVar(_this), res, toStore, operationTy, dbg);
     }
 
     res = classContainsMethod(fieldName, currentClass);
@@ -1224,10 +1224,10 @@ string ASTTransformer::computeFullSymbol(string symbol, int moduleIndex){
     return units[moduleIndex].file->name + std::to_string(moduleIndex) + "." + symbol;
 }
 
-typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){
-    typedAST::Block block;
+CFG::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){
+    CFG::Block block;
     for(auto stmt : stmts){
-        vector<typedAST::nodePtr> stmtVec;
+        vector<CFG::stmtPtr> stmtVec;
         try {
             stmtVec = evalASTStmt(stmt);
         }catch(TransformerException e){
@@ -1235,17 +1235,17 @@ typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts
         }
         // Dead code elimination
         // If a terminator instruction is detected in this block, don't eval anything below it
-        vector<typedAST::nodePtr> scopeEdges;
+        vector<CFG::stmtPtr> scopeEdges;
         for (int i = stmtVec.size() - 1; i >= 0; i--) {
-            if (stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP || stmtVec[i]->type == typedAST::NodeType::RETURN) {
+            if (stmtVec[i]->type == CFG::NodeType::UNCOND_JMP || stmtVec[i]->type == CFG::NodeType::RETURN) {
                 stmtVec.resize(i + 1);
                 block.terminates = true;
                 stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
                 block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
                 return block;
-            }else if(stmtVec[i]->type == typedAST::NodeType::BLOCK_EDGE){
-                std::shared_ptr<typedAST::ScopeEdge> edge = std::reinterpret_pointer_cast<typedAST::ScopeEdge>(stmtVec[i]);
-                if(edge->edgeType == typedAST::ScopeEdgeType::START) scopeEdges.pop_back();
+            }else if(stmtVec[i]->type == CFG::NodeType::BLOCK_EDGE){
+                std::shared_ptr<CFG::ScopeEdge> edge = std::reinterpret_pointer_cast<CFG::ScopeEdge>(stmtVec[i]);
+                if(edge->edgeType == CFG::ScopeEdgeType::START) scopeEdges.pop_back();
                 else scopeEdges.push_back(edge);
             }
         }
@@ -1254,9 +1254,9 @@ typedAST::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts
     }
     return block;
 }
-typedAST::Block ASTTransformer::parseStmtToBlock(AST::ASTNodePtr stmt){
-    typedAST::Block block;
-    vector<typedAST::nodePtr> stmtVec;
+CFG::Block ASTTransformer::parseStmtToBlock(AST::ASTNodePtr stmt){
+    CFG::Block block;
+    vector<CFG::nodePtr> stmtVec;
     try {
         stmtVec = evalASTStmt(stmt);
     }catch(TransformerException e){
@@ -1264,33 +1264,39 @@ typedAST::Block ASTTransformer::parseStmtToBlock(AST::ASTNodePtr stmt){
     }
     // Dead code elimination
     // If a terminator instruction is detected in this block, don't eval anything below it
-    vector<typedAST::nodePtr> scopeEdges;
+    vector<CFG::nodePtr> scopeEdges;
     for(int i = stmtVec.size()-1; i >= 0; i--){
-        if(stmtVec[i]->type == typedAST::NodeType::UNCOND_JMP || stmtVec[i]->type == typedAST::NodeType::RETURN){
+        if(stmtVec[i]->type == CFG::NodeType::UNCOND_JMP || stmtVec[i]->type == CFG::NodeType::RETURN){
             stmtVec.resize(i + 1);
             block.terminates = true;
             stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
             block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
             return block;
-        }else if(stmtVec[i]->type == typedAST::NodeType::BLOCK_EDGE){
-            std::shared_ptr<typedAST::ScopeEdge> edge = std::reinterpret_pointer_cast<typedAST::ScopeEdge>(stmtVec[i]);
-            if(edge->edgeType == typedAST::ScopeEdgeType::START) scopeEdges.pop_back();
+        }else if(stmtVec[i]->type == CFG::NodeType::BLOCK_EDGE){
+            std::shared_ptr<CFG::ScopeEdge> edge = std::reinterpret_pointer_cast<CFG::ScopeEdge>(stmtVec[i]);
+            if(edge->edgeType == CFG::ScopeEdgeType::START) scopeEdges.pop_back();
             else scopeEdges.push_back(edge);
         }
     }
     block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
     return block;
 }
-typedAST::exprPtr ASTTransformer::evalASTExpr(std::shared_ptr<AST::ASTNode> node){
+CFG::exprPtr ASTTransformer::evalASTExpr(std::shared_ptr<AST::ASTNode> node){
     node->accept(this);
     auto tmp = returnedExpr;
     // Sanity check
     returnedExpr = nullptr;
     return tmp;
 }
-vector<typedAST::nodePtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNode> node){
+vector<CFG::stmtPtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNode> node){
     node->accept(this);
-    auto tmp = nodesToReturn;
+    std::vector<CFG::stmtPtr> tmp;
+    for (auto nd : nodesToReturn) {
+        if (std::dynamic_pointer_cast<CFG::stmtPtr>(nd)) {
+            auto stmt = std::dynamic_pointer_cast<CFG::stmtPtr>(nd);
+            tmp.emplace_back(stmt);
+        }
+    }
     // Sanity check
     nodesToReturn.clear();
     return tmp;
@@ -1300,7 +1306,7 @@ CurrentChunkInfo::CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type,
     enclosing = _enclosing;
     type = _type;
     line = 0;
-    func = std::make_shared<typedAST::Function>();
+    func = std::make_shared<CFG::Function>();
     func->name = funcName;
 }
 
