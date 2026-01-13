@@ -1489,7 +1489,7 @@ llvm::Function* Compiler::startFuncDef(const string name, const std::shared_ptr<
     return fn;
 }
 llvm::FunctionType* Compiler::getFuncType(int argCount){
-    vector<llvm::Type*> params = {builder.getPtrTy()};
+    vector<llvm::Type*> params = { getESLValType() };
     // First argument is always the closure structure;
     for(int i = 0; i < argCount; i++) params.push_back(getESLValType());
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
