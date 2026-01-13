@@ -4,7 +4,7 @@ project(ESL)
 # Hardcoded llvm paths
 if(WIN32)
     set(LLVM_DIR "C:/tools/llvm/lib/cmake/llvm")
-    set(CMAKE_CXX_FLAGS "-march=native -pthread")
+    set(CMAKE_CXX_FLAGS "-march=native -pthread -fno-rtti")
 else()
     set(LLVM_DIR "/usr/local/llvm/lib")
     set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic -march=native -fno-rtti")

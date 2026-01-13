@@ -14,11 +14,22 @@ class CFGPrinter : CFG::CFGVisitor{
             case TypeFlag::MUTEX: return "mutex";
             case TypeFlag::FILE: return "file";
             case TypeFlag::ANY: return "any";
-            case TypeFlag::ARRAY: return "array";
-            case TypeFlag::FUNCTION: return "function";
-            case TypeFlag::HASHMAP: return "hashmap";
-            case TypeFlag::INSTANCE: return "instance";
-            case TypeFlag::CLASS: return "class";
+            case TypeFlag::ARRAY:
+                return fmt::format("array<{}>", ty_to_str(std::reinterpret_pointer_cast<ArrayType>(ty)->itemType));
+            case TypeFlag::FUNCTION: {
+                string st = "function (";
+                auto fn_ty = std::reinterpret_pointer_cast<FunctionType>(ty);
+                for (auto& arg : fn_ty->paramTypes) st += fmt::format("<{}>, ", ty_to_str(arg));
+                st.pop_back();
+                st.append(fmt::format(") -> <{}>", ty_to_str(fn_ty->retType)));
+                return st;
+            }
+            case TypeFlag::HASHMAP:
+                return fmt::format("hashmap<{}>", ty_to_str(std::reinterpret_pointer_cast<HashMapType>(ty)->itemType));
+            case TypeFlag::INSTANCE:
+                return fmt::format("instance<{}>", std::reinterpret_pointer_cast<InstanceType>(ty)->klass->name);
+            case TypeFlag::CLASS:
+                return fmt::format("class {}", std::reinterpret_pointer_cast<ClassType>(ty)->name);
             case TypeFlag::UNKNOWN: return "unknown";
         }
     }

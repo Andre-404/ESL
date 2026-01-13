@@ -61,7 +61,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
     // IMPORTANT: this means that the order in which we pass subexpressions to the last_evaluated function
     // must be the same order in which things happen
     void visitVarDecl(CFG::VarDecl* decl) override {
-        if (decl->uuid == _target) return ret_target(getBasicType(TypeFlag::NIL));
+        if (decl->uuid == _target) return ret_target(decl->declType);
         return ret_target(visit_antecedents(decl));
     }
     void visitVarRead(CFG::VarRead* expr) override {
@@ -251,7 +251,7 @@ tyPtr TypeInferencePass::getVarType(std::shared_ptr<CFG::VarDecl> decl) {
     VariableTypeFinder varTypeFinder;
     auto tmp = varTypeFinder.run(decl->uuid, _cur_stmt);
     // If we couldn't constrain the type to anything we know take the most conservative approach
-    if (typeFlagMatch(tmp, TypeFlag::UNKNOWN)) return getBasicType(TypeFlag::ANY);
+    if (typeFlagMatch(tmp, TypeFlag::UNKNOWN)) return decl->declType;
     return tmp;
 }
 
@@ -271,6 +271,7 @@ void TypeInferencePass::run(std::pair<std::shared_ptr<CFG::Function>, vector<Fil
 
 void TypeInferencePass::visitVarDecl(CFG::VarDecl* decl) {
     _cur_stmt = decl;
+    decl->declType = getBasicType(TypeFlag::NIL);
 }
 void TypeInferencePass::visitVarRead(CFG::VarRead* expr) {
     expr->exprType = getVarType(expr->varPtr);
@@ -449,6 +450,8 @@ void TypeInferencePass::visitSwitchStmt(CFG::SwitchStmt* stmt) {
 void TypeInferencePass::visitClassDecl(CFG::ClassDecl* decl) {
     for (const auto& method : decl->methods | std::views::values | std::views::keys) {
         auto data = start_func(method.code->fnTy);
+        // Methods always have an instance of the class as the first arg
+        method.code->args[0]->declType = std::make_shared<InstanceType>(decl->classType);
         for (const auto& stmt : method.code->block.stmts) stmt->accept(this);
         end_func(data);
     }

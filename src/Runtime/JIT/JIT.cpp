@@ -68,7 +68,7 @@ void ESLJIT::createJIT(){
     auto Mangle = llvm::orc::MangleAndInterner(JIT.underlyingJIT->getExecutionSession(), JIT.underlyingJIT->getDataLayout());
     llvm::orc::SymbolMap symbolMap;
     symbolMap[Mangle("___chkstk_ms")] = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(___chkstk_ms),
-                                                                     llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable );
+        llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable | llvm::JITSymbolFlags::Absolute );
     auto Sym = llvm::orc::absoluteSymbols(symbolMap);
     // Define in platformdylib so that main jitdylib can find it because resolution never looks at current dylib for exported symbols
     cantFail(JIT.underlyingJIT->getPlatformJITDylib()->define(std::move(Sym)));

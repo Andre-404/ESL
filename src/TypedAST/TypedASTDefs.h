@@ -199,11 +199,13 @@ namespace CFG{
         VarType varType;
         AST::VarDeclDebugInfo dbgInfo;
         uInt64 uuid;
+        types::tyPtr declType;
         static inline uInt64 instanceCount = 0;
 
         VarDecl(VarType _varType){
             varType = _varType;
             uuid = instanceCount++;
+            declType = types::getBasicType(types::TypeFlag::ANY);
             type = NodeType::VAR_DECL;
         }
         ~VarDecl() {};
