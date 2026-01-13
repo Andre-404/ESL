@@ -1,10 +1,11 @@
 #include "JIT.h"
+
+#include <ranges>
+
 #include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "SEHFrameRegistrar.h"
-#include "llvm/ExecutionEngine/JITLink/JITLink.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
 #include "DebugInfoPlugin.h"
-#include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
 
 ESLJIT* ESLJIT::global = nullptr;
 // JIT needs this if an alloca happens and for some reason it doesn't pick it up from libgcc
@@ -62,6 +63,7 @@ void ESLJIT::createJIT(){
     auto& ES = JIT.underlyingJIT->getExecutionSession();
     auto &TT = JIT.underlyingJIT->getExecutionSession().getTargetTriple();
 
+    #ifdef _WIN32
     // Hack around the ___chkstk_ms routine not being defined
     auto Mangle = llvm::orc::MangleAndInterner(JIT.underlyingJIT->getExecutionSession(), JIT.underlyingJIT->getDataLayout());
     llvm::orc::SymbolMap symbolMap;
@@ -72,6 +74,7 @@ void ESLJIT::createJIT(){
     cantFail(JIT.underlyingJIT->getPlatformJITDylib()->define(std::move(Sym)));
     // TODO: this wont be necessary soon
     llvm::orc::ExecutorAddr ExprSymbolTemp = llvm::ExitOnError()(JIT.underlyingJIT->lookup("__ImageBase"));
+    #endif
 }
 
 MainFn ESLJIT::getMainFunc(){
@@ -83,7 +86,7 @@ using FnKind = llvm::DINameKind;
 using FileKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
 
 void ESLJIT::addressToFunc(uint64_t address){
-    for(auto& [ctx, mem] : dwarfContext){
+    for(auto &ctx: dwarfContext | std::views::keys){
         llvm::DILineInfoSpecifier specifier(FileKind::AbsoluteFilePath, FnKind::ShortName);
         auto InlineInfo = ctx->getInliningInfoForAddress(
                 {address, llvm::object::SectionedAddress::UndefSection}, specifier);

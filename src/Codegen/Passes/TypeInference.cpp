@@ -1,6 +1,7 @@
 #include <ranges>
 
 #include "TypeInference.h"
+#include "../../Includes/fmt/core.h"
 
 using namespace types;
 
@@ -241,36 +242,23 @@ class VariableTypeFinder : CFG::CFGVisitor{
     }
 };
 
-class TypePrinter : CFG::CFGVisitor{
-    int indent = 0;
+class CFGPrinter : CFG::CFGVisitor{
+    string indent;
     string ty_to_str(tyPtr ty) {
         switch (ty->type) {
-            case TypeFlag::NIL:
-                return "nil";
-            case TypeFlag::BOOL:
-                return "bool";
-            case TypeFlag::NUMBER:
-                return "number";
-            case TypeFlag::STRING:
-                return "string";
-            case TypeFlag::MUTEX:
-                return "mutex";
-            case TypeFlag::FILE:
-                return "file";
-            case TypeFlag::ANY:
-                return "any";
-            case TypeFlag::ARRAY:
-                return "array";
-            case TypeFlag::FUNCTION:
-                return "function";
-            case TypeFlag::HASHMAP:
-                return "hashmap";
-            case TypeFlag::INSTANCE:
-                return "instance";
-            case TypeFlag::CLASS:
-                return "class";
-            case TypeFlag::UNKNOWN:
-                return "unknown";
+            case TypeFlag::NIL: return "nil";
+            case TypeFlag::BOOL: return "bool";
+            case TypeFlag::NUMBER: return "number";
+            case TypeFlag::STRING: return "string";
+            case TypeFlag::MUTEX: return "mutex";
+            case TypeFlag::FILE: return "file";
+            case TypeFlag::ANY: return "any";
+            case TypeFlag::ARRAY: return "array";
+            case TypeFlag::FUNCTION: return "function";
+            case TypeFlag::HASHMAP: return "hashmap";
+            case TypeFlag::INSTANCE: return "instance";
+            case TypeFlag::CLASS: return "class";
+            case TypeFlag::UNKNOWN: return "unknown";
         }
     }
     public:
@@ -278,191 +266,218 @@ class TypePrinter : CFG::CFGVisitor{
         for (auto stmt : fn->block.stmts) stmt->accept(this);
     }
     void visitVarDecl(CFG::VarDecl* decl) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"var decl: "<<decl->dbgInfo.varName.getLexeme()<<std::endl;
+        fmt::print("{}Decl for var {}\n", indent, decl->dbgInfo.varName.getLexeme());
     }
     void visitVarRead(CFG::VarRead* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"var read: "<<expr->dbgInfo.varName.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Var read {} of type {}\n", indent, expr->dbgInfo.varName.getLexeme(), ty_to_str(expr->exprType));
     }
     void visitVarStore(CFG::VarStore* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"var store: "<<expr->dbgInfo.varName.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Var store {} of type {}\n", indent, expr->dbgInfo.varName.getLexeme(), ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->toStore->accept(this);
+        indent.pop_back();
     }
     void visitVarReadNative(CFG::VarReadNative* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"var read native: "<<expr->dbgInfo.varName.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Var native read {} of type {}\n", indent, expr->dbgInfo.varName.getLexeme(), ty_to_str(expr->exprType));
     }
     void visitArithmeticExpr(CFG::ArithmeticExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"arith expr: "<<expr->dbgInfo.op.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Arithmetic expr with op {} of type {}\n", indent, expr->dbgInfo.op.getLexeme(), ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->lhs->accept(this);
         expr->rhs->accept(this);
+        indent.pop_back();
     }
     void visitComparisonExpr(CFG::ComparisonExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"comp expr: "<<expr->dbgInfo.op.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Comparison expr with op {} of type {}\n", indent, expr->dbgInfo.op.getLexeme(), ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->lhs->accept(this);
         expr->rhs->accept(this);
+        indent.pop_back();
     }
     void visitInstanceofExpr(CFG::InstanceofExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"instanceof expr: "<<expr->dbgInfo.op.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Instanceof expr {} of type {}\n", indent, expr->dbgInfo.op.getLexeme(), ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->lhs->accept(this);
+        indent.pop_back();
     }
     void visitUnaryExpr(CFG::UnaryExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"unary expr: "<<expr->dbgInfo.op.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Unary expr with op {} of type {}\n", indent, expr->dbgInfo.op.getLexeme(), ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->rhs->accept(this);
+        indent.pop_back();
     }
     void visitLiteralExpr(CFG::LiteralExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"literal expr: "<<expr->dbgInfo.literal.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Literal expr {} of type {}\n", indent, expr->dbgInfo.literal.getLexeme(), ty_to_str(expr->exprType));
     }
     void visitHashmapExpr(CFG::HashmapExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"hashmap expr: "<<expr->dbgInfo.brace1.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Hashmap expr of type {}\n", indent, ty_to_str(expr->exprType));
 
+        indent.push_back(' ');
         for (auto [field, expr] : expr->fields) {
-            std::cout<<s<<"field :"<<field<<"\n";
+            fmt::print("{} {} :\n", indent, field);
+            indent.push_back(' ');
             expr->accept(this);
+            indent.pop_back();
         }
+        indent.pop_back();
     }
     void visitArrayExpr(CFG::ArrayExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"array expr: "<<expr->dbgInfo.bracket1.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Array expr of type {}\n", indent, ty_to_str(expr->exprType));
 
+        indent.push_back(' ');
+        int i = 0;
         for (auto field : expr->fields) {
-            field->accept(this);
+            fmt::print("{} [{}] :\n", indent, i);
+            indent.push_back(' ');
+            expr->accept(this);
+            indent.pop_back();
+            i++;
         }
+        indent.pop_back();
     }
     void visitCollectionGet(CFG::CollectionGet* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"collection get expr: "<<expr->dbgInfo.accessor.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Collection get expr of type {}\n", indent, ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->field->accept(this);
         expr->collection->accept(this);
+        indent.pop_back();
     }
     void visitCollectionSet(CFG::CollectionSet* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"collection set expr: "<<expr->dbgInfo.accessor.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Collection set expr of type {}\n", indent, ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->field->accept(this);
         expr->collection->accept(this);
         expr->toStore->accept(this);
+        indent.pop_back();
     }
     void visitConditionalExpr(CFG::ConditionalExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"conditional expr: "<<expr->dbgInfo.questionmark.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Conditional expr of type {}\n", indent, ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->cond->accept(this);
         expr->thenExpr->accept(this);
         expr->elseExpr->accept(this);
+        indent.pop_back();
     }
     void visitCallExpr(CFG::CallExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"call expr: "<<expr->dbgInfo.paren1.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Call expr of type {}\n", indent, ty_to_str(expr->exprType));
 
+        indent.push_back(' ');
         expr->callee->accept(this);
         for (auto field : expr->args) {
             field->accept(this);
         }
+        indent.pop_back();
     }
     void visitInvokeExpr(CFG::InvokeExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"invoke expr: "<<expr->dbgInfo.method.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Invoke expr on field {} of type {}\n", indent, expr->field, ty_to_str(expr->exprType));
 
+        indent.push_back(' ');
         expr->inst->accept(this);
         for (auto field : expr->args) {
             field->accept(this);
         }
+        indent.pop_back();
     }
     void visitNewExpr(CFG::NewExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"new expr: "<<expr->dbgInfo.className.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}New expr of type {}\n", indent, ty_to_str(expr->exprType));
 
+        indent.push_back(' ');
         for (auto field : expr->args) {
             field->accept(this);
         }
+        indent.pop_back();
     }
     void visitSpawnStmt(CFG::SpawnStmt* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"spawn stmt: "<<stmt->dbgInfo.keyword.getLexeme()<<std::endl;
-        indent++;
+        fmt::print("{}Spawn stmt\n", indent);
+        indent.push_back(' ');
         stmt->call->accept(this);
-        indent--;
+        indent.pop_back();
     }
     void visitCreateClosureExpr(CFG::CreateClosureExpr* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"closure expr: "<<expr->dbgInfo.keyword.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
+        fmt::print("{}Closure expr of type {}\n", indent, ty_to_str(expr->exprType));
 
-        indent += 2;
+        indent.append("  ");
         for (auto stmt : expr->fn->block.stmts) stmt->accept(this);
-        indent -= 2;
+        indent.pop_back();
+        indent.pop_back();
     }
     void visitFuncDecl(CFG::FuncDecl* decl) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"func decl: "<<decl->dbgInfo.keyword.getLexeme()<<std::endl;
+        fmt::print("{}Func decl {}\n", indent, decl->dbgInfo.name.getLexeme());
 
-        indent += 2;
+        indent.append("  ");
         for (auto stmt : decl->fn->block.stmts) stmt->accept(this);
-        indent -= 2;
+        indent.pop_back();
+        indent.pop_back();
     }
     void visitExprStmt(CFG::ExprStmt* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"expr stmt: "<<std::endl;
-        indent++;
+        fmt::print("{}Expr stmt\n", indent);
+        indent.push_back(' ');
         stmt->expr->accept(this);
-        indent--;
+        indent.pop_back();
     }
     void visitReturnStmt(CFG::ReturnStmt* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"return stmt: "<<std::endl;
-        indent++;
-        stmt->expr->accept(this);
-        indent--;
+        fmt::print("{}Return stmt\n", indent);
+        indent.push_back(' ');
+        if (stmt->expr) stmt->expr->accept(this);
+        indent.pop_back();
     }
     void visitUncondJump(CFG::UncondJump* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"jump stmt: "<<std::endl;
+        fmt::print("{}Unconditional jump stmt\n", indent);
     }
     void visitIfStmt(CFG::IfStmt* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"if stmt: "<<std::endl;
-        indent++;
+        fmt::print("{}If stmt\n", indent);
+        indent.push_back(' ');
         stmt->cond->accept(this);
         for (auto stmt : stmt->thenBlock.stmts) stmt->accept(this);
         for (auto stmt : stmt->elseBlock.stmts) stmt->accept(this);
-        indent--;
+        indent.pop_back();
     }
     void visitWhileStmt(CFG::WhileStmt* stmt) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"while stmt: "<<std::endl;
-        indent++;
-        stmt->cond->accept(this);
+        fmt::print("{}While stmt\n", indent);
+        indent.push_back(' ');
+        if (stmt->cond) stmt->cond->accept(this);
         for (auto stmt : stmt->loopBody.stmts) stmt->accept(this);
-        stmt->afterLoopExpr->accept(this);
-        indent--;
+        if (stmt->afterLoopExpr) stmt->afterLoopExpr->accept(this);
+        indent.pop_back();
     }
     void visitSwitchStmt(CFG::SwitchStmt* stmt) override {
-
+        fmt::print("{}Switch stmt\n", indent);
+        indent.push_back(' ');
+        stmt->cond->accept(this);
+        for (auto& _case : stmt->cases) {
+            fmt::print("{}Case\n", indent);
+            indent.push_back(' ');
+            for (auto& stmt : _case.stmts) stmt->accept(this);
+            indent.pop_back();
+        }
+        indent.pop_back();
     }
     void visitClassDecl(CFG::ClassDecl* decl) override {
-
+        fmt::print("{}Class decl {} with parent {}\n", indent, decl->fullName, decl->parentClassName);
+        indent.push_back(' ');
+        for (auto& [name, method] : decl->methods) {
+            fmt::print("{}Method {}\n", indent, name);
+            indent.push_back(' ');
+            for (auto& stmt : method.first.code->block.stmts) stmt->accept(this);
+            indent.pop_back();
+        }
+        indent.pop_back();
     }
     void visitInstGet(CFG::InstGet* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"instget expr: "<<expr->dbgInfo.field.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
-
+        fmt::print("{}Inst get expr of type {}\n", indent, ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->instance->accept(this);
+        indent.pop_back();
     }
     void visitInstSet(CFG::InstSet* expr) override {
-        std::string s(" ", indent);
-        std::cout<<s<<"instset expr: "<<expr->dbgInfo.field.getLexeme()<<" ty: "<<ty_to_str(expr->exprType)<<std::endl;
-
+        fmt::print("{}Inst set expr of type {}\n", indent, ty_to_str(expr->exprType));
+        indent.push_back(' ');
         expr->instance->accept(this);
         expr->toStore->accept(this);
+        indent.pop_back();
     }
     void visitScopeBlock(CFG::ScopeEdge* stmt) override {
-
+        fmt::print("{}Scope {}\n", indent, stmt->edgeType == CFG::ScopeEdgeType::START ? "start" : "end");
     }
 };
 
@@ -482,7 +497,7 @@ bool TypeInferencePass::func_complete(tyPtr func) {
 
 void TypeInferencePass::run(std::pair<std::shared_ptr<CFG::Function>, vector<File*>>& main_fn, bool should_print) {
     _cur_stmt = nullptr;
-    TypePrinter p;
+    CFGPrinter p;
     for (const auto& stmt : main_fn.first->block.stmts) {
         stmt->accept(this);
         if (should_print) stmt->accept(reinterpret_cast<CFG::CFGVisitor *>(&p));

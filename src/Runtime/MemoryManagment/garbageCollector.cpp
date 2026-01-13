@@ -14,7 +14,7 @@ using namespace valueHelpers;
 
 
 NOINLINE uintptr_t *getStackPointer() {
-  return (uintptr_t *)(GET_FRAME_ADDRESS);
+  return GET_FRAME_ADDRESS;
 }
 #ifdef GC_DEBUG
 static std::atomic<uint64_t> numalloc = 0;
