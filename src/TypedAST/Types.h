@@ -95,7 +95,7 @@ namespace types{
     };
 
     tyPtr getBasicType(TypeFlag type);
-    inline bool isBasicType(const tyPtr ty, const TypeFlag type) {
+    inline bool typeFlagMatch(const tyPtr ty, const TypeFlag type) {
         return ty->type == type;
     }
 

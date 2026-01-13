@@ -9,8 +9,8 @@ requires (std::same_as<Args, tyPtr> && ...)
 static tyPtr typeUnion(tyPtr first, Args... types) {
     tyPtr res = first;
     auto lam = [&](auto&& arg) {
-        if (res->type == TypeFlag::UNKNOWN) res = arg;
-        if (!types_equal(res, arg) && arg->type != TypeFlag::UNKNOWN) res = getBasicType(TypeFlag::ANY);
+        if (typeFlagMatch(res, TypeFlag::UNKNOWN)) res = arg;
+        if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = getBasicType(TypeFlag::ANY);
     };
     (lam(types), ...);
     return res;
@@ -21,8 +21,8 @@ requires (std::same_as<Args, tyPtr> && ...)
 static tyPtr last_evaluated(tyPtr first, Args... types) {
     tyPtr res = first;
     auto lam = [&](auto&& arg) {
-        if (res->type == TypeFlag::UNKNOWN) res = arg;
-        if (!types_equal(res, arg) && arg->type != TypeFlag::UNKNOWN) res = arg;
+        if (typeFlagMatch(res, TypeFlag::UNKNOWN)) res = arg;
+        if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = arg;
     };
     (lam(types), ...);
     return res;
@@ -135,22 +135,26 @@ class VariableTypeFinder : CFG::CFGVisitor{
     void visitCollectionGet(CFG::CollectionGet* expr) override {
         // Implication of array[number] and hashmap[string] goes both ways
         if (is_target(expr->collection)) {
-            if (expr->field->exprType->type == TypeFlag::NUMBER) return ret_target(getBasicType(TypeFlag::ARRAY));
-            if (expr->field->exprType->type == TypeFlag::STRING) return ret_target(getBasicType(TypeFlag::HASHMAP));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::NUMBER))
+                return ret_target(std::make_shared<ArrayType>(getBasicType(TypeFlag::ANY)));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::STRING))
+                return ret_target(std::make_shared<HashMapType>(getBasicType(TypeFlag::ANY)));
         } else if (is_target(expr->field)) {
-            if (expr->field->exprType->type == TypeFlag::ARRAY) return ret_target(getBasicType(TypeFlag::NUMBER));
-            if (expr->field->exprType->type == TypeFlag::HASHMAP) return ret_target(getBasicType(TypeFlag::STRING));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::ARRAY)) return ret_target(getBasicType(TypeFlag::NUMBER));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::HASHMAP)) return ret_target(getBasicType(TypeFlag::STRING));
         }
         return ret_target(last_evaluated(extract_type(expr->collection), extract_type(expr->field)));
     }
     void visitCollectionSet(CFG::CollectionSet* expr) override {
         // Implication of array[number] and hashmap[string] goes both ways
         if (is_target(expr->collection)) {
-            if (expr->field->exprType->type == TypeFlag::NUMBER) return ret_target(getBasicType(TypeFlag::ARRAY));
-            if (expr->field->exprType->type == TypeFlag::STRING) return ret_target(getBasicType(TypeFlag::HASHMAP));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::NUMBER))
+                return ret_target(std::make_shared<ArrayType>(getBasicType(TypeFlag::ANY)));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::STRING))
+                return ret_target(std::make_shared<HashMapType>(getBasicType(TypeFlag::ANY)));
         } else if (is_target(expr->field)) {
-            if (expr->field->exprType->type == TypeFlag::ARRAY) return ret_target(getBasicType(TypeFlag::NUMBER));
-            if (expr->field->exprType->type == TypeFlag::HASHMAP) return ret_target(getBasicType(TypeFlag::STRING));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::ARRAY)) return ret_target(getBasicType(TypeFlag::NUMBER));
+            if (typeFlagMatch(expr->field->exprType, TypeFlag::HASHMAP)) return ret_target(getBasicType(TypeFlag::STRING));
         }
         return ret_target(last_evaluated(extract_type(expr->collection), extract_type(expr->field), extract_type(expr->toStore)));
     }
@@ -176,7 +180,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
         return ret_target(tmp);
     }
     void visitSpawnStmt(CFG::SpawnStmt* stmt) override {
-        if (auto tmp = extract_type(stmt->call); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->call); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         return ret_target(visit_antecedents(stmt));
@@ -188,13 +192,13 @@ class VariableTypeFinder : CFG::CFGVisitor{
         // Should never be reached
     }
     void visitExprStmt(CFG::ExprStmt* stmt) override {
-        if (auto tmp = extract_type(stmt->expr); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->expr); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         return ret_target(visit_antecedents(stmt));
     }
     void visitReturnStmt(CFG::ReturnStmt* stmt) override {
-        if (auto tmp = extract_type(stmt->expr); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->expr); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         return ret_target(visit_antecedents(stmt));
@@ -203,7 +207,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
         // Should never be reached
     }
     void visitIfStmt(CFG::IfStmt* stmt) override {
-        if (auto tmp = extract_type(stmt->cond); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->cond); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         return ret_target(visit_antecedents(stmt));
@@ -213,7 +217,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
         // Since the first antecendents in the loop label are the predecessors of the loop we must have already explored them
         if (_loop_labels.contains(stmt)) return ret_target(getBasicType(TypeFlag::UNKNOWN));
 
-        if (auto tmp = extract_type(stmt->cond); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->cond); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         _loop_labels.insert(stmt);
@@ -222,7 +226,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
         return ret_target(tmp);
     }
     void visitSwitchStmt(CFG::SwitchStmt* stmt) override {
-        if (auto tmp = extract_type(stmt->cond); tmp->type != TypeFlag::UNKNOWN) {
+        if (auto tmp = extract_type(stmt->cond); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {
             return ret_target(tmp);
         }
         return ret_target(visit_antecedents(stmt));
@@ -247,12 +251,12 @@ tyPtr TypeInferencePass::getVarType(std::shared_ptr<CFG::VarDecl> decl) {
     VariableTypeFinder varTypeFinder;
     auto tmp = varTypeFinder.run(decl->uuid, _cur_stmt);
     // If we couldn't constrain the type to anything we know take the most conservative approach
-    if (tmp->type == TypeFlag::UNKNOWN) return getBasicType(TypeFlag::ANY);
+    if (typeFlagMatch(tmp, TypeFlag::UNKNOWN)) return getBasicType(TypeFlag::ANY);
     return tmp;
 }
 
 bool TypeInferencePass::func_complete(tyPtr func) {
-    return func->type == TypeFlag::FUNCTION ? _processed_funcs.contains(std::reinterpret_pointer_cast<FunctionType>(func)) : false;
+    return typeFlagMatch(func, TypeFlag::FUNCTION) ? _processed_funcs.contains(std::reinterpret_pointer_cast<FunctionType>(func)) : false;
 }
 
 void TypeInferencePass::run(std::pair<std::shared_ptr<CFG::Function>, vector<File*>>& main_fn, bool should_print) {
@@ -277,15 +281,19 @@ void TypeInferencePass::visitVarStore(CFG::VarStore* expr) {
 }
 void TypeInferencePass::visitVarReadNative(CFG::VarReadNative* expr) {
     // Expr type is set when transforming
-    if (expr->exprType->type == TypeFlag::FUNCTION) _processed_funcs.insert(std::reinterpret_pointer_cast<FunctionType>(expr->exprType));
+    if (typeFlagMatch(expr->exprType, TypeFlag::FUNCTION)) _processed_funcs.insert(std::reinterpret_pointer_cast<FunctionType>(expr->exprType));
 }
 void TypeInferencePass::visitArithmeticExpr(CFG::ArithmeticExpr* expr) {
     expr->lhs->accept(this);
     expr->rhs->accept(this);
     switch (expr->opType) {
         case CFG::ArithmeticOp::ADD: {
-            auto tmp = typeUnion(expr->lhs->exprType, expr->rhs->exprType);
-            if (tmp->type == TypeFlag::NUMBER || tmp->type == TypeFlag::STRING) expr->exprType = tmp;
+            auto lhs = expr->lhs->exprType;
+            auto rhs = expr->rhs->exprType;
+            if (typeFlagMatch(lhs, TypeFlag::NUMBER) || typeFlagMatch(rhs, TypeFlag::NUMBER))
+                expr->exprType = getBasicType(TypeFlag::NUMBER);
+            if (typeFlagMatch(lhs, TypeFlag::STRING) || typeFlagMatch(rhs, TypeFlag::STRING))
+                expr->exprType = getBasicType(TypeFlag::STRING);
             break;
         }
         default:
@@ -344,14 +352,14 @@ void TypeInferencePass::visitCallExpr(CFG::CallExpr* expr) {
 
     // Determine the result of the call(if possible)
     // If this is a recursive call we can't know the return type for sure
-    if (auto ty = expr->callee->exprType; ty->type == TypeFlag::FUNCTION && func_complete(ty)) {
+    if (auto ty = expr->callee->exprType; typeFlagMatch(ty, TypeFlag::FUNCTION) && func_complete(ty)) {
         expr->exprType = std::reinterpret_pointer_cast<FunctionType>(ty)->retType;
     }
 }
 
 void TypeInferencePass::visitInstGet(CFG::InstGet* expr) {
     expr->instance->accept(this);
-    if (expr->instance->exprType->type == TypeFlag::INSTANCE) {
+    if (typeFlagMatch(expr->instance->exprType, TypeFlag::INSTANCE)) {
         auto class_ty = std::reinterpret_pointer_cast<InstanceType>(expr->instance->exprType)->klass;
         if (class_ty->methods.contains(expr->field)) expr->exprType = class_ty->methods[expr->field].first;
         else if (class_ty->fields.contains(expr->field)) expr->exprType = class_ty->fields[expr->field].first;
@@ -365,7 +373,7 @@ void TypeInferencePass::visitInstSet(CFG::InstSet* expr) {
 void TypeInferencePass::visitInvokeExpr(CFG::InvokeExpr* expr) {
     expr->inst->accept(this);
     for (const auto& arg : expr->args) arg->accept(this);
-    if (expr->inst->exprType->type == TypeFlag::INSTANCE) {
+    if (typeFlagMatch(expr->inst->exprType, TypeFlag::INSTANCE)) {
         auto class_ty = std::reinterpret_pointer_cast<InstanceType>(expr->inst->exprType)->klass;
         tyPtr func_ty = nullptr;
         if (class_ty->methods.contains(expr->field)) func_ty = class_ty->methods[expr->field].first;
