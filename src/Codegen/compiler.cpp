@@ -82,9 +82,10 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
     llvm::verifyModule(*curModule, &llvm::errs());
     llvm::errs()<<"--------------------Unoptimized module--------------------\n";
 #ifdef COMPILER_DEBUG
-    //curModule->print(llvm::errs(), nullptr);
+    curModule->print(llvm::errs(), nullptr);
 #endif
     debugEmitter.finalize();
+    llvm::errs()<<"--------------------Optimized module--------------------\n";
     optimizeModule(*curModule);
     return std::move(llvm::orc::ThreadSafeModule(std::move(curModule), std::move(ctx)));
 }

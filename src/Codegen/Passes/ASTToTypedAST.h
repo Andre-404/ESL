@@ -61,6 +61,69 @@ namespace typedASTParser{
         // Stack can grow an arbitrary amount
         vector<Local> locals;
         vector<Upvalue> freevars;
+    private:
+        vector<CFG::nodePtr> stmt_antecedents;
+        vector<CFG::nodePtr> break_antecedents;
+        vector<CFG::nodePtr> continue_antecedents;
+        vector<CFG::nodePtr> advance_antecedents;
+        struct loop_data {
+            vector<CFG::nodePtr> break_antecedents;
+            vector<CFG::nodePtr> continue_antecedents;
+        };
+        struct switch_data {
+            vector<CFG::nodePtr> break_antecedents;
+            vector<CFG::nodePtr> advance_antecedents;
+        };
+    public:
+        vector<CFG::nodePtr>&& get_stmt() {
+            return std::move(stmt_antecedents);
+        }
+        vector<CFG::nodePtr>&& get_advance() {
+            return std::move(advance_antecedents);
+        }
+        loop_data prep_loop() {
+            return {std::move(break_antecedents), std::move(continue_antecedents) };
+        }
+        vector<CFG::nodePtr> finish_loop(loop_data& data) {
+            stmt_antecedents.insert(stmt_antecedents.end(), continue_antecedents.begin(), continue_antecedents.end());
+            auto tmp = stmt_antecedents;
+            stmt_antecedents = break_antecedents;
+            break_antecedents = std::move(data.break_antecedents);
+            continue_antecedents = std::move(data.continue_antecedents);
+            return std::move(tmp);
+        }
+        switch_data prep_switch() {
+            return { std::move(break_antecedents), std::move(advance_antecedents) };
+        }
+        void finish_switch(switch_data& data) {
+            stmt_antecedents = break_antecedents;
+            stmt_antecedents.insert(stmt_antecedents.end(), advance_antecedents.begin(), advance_antecedents.end());
+            break_antecedents = std::move(data.break_antecedents);
+            advance_antecedents = std::move(data.advance_antecedents);
+        }
+
+        void set_stmt(vector<CFG::nodePtr> cur) {
+            stmt_antecedents = std::move(cur);
+        }
+
+        void add_stmt(CFG::nodePtr cur) {
+            stmt_antecedents.push_back(cur);
+        }
+        void add_break(CFG::nodePtr cur) {
+            break_antecedents.push_back(cur);
+        }
+        void add_continue(CFG::nodePtr cur) {
+            continue_antecedents.push_back(cur);
+        }
+        void add_advance(CFG::nodePtr cur) {
+            advance_antecedents.push_back(cur);
+        }
+        template<class NodeTy>
+        inline NodeTy set_antecedents(NodeTy stmt) {
+            stmt->antecedents = std::move(get_stmt());
+            add_stmt(stmt);
+            return stmt;
+        }
         CurrentChunkInfo(CurrentChunkInfo* _enclosing, FuncType _type, string funcName);
     };
 
@@ -148,10 +211,12 @@ namespace typedASTParser{
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
 #pragma endregion
     private:
+
         bool transformedAST; // Whether the run function was called(used by getTypeEnv)
         // Compiler only ever emits the code for a single function, top level code is considered a function
         CurrentChunkInfo* current;
         std::shared_ptr<ClassChunkInfo> currentClass;
+
 
         vector<AST::ASTModule>& units;
         int curUnitIndex;
@@ -219,13 +284,13 @@ namespace typedASTParser{
         Token syntheticToken(const string& str);
         void error(const Token token, const string& msg) noexcept(false);
         void error(const string& message) noexcept(false);
-        vector<std::variant<double, bool, void*, string>> getCaseConstants(vector<Token> constants);
+        vector<std::variant<double, bool, void*, string>> getCaseConstants(vector<Token>& constants);
         string computeFullSymbol(string symbol, int moduleIndex);
 
         CFG::Block parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts);
         CFG::Block parseStmtToBlock(AST::ASTNodePtr stmt);
         CFG::exprPtr evalASTExpr(std::shared_ptr<AST::ASTNode> node);
-        vector<CFG::stmtPtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
+        vector<CFG::nodePtr> evalASTStmt(std::shared_ptr<AST::ASTNode> node);
         void createNativeFn(string name, int arity, types::tyPtr retTy);
         void declareNativeFunctions();
         #pragma endregion

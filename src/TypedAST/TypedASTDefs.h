@@ -90,6 +90,8 @@ namespace CFG{
 
     class CFGVisitor{
     public:
+        virtual ~CFGVisitor() = default;
+
         virtual void visitVarDecl(VarDecl* decl) = 0;
         virtual void visitVarRead(VarRead* expr) = 0;
         virtual void visitVarStore(VarStore* expr) = 0;
@@ -124,6 +126,7 @@ namespace CFG{
 
     class CFGCodeGen{
     public:
+        virtual ~CFGCodeGen() = default;
         virtual llvm::Value* visitVarDecl(VarDecl* decl) = 0;
         virtual llvm::Value* visitVarRead(VarRead* expr) = 0;
         virtual llvm::Value* visitVarStore(VarStore* expr) = 0;
@@ -179,7 +182,7 @@ namespace CFG{
     // Only keep track of antecedents to build a reverse CFG
     class CFGStmt : public CFGNode {
     public:
-        std::vector<std::shared_ptr<CFGStmt>> antecedents;
+        std::vector<std::shared_ptr<CFGNode>> antecedents;
     };
 
     using stmtPtr = shared_ptr<CFGStmt>;
@@ -343,13 +346,16 @@ namespace CFG{
     public:
         exprPtr lhs;
         string className;
+        std::shared_ptr<types::ClassType> classType;
         AST::BinaryExprDebugInfo dbgInfo;
 
-        InstanceofExpr(exprPtr _lhs, string _className, AST::BinaryExprDebugInfo _dbgInfo): dbgInfo(_dbgInfo){
-                lhs = _lhs;
-                className = _className;
-                exprType = types::getBasicType(types::TypeFlag::ANY);
-                type = NodeType::INSTANCEOF;
+        InstanceofExpr(exprPtr _lhs, string _className, std::shared_ptr<types::ClassType> _classType,
+            AST::BinaryExprDebugInfo _dbgInfo): dbgInfo(_dbgInfo) {
+            classType = _classType;
+            lhs = _lhs;
+            className = _className;
+            exprType = types::getBasicType(types::TypeFlag::BOOL);
+            type = NodeType::INSTANCEOF;
         }
         ~InstanceofExpr() {};
         void accept(CFGVisitor* vis) override{
@@ -599,7 +605,7 @@ namespace CFG{
     };
 
     struct Block{
-        vector<stmtPtr> stmts;
+        vector<nodePtr> stmts;
         // If this block terminates no need to put a br instruction at the end of it when emitting IR
         bool terminates;
         Block(){
@@ -645,7 +651,7 @@ namespace CFG{
             return vis->visitCreateClosureExpr(this);
         }
     };
-    class FuncDecl : public CFGStmt{
+    class FuncDecl : public CFGNode{
     public:
         std::shared_ptr<Function> fn;
         AST::FuncDeclDebugInfo dbgInfo;
@@ -722,7 +728,7 @@ namespace CFG{
         CONTINUE,
         ADVANCE
     };
-    class UncondJump : public CFGStmt{
+    class UncondJump : public CFGNode{
     public:
         JumpType jmpType;
         AST::UncondJmpDebugInfo dbgInfo;
@@ -795,7 +801,7 @@ namespace CFG{
         AST::SwitchStmtDebugInfo dbgInfo;
         bool containsStrings;
 
-        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, bool, void*, string>, int>>& _constants,
+        SwitchStmt(exprPtr _cond, vector<std::pair<std::variant<double, bool, void*, string>, int>> _constants,
                    vector<Block> _cases, int _defaultCaseBlockNum, bool _containsStrings, AST::SwitchStmtDebugInfo _dbgInfo)
             : dbgInfo(_dbgInfo){
             cond = _cond;
@@ -827,7 +833,7 @@ namespace CFG{
         }
     };
 
-    class ClassDecl : public CFGStmt{
+    class ClassDecl : public CFGNode{
     public:
         // Privates are prefixed with "priv."
         // Int is index of that field/method after linearization
@@ -917,7 +923,7 @@ namespace CFG{
         END
     };
     // Used for better debug info and to know which variables to remove when exiting scope and for generating runtime debug info
-    class ScopeEdge : public CFGStmt{
+    class ScopeEdge : public CFGNode{
     public:
         ScopeEdgeType edgeType;
         Token location;

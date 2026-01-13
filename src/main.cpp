@@ -12,8 +12,7 @@
 #include "Codegen/Passes/ASTToTypedAST.h"
 #include "Codegen/Passes/ASTVerifier.h"
 #include "Codegen/Passes/ASTOptimization.h"
-#include "ErrorHandling/errorHandler.h"
-#include <chrono>
+#include "Codegen/Passes/TypeInference.h"
 
 #if defined(_WIN32) || defined(WIN32)
 #include <windows.h>
@@ -84,8 +83,10 @@ int main(int argc, char* argv[]) {
         handler.displayErrors();
         exit(64);
     }
+    TypeInferencePass pass;
+    pass.run(res, true);
     auto classes = transformer.getClassHierarchy();
-    if(handler.hasErrors()){
+    if (handler.hasErrors()) {
         handler.displayErrors();
         exit(64);
     }

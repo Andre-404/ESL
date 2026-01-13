@@ -19,6 +19,7 @@ namespace types{
         HASHMAP,
         INSTANCE,
         CLASS,
+        UNKNOWN // Special type that's ignored when doing a type union
     };
 
     class Type{
@@ -93,6 +94,24 @@ namespace types{
         }
     };
 
-    tyPtr getBasicType(const TypeFlag type);
+    tyPtr getBasicType(TypeFlag type);
+    inline bool isBasicType(const tyPtr ty, const TypeFlag type) {
+        return ty->type == type;
+    }
+
+    inline bool types_equal(const tyPtr &left, const tyPtr &right) {
+        if (left->type != right->type) return false;
+        switch (left->type) {
+            case TypeFlag::ANY: return false;
+            case TypeFlag::ARRAY: return types_equal(((ArrayType*)left.get())->itemType, ((ArrayType*)right.get())->itemType);
+            case TypeFlag::FUNCTION: return left == right;
+            case TypeFlag::HASHMAP:
+                return types_equal(((HashMapType*)left.get())->itemType, ((HashMapType*)right.get())->itemType);
+            case TypeFlag::INSTANCE:
+                return types_equal(((InstanceType*)left.get())->klass, ((InstanceType*)right.get())->klass);
+            case TypeFlag::CLASS: return left == right;
+            default: return true;
+        }
+    }
 
 }

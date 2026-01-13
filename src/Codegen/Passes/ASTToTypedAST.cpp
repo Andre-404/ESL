@@ -53,7 +53,7 @@ ankerl::unordered_dense::map<string, types::tyPtr>& ASTTransformer::getNativeFun
 }
 
 #pragma region Visitor
-static Token probeToken(AST::ASTNodePtr ptr){
+static inline Token probeToken(AST::ASTNodePtr ptr){
     AST::ASTProbe p;
     ptr->accept(&p);
     return p.getProbedToken();
@@ -240,6 +240,7 @@ void ASTTransformer::visitNewExpr(AST::NewExpr* expr) {
     auto varDbg = AST::VarReadDebugInfo(className);
 
     returnedExpr = std::make_shared<CFG::NewExpr>(klass->mangledName, args, dbg);
+    returnedExpr->exprType = std::make_shared<types::InstanceType>(klass->classTy);
 }
 
 void ASTTransformer::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
@@ -434,9 +435,8 @@ void ASTTransformer::visitVarDecl(AST::VarDecl* decl) {
         defineGlobalVar(fullGlobalSymbol, AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
     }else defineLocalVar(AST::VarDeclDebugInfo(decl->keyword, decl->getName()));
 
-    auto toStore = storeToVar(decl->var.name, decl->op, initializer);
-
-    nodesToReturn = {var, std::make_shared<CFG::ExprStmt>(toStore)};
+    auto toStore = current->set_antecedents(std::make_shared<CFG::ExprStmt>(storeToVar(decl->var.name, decl->op, initializer)));
+    nodesToReturn = {var, toStore};
 }
 
 void ASTTransformer::visitFuncDecl(AST::FuncDecl* decl) {
@@ -555,12 +555,17 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
 }
 
 void ASTTransformer::visitExprStmt(AST::ExprStmt* stmt) {
-    nodesToReturn= { std::make_shared<CFG::ExprStmt>(evalASTExpr(stmt->expr)) };
+    auto tmp_antecedents = current->get_stmt();
+    auto tmp = std::make_shared<CFG::ExprStmt>(evalASTExpr(stmt->expr));
+    tmp->antecedents = tmp_antecedents;
+    nodesToReturn= { tmp };
+    current->add_stmt(tmp);
 }
 void ASTTransformer::visitSpawnStmt(AST::SpawnStmt* stmt){
     auto call = evalASTExpr(stmt->callExpr);
-    nodesToReturn = {std::make_shared<CFG::SpawnStmt>(call, call->type == CFG::NodeType::INVOKE,
-                                                      AST::SpawnStmtDebugInfo(stmt->keyword))};
+    auto tmp = current->set_antecedents(std::make_shared<CFG::SpawnStmt>(call, call->type == CFG::NodeType::INVOKE,
+                                                      AST::SpawnStmtDebugInfo(stmt->keyword)));
+    nodesToReturn = {tmp};
 }
 void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
     vector<CFG::nodePtr> nodes = {beginScope(stmt->start)};
@@ -578,49 +583,54 @@ void ASTTransformer::visitBlockStmt(AST::BlockStmt* stmt) {
 }
 
 void ASTTransformer::visitIfStmt(AST::IfStmt* stmt) {
-    auto cond = evalASTExpr(stmt->condition);
-    CFG::Block thenBlock = parseStmtToBlock(stmt->thenBranch);
-    CFG::Block elseBlock;
-    if(stmt->elseBranch){
-        elseBlock = parseStmtToBlock(stmt->elseBranch);
-    }
-
     auto dbg = AST::IfStmtDebugInfo(stmt->keyword);
+    auto tmpIf = current->set_antecedents(std::make_shared<CFG::IfStmt>(evalASTExpr(stmt->condition),
+        CFG::Block(), CFG::Block(), dbg));
 
-    nodesToReturn = {std::make_shared<CFG::IfStmt>(cond, thenBlock, elseBlock, dbg)};
+    tmpIf->thenBlock = parseStmtToBlock(stmt->thenBranch);
+    vector<CFG::nodePtr> antecedents = current->get_stmt();
+    if(stmt->elseBranch){
+        tmpIf->elseBlock = parseStmtToBlock(stmt->elseBranch);
+        auto tmp = current->get_stmt();
+        antecedents.insert(antecedents.end(), tmp.begin(), tmp.end());
+    } else antecedents.push_back(tmpIf);
+
+    current->set_stmt(std::move(antecedents));
+    nodesToReturn = { tmpIf };
 }
 void ASTTransformer::visitWhileStmt(AST::WhileStmt* stmt) {
-    auto cond = evalASTExpr(stmt->condition);
-    CFG::Block loopBody = parseStmtToBlock(stmt->body);
-
     auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
+    auto tmpWhile = current->set_antecedents(std::make_shared<CFG::WhileStmt>(evalASTExpr(stmt->condition), CFG::Block(), dbg));
+    auto data = current->prep_loop();
+    tmpWhile->loopBody = parseStmtToBlock(stmt->body);
+    auto tmp = current->finish_loop(data);
+    tmpWhile->antecedents.insert(tmpWhile->antecedents.end(), tmp.begin(), tmp.end());
 
-    nodesToReturn = {std::make_shared<CFG::WhileStmt>(cond, loopBody, dbg)};
+    current->add_stmt(tmpWhile);
+    nodesToReturn = { tmpWhile };
 }
 void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
     // Convert for to a while loop with "init" directly above it in a block
     auto scopeEdge1 = beginScope(stmt->keyword);
     vector<CFG::nodePtr> init;
-    CFG::exprPtr cond = nullptr;
-    CFG::exprPtr inc = nullptr;
     // Order of eval is important for types
     // Init can be a single statement(expr statement) or a var decl + var store
     if(stmt->init) init = evalASTStmt(stmt->init);
-    if(stmt->condition) cond = evalASTExpr(stmt->condition);
+    auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
+    auto tmpWhile = current->set_antecedents(std::make_shared<CFG::WhileStmt>(stmt->condition ? evalASTExpr(stmt->condition) : nullptr,
+        CFG::Block(), dbg, stmt->increment ? evalASTExpr(stmt->increment) : nullptr));
+    auto data = current->prep_loop();
+    tmpWhile->loopBody = parseStmtToBlock(stmt->body);
+    auto tmp = current->finish_loop(data);
+    tmpWhile->antecedents.insert(tmpWhile->antecedents.end(), tmp.begin(), tmp.end());
+    current->add_stmt(tmpWhile);
 
-    CFG::Block loopBody = parseStmtToBlock(stmt->body);
-    if(stmt->increment) inc = evalASTExpr(stmt->increment);
-
-    auto scopeEdge2 = endScope(stmt->keyword);
     // Init isn't treated as part of the while loop, but as statement(s) by itself(exprStmt or var decl + var store)
     nodesToReturn.insert(nodesToReturn.end(), scopeEdge1);
     nodesToReturn.insert(nodesToReturn.end(), init.begin(), init.end());
-
-    auto dbg = AST::WhileStmtDebugInfo(stmt->keyword);
-
     // AfterLoopExpr is special field that won't be part of the loop body, but in a basic block by itself
-    nodesToReturn.push_back(std::make_shared<CFG::WhileStmt>(cond, loopBody, dbg, inc));
-    nodesToReturn.push_back(scopeEdge2);
+    nodesToReturn.push_back(tmpWhile);
+    nodesToReturn.push_back(endScope(stmt->keyword));
 }
 void ASTTransformer::visitBreakStmt(AST::BreakStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
@@ -631,7 +641,7 @@ void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::CONTINUE, dbg)};
 }
 
-vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstants(vector<Token> constants){
+vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstants(vector<Token>& constants){
     vector<std::variant<double, bool, void*, string>> converted;
     for (auto literal: constants) {
         if(literal.type == TokenType::STRING){
@@ -661,36 +671,33 @@ vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstan
 
 void ASTTransformer::visitSwitchStmt(AST::SwitchStmt* stmt) {
     auto cond = evalASTExpr(stmt->expr);
-    vector<std::pair<std::variant<double, bool, void*, string>, int>> constants;
-    // Used to check if switch stmt contains duplicate constants
-    vector<CFG::Block> caseBlocks;
-    int defaultBlockIdx = -1;
+    vector<Token> cases;
+    for(auto _case : stmt->cases) cases.push_back(_case->caseType);
+    auto dbg = AST::SwitchStmtDebugInfo(stmt->keyword, cases);
+    // Dont know why it cant infer template args for make_shared
+    CFG::SwitchStmt a(cond, {}, {}, -1, false, dbg);
+    auto tmpSwitch = current->set_antecedents(std::make_shared<CFG::SwitchStmt>(a));
+    current->get_stmt(); // Discard
     int i = 0;
-    bool containsString = false;
+    auto temp_data = current->prep_switch();
     for(auto _case : stmt->cases){
         if(_case->caseType.type == TokenType::DEFAULT){
-            defaultBlockIdx = i;
-            caseBlocks.push_back(parseStmtsToBlock(_case->stmts));
-            i++;
-            continue;
+            tmpSwitch->defaultCaseBlockNum= i;
+        } else {
+            for(auto& literal : getCaseConstants(_case->constants)){
+                if (literal.index() == 3) tmpSwitch->containsStrings = true;
+                tmpSwitch->constants.emplace_back(literal, i);
+            }
         }
-        for(Token& tok : _case->constants){
-            if(tok.type == TokenType::STRING) containsString = true;
-        }
-        auto convertedLiterals = getCaseConstants(_case->constants);
-        for(auto literal : convertedLiterals){
-            constants.emplace_back(literal, i);
-        }
-        caseBlocks.push_back(parseStmtsToBlock(_case->stmts));
+        // From pre switch we can go to any case
+        current->set_stmt(current->get_advance());
+        current->add_stmt(tmpSwitch);
+        tmpSwitch->cases.push_back(parseStmtsToBlock(_case->stmts));
         i++;
     }
-    vector<Token> cases;
-    for(auto _case : stmt->cases){
-        cases.push_back(_case->caseType);
-    }
-    auto dbg = AST::SwitchStmtDebugInfo(stmt->keyword, cases);
+    current->finish_switch(temp_data);
 
-    nodesToReturn = {std::make_shared<CFG::SwitchStmt>(cond, constants, caseBlocks, defaultBlockIdx, containsString, dbg)};
+    nodesToReturn = {tmpSwitch};
 }
 void ASTTransformer::visitCaseStmt(AST::CaseStmt* _case) {
     //Nothing, everything is handled in visitSwitchStmt
@@ -713,7 +720,10 @@ void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {
 
     auto dbg = AST::ReturnStmtDebugInfo(stmt->keyword);
 
-    nodesToReturn = {std::make_shared<CFG::ReturnStmt>(expr, dbg)};
+    auto tmpRet = std::make_shared<CFG::ReturnStmt>(expr, dbg);
+    tmpRet->antecedents = std::move(current->get_stmt());
+    nodesToReturn = { tmpRet };
+
 }
 #pragma endregion
 
@@ -781,7 +791,7 @@ varPtr ASTTransformer::declareGlobalVar(const string& name, const AST::ASTDeclTy
         case AST::ASTDeclType::FUNCTION: varty = CFG::VarType::GLOBAL_FUNC; break;
         case AST::ASTDeclType::CLASS: break; // Unreachable
     }
-    varPtr var = std::make_shared<CFG::VarDecl>(varty);
+    varPtr var = current->set_antecedents(std::make_shared<CFG::VarDecl>(varty));
     globals.insert_or_assign(name, Globalvar(var));
     return var;
 }
@@ -1025,7 +1035,7 @@ std::shared_ptr<CFG::InstanceofExpr> ASTTransformer::createInstanceofExpr(CFG::e
         error(dbg.op, "Expected class identifier on right side.");
     }
     std::shared_ptr<ClassChunkInfo> info = getClassInfoFromExpr(rhs);
-    return std::make_shared<CFG::InstanceofExpr>(lhs, info->mangledName, dbg);
+    return std::make_shared<CFG::InstanceofExpr>(lhs, info->mangledName, info->classTy, dbg);
 }
 
 void ASTTransformer::detectDuplicateSymbol(const Token publicName, const bool isMethod, const bool methodOverrides){
@@ -1227,7 +1237,7 @@ string ASTTransformer::computeFullSymbol(string symbol, int moduleIndex){
 CFG::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){
     CFG::Block block;
     for(auto stmt : stmts){
-        vector<CFG::stmtPtr> stmtVec;
+        vector<CFG::nodePtr> stmtVec;
         try {
             stmtVec = evalASTStmt(stmt);
         }catch(TransformerException e){
@@ -1235,13 +1245,20 @@ CFG::Block ASTTransformer::parseStmtsToBlock(vector<AST::ASTNodePtr>& stmts){
         }
         // Dead code elimination
         // If a terminator instruction is detected in this block, don't eval anything below it
-        vector<CFG::stmtPtr> scopeEdges;
+        vector<CFG::nodePtr> scopeEdges;
         for (int i = stmtVec.size() - 1; i >= 0; i--) {
             if (stmtVec[i]->type == CFG::NodeType::UNCOND_JMP || stmtVec[i]->type == CFG::NodeType::RETURN) {
                 stmtVec.resize(i + 1);
                 block.terminates = true;
                 stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
                 block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
+                if (stmtVec[i]->type == CFG::NodeType::RETURN) current->set_stmt({});
+                else {
+                    auto jmp = std::reinterpret_pointer_cast<CFG::UncondJump>(stmtVec[i]);
+                    if (jmp->jmpType == CFG::JumpType::BREAK) current->add_break(stmtVec[i]);
+                    else if (jmp->jmpType == CFG::JumpType::CONTINUE) current->add_continue(stmtVec[i]);
+                    else if (jmp->jmpType == CFG::JumpType::ADVANCE) current->add_advance(stmtVec[i]);
+                }
                 return block;
             }else if(stmtVec[i]->type == CFG::NodeType::BLOCK_EDGE){
                 std::shared_ptr<CFG::ScopeEdge> edge = std::reinterpret_pointer_cast<CFG::ScopeEdge>(stmtVec[i]);
@@ -1271,6 +1288,13 @@ CFG::Block ASTTransformer::parseStmtToBlock(AST::ASTNodePtr stmt){
             block.terminates = true;
             stmtVec.insert(stmtVec.end(), scopeEdges.rbegin(), scopeEdges.rend());
             block.stmts.insert(block.stmts.end(), stmtVec.begin(), stmtVec.end());
+            if (stmtVec[i]->type == CFG::NodeType::RETURN) current->set_stmt({});
+            else {
+                auto jmp = std::reinterpret_pointer_cast<CFG::UncondJump>(stmtVec[i]);
+                if (jmp->jmpType == CFG::JumpType::BREAK) current->add_break(stmtVec[i]);
+                else if (jmp->jmpType == CFG::JumpType::CONTINUE) current->add_continue(stmtVec[i]);
+                else if (jmp->jmpType == CFG::JumpType::ADVANCE) current->add_advance(stmtVec[i]);
+            }
             return block;
         }else if(stmtVec[i]->type == CFG::NodeType::BLOCK_EDGE){
             std::shared_ptr<CFG::ScopeEdge> edge = std::reinterpret_pointer_cast<CFG::ScopeEdge>(stmtVec[i]);
@@ -1288,15 +1312,9 @@ CFG::exprPtr ASTTransformer::evalASTExpr(std::shared_ptr<AST::ASTNode> node){
     returnedExpr = nullptr;
     return tmp;
 }
-vector<CFG::stmtPtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNode> node){
+vector<CFG::nodePtr> ASTTransformer::evalASTStmt(std::shared_ptr<AST::ASTNode> node){
     node->accept(this);
-    std::vector<CFG::stmtPtr> tmp;
-    for (auto nd : nodesToReturn) {
-        if (std::dynamic_pointer_cast<CFG::stmtPtr>(nd)) {
-            auto stmt = std::dynamic_pointer_cast<CFG::stmtPtr>(nd);
-            tmp.emplace_back(stmt);
-        }
-    }
+    auto tmp = nodesToReturn;
     // Sanity check
     nodesToReturn.clear();
     return tmp;
