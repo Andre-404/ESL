@@ -106,7 +106,7 @@ namespace types{
             case TypeFlag::ARRAY: return types_equal(((ArrayType*)left.get())->itemType, ((ArrayType*)right.get())->itemType);
             case TypeFlag::FUNCTION: return left == right;
             case TypeFlag::HASHMAP:
-                return types_equal(((HashMapType*)left.get())->itemType, ((HashMapType*)right.get())->itemType);
+                return false;
             case TypeFlag::INSTANCE:
                 return types_equal(((InstanceType*)left.get())->klass, ((InstanceType*)right.get())->klass);
             case TypeFlag::CLASS: return left == right;

@@ -400,7 +400,7 @@ llvm::Value* Compiler::visitCollectionGet(CFG::CollectionGet* expr) {
     llvm::Value* intMax = builder.getInt64(UINT64_MAX);
     llvm::Constant* str = createConstStr("Expected an array or hashmap, got '{}'.");
     builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
-                                                    collection, intMax, intMax});
+                                                    ESLValTo(collection, builder.getInt64Ty()), intMax, intMax});
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -459,7 +459,7 @@ llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     llvm::Value* intMax = builder.getInt64(UINT64_MAX);
     llvm::Constant* str = createConstStr("Expected an array or hashmap, got '{}'.");
     builder.CreateCall(safeGetFunc("runtimeError"),{str, builder.getInt8(+runtimeErrorType::WRONG_TYPE),
-                                                    collection, intMax, intMax});
+                                                    ESLValTo(collection, builder.getInt64Ty()), intMax, intMax});
     builder.CreateUnreachable();
 
     F->insert(F->end(), mergeBB);
@@ -1629,7 +1629,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
     index = ESLValTo(index, builder.getDoubleTy());
     index = builder.CreateFPToUI(index, builder.getInt64Ty());
     arr = builder.CreateCall(safeGetFunc("decodeArray"), arr, "obj.arr.ptr");
-    builder.CreateCall(safeGetFunc("arrWriteBarrier"), {arr, val}, "barrier");
+    builder.CreateCall(safeGetFunc("arrWriteBarrier"), {arr, val});
     llvm::Value* storagePtr = builder.CreateConstInBoundsGEP2_32(namedTypes["ObjArray"], arr, 0, 3);
     arr = builder.CreateLoad(namedTypes["ObjArrayStoragePtr"], storagePtr, "storage.ptr");
     arr = builder.CreateConstInBoundsGEP1_32(namedTypes["ObjArrayStorage"], arr, 1, "data.ptr");
@@ -2256,7 +2256,7 @@ void Compiler::generateNativeFuncs(fastMap<string, types::tyPtr>& natives){
 void Compiler::createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights){
     auto sw = builder.CreateSwitch(cond, defaultBB);
     for(auto [_case, BB] : cases){
-        sw->addCase(builder.getInt32(_case), BB);
+        sw->addCase(builder.getInt8(_case), BB);
     }
     // Convert weights to LLVM constants
     std::vector<llvm::Metadata*> Vals;

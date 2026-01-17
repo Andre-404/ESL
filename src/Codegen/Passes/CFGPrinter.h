@@ -101,7 +101,7 @@ class CFGPrinter : CFG::CFGVisitor{
         for (auto field : expr->fields) {
             fmt::print("{} [{}] :\n", indent, i);
             indent.push_back(' ');
-            expr->accept(this);
+            field->accept(this);
             indent.pop_back();
             i++;
         }

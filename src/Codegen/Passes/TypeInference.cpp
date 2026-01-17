@@ -140,8 +140,8 @@ class VariableTypeFinder : CFG::CFGVisitor{
             if (typeFlagMatch(expr->field->exprType, TypeFlag::STRING))
                 return ret_target(std::make_shared<HashMapType>(getBasicType(TypeFlag::ANY)));
         } else if (is_target(expr->field)) {
-            if (typeFlagMatch(expr->field->exprType, TypeFlag::ARRAY)) return ret_target(getBasicType(TypeFlag::NUMBER));
-            if (typeFlagMatch(expr->field->exprType, TypeFlag::HASHMAP)) return ret_target(getBasicType(TypeFlag::STRING));
+            if (typeFlagMatch(expr->collection->exprType, TypeFlag::ARRAY)) return ret_target(getBasicType(TypeFlag::NUMBER));
+            if (typeFlagMatch(expr->collection->exprType, TypeFlag::HASHMAP)) return ret_target(getBasicType(TypeFlag::STRING));
         }
         return ret_target(last_evaluated(extract_type(expr->collection), extract_type(expr->field)));
     }

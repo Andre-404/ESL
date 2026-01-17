@@ -85,6 +85,7 @@ void ASTTransformer::visitSetExpr(AST::SetExpr* expr){
 
         auto dbg = AST::CollectionSetDebugInfo(expr->accessor, expr->op);
         returnedExpr = std::make_shared<CFG::CollectionSet>(collection, field, toStore, operationType, dbg);
+        return;
     }
     // Tries to resolve this.field = expr if we're currently inside a method
     auto resolved = tryResolveThis(expr, operationType);

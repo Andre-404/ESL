@@ -3,8 +3,8 @@
 #include "../Objects/objects.h"
 #include "../Values/valueHelpersInline.cpp"
 #include "../../Includes/rpmalloc/rpmalloc.h"
+#include "threadArena.h"
 #include <algorithm>
-#include <variant>
 #include <csetjmp>
 
 using namespace valueHelpers;

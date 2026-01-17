@@ -3,6 +3,7 @@
 #include "../Includes/fmt/format.h"
 #include "Values/valueHelpersInline.cpp"
 #include "MemoryManagment/garbageCollector.h"
+#include "MemoryManagment/threadArena.h"
 #include <csetjmp>
 #include <stdarg.h>
 #include "JIT/JIT.h"
