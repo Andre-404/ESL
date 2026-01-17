@@ -55,6 +55,7 @@ PageData* HeapPageManager::allocatePage(uint32_t sizeClassIdx){
     pageData->next = nullptr;
     pageData->numBlocks = (PAGE_SIZE - sizeof(PageData)) / pageData->blockSize;
     inUse.push_back(pageData);
+    allocatedSet.insert(pageData);
     return pageData;
 }
 
@@ -64,10 +65,14 @@ PageData* HeapPageManager::getPageFromPtr(char* ptr){
     /*auto it = std::lower_bound(inUse.begin(), inUse.end(), ptr, [](PageData* page, char* ptr){
         return page->basePtr < ptr;
     });*/
-    for(int i = 0; i < inUse.size(); i++){
+    auto pagePtr = reinterpret_cast<PageData *>(reinterpret_cast<uint64_t>(ptr) & ~(PAGE_SIZE-1));
+    if (allocatedSet.contains(pagePtr)) {
+        return pagePtr;
+    }
+    /*for(int i = 0; i < inUse.size(); i++){
         uint64_t diff = ptr - inUse[i]->basePtr;
         if(diff >= 0 && diff < (PAGE_SIZE)) return inUse[i];
-    }
+    }*/
     return nullptr;
     /*if((char*)(*it) == ptr || it == inUse.begin()) return *it;
     else return *(--it);*/

@@ -3,6 +3,8 @@
 #include <mutex>
 #include <array>
 
+#include "../../Includes/unorderedDense.h"
+
 namespace memory{
 #define SMALL_GRANULARITY 16u
 #define SMALL_SIZE_CLASSES 32u
@@ -50,6 +52,7 @@ namespace memory{
         // This needs to be a vector to allow for efficient binary search
         vector<PageData*> inUse;
         vector<PageData*> empty;
+        ankerl::unordered_dense::set<PageData*> allocatedSet;
         // When a thread ends its execution it's pages get put in the graveyard since they might have objects allocated on them
         std::array<PageData*, MP_CNT> graveyard;
         std::mutex allocMtx;

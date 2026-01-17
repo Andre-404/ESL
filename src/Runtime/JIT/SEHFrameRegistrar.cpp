@@ -1,9 +1,12 @@
 #include "SEHFrameRegistrar.h"
+#ifdef _WIN32
 #include "windows.h"
+#endif
 
 namespace llvm::orc {
     using namespace jitlink;
     Error SEHRegistrarPlugin::AddSEHFrames(MaterializationResponsibility &MR, LinkGraph &G)  {
+        #ifdef _WIN32
         if(Section* sec = G.findSectionByName(".pdata")){
             SectionRange SEHFrameRange(*sec);
             // Never fails because __ImageBase needs to be defined by for the JIT to function before any pass runs
@@ -17,6 +20,7 @@ namespace llvm::orc {
                 return createStringError("Failed to register SEH frames");
             }
         }
+        #endif
         return Error::success();
     }
 

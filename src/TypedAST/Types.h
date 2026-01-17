@@ -19,13 +19,7 @@ namespace types{
         HASHMAP,
         INSTANCE,
         CLASS,
-    };
-
-    enum class TypeConstraintFlag{
-        ADD_TY,
-        GET_RETURN_TY,
-        INST_GET_FIELD_TY,
-        COMPUTE_ADD_TYS,
+        UNKNOWN // Special type that's ignored when doing a type union
     };
 
     class Type{
@@ -38,61 +32,12 @@ namespace types{
             type = _ty;
         }
     };
-    using tyVarIdx = int;
     using tyPtr = std::shared_ptr<Type>;
-
-    class TypeConstraint{
-    public:
-        TypeConstraintFlag type;
-    };
-
-    class AddTyConstraint : public TypeConstraint{
-    public:
-        tyVarIdx toAdd;
-        AddTyConstraint(const tyVarIdx _toAdd){
-            toAdd = _toAdd;
-            type = TypeConstraintFlag::ADD_TY;
-        }
-    };
-
-    class CallResTyConstraint : public TypeConstraint{
-    public:
-        tyVarIdx calleeType;
-
-        CallResTyConstraint(const tyVarIdx _calleeType){
-            calleeType = _calleeType;
-            type = TypeConstraintFlag::GET_RETURN_TY;
-        }
-    };
-
-    class InstGetFieldTyConstraint : public TypeConstraint{
-    public:
-        tyVarIdx potentialInst;
-        string field;
-
-        InstGetFieldTyConstraint(const tyVarIdx _potentialInst, const string _field){
-            potentialInst = _potentialInst;
-            field = _field;
-            type = TypeConstraintFlag::INST_GET_FIELD_TY;
-        }
-    };
-
-    class ComputeAddTysConstraint : public TypeConstraint{
-    public:
-        tyVarIdx lhs;
-        tyVarIdx rhs;
-
-        ComputeAddTysConstraint(const tyVarIdx _lhs, const tyVarIdx _rhs){
-            lhs = _lhs;
-            rhs = _rhs;
-            type = TypeConstraintFlag::COMPUTE_ADD_TYS;
-        }
-    };
 
     class ArrayType : public Type{
     public:
-        tyVarIdx itemType;
-        ArrayType(const tyVarIdx _itemType){
+        tyPtr itemType;
+        ArrayType(const tyPtr _itemType){
             itemType = _itemType;
             type = TypeFlag::ARRAY;
         }
@@ -101,11 +46,11 @@ namespace types{
     class FunctionType : public Type{
     public:
         int argCount;
-        tyVarIdx retType; //Possible return types
-        vector<tyVarIdx> paramTypes;
+        tyPtr retType; //Possible return types
+        vector<tyPtr> paramTypes;
         bool isClosure;
 
-        FunctionType(const int _argCount, const tyVarIdx _retType, const bool _isClosure){
+        FunctionType(const int _argCount, const tyPtr _retType, const bool _isClosure){
             argCount = _argCount;
             retType = _retType;
             isClosure = _isClosure;
@@ -115,29 +60,18 @@ namespace types{
 
     class HashMapType : public Type{
     public:
-        tyVarIdx itemType;
-        HashMapType(const tyVarIdx _itemType){
+        tyPtr itemType;
+        HashMapType(const tyPtr _itemType){
             itemType = _itemType;
             type = TypeFlag::HASHMAP;
-        }
-    };
-
-    class ClassType;
-
-    class InstanceType : public Type{
-    public:
-        std::shared_ptr<ClassType> klass;
-        InstanceType(const std::shared_ptr<ClassType> _klass){
-            klass = _klass;
-            type = TypeFlag::INSTANCE;
         }
     };
 
     class ClassType : public Type{
     public:
         // Privates are prefixed with "priv."
-        std::unordered_map<string, std::pair<tyVarIdx, uInt64>> fields;
-        std::unordered_map<string, std::pair<tyVarIdx, uInt64>> methods;
+        std::unordered_map<string, std::pair<tyPtr, uInt64>> fields;
+        std::unordered_map<string, std::pair<tyPtr, uInt64>> methods;
         string name;
 
         // Fields and methods get filled up from the outside
@@ -151,6 +85,32 @@ namespace types{
         }
     };
 
-    tyPtr getBasicType(const TypeFlag type);
+    class InstanceType : public Type{
+    public:
+        std::shared_ptr<ClassType> klass;
+        InstanceType(const std::shared_ptr<ClassType> _klass){
+            klass = _klass;
+            type = TypeFlag::INSTANCE;
+        }
+    };
+
+    tyPtr getBasicType(TypeFlag type);
+    inline bool typeFlagMatch(const tyPtr ty, const TypeFlag type) {
+        return ty->type == type;
+    }
+
+    inline bool types_equal(const tyPtr &left, const tyPtr &right) {
+        if (left->type != right->type) return false;
+        switch (left->type) {
+            case TypeFlag::ANY: return true;
+            case TypeFlag::ARRAY: return types_equal(((ArrayType*)left.get())->itemType, ((ArrayType*)right.get())->itemType);
+            case TypeFlag::FUNCTION: return left == right;
+            case TypeFlag::HASHMAP: return types_equal(((HashMapType*)left.get())->itemType, ((HashMapType*)right.get())->itemType);
+            case TypeFlag::INSTANCE:
+                return types_equal(((InstanceType*)left.get())->klass, ((InstanceType*)right.get())->klass);
+            case TypeFlag::CLASS: return left == right;
+            default: return true;
+        }
+    }
 
 }

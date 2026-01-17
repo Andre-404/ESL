@@ -1,6 +1,7 @@
 #include "errorHandler.h"
 #include "../Includes/fmt/format.h"
 #include <iostream>
+#include <algorithm>
 
 //name:line:column: error: msg
 //line

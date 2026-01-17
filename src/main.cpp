@@ -10,10 +10,9 @@
 #include "Runtime/MemoryManagment/garbageCollector.h"
 #include "Codegen/Passes/closureConverter.h"
 #include "Codegen/Passes/ASTToTypedAST.h"
-#include "Codegen/Passes/SemanticVerifier.h"
+#include "Codegen/Passes/ASTVerifier.h"
 #include "Codegen/Passes/ASTOptimization.h"
-#include "ErrorHandling/errorHandler.h"
-#include <chrono>
+#include "Codegen/Passes/TypeInference.h"
 
 #if defined(_WIN32) || defined(WIN32)
 #include <windows.h>
@@ -68,7 +67,7 @@ int main(int argc, char* argv[]) {
     AST::Parser parser(handler);
 
     vector<AST::ASTModule> ASTmodules = parser.parse(modules);
-    AST::SemanticVerifier verifier(handler);
+    AST::ASTVerifier verifier(handler);
     verifier.process(ASTmodules);
     if(handler.hasErrors()){
         handler.displayErrors();
@@ -84,9 +83,10 @@ int main(int argc, char* argv[]) {
         handler.displayErrors();
         exit(64);
     }
-    auto env = transformer.getTypeEnv();
+    TypeInferencePass pass;
+    pass.run(res, true);
     auto classes = transformer.getClassHierarchy();
-    if(handler.hasErrors()){
+    if (handler.hasErrors()) {
         handler.displayErrors();
         exit(64);
     }
@@ -96,7 +96,7 @@ int main(int argc, char* argv[]) {
     llvm::InitializeNativeTargetAsmParser();
     llvm::InitializeNativeTargetDisassembler();
     ESLJIT::createJIT();
-    compileCore::Compiler compiler(res.second, env, classes, transformer.getNativeFuncTypes(),
+    compileCore::Compiler compiler(res.second, classes, transformer.getNativeFuncTypes(),
                                    ESLJIT::getJIT().getDL(), handler);
     ESLJIT::getJIT().addIRModule(std::move(compiler.compile(res.first, "func.main")));
     MainFn mainFuncPtr = ESLJIT::getJIT().getMainFunc();

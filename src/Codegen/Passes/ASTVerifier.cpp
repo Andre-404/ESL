@@ -1,16 +1,16 @@
-#include "SemanticVerifier.h"
+#include "ASTVerifier.h"
 #include "../../ErrorHandling/errorHandler.h"
 #include "../../Includes/fmt/format.h"
 #include <unordered_map>
 
 using namespace AST;
 
-SemanticVerifier::SemanticVerifier(errorHandler::ErrorHandler& errHandler) : errHandler(errHandler) {
+ASTVerifier::ASTVerifier(errorHandler::ErrorHandler& errHandler) : errHandler(errHandler) {
     loopDepth = 0;
     switchDepth = 0;
 }
 
-void SemanticVerifier::process(vector<ASTModule> &units) {
+void ASTVerifier::process(vector<ASTModule> &units) {
     for(ASTModule& module : units){
         loopDepth = 0;
         switchDepth = 0;
@@ -34,15 +34,15 @@ void SemanticVerifier::process(vector<ASTModule> &units) {
     }
 }
 
-void SemanticVerifier::visitAssignmentExpr(AST::AssignmentExpr* expr) {
+void ASTVerifier::visitAssignmentExpr(AST::AssignmentExpr* expr) {
     expr->value->accept(this);
 }
-void SemanticVerifier::visitSetExpr(AST::SetExpr* expr){
+void ASTVerifier::visitSetExpr(AST::SetExpr* expr){
     expr->callee->accept(this);
     expr->field->accept(this);
     expr->value->accept(this);
 }
-void SemanticVerifier::visitConditionalExpr(AST::ConditionalExpr* expr) {
+void ASTVerifier::visitConditionalExpr(AST::ConditionalExpr* expr) {
     expr->condition->accept(this);
     expr->mhs->accept(this);
     expr->rhs->accept(this);
@@ -53,7 +53,7 @@ static bool isComparisonOp(const Token token){
     return (t == TokenType::LESS || t == TokenType::LESS_EQUAL ||
             t == TokenType::GREATER || t== TokenType::GREATER_EQUAL);
 }
-void SemanticVerifier::visitBinaryExpr(AST::BinaryExpr* expr){
+void ASTVerifier::visitBinaryExpr(AST::BinaryExpr* expr){
     // Chaining comparison ops is forbidden, here lhs is checked against op of this binary expr,
     // After parsing rhs, rhs is compared to op of this binary expr
     // TODO: move this to SemanticVerifer
@@ -66,47 +66,47 @@ void SemanticVerifier::visitBinaryExpr(AST::BinaryExpr* expr){
     expr->left->accept(this);
     expr->right->accept(this);
 }
-void SemanticVerifier::visitUnaryExpr(AST::UnaryExpr* expr){
+void ASTVerifier::visitUnaryExpr(AST::UnaryExpr* expr){
     expr->right->accept(this);
 }
-void SemanticVerifier::visitCallExpr(AST::CallExpr* expr) {
+void ASTVerifier::visitCallExpr(AST::CallExpr* expr) {
     expr->callee->accept(this);
     for(auto arg : expr->args) arg->accept(this);
 }
-void SemanticVerifier::visitNewExpr(AST::NewExpr* expr) {
+void ASTVerifier::visitNewExpr(AST::NewExpr* expr) {
     expr->call->accept(this);
 }
-void SemanticVerifier::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
+void ASTVerifier::visitFieldAccessExpr(AST::FieldAccessExpr* expr) {
     expr->callee->accept(this);
     expr->field->accept(this);
 }
-void SemanticVerifier::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
+void ASTVerifier::visitArrayLiteralExpr(AST::ArrayLiteralExpr* expr) {
     for(auto _expr : expr->members) _expr->accept(this);
 }
-void SemanticVerifier::visitStructLiteralExpr(AST::StructLiteral* expr) {
+void ASTVerifier::visitStructLiteralExpr(AST::StructLiteral* expr) {
     for(StructEntry& pair : expr->fields) pair.expr->accept(this);
 }
-void SemanticVerifier::visitLiteralExpr(AST::LiteralExpr* expr) {
+void ASTVerifier::visitLiteralExpr(AST::LiteralExpr* expr) {
     // Nothing
 }
-void SemanticVerifier::visitFuncLiteral(AST::FuncLiteral* expr) {
+void ASTVerifier::visitFuncLiteral(AST::FuncLiteral* expr) {
     int temploopdepth = loopDepth;
     int tempswitchdepth = switchDepth;
     expr->body->accept(this);
     loopDepth = temploopdepth;
     switchDepth = tempswitchdepth;
 }
-void SemanticVerifier::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
+void ASTVerifier::visitModuleAccessExpr(AST::ModuleAccessExpr* expr) {
     // Nothing
 }
-void SemanticVerifier::visitMacroExpr(AST::MacroExpr* expr) {
+void ASTVerifier::visitMacroExpr(AST::MacroExpr* expr) {
     // Nothing
 }
 
-void SemanticVerifier::visitVarDecl(AST::VarDecl* decl) {
+void ASTVerifier::visitVarDecl(AST::VarDecl* decl) {
     if(decl->value) decl->value->accept(this);
 }
-void SemanticVerifier::visitFuncDecl(AST::FuncDecl* decl) {
+void ASTVerifier::visitFuncDecl(AST::FuncDecl* decl) {
     int temploopdepth = loopDepth;
     int tempswitchdepth = switchDepth;
     decl->body->accept(this);
@@ -114,7 +114,7 @@ void SemanticVerifier::visitFuncDecl(AST::FuncDecl* decl) {
     switchDepth = tempswitchdepth;
 }
 
-void SemanticVerifier::visitClassDecl(AST::ClassDecl* decl) {
+void ASTVerifier::visitClassDecl(AST::ClassDecl* decl) {
     std::unordered_map<string, Token> fieldNames;
     std::unordered_map<string, Token> methodNames;
     for(auto method : decl->methods) {
@@ -153,27 +153,27 @@ void SemanticVerifier::visitClassDecl(AST::ClassDecl* decl) {
     }
 }
 
-void SemanticVerifier::visitExprStmt(AST::ExprStmt* stmt) {
+void ASTVerifier::visitExprStmt(AST::ExprStmt* stmt) {
     stmt->expr->accept(this);
 }
-void SemanticVerifier::visitSpawnStmt(AST::SpawnStmt* stmt) {
+void ASTVerifier::visitSpawnStmt(AST::SpawnStmt* stmt) {
     stmt->callExpr->accept(this);
 }
-void SemanticVerifier::visitBlockStmt(AST::BlockStmt* stmt) {
+void ASTVerifier::visitBlockStmt(AST::BlockStmt* stmt) {
     for(auto _stmt : stmt->statements) _stmt->accept(this);
 }
-void SemanticVerifier::visitIfStmt(AST::IfStmt* stmt) {
+void ASTVerifier::visitIfStmt(AST::IfStmt* stmt) {
     stmt->condition->accept(this);
     stmt->thenBranch->accept(this);
     if(stmt->elseBranch) stmt->elseBranch->accept(this);
 }
-void SemanticVerifier::visitWhileStmt(AST::WhileStmt* stmt) {
+void ASTVerifier::visitWhileStmt(AST::WhileStmt* stmt) {
     loopDepth++;
     stmt->condition->accept(this);
     stmt->body->accept(this);
     loopDepth--;
 }
-void SemanticVerifier::visitForStmt(AST::ForStmt* stmt) {
+void ASTVerifier::visitForStmt(AST::ForStmt* stmt) {
     loopDepth++;
     if(stmt->init) stmt->init->accept(this);
     if(stmt->condition) stmt->condition->accept(this);
@@ -181,16 +181,16 @@ void SemanticVerifier::visitForStmt(AST::ForStmt* stmt) {
     stmt->body->accept(this);
     loopDepth--;
 }
-void SemanticVerifier::visitBreakStmt(AST::BreakStmt* stmt) {
+void ASTVerifier::visitBreakStmt(AST::BreakStmt* stmt) {
     if (loopDepth == 0 && switchDepth == 0)
         errHandler.reportError("Cannot use 'break' outside of loops or switch statements.", stmt->keyword);
 }
-void SemanticVerifier::visitContinueStmt(AST::ContinueStmt* stmt) {
+void ASTVerifier::visitContinueStmt(AST::ContinueStmt* stmt) {
     if (loopDepth == 0)
         errHandler.reportError("Cannot use 'continue' outside of loops.", stmt->keyword);
 }
 // Can't use the visit method because we need to pass vector for switch constants
-void SemanticVerifier::handleCaseStmt(AST::CaseStmt& _case, vector<Token> allSwitchConstants){
+void ASTVerifier::handleCaseStmt(AST::CaseStmt& _case, vector<Token> allSwitchConstants){
     unordered_map<string, Token> constants;
     // Checks constant uniqueness
     for(auto c : _case.constants){
@@ -209,7 +209,7 @@ void SemanticVerifier::handleCaseStmt(AST::CaseStmt& _case, vector<Token> allSwi
     for(auto stmt : _case.stmts) stmt->accept(this);
 }
 
-void SemanticVerifier::visitSwitchStmt(AST::SwitchStmt* stmt) {
+void ASTVerifier::visitSwitchStmt(AST::SwitchStmt* stmt) {
     switchDepth++;
     stmt->expr->accept(this);
     bool hasDefault = false;
@@ -224,17 +224,17 @@ void SemanticVerifier::visitSwitchStmt(AST::SwitchStmt* stmt) {
     }
     switchDepth--;
 }
-void SemanticVerifier::visitCaseStmt(AST::CaseStmt* _case) {
+void ASTVerifier::visitCaseStmt(AST::CaseStmt* _case) {
     // Empty, handled in handleCaseStmt
 }
-void SemanticVerifier::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
+void ASTVerifier::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     if (switchDepth == 0) errHandler.reportError("Cannot use 'advance' outside of switch statements.", stmt->keyword);
 }
-void SemanticVerifier::visitReturnStmt(AST::ReturnStmt* stmt) {
+void ASTVerifier::visitReturnStmt(AST::ReturnStmt* stmt) {
     if (stmt->expr) stmt->expr->accept(this);
 }
 // Checks for duplicate aliases within the same module
-void SemanticVerifier::checkAliasConflict(ASTModule& module){
+void ASTVerifier::checkAliasConflict(ASTModule& module){
     unordered_map<string, Token> aliases;
     for(auto [alias, depIdx] : module.importedModules){
         if(alias.type == TokenType::NONE) continue;
@@ -245,7 +245,7 @@ void SemanticVerifier::checkAliasConflict(ASTModule& module){
     }
 }
 
-void SemanticVerifier::checkNamingConflicts(ASTModule& module, vector<ASTModule>& units){
+void ASTVerifier::checkNamingConflicts(ASTModule& module, vector<ASTModule>& units){
     unordered_map<string, string> symbols;
     // Checks for duplicate symbols in imported files
     for(int i = 0; i < module.importedModules.size(); i++){

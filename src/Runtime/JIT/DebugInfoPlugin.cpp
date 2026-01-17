@@ -22,7 +22,7 @@ static SmallVector<char, 0> getSectionData(jitlink::Section &Sec) {
 }
 
 std::pair<std::unique_ptr<DWARFContext>, StringMap<std::unique_ptr<MemoryBuffer>>>
-llvm::orc::createDWARFContext(jitlink::LinkGraph &G) {
+orc::createDWARFContext(jitlink::LinkGraph &G) {
     StringMap<std::unique_ptr<MemoryBuffer>> DWARFSectionData;
     for (auto &Sec : G.sections()) {
         if (Sec.getName().find(".debug_") == 0) {
@@ -34,7 +34,7 @@ llvm::orc::createDWARFContext(jitlink::LinkGraph &G) {
         }
     }
     auto Ctx = DWARFContext::create(DWARFSectionData, G.getPointerSize(),
-                                 G.getEndianness() == llvm::endianness::little);
+                                 G.getEndianness() == endianness::little);
     return std::make_pair(std::move(Ctx), std::move(DWARFSectionData));
 }
 

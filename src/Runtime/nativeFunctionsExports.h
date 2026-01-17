@@ -4,6 +4,7 @@
 #include "Values/valueHelpers.h"
 #include "Values/valueHelpersInline.cpp"
 #include <iostream>
+#include "MemoryManagment/threadArena.h"
 
 using namespace object;
 

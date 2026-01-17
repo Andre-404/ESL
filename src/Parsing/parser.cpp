@@ -501,8 +501,9 @@ shared_ptr<ClassDecl> Parser::classDecl() {
         colon = previous();
         // Only accept identifiers and module access
         inherited = expression(+Precedence::PRIMARY - 1);
-        if (!((inherited->type == ASTType::LITERAL && dynamic_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER)
-              || inherited->type == ASTType::MODULE_ACCESS)) {
+        if (!((inherited->type == ASTType::LITERAL &&
+            reinterpret_cast<LiteralExpr*>(inherited.get())->token.type == TokenType::IDENTIFIER) ||
+            inherited->type == ASTType::MODULE_ACCESS)) {
             error(colon, "Superclass can only be an identifier.");
         }
     }

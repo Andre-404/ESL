@@ -3,6 +3,7 @@
 #include "../Values/valueHelpersInline.cpp"
 #include "../MemoryManagment/garbageCollector.h"
 #include "../../Includes/rapidhash.h"
+#include "../MemoryManagment/threadArena.h"
 
 using namespace object;
 using namespace memory;
