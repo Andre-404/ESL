@@ -10,7 +10,7 @@ static tyPtr typeUnion(tyPtr first, Args... types) {
     tyPtr res = first;
     auto lam = [&](auto&& arg) {
         if (typeFlagMatch(res, TypeFlag::UNKNOWN)) res = arg;
-        if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = getBasicType(TypeFlag::ANY);
+        else if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = getBasicType(TypeFlag::ANY);
     };
     (lam(types), ...);
     return res;
