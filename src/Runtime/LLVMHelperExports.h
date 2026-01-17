@@ -152,7 +152,9 @@ EXPORT Value hashmapGetV(ObjHashMap* map, ObjString* str){
 
 // Can't error since if str isn't in map it's inserted as a new value
 EXPORT void hashmapSetV(ObjHashMap* map, ObjString* str, Value v){
-    map->fields.insert_or_assign(str, v);
+    auto it = map->fields.find(str);
+    if(it == map->fields.end()) map->fields.insert_or_assign(str, v);
+    else it->second = v;
 }
 
 EXPORT Obj* gcAlloc(int64_t bytes){
