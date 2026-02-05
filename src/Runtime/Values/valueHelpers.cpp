@@ -47,7 +47,6 @@ string valueHelpers::typeToStr(Value x) {
                 case +ObjType::CLOSURE: return "<function>";
                 case +ObjType::INSTANCE: return "<instance: " + string(asInstance(x)->klass->name) + ">";
                 case +ObjType::STRING: return "<string>";
-                case +ObjType::FREEVAR: return "<upvalue>";
                 case +ObjType::HASH_MAP: return "<hash map>";
                 case +ObjType::FILE: return "<file>";
                 case +ObjType::MUTEX: return "<mutex>";

@@ -123,7 +123,7 @@ EXPORT Value createHashMap(int nFields, ...){
 
 EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...){
     ObjClosure* closure = static_cast<ObjClosure *>(
-            memory::getLocalArena().alloc(sizeof(ObjClosure) + upvalCount*sizeof(ObjFreevar*)));
+            memory::getLocalArena().alloc(sizeof(ObjClosure) + upvalCount*sizeof(Value)));
     closure->arity = arity;
     closure->name = name;
     closure->func = fn;
@@ -132,7 +132,7 @@ EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...)
     va_list ap;
     va_start(ap, upvalCount);
     for(int i=0; i<upvalCount; i++){
-        closure->getFreevarArr()[i] = va_arg(ap, object::ObjFreevar*);
+        closure->getFreevarArr()[i] = va_arg(ap, Value);
     }
     va_end(ap);
     return encodeObj(closure);

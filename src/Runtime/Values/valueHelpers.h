@@ -9,8 +9,6 @@ namespace object {
 
 	class ObjArray;
 
-	class ObjFreevar;
-
 	class ObjClosure;
 
 	class ObjClass;

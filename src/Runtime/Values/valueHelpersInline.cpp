@@ -38,7 +38,6 @@ inline bool isClosure(Value x) { return isObj(x) && (x&mask_payload_type) == +Ob
 inline bool isClass(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::CLASS; }
 inline bool isInstance(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::INSTANCE; }
 inline bool isHashMap(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::HASH_MAP; }
-inline bool isUpvalue(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::FREEVAR; }
 inline bool isFile(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::FILE; }
 inline bool isMutex(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjType::MUTEX; }
 
@@ -51,7 +50,6 @@ inline object::ObjClosure* asClosure(Value x) { return reinterpret_cast<ObjClosu
 inline object::ObjClass* asClass(Value x) { return reinterpret_cast<ObjClass*>(decodeObj(x)); }
 inline object::ObjInstance* asInstance(Value x) { return reinterpret_cast<ObjInstance*>(decodeObj(x)); }
 inline object::ObjHashMap* asHashMap(Value x) { return reinterpret_cast<ObjHashMap*>(decodeObj(x)); }
-inline object::ObjFreevar* asUpvalue(Value x) { return reinterpret_cast<ObjFreevar*>(decodeObj(x)); }
 inline object::ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
 inline object::ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }
 

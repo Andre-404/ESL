@@ -35,8 +35,6 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), PTR_TY(TYPE(Int8))}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
-    types["ObjFreevar"] = llvm::StructType::create(*ctx, {types["Obj"], getESLValType(*ctx)}, "ObjFreevar");
-    types["ObjFreevarPtr"] = PTR_TY(types["ObjFreevar"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
                                                                      PTR_TY(TYPE(Int8))}, "ObjClosure");
     types["ObjClosureAligned"] = llvm::StructType::create(*ctx, {types["ObjClosure"], TYPE(Int64)}, "ObjClosureAligned");

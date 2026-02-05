@@ -15,7 +15,6 @@ namespace object {
         DEALLOCATED,
         STRING,
         CLOSURE,
-        FREEVAR,
         CLASS,
         INSTANCE,
         ARRAY,
@@ -91,12 +90,6 @@ namespace object {
         void push(Value item, memory::ThreadArena& allocator);
     };
 
-    class ObjFreevar : public Obj {
-    public:
-        ObjFreevar(Value val);
-        Value val;
-    };
-
     // Pointer to a compiled function
     using Function = char*;
     using CheckFieldFunc = int (*)(ObjString*);
@@ -110,7 +103,7 @@ namespace object {
         Function func;
         char* name;
 
-        ObjFreevar** getFreevarArr();
+        Value* getFreevarArr();
     };
 
     class ObjClass : public Obj {

@@ -162,13 +162,8 @@ namespace memory {
                 case +ObjType::CLOSURE: {
                     ObjClosure *cl = reinterpret_cast<ObjClosure *>(ptr);
                     for (int i = 0; i < cl->freevarCount; i++) {
-                        markObj(cl->getFreevarArr()[i]);
+                        markVal(cl->getFreevarArr()[i]);
                     }
-                    break;
-                }
-                case +ObjType::FREEVAR: {
-                    ObjFreevar *upval = reinterpret_cast<ObjFreevar *>(ptr);
-                    markVal(upval->val);
                     break;
                 }
                 case +ObjType::INSTANCE: {

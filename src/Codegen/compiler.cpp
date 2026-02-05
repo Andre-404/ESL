@@ -94,28 +94,13 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
 llvm::Value* Compiler::visitVarDecl(CFG::VarDecl* decl) {
     debugEmitter.emitNewLocation(builder, decl->dbgInfo.varName);
     switch(decl->varType){
-        case CFG::VarType::LOCAL:{
+        case CFG::VarType::LOCAL:
+        case CFG::VarType::FREEVAR: {
             // Alloca at the beginning of the function to make use of mem2reg pass
             pastAllocas([this, decl](auto& tb) {
                 auto tmp = tb.CreateAlloca(getESLValType(), nullptr, decl->dbgInfo.varName.getLexeme());
                 variables.insert_or_assign(decl->uuid, tmp);
                 debugEmitter.addLocalVarDecl(builder, tmp, decl->dbgInfo.varName, false);
-            });
-            break;
-        }
-        case CFG::VarType::FREEVAR:{
-            pastAllocas([this, decl](auto& tb) {
-                // Creates a heap allocated free variable
-                size_t freevarSize = curModule->getDataLayout().getTypeAllocSize(namedTypes["ObjFreevar"]);
-                llvm::Value* var = tb.CreateCall(safeGetFunc("gcAlloc"), { tb.getInt64(freevarSize)}, decl->dbgInfo.varName.getLexeme());
-                // Get pointers to obj type field and payload field
-                llvm::Value* objTypePtr = tb.CreateConstInBoundsGEP2_32(namedTypes["Obj"], var, 0, 1);
-                llvm::Value* storedValPtr = tb.CreateConstInBoundsGEP2_32(namedTypes["ObjFreevar"], var, 0, 1);
-                // Store type tag and null as default value
-                tb.CreateStore(tb.getInt8(+object::ObjType::FREEVAR), objTypePtr);
-                tb.CreateStore(tb.getInt64(mask_signature_null), storedValPtr);
-                variables.insert_or_assign(decl->uuid, var);
-                debugEmitter.addLocalVarDecl(builder, var, decl->dbgInfo.varName, false);
             });
             break;
         }
@@ -650,9 +635,11 @@ llvm::Value* Compiler::visitCreateClosureExpr(CFG::CreateClosureExpr* expr) {
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
         llvm::Value* freevarPtr = builder.CreateGEP(namedTypes["ObjClosure"], cl, builder.getInt32(1));
-        freevarPtr = builder.CreateInBoundsGEP(namedTypes["ObjFreevarPtr"], freevarPtr, builder.getInt32(i));
-        llvm::Value* tmp = builder.CreateLoad(namedTypes["ObjFreevarPtr"], freevarPtr);
-        variables.insert_or_assign(freevar.second->uuid, tmp);
+        freevarPtr = builder.CreateInBoundsGEP(getESLValType(), freevarPtr, builder.getInt32(i));
+        llvm::Value* tmp = builder.CreateLoad(getESLValType(), freevarPtr);
+        auto var = builder.CreateAlloca(getESLValType(), builder.getInt32(1));
+        builder.CreateStore(tmp, var);
+        variables.insert_or_assign(freevar.second->uuid, var);
     }
 
     declareFuncArgs(expr->fn->args);
@@ -678,7 +665,7 @@ llvm::Value* Compiler::visitCreateClosureExpr(CFG::CreateClosureExpr* expr) {
     // Freevars are gathered after switching to the enclosing function
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
-        closureConstructorArgs.push_back(variables.at(freevar.first->uuid));
+        closureConstructorArgs.push_back(builder.CreateLoad(getESLValType(), variables.at(freevar.first->uuid)));
         // Removes the freevars uuid from the variable pool since compilation for this function is done and this won't be used again
         variables.erase(freevar.second->uuid);
     }
@@ -1392,20 +1379,9 @@ void Compiler::declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args
     for (auto var : args) {
         llvm::Value* varPtr;
         // Don't need to use temp builder when creating alloca since this happens in the first basicblock of the function
-        if(var->varType == CFG::VarType::LOCAL){
-            varPtr = builder.CreateAlloca(getESLValType(), nullptr, var->dbgInfo.varName.getLexeme());
-            builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), varPtr);
-        }else{
-            size_t freevarSize = curModule->getDataLayout().getTypeAllocSize(namedTypes["ObjFreevar"]);
-            varPtr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt64(freevarSize)}, var->dbgInfo.varName.getLexeme());
-            llvm::Value* objType = builder.CreateInBoundsGEP(namedTypes["Obj"], varPtr, {builder.getInt32(0), builder.getInt32(1)});
-            builder.CreateStore(builder.getInt8(+object::ObjType::FREEVAR), objType);
-            // first index: access to the structure that's being pointed to,
-            // second index: access to the second field(64bit field for the value)
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], varPtr, idxList, "freevar.addr");
-            builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), tmpEle);
-        }
+        // Since closures capture by value we can make everything a stack variable
+        varPtr = builder.CreateAlloca(getESLValType(), nullptr, var->dbgInfo.varName.getLexeme());
+        builder.CreateStore(inProgressFuncs.top().fn->getArg(argIndex++), varPtr);
         debugEmitter.addLocalVarDecl(builder, varPtr, var->dbgInfo.varName, true, argIndex);
         // Insert the argument into the pool of variables
         variables.insert_or_assign(var->uuid, varPtr);
@@ -2030,16 +2006,9 @@ llvm::Constant* Compiler::constObjToVal(llvm::Constant* obj, uint8_t type){
 
 llvm::Value* Compiler::codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr){
     switch(varPtr->varType){
-        case CFG::VarType::LOCAL:{
+        case CFG::VarType::LOCAL:
+        case CFG::VarType::FREEVAR: {
             return builder.CreateLoad(getESLValType(), variables.at(varPtr->uuid), "load.local");
-        }
-        case CFG::VarType::FREEVAR:{
-            llvm::Value* upvalPtr = variables.at(varPtr->uuid);
-            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
-            // second index: gets the second element of the ObjFreevar struct
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], upvalPtr, idxList, "freevar.addr");
-            return builder.CreateLoad(getESLValType(), tmpEle, "load.freevar");
         }
         case CFG::VarType::GLOBAL:
         case CFG::VarType::GLOBAL_FUNC:{
@@ -2051,26 +2020,7 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr){
 }
 
 llvm::Value* Compiler::codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore){
-    switch(varPtr->varType){
-        case CFG::VarType::LOCAL:{
-            builder.CreateStore(toStore, variables.at(varPtr->uuid));
-            break;
-        }
-        case CFG::VarType::FREEVAR:{
-            llvm::Value* freevarPtr = variables.at(varPtr->uuid);
-            // first index: gets the "first element" of the memory being pointed to by upvalPtr(a single struct is there)
-            // second index: gets the ref to the second element of the ObjFreevar struct
-            vector<llvm::Value*> idxList = {builder.getInt32(0), builder.getInt32(1)};
-            auto tmpEle = builder.CreateInBoundsGEP(namedTypes["ObjFreevar"], freevarPtr, idxList, "freevar.addr");
-            builder.CreateStore(toStore, tmpEle);
-            break;
-        }
-        case CFG::VarType::GLOBAL:
-        case CFG::VarType::GLOBAL_FUNC:{
-            builder.CreateStore(toStore, variables.at(varPtr->uuid));
-            break;
-        }
-    }
+    builder.CreateStore(toStore, variables.at(varPtr->uuid));
     return toStore;
 }
 

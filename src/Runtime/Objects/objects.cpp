@@ -15,8 +15,7 @@ size_t Obj::getSize(){
         case +ObjType::STRING: return sizeof(ObjString) + ((ObjString*)this)->size;
         case +ObjType::ARRAY: return sizeof(ObjArray);
         case +ObjType::ARRAY_STORAGE_HEADER: return sizeof(ObjArrayStorage) + ((ObjArrayStorage*)this)->capacity*sizeof(Value);
-        case +ObjType::CLOSURE: return sizeof(ObjClosure);
-        case +ObjType::FREEVAR: return sizeof(ObjFreevar);
+        case +ObjType::CLOSURE: return sizeof(ObjClosure) + ((ObjClosure*)this)->freevarCount*sizeof(Value);
         case +ObjType::CLASS: return sizeof(ObjClass);
         case +ObjType::INSTANCE: return sizeof(ObjInstance) + ((ObjInstance*)this)->fieldArrLen*sizeof(Value);
         case +ObjType::HASH_MAP: return sizeof(ObjHashMap);
@@ -55,8 +54,7 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
             str.erase(str.size() - 1).append(" ]");
             return str;
         }
-        case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";;
-        case +ObjType::FREEVAR: return "<freevar>";
+        case +ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";
         case +ObjType::CLASS: return "<class " + string(reinterpret_cast<ObjClass*>(this)->name) + ">";
         case +ObjType::INSTANCE: return "<" + string(reinterpret_cast<ObjInstance*>(this)->klass->name) + " instance>";
         case +ObjType::HASH_MAP:{
@@ -116,8 +114,8 @@ uint64_t stringHash::operator()(object::ObjString* str) const noexcept{
 #pragma endregion
 
 #pragma region ObjClosure
-ObjFreevar** ObjClosure::getFreevarArr(){
-    return (ObjFreevar**)(((char*)this)+sizeof(ObjClosure));
+Value* ObjClosure::getFreevarArr(){
+    return reinterpret_cast<Value *>(this + 1);
 }
 #pragma endregion
 
@@ -164,11 +162,6 @@ void ObjArray::push(Value item, memory::ThreadArena& allocator){
     getData()[size++] = item;
 }
 #pragma endregion
-
-ObjFreevar::ObjFreevar(Value val){
-    this->val = val;
-    type = +ObjType::FREEVAR;
-}
 
 #pragma region ObjClass
 ObjClass::ObjClass(string _name) {
