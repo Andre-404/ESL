@@ -2,14 +2,9 @@
 #include "Passes/ASTToTypedAST.h"
 #include "DebugEmitter.h"
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
-#include <array>
 #include <stack>
 
 namespace errorHandler{
@@ -142,6 +137,7 @@ class Compiler : public CFG::CFGCodeGen {
         // Declares both user and native functions
         llvm::Function* declareFunction(const std::shared_ptr<types::FunctionType> fnTy);
         void createMainEntrypoint(string entrypointName);
+        void pastAllocas(std::function<void(llvm::IRBuilder<>&)> func);
 
         #pragma region Helpers
         // Compile time type checking
@@ -157,6 +153,9 @@ class Compiler : public CFG::CFGCodeGen {
         void createInstNoField(const string err, const string field, llvm::Value* inst);
         void createInstClassCheck(const string err, llvm::Value* inst, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
 
+        // Branching
+        void create_if(llvm::Value* cond, std::function<void()> then, std::function<void()> _else);
+
         // Codegen functions(take in a CFG expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
         llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
@@ -170,12 +169,14 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Value* codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore);
 
+        // GC stuff
+        llvm::StoreInst* createStore(llvm::Value* ptr, llvm::Value* val);
+
         // Functions helpers
         llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
         llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args);
         llvm::FunctionCallee setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
-        void createRuntimeFuncArgCheck(llvm::Value* objClosurePtr, size_t argSize, Token dbg);
         llvm::FunctionCallee getBitcastFunc(llvm::Value* closurePtr, const int argc);
 
         // Array optimization
@@ -228,7 +229,6 @@ class Compiler : public CFG::CFGCodeGen {
         // Misc
         llvm::Constant* createConstStr(const string& str);
         llvm::Function* safeGetFunc(const string& name);
-        void argCntError(Token token, llvm::Value* expected, const int got);
         llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         void generateNativeFuncs(fastMap<string, types::tyPtr>& natives);
         void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);;

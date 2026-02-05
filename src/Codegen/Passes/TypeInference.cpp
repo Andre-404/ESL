@@ -22,7 +22,7 @@ static tyPtr last_evaluated(tyPtr first, Args... types) {
     tyPtr res = first;
     auto lam = [&](auto&& arg) {
         if (typeFlagMatch(res, TypeFlag::UNKNOWN)) res = arg;
-        if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = arg;
+        else if (!types_equal(res, arg) && !typeFlagMatch(arg, TypeFlag::UNKNOWN)) res = arg;
     };
     (lam(types), ...);
     return res;
@@ -57,7 +57,7 @@ class VariableTypeFinder : CFG::CFGVisitor{
         return visit_antecedents(cur_stmt);
     }
     // Returning UNKNOWN in any method here means we explored everything and found no constraints on the target
-    // When there are multiple subexpressions to explore we use the last evaluated type
+    // When there are multiple subexpressions to explore we use the last evaluated type(if present)
     // IMPORTANT: this means that the order in which we pass subexpressions to the last_evaluated function
     // must be the same order in which things happen
     void visitVarDecl(CFG::VarDecl* decl) override {
