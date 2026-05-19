@@ -44,6 +44,12 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/Passes/CFG/TypeInference.cpp
         src/Codegen/Passes/CFG/TypeInference.h
         src/Codegen/Passes/CFG/CFGPrinter.h
+        src/Codegen/CompilerParts/ComptimeValues.cpp
+        src/Codegen/CompilerParts/ComptimeValues.h
+        src/Codegen/CompilerParts/RuntimeTypecheck.cpp
+        src/Codegen/CompilerParts/RuntimeTypecheck.h
+        src/Codegen/CompilerParts/TypeHelper.cpp
+        src/Codegen/CompilerParts/TypeHelper.h
 )
 
 string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")

@@ -13,8 +13,9 @@ namespace llvm{
 
 namespace llvmHelpers {
     llvm::Type* getESLValType(llvm::LLVMContext& ctx);
-    void addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module,
-                                    std::unique_ptr<llvm::LLVMContext> &context,
+    void createInternalTypes(llvm::LLVMContext& ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types);
+    void addHelperFunctionsToModule(llvm::Module& module,
+                                    llvm::LLVMContext& context,
                                     llvm::IRBuilder<>& builder,
                                     ankerl::unordered_dense::map<string, llvm::Type*>& types);
 }

@@ -1,11 +1,14 @@
 #pragma once
 #include "Passes/AST/ASTToTypedAST.h"
 #include "DebugEmitter.h"
+#include "CompilerParts/ComptimeValues.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include <stack>
+
+#include "CompilerParts/RuntimeTypecheck.h"
 
 namespace errorHandler{
     class ErrorHandler;
@@ -109,13 +112,9 @@ class Compiler : public CFG::CFGCodeGen {
 
         // Maps uuids of classes to global variable holding the class struct
         fastMap<string, Class> classes;
-        fastMap<string, std::pair<int, int>> classHierarchy;
         // Connects function types(unique for each function) and the LLVM IR representation of that function
         fastMap<types::tyPtr, llvm::Function*> functions;
         fastMap<string, llvm::Value*> nativeFunctions;
-        fastMap<string, llvm::Constant*> CStrings;
-        fastMap<string, llvm::Constant*> ESLStrings;
-        fastMap<string, llvm::Type*> namedTypes;
         DebugEmitter debugEmitter;
         errorHandler::ErrorHandler& errHandler;
 
@@ -131,6 +130,10 @@ class Compiler : public CFG::CFGCodeGen {
         std::stack<llvm::BasicBlock*> breakJumpDest;
         std::stack<llvm::BasicBlock*> advanceJumpDest;
 
+        TypeHelper _tyhelp;
+        ComptimeValues _ct;
+        RuntimeTypecheck _rt;
+
         // LLVM stuff
         void setupModule(const llvm::DataLayout& DL);
         void optimizeModule(llvm::Module& module);
@@ -144,14 +147,6 @@ class Compiler : public CFG::CFGCodeGen {
         bool exprIsType(const typedExprPtr expr, const types::tyPtr ty);
         bool exprIsType(const typedExprPtr expr1, const typedExprPtr expr2, const types::tyPtr ty);
         bool exprIsComplexType(const typedExprPtr expr, const types::TypeFlag flag);
-
-        // Runtime type checking
-        void createTypeCheckUnary(const string err, llvm::Value* const val, std::tuple<uint64_t, uint64_t, bool> masks);
-        void createTypeCheckBinary(const string err, llvm::Value* const lhs, llvm::Value* const rhs, std::tuple<uint64_t, uint64_t, bool> masks);
-        void createArgCountCheck(const string err, llvm::Value* closure, uint8_t expectedArity);
-        void createArrBoundsCheck(const string err, llvm::Value* arr, llvm::Value* index);
-        void createInstNoField(const string err, const string field, llvm::Value* inst);
-        void createInstClassCheck(const string err, llvm::Value* inst, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
 
         // Branching
         void create_if(llvm::Value* cond, std::function<void()> then, std::function<void()> _else);
@@ -169,12 +164,8 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Value* codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr);
         llvm::Value* codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore);
 
-        // GC stuff
-        llvm::StoreInst* createStore(llvm::Value* ptr, llvm::Value* val);
-
         // Functions helpers
         llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
-        llvm::FunctionType* getFuncType(int argnum);
         void declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args);
         llvm::FunctionCallee setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
         llvm::FunctionCallee getBitcastFunc(llvm::Value* closurePtr, const int argc);
@@ -193,7 +184,6 @@ class Compiler : public CFG::CFGCodeGen {
         // Class helpers
         llvm::Function* createStrToIdxFunc(std::shared_ptr<types::ClassType> classType, bool isMethod);
         void codegenMethod(string classname, CFG::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
-        llvm::Constant* createMethodObj(CFG::ClassMethod& method, llvm::Function* methodPtr);
 
         llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
         llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
@@ -213,25 +203,10 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Function* createThreadWrapper(llvm::FunctionType* funcType, int numArgs);
         void setupThreadCreation(llvm::FunctionCallee callee, vector<llvm::Value*>& args);
 
-        // Const objects
-        llvm::Constant* createESLString(const string& str);
-        llvm::Constant* createConstObjHeader(int type);
-        llvm::Constant* constObjToVal(llvm::Constant* obj, uint8_t type);
-        llvm::GlobalVariable* storeConstObj(llvm::Constant* obj);
-
-        // ESL val casting
-        llvm::Value* ESLValTo(llvm::Value* val, llvm::Type* ty);
-        llvm::Constant* ESLConstTo(llvm::Constant* constant, llvm::Type* ty);
-        llvm::Value* CastToESLVal(llvm::Value* val);
-        llvm::Constant* ConstCastToESLVal(llvm::Constant* constant);
-        llvm::Type* getESLValType();
-
         // Misc
-        llvm::Constant* createConstStr(const string& str);
         llvm::Function* safeGetFunc(const string& name);
-        llvm::Constant* createConstant(std::variant<double, bool, void*,string>& constant);
         void generateNativeFuncs(fastMap<string, types::tyPtr>& natives);
-        void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);;
+        void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
 
         #pragma endregion
 	};

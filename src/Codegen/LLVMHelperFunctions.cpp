@@ -11,8 +11,8 @@
 #include "llvm/IR/LLVMContext.h"
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
-    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module.get())
-#define TYPE(type) llvm::Type::get ## type ## Ty(*ctx)
+    llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module)
+#define TYPE(type) llvm::Type::get ## type ## Ty(ctx)
 #define PTR_TY(type) llvm::PointerType::getUnqual(type)
 
 // TODO: make this work only on windows, linux shouldn't have dllimport storage(i think)
@@ -21,50 +21,48 @@ llvm::Function* wrapFn(llvm::Function*  fn){
     return fn;
 }
 
-using namespace llvmHelpers;
-
 llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
     // Opaque pointer
     return llvm::PointerType::get(ctx, 1);
 }
 
-void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void llvmHelpers::createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     // First 2 bytes are GC info
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
-    types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8)}, "Obj");
+    types["Obj"] = llvm::StructType::create(ctx, {padding, TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
-    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32)}, "ObjString");
+    types["ObjString"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int32)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
-    types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
+    types["ObjClosure"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
                                                                      PTR_TY(TYPE(Int8))}, "ObjClosure");
-    types["ObjClosureAligned"] = llvm::StructType::create(*ctx, {types["ObjClosure"], TYPE(Int64)}, "ObjClosureAligned");
+    types["ObjClosureAligned"] = llvm::StructType::create(ctx, {types["ObjClosure"], TYPE(Int64)}, "ObjClosureAligned");
     types["ObjClosurePtr"] = PTR_TY(types["ObjClosure"]);
 
 
-    auto classType = llvm::StructType::create(*ctx, "ObjClass");
+    auto classType = llvm::StructType::create(ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
-    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(*ctx)}, false);
+    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(ctx)}, false);
     // Last int64 is for padding
     classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64)});
     types["ObjClass"] = classType;
 
-    types["ObjInstance"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
+    types["ObjInstance"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int32), types["ObjClassPtr"]}, "ObjInstance");
     types["ObjInstancePtr"] = PTR_TY(types["ObjInstance"]);
 
-    types["ObjArrayStorage"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32)}, "ObjArrayStorage");
+    types["ObjArrayStorage"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int32)}, "ObjArrayStorage");
     types["ObjArrayStoragePtr"] = PTR_TY(types["ObjArrayStorage"]);
 
-    types["ObjArray"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int32), types["ObjArrayStoragePtr"]}, "ObjArray");
+    types["ObjArray"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int8), TYPE(Int32), types["ObjArrayStoragePtr"]}, "ObjArray");
     types["ObjArrayPtr"] = PTR_TY(types["ObjArray"]);
 }
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
 
-void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMContext& ctx,
                                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    createLLVMTypes(ctx, types);
-    llvm::Type* eslValTy = getESLValType(*ctx);
+    createInternalTypes(ctx, types);
+    llvm::Type* eslValTy = getESLValType(ctx);
     auto fn = wrapFn(CREATE_FUNC(runtimeError, false, TYPE(Void), PTR_TY(TYPE(Int8)), TYPE(Int8), TYPE(Int64), TYPE(Int64), TYPE(Int64)));
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
@@ -96,7 +94,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     wrapFn(CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy)));
     fn = wrapFn(CREATE_FUNC(gcAlloc, false, types["ObjPtr"], TYPE(Int64)));
-    fn->addFnAttr(llvm::Attribute::get(*ctx, "allockind", "alloc"));
+    fn->addFnAttr(llvm::Attribute::get(ctx, "allockind", "alloc"));
     fn->addFnAttr(llvm::Attribute::NoRecurse);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     fn->addFnAttr(llvm::Attribute::NoFree);
@@ -104,7 +102,7 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     fn->addFnAttr(llvm::Attribute::MustProgress);
     fn->addFnAttr(llvm::Attribute::NoCallback);
     llvm::AttributeList a;
-    llvm::AttrBuilder b(*ctx);
+    llvm::AttrBuilder b(ctx);
     b.addAlignmentAttr(8);
     fn->addRetAttr(b.getAttribute(llvm::Attribute::Alignment));
     b.addDereferenceableAttr(8);
@@ -128,6 +126,12 @@ void llvmHelpers::addHelperFunctionsToModule(std::unique_ptr<llvm::Module>& modu
     // ret: void, args: threadData ptr
     wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), ));
 
+    module.getOrInsertGlobal("gcFlag", builder.getInt64Ty());
+    llvm::GlobalVariable* gvar = module.getNamedGlobal("gcFlag");
+    gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
+    gvar->setInitializer(builder.getInt64(0));
+    gvar->setAlignment(llvm::Align::Of<uint64_t>());
+
     buildLLVMNativeFunctions(module, ctx, builder, types);
 }
 
@@ -139,15 +143,15 @@ static llvm::Constant* ESLConstToI64(llvm::Constant* constant){
 }
 
 
-void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique_ptr<llvm::LLVMContext> &ctx,
+void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     auto createFunc = [&](string name, llvm::FunctionType *FT){
-        llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module.get());
-        llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
+        llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module);
+        llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx, "entry", F);
         builder.SetInsertPoint(BB);
         return F;
     };
-    llvm::Type* eslValTy = getESLValType(*ctx);
+    llvm::Type* eslValTy = llvmHelpers::getESLValType(ctx);
     // Extremely cursed, but using lambdas that are immediately called avoids naming conflicts
     [&]{
         llvm::Function* f = createFunc("encodeBool",llvm::FunctionType::get(eslValTy, TYPE(Int1), false));
@@ -207,9 +211,9 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Even though x might not be bool it will still be decoded as a bool, but that's just an icmp so it's ok
         auto arg = f->getArg(0);
 
-        auto c1 = builder.CreateCall(module->getFunction("isBool"), arg);
-        auto c2 = builder.CreateNot(builder.CreateCall(module->getFunction("decodeBool"), arg));
-        auto c3 = builder.CreateCall(module->getFunction("isNull"), arg);
+        auto c1 = builder.CreateCall(module.getFunction("isBool"), arg);
+        auto c2 = builder.CreateNot(builder.CreateCall(module.getFunction("decodeBool"), arg));
+        auto c3 = builder.CreateCall(module.getFunction("isNull"), arg);
         builder.CreateRet(builder.CreateNot(builder.CreateOr(builder.CreateAnd(c1, c2), c3)));
     llvm::verifyFunction(*f);
     }();
@@ -237,14 +241,14 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
     }();
     // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
     [&]{
-        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "safepoint_poll", module.get());
-        llvm::BasicBlock *BB = llvm::BasicBlock::Create(*ctx, "entry", F);
+        llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "safepoint_poll", module);
+        llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx, "entry", F);
         builder.SetInsertPoint(BB);
-        llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(*ctx, "runGC", F);
-        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "merge");
+        llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(ctx, "runGC", F);
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(ctx, "merge");
 
         // Atomically load the value
-        auto load = builder.CreateLoad(builder.getInt64Ty(), module->getNamedGlobal("gcFlag"), false);
+        auto load = builder.CreateLoad(builder.getInt64Ty(), module.getNamedGlobal("gcFlag"), false);
         load->setAtomic(llvm::AtomicOrdering::Monotonic);
         load->setAlignment(llvm::Align(8));
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
@@ -252,7 +256,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        auto call = builder.CreateCall(module->getFunction("stopThread"));
+        auto call = builder.CreateCall(module.getFunction("stopThread"));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
@@ -263,7 +267,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
     [&]{
         llvm::Function *F = createFunc("decodeClosure",llvm::FunctionType::get(types["ObjClosurePtr"], eslValTy,false));
-        llvm::Value* tmp = builder.CreateCall(module->getFunction("decodeObj"), F->getArg(0));
+        llvm::Value* tmp = builder.CreateCall(module.getFunction("decodeObj"), F->getArg(0));
         tmp = builder.CreateBitCast(tmp, types["ObjClosurePtr"]);
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
@@ -289,16 +293,16 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::Value* subclassIdxStart = F->getArg(1);
         llvm::Value* subclassIdxEnd = F->getArg(2);
 
-        auto cond1 = builder.CreateCall(module->getFunction("isObjType"),
+        auto cond1 = builder.CreateCall(module.getFunction("isObjType"),
                                         {inst, builder.getInt8(+ObjType::INSTANCE)});
 
-        llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(*ctx, "notObj");
-        llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(*ctx, "checkClassType", F);
+        llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(ctx, "notObj");
+        llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(ctx, "checkClassType", F);
         cond1 = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond1, builder.getInt1(true)});
         builder.CreateCondBr(cond1, checkTypeBB, notObjBB);
 
         builder.SetInsertPoint(checkTypeBB);
-        inst = builder.CreateCall(module->getFunction("decodeObj"), {inst});
+        inst = builder.CreateCall(module.getFunction("decodeObj"), {inst});
         auto ptr = builder.CreateInBoundsGEP(types["ObjInstance"], inst,
                                              {builder.getInt32(0), builder.getInt32(2)});
         ptr = builder.CreateLoad(types["ObjClassPtr"], ptr);
@@ -319,7 +323,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
 
     {
         llvm::Function *F = createFunc("decodeArray",llvm::FunctionType::get(types["ObjArrayPtr"], eslValTy,false));
-        llvm::Value* tmp = builder.CreateCall(module->getFunction("decodeObj"), F->getArg(0));
+        llvm::Value* tmp = builder.CreateCall(module.getFunction("decodeObj"), F->getArg(0));
         tmp = builder.CreateBitCast(tmp, types["ObjArrayPtr"]);
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
@@ -328,7 +332,7 @@ void buildLLVMNativeFunctions(std::unique_ptr<llvm::Module>& module, std::unique
         llvm::Function *F = createFunc("arrWriteBarrier",llvm::FunctionType::get(TYPE(Void), {types["ObjArrayPtr"], eslValTy}, false));
         llvm::Value* ptr = builder.CreateConstInBoundsGEP2_32(types["ObjArray"], F->getArg(0), 0, 1);
         llvm::Value* tmp = builder.CreateLoad(TYPE(Int8), ptr, "has.obj");
-        llvm::Value* isObj = builder.CreateCall(module->getFunction("isObj"), F->getArg(1));
+        llvm::Value* isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(1));
         isObj = builder.CreateZExt(isObj, TYPE(Int8));
         tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
         builder.CreateStore(tmp, ptr);
