@@ -1,45 +1,15 @@
 #pragma once
-#include <array>
-#include "../../AST/ASTDefs.h"
-// Identifies types of variable declarations(and function arguments)
-// Variable declarations can be: global, local, upvalue
-// Function arguments can be: local, upvalue
+#include "../../../AST/ASTDefs.h"
 
-namespace closureConversion{
-    struct Local {
-        AST::ASTVar* var = nullptr;
-        int depth = -1;
-    };
+namespace errorHandler{
+    class ErrorHandler;
+}
 
-    struct FreeVariable {
-        int index = 0;
-        bool isLocal;
-        // Name of this variable
-        string name = "";
-
-        FreeVariable(int _index, bool _isLocal, string _name) : index(_index), isLocal(_isLocal), name(_name) {}
-    };
-
-    struct CurrentChunkInfo {
-        // For closures
-        CurrentChunkInfo *enclosing;
-        //locals
-        vector<Local> locals;
-        uInt scopeDepth;
-        vector<FreeVariable> freeVars;
-
-        CurrentChunkInfo(CurrentChunkInfo *_enclosing);
-    };
-
-    class ClosureConverter : public AST::Visitor {
+namespace AST {
+    class ASTOptimizer : public Visitor {
     public:
-        CurrentChunkInfo* current;
-        bool hadError;
-
-        ClosureConverter();
-
-        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> generateFreevarMap(vector<AST::ASTModule>& units);
-
+        ASTOptimizer(errorHandler::ErrorHandler& errHandler);
+        void process(vector<ASTModule>& units);
         #pragma region Visitor pattern
         void visitAssignmentExpr(AST::AssignmentExpr* expr) override;
         void visitSetExpr(AST::SetExpr* expr) override;
@@ -74,22 +44,8 @@ namespace closureConversion{
         void visitReturnStmt(AST::ReturnStmt* stmt) override;
         #pragma endregion
     private:
-        std::unordered_map<AST::FuncLiteral*, vector<FreeVariable>> freevarMap;
-
-        #pragma region Helpers
-        // Variables
-        void declareGlobalVar(AST::ASTVar& var);
-        void namedVar(const Token name);
-        // Locals
-        void declareLocalVar(AST::ASTVar& var);
-        void addLocal(AST::ASTVar& name);
-        int resolveLocal(const Token name);
-        int resolveLocal(CurrentChunkInfo* func, const Token name);
-        int resolveFreeVar(CurrentChunkInfo* func, const Token name);
-        int addFreeVar(CurrentChunkInfo* func, const int index, const bool isLocal, const string& name);
-        void beginScope();
-        void endScope();
-        #pragma endregion
+        errorHandler::ErrorHandler& errHandler;
     };
-
 }
+
+

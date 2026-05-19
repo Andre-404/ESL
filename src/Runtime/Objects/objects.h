@@ -2,7 +2,6 @@
 #include "../../Includes/unorderedDense.h"
 #include "../../common.h"
 #include <fstream>
-#include <stdio.h>
 #include <shared_mutex>
 
 namespace memory{
@@ -44,7 +43,8 @@ namespace object {
     class ObjString : public Obj {
     public:
         uint32_t size;
-        char* str;
+
+        char* get_str() const { return (char*)(this + 1);}
 
         bool compare(ObjString* other);
 
@@ -57,7 +57,7 @@ namespace object {
     };
 
     struct stringHash {
-        uint64_t operator()(object::ObjString* str) const noexcept;
+        uint64_t operator()(const object::ObjString* str) const noexcept;
     };
 
     struct stringEQ
@@ -115,8 +115,6 @@ namespace object {
         const char* name;
         CheckFieldFunc getMethod;
         CheckFieldFunc getField;
-
-        ObjClass(string _name);
     };
 
     // ObjInstance is a header followed by array of values(fields)

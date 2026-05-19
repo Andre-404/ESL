@@ -1,6 +1,6 @@
 #include "ASTOptimization.h"
-#include "../../ErrorHandling/errorHandler.h"
-#include "../../Includes/fmt/format.h"
+#include "../../../ErrorHandling/errorHandler.h"
+#include "../../../Includes/fmt/format.h"
 #include <unordered_map>
 
 using namespace AST;

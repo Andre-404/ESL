@@ -1,6 +1,6 @@
 #pragma once
-#include "../../Includes/fmt/core.h"
-#include "../../TypedAST/TypedASTDefs.h"
+#include "../../../Includes/fmt/core.h"
+#include "../../../TypedAST/TypedASTDefs.h"
 
 class CFGPrinter : CFG::CFGVisitor{
     string indent;

@@ -19,7 +19,7 @@ message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/files.cpp src/Runtime/Values/valueHelpers.h src/Runtime/Values/valueHelpers.cpp src/Codegen/compiler.h src/Codegen/compiler.cpp src/ErrorHandling/errorHandler.h src/ErrorHandling/errorHandler.cpp src/Runtime/MemoryManagment/garbageCollector.h src/Runtime/MemoryManagment/garbageCollector.cpp src/Runtime/Objects/objects.h src/Runtime/Objects/objects.cpp src/AST/ASTDefs.h src/AST/ASTProbe.h src/AST/ASTProbe.cpp src/Parsing/parser.h src/Parsing/parser.cpp src/Preprocessing/scanner.h src/Preprocessing/scanner.cpp src/Preprocessing/preprocessor.h src/Preprocessing/preprocessor.cpp src/Includes/format.cc src/Includes/format.cc src/Includes/format.cc src/Includes/fmt/color.h src/Includes/fmt/ostream.h src/Includes/fmt/std.h src/Runtime/oldNativeFunctions.h src/Runtime/oldNativeFunctions.cpp src/Parsing/macroExpander.h src/Parsing/macroExpander.cpp src/Runtime/Values/valueHelpersInline.cpp src/Includes/unorderedDense.h src/Codegen/Passes/closureConverter.h src/Codegen/Passes/closureConverter.cpp src/SemanticAnalysis/semanticAnalyzer.h src/SemanticAnalysis/semanticAnalyzer.cpp src/Codegen/LLVMHelperFunctions.h src/Codegen/LLVMHelperFunctions.cpp src/Runtime/JIT/JIT.h src/Runtime/LLVMHelperExports.h src/TypedAST/Types.h src/TypedAST/Types.cpp src/TypedAST/TypedASTDefs.h src/Codegen/Passes/ASTToTypedAST.h src/Codegen/Passes/ASTToTypedAST.cpp src/AST/ASTDebugInfo.h
+add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/files.cpp src/Runtime/Values/valueHelpers.h src/Runtime/Values/valueHelpers.cpp src/Codegen/compiler.h src/Codegen/compiler.cpp src/ErrorHandling/errorHandler.h src/ErrorHandling/errorHandler.cpp src/Runtime/MemoryManagment/garbageCollector.h src/Runtime/MemoryManagment/garbageCollector.cpp src/Runtime/Objects/objects.h src/Runtime/Objects/objects.cpp src/AST/ASTDefs.h src/AST/ASTProbe.h src/AST/ASTProbe.cpp src/Parsing/parser.h src/Parsing/parser.cpp src/Preprocessing/scanner.h src/Preprocessing/scanner.cpp src/Preprocessing/preprocessor.h src/Preprocessing/preprocessor.cpp src/Includes/format.cc src/Includes/format.cc src/Includes/format.cc src/Includes/fmt/color.h src/Includes/fmt/ostream.h src/Includes/fmt/std.h src/Runtime/oldNativeFunctions.h src/Runtime/oldNativeFunctions.cpp src/Parsing/macroExpander.h src/Parsing/macroExpander.cpp src/Runtime/Values/valueHelpersInline.cpp src/Includes/unorderedDense.h src/Codegen/Passes/AST/closureConverter.h src/Codegen/Passes/AST/closureConverter.cpp src/SemanticAnalysis/semanticAnalyzer.h src/SemanticAnalysis/semanticAnalyzer.cpp src/Codegen/LLVMHelperFunctions.h src/Codegen/LLVMHelperFunctions.cpp src/Runtime/JIT/JIT.h src/Runtime/LLVMHelperExports.h src/TypedAST/Types.h src/TypedAST/Types.cpp src/TypedAST/TypedASTDefs.h src/Codegen/Passes/AST/ASTToTypedAST.h src/Codegen/Passes/AST/ASTToTypedAST.cpp src/AST/ASTDebugInfo.h
         src/Codegen/Passes/computeClassHierarchy.h
         src/Codegen/Passes/computeClassHierarchy.cpp
         src/Runtime/nativeFunctionsExports.h
@@ -37,13 +37,13 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/JIT/SEHFrameRegistrar.cpp
         src/Runtime/JIT/DebugInfoPlugin.cpp
         src/Runtime/JIT/DebugInfoPlugin.h
-        src/Codegen/Passes/ASTOptimization.cpp
-        src/Codegen/Passes/ASTOptimization.h
-        src/Codegen/Passes/ASTVerifier.cpp
-        src/Codegen/Passes/ASTVerifier.h
-        src/Codegen/Passes/TypeInference.cpp
-        src/Codegen/Passes/TypeInference.h
-        src/Codegen/Passes/CFGPrinter.h
+        src/Codegen/Passes/AST/ASTOptimization.cpp
+        src/Codegen/Passes/AST/ASTOptimization.h
+        src/Codegen/Passes/AST/ASTVerifier.cpp
+        src/Codegen/Passes/AST/ASTVerifier.h
+        src/Codegen/Passes/CFG/TypeInference.cpp
+        src/Codegen/Passes/CFG/TypeInference.h
+        src/Codegen/Passes/CFG/CFGPrinter.h
 )
 
 string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")

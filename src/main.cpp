@@ -8,11 +8,11 @@
 #include "llvm/Support/TargetSelect.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
 #include "Runtime/MemoryManagment/garbageCollector.h"
-#include "Codegen/Passes/closureConverter.h"
-#include "Codegen/Passes/ASTToTypedAST.h"
-#include "Codegen/Passes/ASTVerifier.h"
-#include "Codegen/Passes/ASTOptimization.h"
-#include "Codegen/Passes/TypeInference.h"
+#include "Codegen/Passes/AST/closureConverter.h"
+#include "Codegen/Passes/AST/ASTToTypedAST.h"
+#include "Codegen/Passes/AST/ASTVerifier.h"
+#include "Codegen/Passes/AST/ASTOptimization.h"
+#include "Codegen/Passes/CFG/TypeInference.h"
 
 #if defined(_WIN32) || defined(WIN32)
 #include <windows.h>

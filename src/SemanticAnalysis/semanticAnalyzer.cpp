@@ -1,7 +1,7 @@
 #include "semanticAnalyzer.h"
 #include <iostream>
 #include "../Includes/fmt/format.h"
-#include "../Codegen/Passes/closureConverter.h"
+#include "../Codegen/Passes/AST/closureConverter.h"
 #include "../ErrorHandling/errorHandler.h"
 
 using namespace SemanticAnalysis;

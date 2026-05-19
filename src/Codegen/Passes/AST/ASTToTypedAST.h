@@ -1,9 +1,9 @@
 #pragma once
-#include "../../AST/ASTDefs.h"
-#include "../../TypedAST/TypedASTDefs.h"
+#include "../../../AST/ASTDefs.h"
+#include "../../../TypedAST/TypedASTDefs.h"
 #include "closureConverter.h"
-#include "../../Includes/unorderedDense.h"
-#include "computeClassHierarchy.h"
+#include "../../../Includes/unorderedDense.h"
+#include "../computeClassHierarchy.h"
 
 namespace errorHandler{
     class ErrorHandler;

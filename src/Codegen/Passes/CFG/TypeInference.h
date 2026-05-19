@@ -1,6 +1,6 @@
 #pragma once
-#include "computeClassHierarchy.h"
-#include "../../TypedAST/TypedASTDefs.h"
+#include "../computeClassHierarchy.h"
+#include "../../../TypedAST/TypedASTDefs.h"
 #include <unordered_map>
 #include <unordered_set>
 

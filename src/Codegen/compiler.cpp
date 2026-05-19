@@ -1952,7 +1952,9 @@ llvm::Constant* Compiler::createConstStr(const string& str){
 llvm::Constant* Compiler::createESLString(const string& str){
     if(ESLStrings.contains(str)) return ESLStrings[str];
     auto obj = llvm::ConstantStruct::get(llvm::StructType::getTypeByName(*ctx, "ObjString"), {
-        createConstObjHeader(+object::ObjType::STRING), builder.getInt32(str.size()), createConstStr(str)});
+        createConstObjHeader(+object::ObjType::STRING), builder.getInt32(str.size())
+    });
+    obj = llvm::ConstantStruct::getAnon({obj, llvm::ConstantDataArray::getString(*ctx, str)});
     auto val = constObjToVal(storeConstObj(obj), +object::ObjType::STRING);
     ESLStrings[str] = val;
     return val;

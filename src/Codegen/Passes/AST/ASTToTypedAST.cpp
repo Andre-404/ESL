@@ -1,8 +1,8 @@
 #include "ASTToTypedAST.h"
-#include "../../AST/ASTProbe.h"
-#include "../../Includes/fmt/format.h"
-#include "../../ErrorHandling/errorHandler.h"
-#include "../../TypedAST/Types.h"
+#include "../../../AST/ASTProbe.h"
+#include "../../../Includes/fmt/format.h"
+#include "../../../ErrorHandling/errorHandler.h"
+#include "../../../TypedAST/Types.h"
 
 using namespace passes;
 using namespace typedASTParser;

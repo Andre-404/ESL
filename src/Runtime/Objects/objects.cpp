@@ -44,7 +44,7 @@ void object::runObjDestructor(object::Obj* obj){
 
 string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
     switch(type){
-        case +ObjType::STRING: return string(reinterpret_cast<ObjString*>(this)->str);
+        case +ObjType::STRING: return string(reinterpret_cast<ObjString*>(this)->get_str());
         case +ObjType::ARRAY:{
             ObjArray* arr = reinterpret_cast<ObjArray*>(this);
             string str = "[";
@@ -61,14 +61,15 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
             ObjHashMap* map = reinterpret_cast<ObjHashMap*>(this);
             string str = "{";
             for(auto it : map->fields){
-                str.append(" \"").append(string(it.first->str)).append("\" : ");
+                str.append(" \"").append(string(it.first->get_str())).append("\" : ");
                 str.append(valueHelpers::toString(it.second, stack)).append(",");
             }
             str.erase(str.size() - 1).append(" }");
             return str;
         }
         case +ObjType::FILE: return "<file>";
-        case +ObjType::MUTEX: return "<mutex>";;
+        case +ObjType::MUTEX: return "<mutex>";
+        default: break;
     }
     return "cannot stringfy object";
 }
@@ -80,36 +81,34 @@ void* Obj::operator new(const size_t size, memory::ThreadArena& allocator) {
 
 #pragma region ObjString
 bool ObjString::compare(ObjString* other) {
-	return size == other->size && std::strcmp(str, other->str) == 0;
+	return size == other->size && std::strcmp(get_str(), other->get_str()) == 0;
 }
 
 bool ObjString::compare(const string other) {
-	return std::strcmp(str, other.c_str()) == 0;
+	return std::strcmp(get_str(), other.c_str()) == 0;
 }
 
 ObjString* ObjString::concat(ObjString* other, ThreadArena& allocator) {
     ObjString* newStr = static_cast<ObjString *>(allocator.alloc(sizeof(ObjString) + size + other->size +1));
-    newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
     newStr->size = size + other->size;
 
-    std::memcpy(newStr->str, str, size);
-    std::memcpy(newStr->str + size, other->str, other->size+1);
+    std::memcpy(newStr->get_str(), get_str(), size);
+    std::memcpy(newStr->get_str() + size, other->get_str(), other->size+1);
 
     return memory::gc->interned.checkInterned(newStr);
 }
 
 ObjString* ObjString::createStr(char* str, memory::ThreadArena& allocator){
     ObjString* newStr = static_cast<ObjString *>(allocator.alloc(sizeof(ObjString) + std::strlen(str) +1));
-    newStr->str = ((char*)newStr)+sizeof(ObjString);
     newStr->type = +ObjType::STRING;
     newStr->size = std::strlen(str);
-    strcpy(newStr->str, str);
+    strcpy(newStr->get_str(), str);
     return memory::gc->interned.checkInterned(newStr);
 }
 
-uint64_t stringHash::operator()(object::ObjString* str) const noexcept{
-    return rapidhash(str->str, str->size);
+uint64_t stringHash::operator()(const ObjString* str) const noexcept{
+    return rapidhash(str->get_str(), str->size);
 }
 #pragma endregion
 
@@ -160,13 +159,6 @@ void ObjArray::push(Value item, memory::ThreadArena& allocator){
         storage = newStorage;
     }
     getData()[size++] = item;
-}
-#pragma endregion
-
-#pragma region ObjClass
-ObjClass::ObjClass(string _name) {
-	name = nullptr;
-	type = +ObjType::CLASS;
 }
 #pragma endregion
 

@@ -33,7 +33,7 @@ void createLLVMTypes(std::unique_ptr<llvm::LLVMContext> &ctx, ankerl::unordered_
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
     types["Obj"] = llvm::StructType::create(*ctx, {padding, TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
-    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32), PTR_TY(TYPE(Int8))}, "ObjString");
+    types["ObjString"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int32)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
     types["ObjClosure"] = llvm::StructType::create(*ctx, {types["Obj"], TYPE(Int8), TYPE(Int8), PTR_TY(TYPE(Int8)),
                                                                      PTR_TY(TYPE(Int8))}, "ObjClosure");

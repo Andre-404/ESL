@@ -43,10 +43,10 @@ EXPORT Value as_number(ObjClosure* ptr, Value num){
         exit(64);
     }
     try {
-        return encodeNumber(std::stod(asString(num)->str));
+        return encodeNumber(std::stod(asString(num)->get_str()));
     }
     catch (std::exception &e){
-        std::cerr << fmt::format("Cannot convert \"{}\" to Number.\n", asString(num)->str);
+        std::cerr << fmt::format("Cannot convert \"{}\" to Number.\n", asString(num)->get_str());
         exit(64);
     }
 }

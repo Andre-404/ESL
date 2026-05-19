@@ -1,5 +1,5 @@
 #pragma once
-#include "Passes/ASTToTypedAST.h"
+#include "Passes/AST/ASTToTypedAST.h"
 #include "DebugEmitter.h"
 
 #include "llvm/IR/IRBuilder.h"
