@@ -2,13 +2,13 @@
 #include "Passes/AST/ASTToTypedAST.h"
 #include "DebugEmitter.h"
 #include "CompilerParts/ComptimeValues.h"
+#include "CompilerParts/RuntimeTypecheck.h"
+#include "CompilerParts/InstBuilder.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include <stack>
-
-#include "CompilerParts/RuntimeTypecheck.h"
 
 namespace errorHandler{
     class ErrorHandler;
@@ -112,8 +112,6 @@ class Compiler : public CFG::CFGCodeGen {
 
         // Maps uuids of classes to global variable holding the class struct
         fastMap<string, Class> classes;
-        // Connects function types(unique for each function) and the LLVM IR representation of that function
-        fastMap<types::tyPtr, llvm::Function*> functions;
         fastMap<string, llvm::Value*> nativeFunctions;
         DebugEmitter debugEmitter;
         errorHandler::ErrorHandler& errHandler;
@@ -122,7 +120,6 @@ class Compiler : public CFG::CFGCodeGen {
         std::unique_ptr<llvm::LLVMContext> ctx;
         llvm::IRBuilder<> builder;
         std::unique_ptr<llvm::Module> curModule;
-        vector<llvm::Attribute> ESLFuncAttrs;
 
         std::stack<Function> inProgressFuncs;
         std::stack<llvm::BasicBlock*> continueJumpDest;
@@ -133,6 +130,8 @@ class Compiler : public CFG::CFGCodeGen {
         TypeHelper _tyhelp;
         ComptimeValues _ct;
         RuntimeTypecheck _rt;
+        InstBuilder _inst_builder;
+
 
         // LLVM stuff
         void setupModule(const llvm::DataLayout& DL);
@@ -165,10 +164,8 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Value* codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore);
 
         // Functions helpers
-        llvm::Function* startFuncDef(const string name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
+        llvm::Function* startFuncDef(const string &name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
         void declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args);
-        llvm::FunctionCallee setupUnoptCall(llvm::Value* closureVal, int argc, Token dbg);
-        llvm::FunctionCallee getBitcastFunc(llvm::Value* closurePtr, const int argc);
 
         // Array optimization
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, CFG::SetType opTy, Token dbg);
@@ -185,19 +182,6 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Function* createStrToIdxFunc(std::shared_ptr<types::ClassType> classType, bool isMethod);
         void codegenMethod(string classname, CFG::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
 
-        llvm::GlobalVariable* createInstanceTemplate(llvm::Constant* klass, int fieldN);
-        llvm::Value* optimizeInstGet(llvm::Value* inst, string field, Class& klass);
-        llvm::Value* instGetUnoptimized(llvm::Value* inst, string fieldName, Token dbg);
-        std::pair<llvm::Value*, llvm::Value*> instGetUnoptIdx(llvm::Value* klass, string field);
-        std::pair<llvm::Value*, llvm::Value*> instGetClassPtr(llvm::Value* inst, Token dbg);
-        llvm::Value* instGetIdxType(llvm::Value* fieldIdx, llvm::Value* methodIdx);
-
-        llvm::Value* getOptInstFieldPtr(llvm::Value* inst, Class& klass, string field);
-        llvm::Value* getUnoptInstFieldPtr(llvm::Value* inst, string field, Token dbg);
-
-        llvm::FunctionCallee optimizeInvoke(llvm::Value* inst, string field, Class& klass, vector<llvm::Value*>& args, Token dbg);
-        llvm::Value* unoptimizedInvoke(llvm::Value* inst, string field, vector<llvm::Value*> args, Token dbg);
-
         // Multithreading
         // Unfortunately right now we need to create a threadWrapper for each spawn statement
         llvm::Function* createThreadWrapper(llvm::FunctionType* funcType, int numArgs);
@@ -206,7 +190,6 @@ class Compiler : public CFG::CFGCodeGen {
         // Misc
         llvm::Function* safeGetFunc(const string& name);
         void generateNativeFuncs(fastMap<string, types::tyPtr>& natives);
-        void createWeightedSwitch(llvm::Value* cond, vector<std::pair<int, llvm::BasicBlock*>> cases, llvm::BasicBlock* defaultBB, vector<int> weights);
 
         #pragma endregion
 	};

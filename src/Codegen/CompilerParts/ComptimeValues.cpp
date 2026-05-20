@@ -1,7 +1,4 @@
 #include "ComptimeValues.h"
-
-#include <ranges>
-
 #include "../LLVMHelperFunctions.h"
 #include "../../Runtime/Values/valueHelpers.h"
 
@@ -11,7 +8,7 @@ llvm::Constant* ComptimeValues::createESLString(const string& str){
         createConstObjHeader(+object::ObjType::STRING), _b.getInt32(str.size())
     });
     obj = llvm::ConstantStruct::getAnon({obj, llvm::ConstantDataArray::getString(_b.getContext(), str)});
-    auto val = constObjToVal(storeConstObj(obj), +object::ObjType::STRING);
+    const auto val = constObjToVal(storeConstObj(obj), +object::ObjType::STRING);
     ESLStrings[str] = val;
     return val;
 }

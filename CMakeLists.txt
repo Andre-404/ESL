@@ -50,6 +50,8 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/CompilerParts/RuntimeTypecheck.h
         src/Codegen/CompilerParts/TypeHelper.cpp
         src/Codegen/CompilerParts/TypeHelper.h
+        src/Codegen/CompilerParts/InstBuilder.cpp
+        src/Codegen/CompilerParts/InstBuilder.h
 )
 
 string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")

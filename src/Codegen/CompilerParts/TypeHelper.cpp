@@ -2,8 +2,10 @@
 #include "../LLVMHelperFunctions.h"
 
 
-TypeHelper::TypeHelper(llvm::IRBuilder<>& b, llvm::Module& mod, ankerl_map<string, std::pair<int, int>>& _hierarchy) : _b(b) {
+TypeHelper::TypeHelper(llvm::IRBuilder<>& b, llvm::Module& mod, const ankerl_map<std::string, std::pair<int, int>>& _hierarchy) : _b(b) {
     llvmHelpers::addHelperFunctionsToModule(mod, _b.getContext(), _b, _named_types);
+    _func_attrs.push_back(llvm::Attribute::get(_b.getContext(), "uwtable", "sync"));
+    _func_attrs.push_back(llvm::Attribute::get(_b.getContext(), "no-trapping-math", "true"));
     _class_hierarchy = _hierarchy;
 }
 
@@ -37,7 +39,7 @@ llvm::Type* TypeHelper::getESLValType() const {
     return llvmHelpers::getESLValType(_b.getContext());
 }
 
-llvm::Type* TypeHelper::internal_obj_ty(const string& name) const {
+llvm::Type* TypeHelper::internal_obj_ty(const std::string& name) const {
     return _named_types.at(name);
 }
 
@@ -49,6 +51,19 @@ llvm::FunctionType* TypeHelper::getFuncType(int argCount) const {
     return fty;
 }
 
-std::pair<int, int> TypeHelper::class_hierarchy(const string& classname) const {
+void TypeHelper::set_fn_attrs(llvm::Function* fn) const {
+    for(const auto& attr : _func_attrs) fn->addFnAttr(attr);
+}
+
+llvm::Function* TypeHelper::ty_to_fn(const types::tyPtr& ty) const {
+    if (_fn_type_mapping.contains(ty)) return _fn_type_mapping.at(ty);
+    return nullptr;
+}
+
+void TypeHelper::add_fn_mapping(const types::tyPtr& ty, llvm::Function* fn) {
+    _fn_type_mapping[ty] = fn;
+}
+
+std::pair<int, int> TypeHelper::class_hierarchy(const std::string& classname) const {
     return _class_hierarchy.at(classname);
 }

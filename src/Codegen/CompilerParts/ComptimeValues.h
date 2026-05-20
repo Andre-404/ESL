@@ -1,6 +1,5 @@
 #pragma once
 #include "llvm/IR/IRBuilder.h"
-#include "../../common.h"
 #include "../../Includes/unorderedDense.h"
 #include "../../ErrorHandling/errorHandler.h"
 #include "TypeHelper.h"

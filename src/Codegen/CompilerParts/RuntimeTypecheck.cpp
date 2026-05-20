@@ -140,6 +140,20 @@ void RuntimeTypecheck::createInstClassCheck(const string& err, llvm::Value* inst
    );
 }
 
+llvm::FunctionCallee RuntimeTypecheck::createUnoptFunCall(llvm::Value* closureVal, int argc) const {
+    createTypeCheckUnary("Expected a function for a callee, got '{}'.", closureVal, TypeHelper::getObjectTypeMasks(object::ObjType::CLOSURE));
+
+    string err = fmt::format("Function {} being called with {} arguments when it accepts {}.", "{}", argc, "{}");
+    createArgCountCheck(err, closureVal, argc);
+    auto closurePtr = _b.CreateCall(get_func("decodeClosure"), closureVal);
+
+    // Index for accessing the fn ptr is at 3, not 2, because we have a Obj struct at index 0
+    auto fnPtrAddr = _b.CreateInBoundsGEP(_tyhelp.internal_obj_ty("ObjClosure"), closurePtr, { _b.getInt32(0), _b.getInt32(3) });
+    llvm::Value* fnPtr = _b.CreateLoad(_b.getPtrTy(), fnPtrAddr);
+    auto fnTy = _tyhelp.getFuncType(argc-1);
+    return llvm::FunctionCallee(fnTy, _b.CreateBitCast(fnPtr, llvm::PointerType::getUnqual(fnTy)));
+}
+
 // Helper
 void RuntimeTypecheck::create_if(llvm::Value* cond, const std::function<void()>& then, const std::function<void()>& _else) const {
     llvm::Function *F = _b.GetInsertBlock()->getParent();
@@ -166,4 +180,19 @@ llvm::Function* RuntimeTypecheck::get_func(const string& name) const {
         exit(64);
     }
     return fn;
+}
+
+void RuntimeTypecheck::createWeightedSwitch(llvm::Value* cond, vector<std::tuple<int, llvm::BasicBlock*, int>> cases) const {
+    auto sw = _b.CreateSwitch(cond, std::get<1>(cases.front()));
+    // Convert weights to LLVM constants
+    std::vector<llvm::Metadata*> weights;
+    weights.push_back(llvm::MDString::get(_b.getContext(), "branch_weights"));
+
+    for(auto [_case, BB, weight] : cases | std::views::drop(1)){
+        sw->addCase(_b.getInt8(_case), BB);
+        weights.push_back(llvm::ConstantAsMetadata::get(_b.getInt32(weight)));
+    }
+
+    llvm::MDNode* WeightsNode = llvm::MDNode::get(_b.getContext(), weights);
+    sw->setMetadata(llvm::LLVMContext::MD_prof, WeightsNode);
 }

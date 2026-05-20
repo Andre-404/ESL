@@ -29,7 +29,7 @@ static tyPtr last_evaluated(tyPtr first, Args... types) {
 }
 
 
-class VariableTypeFinder : CFG::CFGVisitor{
+class VariableTypeFinder : CFG::CFGVisitor {
     uint64_t _target = 0;
     tyPtr _target_type = nullptr;
     std::unordered_set<CFG::WhileStmt*> _loop_labels;

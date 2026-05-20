@@ -3,12 +3,8 @@
 #include "../Runtime/nativeFunctionsExports.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Support/ModRef.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/LLVMContext.h"
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module)
@@ -26,7 +22,7 @@ llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
     return llvm::PointerType::get(ctx, 1);
 }
 
-void llvmHelpers::createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
     // First 2 bytes are GC info
     auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
     types["Obj"] = llvm::StructType::create(ctx, {padding, TYPE(Int8)}, "Obj");
@@ -41,7 +37,7 @@ void llvmHelpers::createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_
 
     auto classType = llvm::StructType::create(ctx, "ObjClass");
     types["ObjClassPtr"] = PTR_TY(classType);
-    auto fnTy = llvm::FunctionType::get(TYPE(Int32), {getESLValType(ctx)}, false);
+    auto fnTy = llvm::FunctionType::get(TYPE(Int32), { llvmHelpers::getESLValType(ctx)}, false);
     // Last int64 is for padding
     classType->setBody({types["Obj"], TYPE(Int16), TYPE(Int16), TYPE(Int32), TYPE(Int32), PTR_TY(TYPE(Int8)), PTR_TY(fnTy), PTR_TY(fnTy), TYPE(Int64)});
     types["ObjClass"] = classType;
@@ -101,7 +97,6 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     fn->addFnAttr(llvm::Attribute::WillReturn);
     fn->addFnAttr(llvm::Attribute::MustProgress);
     fn->addFnAttr(llvm::Attribute::NoCallback);
-    llvm::AttributeList a;
     llvm::AttrBuilder b(ctx);
     b.addAlignmentAttr(8);
     fn->addRetAttr(b.getAttribute(llvm::Attribute::Alignment));
@@ -145,7 +140,7 @@ static llvm::Constant* ESLConstToI64(llvm::Constant* constant){
 
 void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
                               llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    auto createFunc = [&](string name, llvm::FunctionType *FT){
+    auto createFunc = [&](const string& name, llvm::FunctionType *FT){
         llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module);
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx, "entry", F);
         builder.SetInsertPoint(BB);
@@ -256,7 +251,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        auto call = builder.CreateCall(module.getFunction("stopThread"));
+        builder.CreateCall(module.getFunction("stopThread"));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
