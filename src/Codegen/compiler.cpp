@@ -47,7 +47,7 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
     pastAllocas([this](auto& tb)  {
         auto val = tb.CreateIntrinsic(tb.getPtrTy(), llvm::Intrinsic::frameaddress, {tb.getInt32(0)});
         tb.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
-        tb.CreateCall(safeGetFunc("threadInit"), {val});
+        tb.CreateCall(safeGetFunc("threadInit"), { val, llvm::ConstantPointerNull::get(builder.getPtrTy())});
         for(auto strObj : _ct.ESL_strings()) {
             tb.CreateCall(safeGetFunc("gcInternStr"), { strObj });
         }
@@ -1390,30 +1390,28 @@ void Compiler::codegenMethod(string classname, CFG::ClassMethod& method, llvm::C
 
 // Multithreading
 llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int numArgs){
-    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false);
+    llvm::FunctionType* fty = llvm::FunctionType::get(builder.getPtrTy(), { builder.getPtrTy() }, false);
     auto fn = llvm::Function::Create(fty, llvm::Function::PrivateLinkage, "threadWrapper", curModule.get());
     fn->addFnAttr("uwtable", "sync");
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
-    // Loads arguments from stack of the thread that called spawn
+    // Loads arguments from memory passed to wrapper, must load all args before threadInit is called since that function frees the memory
     vector<llvm::Value*>args;
     for(int i = 0; i < numArgs; i++){
         llvm::Value* gep = builder.CreateConstInBoundsGEP1_32(_tyhelp.getESLValType(), fn->getArg(0), i + 1);
         args.push_back(builder.CreateLoad(_tyhelp.getESLValType(), gep));
     }
-    // Loads the function pointer from the first element and then atomically change it to 0 since it acts as a flag
     llvm::Value* funcPtr = builder.CreateLoad(builder.getPtrTy(), fn->getArg(0));
-    llvm::StoreInst* store = builder.CreateStore(builder.getInt64(0), fn->getArg(0));
-    store->setAtomic(llvm::AtomicOrdering::Release);
-    store->setAlignment(llvm::Align(8));
 
     llvm::Value* frameAddr = builder.CreateIntrinsic(builder.getPtrTy(), llvm::Intrinsic::frameaddress, {builder.getInt32(0)});
-    builder.CreateCall(safeGetFunc("threadInit"), {frameAddr});
+    builder.CreateCall(safeGetFunc("threadInit"), { frameAddr, fn->getArg(0) });
 
     builder.CreateCall(funcType, funcPtr, args);
+
     builder.CreateCall(safeGetFunc("threadDestruct"));
     builder.CreateRet(llvm::ConstantPointerNull::get(builder.getPtrTy()));
+
     llvm::verifyFunction(*fn);
 
     // Set insertion point to the end of the enclosing function
@@ -1422,7 +1420,7 @@ llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int 
 }
 
 void Compiler::setupThreadCreation(llvm::FunctionCallee callee, vector<llvm::Value*>& args){
-    // args.size + 1 because first element is used as an atomic flag
+    // alloca content: func ptr + args
     llvm::AllocaInst* alloca = builder.CreateAlloca(builder.getInt64Ty(), builder.getInt32(args.size()+1), "args");
     for(int i = 0; i < args.size(); i++){
         llvm::Value* ptr = builder.CreateConstInBoundsGEP1_32(builder.getInt64Ty(), alloca, i+1, fmt::format("{}.arg", i));
@@ -1432,22 +1430,7 @@ void Compiler::setupThreadCreation(llvm::FunctionCallee callee, vector<llvm::Val
     builder.CreateStore(callee.getCallee(), alloca);
     llvm::Function* wrapper = createThreadWrapper(callee.getFunctionType(), args.size());
     // C++ function that actually calls pthread_create and also does cleanup when a thread dies
-    builder.CreateCall(safeGetFunc("createNewThread"), {wrapper, alloca});
-
-    // Spinlock
-    llvm::Function *F = builder.GetInsertBlock()->getParent();
-    llvm::BasicBlock* header = llvm::BasicBlock::Create(*ctx, "spinlock.header", F);
-    llvm::BasicBlock* next = llvm::BasicBlock::Create(*ctx, "spinlock.done", F);
-    builder.CreateBr(header);
-    builder.SetInsertPoint(header);
-    // First slot in alloca is a flag that is reset atomically by the spawned thread
-    llvm::LoadInst* flag = builder.CreateLoad(builder.getInt64Ty(), alloca);
-    flag->setOrdering(llvm::AtomicOrdering::Acquire);
-    flag->setAlignment(llvm::Align(8));
-
-    llvm::Value* cmp = builder.CreateICmpEQ(flag, builder.getInt64(0), "lock.cond");
-    builder.CreateCondBr(cmp, next, header);
-    builder.SetInsertPoint(next);
+    builder.CreateCall(safeGetFunc("createNewThread"), { wrapper, alloca, builder.getInt64(args.size()+1)});
 }
 
 // Misc

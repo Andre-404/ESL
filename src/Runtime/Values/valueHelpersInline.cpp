@@ -44,14 +44,14 @@ inline bool isMutex(Value x) { return isObj(x) && (x&mask_payload_type) == +ObjT
 inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
 
 // Uses reinterpret_cast because it assumes the object being passed is of the requested type
-inline object::ObjString* asString(Value x) { return reinterpret_cast<ObjString*>(decodeObj(x)); }
-inline object::ObjArray* asArray(Value x) { return reinterpret_cast<ObjArray*>(decodeObj(x)); }
-inline object::ObjClosure* asClosure(Value x) { return reinterpret_cast<ObjClosure*>(decodeObj(x)); }
-inline object::ObjClass* asClass(Value x) { return reinterpret_cast<ObjClass*>(decodeObj(x)); }
-inline object::ObjInstance* asInstance(Value x) { return reinterpret_cast<ObjInstance*>(decodeObj(x)); }
-inline object::ObjHashMap* asHashMap(Value x) { return reinterpret_cast<ObjHashMap*>(decodeObj(x)); }
-inline object::ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
-inline object::ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }
+inline ObjString* asString(Value x) { return reinterpret_cast<ObjString*>(decodeObj(x)); }
+inline ObjArray* asArray(Value x) { return reinterpret_cast<ObjArray*>(decodeObj(x)); }
+inline ObjClosure* asClosure(Value x) { return reinterpret_cast<ObjClosure*>(decodeObj(x)); }
+inline ObjClass* asClass(Value x) { return reinterpret_cast<ObjClass*>(decodeObj(x)); }
+inline ObjInstance* asInstance(Value x) { return reinterpret_cast<ObjInstance*>(decodeObj(x)); }
+inline ObjHashMap* asHashMap(Value x) { return reinterpret_cast<ObjHashMap*>(decodeObj(x)); }
+inline ObjFile* asFile(Value x) { return reinterpret_cast<ObjFile*>(decodeObj(x)); }
+inline ObjMutex* asMutex(Value x) { return reinterpret_cast<ObjMutex*>(decodeObj(x)); }
 
 inline bool equals(Value x, Value y){
     ValueType type = getType(x);

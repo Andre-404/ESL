@@ -114,10 +114,10 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     // ret: void, args: ObjHashmap, ObjString(index into the map), Value to be inserted
     wrapFn(CREATE_FUNC(hashmapSetV, false, TYPE(Void), types["ObjPtr"], types["ObjPtr"], eslValTy));
 
-    // ret: void, args: wrapper function ptr, alloca ptr with args
-    wrapFn(CREATE_FUNC(createNewThread, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy()));
-    // ret: void, args: frame address
-    wrapFn(CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy()));
+    // ret: void, args: wrapper function ptr, alloca ptr with args, argc
+    wrapFn(CREATE_FUNC(createNewThread, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()));
+    // ret: void, args: frame address, malloc-ed args
+    wrapFn(CREATE_FUNC(threadInit, false, TYPE(Void), builder.getPtrTy(), builder.getPtrTy()));
     // ret: void, args: threadData ptr
     wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), ));
 

@@ -1,6 +1,7 @@
 #pragma once
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/format.h"
+#include "../Includes/rpmalloc/rpmalloc.h"
 #include "Values/valueHelpersInline.cpp"
 #include "MemoryManagment/garbageCollector.h"
 #include "MemoryManagment/threadArena.h"
@@ -171,12 +172,15 @@ EXPORT void gcInternStr(Value val){
 
 using wrapper = void*(*)(void*);
 
-EXPORT void createNewThread(wrapper llvmWrapper, int64_t* alloca){
+EXPORT void createNewThread(wrapper llvmWrapper, int64_t* alloca, int64_t argc){
+    auto mem = rpmalloc(argc*sizeof(Value));
+    memcpy(mem, alloca, argc*sizeof(Value));
     pthread_t p;
-    pthread_create(&p, nullptr, llvmWrapper, alloca);
+    pthread_create(&p, nullptr, llvmWrapper, mem);
 }
 
-EXPORT void threadInit(uintptr_t* frameAddr){
+EXPORT void threadInit(uintptr_t* frameAddr, uintptr_t* storage){
+    if (storage) rpfree(storage);
     memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
     memory::initLocalArena();
 }
