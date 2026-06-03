@@ -52,6 +52,34 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/CompilerParts/TypeHelper.h
         src/Codegen/CompilerParts/InstBuilder.cpp
         src/Codegen/CompilerParts/InstBuilder.h
+        src/Runtime/ConcurrentGC/gc-config.h
+        src/Runtime/ConcurrentGC/pg-meta.h
+        src/Runtime/ConcurrentGC/managed.h
+        src/Runtime/ConcurrentGC/pg-manager.h
+        src/Runtime/ConcurrentGC/page-allocator.h
+        src/Runtime/ConcurrentGC/page-allocator.cpp
+        src/Runtime/ConcurrentGC/pg-manager.cpp
+        src/Runtime/ConcurrentGC/tstack.h
+        src/Runtime/ConcurrentGC/sync-point.h
+        src/Runtime/ConcurrentGC/sweeper.h
+        src/Runtime/ConcurrentGC/copier.h
+        src/Runtime/ConcurrentGC/copier.cpp
+        src/Runtime/ConcurrentGC/mark-buf.h
+        src/Runtime/ConcurrentGC/pruner.h
+        src/Runtime/ConcurrentGC/marker.h
+        src/Runtime/ConcurrentGC/mark-buf.cpp
+        src/Runtime/ConcurrentGC/marker.cpp
+        src/Runtime/ConcurrentGC/customization.h
+        src/Runtime/ConcurrentGC/obj-allocator.h
+        src/Runtime/ConcurrentGC/TCB.h
+        src/Runtime/ConcurrentGC/TCB-registry.h
+        src/Runtime/ConcurrentGC/gc.h
+        src/Runtime/ConcurrentGC/gc.cpp
+        src/Runtime/ConcurrentGC/gc-heuristic.h
+        src/Runtime/ConcurrentGC/arena.h
+        src/Runtime/ConcurrentGC/szclass-allocator.h
+        src/Runtime/ConcurrentGC/platform-specific.h
+        src/Runtime/ConcurrentGC/radix-tree.h
 )
 
 string(CONCAT llvm_libraries "LLVMSupport;LLVMCore;LLVMIRReader;LLVMOrcJIT;LLVMPasses;LLVMScalarOpts;LLVMipo;LLVMTarget;LLVMOption;LLVMAnalysis;LLVMTransformUtils;LLVMInstCombine;LLVMBitReader;LLVMObject;LLVMInstrumentation;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info;LLVMJITLink;LLVMExecutionEngine;LLVMDebugInfoDWARF;LLVMOrcTargetProcess;LLVMSymbolize")

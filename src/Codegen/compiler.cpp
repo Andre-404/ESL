@@ -1169,6 +1169,7 @@ llvm::Function* Compiler::startFuncDef(const string &name, const std::shared_ptr
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
+    builder.CreateCall(safeGetFunc("safepoint_poll"));
     return fn;
 }
 void Compiler::declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args){

@@ -14,7 +14,7 @@ llvm::GlobalVariable* InstBuilder::createInstanceTemplate(llvm::Constant* klass,
             _ct.createConstObjHeader(+object::ObjType::INSTANCE), _b.getInt32(fieldN), klass });
     // Struct and array should be one after another without any padding(?)
     auto inst =  llvm::ConstantStruct::get(llvm::StructType::create(_b.getContext(),
-{ _tyhelp.internal_obj_ty("ObjInstance"), llvm::ArrayType::get(_tyhelp.getESLValType(), fieldN) }),{obj, fieldArr});
+        { _tyhelp.internal_obj_ty("ObjInstance"), llvm::ArrayType::get(_tyhelp.getESLValType(), fieldN) }),{obj, fieldArr});
     return _ct.storeConstObj(inst);
 }
 
