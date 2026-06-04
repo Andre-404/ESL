@@ -9,13 +9,28 @@ namespace gc::detail {
     class arena {
         std::array<szclass_allocator, config::szclass_cnt> _allocators;
         size_t _debt;
+        pg_meta* _big_objs;
+
+        managed* alloc_big(size_t sz, pg_manager& manager) {
+            auto res = manager.get_big_pg(large_pg_sz(sz));
+            if (!res) [[unlikely]] return nullptr;
+            res->link(_big_objs);
+            _big_objs = res;
+            return pg_meta::pg_slots_iter { res, (uint16_t)0 }.get();
+        }
     public:
-        arena() : _debt(0) {}
+        arena() : _debt(0), _big_objs(nullptr) {}
         managed* alloc(size_t sz, pg_manager& manager) {
-            auto szclass = config::sz_to_class[sz];
             _debt += sz;
+            auto szclass = config::sz_to_class(sz);
+
+            if (sz == -1) return alloc_big(sz, manager);
+
             if (auto res = _allocators[szclass].alloc()) return res;
-            _allocators[szclass].push_pg(manager.get_new_pg(szclass));
+
+            if (auto new_pg = manager.get_new_pg(szclass)) _allocators[szclass].push_pg(new_pg);
+            else [[unlikely]] return nullptr;
+
             return _allocators[szclass].alloc();
         }
 
@@ -26,12 +41,12 @@ namespace gc::detail {
             for (auto& alloc : _allocators) alloc.flush_alloc_cache();
         }
         template<typename F>
-        void iter_caches(F consume) {
-            for (auto& alloc : _allocators) consume(alloc.list_start());
+        void mutate_caches(F mutator) {
+            for (auto& alloc : _allocators) alloc.mutate(mutator);
         }
         template<typename F>
-        void prune_caches(F prune) {
-            for (auto& alloc : _allocators) alloc.prune(prune);
+        void mutate_objs(F mutator) {
+            _big_objs = mutator(_big_objs);
         }
     };
 }

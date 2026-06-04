@@ -21,7 +21,7 @@ namespace gc {
             return arr;
         }();
 
-        constexpr auto sz_to_class = []() constexpr {
+        constexpr auto sz_to_class_table = []() constexpr {
             auto arr = std::array<uint8_t, sz_classes[szclass_cnt - 1] / 16> {};
             uint8_t cur_sz_class = 0;
             for (size_t i = 0; i < sz_classes[szclass_cnt - 1]; i += 16) {
@@ -30,6 +30,13 @@ namespace gc {
             }
             return arr;
         }();
+
+
+
+        constexpr int8_t sz_to_class(size_t sz) {
+            if (sz > sz_classes[szclass_cnt - 1]) return -1;
+            return sz_to_class_table[sz / 16];
+        }
 
         constexpr size_t heap_bits = 48; // TODO: shrink to 40 bits once we have a proper allocator
         constexpr size_t pg_bits = 16;
@@ -40,6 +47,8 @@ namespace gc {
         constexpr size_t heap_max_sz = 1ull << heap_bits;
         constexpr size_t l1_sz = 1ull << l1_bits;
         constexpr size_t l2_sz = 1ull << l2_bits;
+
+        constexpr size_t debt_trigger = 100 * (1 << 10);
     }
 
 }

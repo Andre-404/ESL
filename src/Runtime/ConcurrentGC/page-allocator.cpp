@@ -8,9 +8,9 @@
 
 using namespace gc::detail;
 
-pg_meta* pg_allocator::alloc_pg(size_t block_sz) {
+pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
 #ifdef _WIN32
-    void* page = VirtualAlloc(nullptr, config::page_sz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    void* page = VirtualAlloc(nullptr, config::page_sz * num_pgs, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #else
     // posix_memalign can return non zeroed memory so we have to zero it first
     void *page;
@@ -20,9 +20,10 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz) {
     return new(page) pg_meta(block_sz);
 }
 
-void pg_allocator::dealloc_pg(pg_meta* pg) {
+void pg_allocator::dealloc_pgs(pg_meta* start, pg_meta* end) {
 #ifdef _WIN32
-    VirtualFree(pg, 0, MEM_RELEASE);
+    for (auto pg = start; pg != end; pg = start->next()) VirtualFree(pg, 0, MEM_RELEASE);
+    VirtualFree(end, 0, MEM_RELEASE);
 #else
     free((void*)pg);
 #endif

@@ -44,14 +44,11 @@ namespace gc::detail {
             if (_allocator.valid()) _allocator.flush_cache();
         }
 
-        pg_meta* list_start() const { return _start; }
-
         template<typename F>
-        [[nodiscard]] pg_meta* prune(F prune) {
-            auto [empty, retain] = prune(_start);
-            _start = retain;
+        void mutate(F mutator) {
+            auto new_start = mutator(_start);
+            _start = new_start;
             if (_start) _allocator = obj_allocator { *_start };
-            return empty;
         }
     };
 }

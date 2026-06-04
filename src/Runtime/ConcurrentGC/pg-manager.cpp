@@ -21,43 +21,65 @@ ts_cache::l2_cache& ts_cache::get_or_create_l2(size_t idx)  {
 }
 
 pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
-    auto pg = _partial[sz_class].lfpop();
+    auto pg = _partial[sz_class].pop();
     if (pg) return pg;
 
     pg = _empty.lfpop();
     if (pg) {
         --_empty_cnt;
-        if (!pg->is_pod()) _cleanup(pg);
         pg = new (pg) pg_meta(config::sz_classes[sz_class]);
-        _active.add(pg);
+        _active.add((uintptr_t)pg, pg);
         pg->recycle();
         return pg;
     }
-    pg = _allocator.alloc_pg(config::sz_classes[sz_class]);
-    _active.add(pg);
+
+    pg = _allocator.alloc_pg(config::sz_classes[sz_class], 1);
+    if (pg) _active.add((uintptr_t)pg, pg);
     return pg;
 }
 
-void pg_manager::dealloc_pgs(pg_meta *head, size_t empty_limit)  {
+pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
+    auto pg = _allocator.alloc_pg(obj_sz, obj_sz / config::page_sz + 1);
+
+    if (pg) {
+        for (auto i = 0; i < obj_sz / config::page_sz + 1; i++) {
+            auto ptr = (uintptr_t)((uint8_t*)pg + i * config::page_sz);
+            _active.add(ptr, pg);
+        }
+    }
+    return pg;
+}
+
+void pg_manager::dealloc_pgs(pg_meta *head, bool is_big)  {
     if (!head) return;
     auto tail = head;
-    auto deactivate = [&](pg_meta* pg) {
-        _active.remove(pg);
-        if (!pg->is_pod()) _cleanup(pg);
-    };
+    if (is_big) {
+        while (tail->next()) {
+            for (auto i = 0; i < tail->block_sz() / config::page_sz + 1; i++) {
+                auto offset = (pg_meta*)((uint8_t*)tail + i * config::page_sz);
+                _active.remove(offset);
+            }
+            tail = tail->next();
+        }
+        _allocator.dealloc_pgs(head, tail);
+        return;
+    }
 
     for (;; tail = tail->next()) {
-        deactivate(tail);
+        _active.remove(tail);
         ++_empty_cnt;
-        if (!tail->next() || _empty_cnt >= empty_limit) break;
+        if (!tail->next() || _empty_cnt >= _empty_limit) break;
     }
     auto to_del = tail->next();
     _empty.lfpush_range(head, tail);
 
-    for (auto cur = to_del; cur;) {
-        auto* next = cur->next();
-        deactivate(cur);
-        _allocator.dealloc_pg(cur);
-        cur = next;
+    if (!to_del) return;
+
+    auto del_tail = to_del;
+    while (del_tail->next()) {
+        _active.remove(del_tail);
+        del_tail = del_tail->next();
     }
+    _allocator.dealloc_pgs(to_del, del_tail);
+
 }

@@ -26,10 +26,6 @@ namespace gc::detail {
             auto ptr = std::assume_aligned<8>(mark_bits());
             memset(ptr, 0, _bitmap_size);
         }
-        void clear_both() {
-            auto ptr = std::assume_aligned<8>((uint8_t*)this + sizeof(dual_bitmap));
-            memset(ptr, 0, _bitmap_size * 2);
-        }
     };
     class pg_meta : public tnode<pg_meta> {
         // Number of objects live in the last gc cycle
@@ -114,7 +110,8 @@ namespace gc::detail {
         void recycle() {
             _num_live = 0;
             _has_pinned = false;
-            _bitmap.clear_both();
+            // Only empty pages get recycled, and their allocated bitmap is empty
+            _bitmap.clear_mark();
         }
 
         bool record_mark(managed* ptr, bool is_pinned) {

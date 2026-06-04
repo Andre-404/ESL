@@ -11,14 +11,22 @@ namespace gc::detail {
         std::vector<size_t*> _roots;
 
         [[gnu::always_inline]] void push_obj(mark_buf* buf, managed* obj);
-    public:
-        marker() {}
-
         [[nodiscard]] mark_buf* replace_buf(mark_buf* buf) {
             if (!buf->empty()) _bufs.push_full(buf);
             else return buf;
 
             return _bufs.pop_empty();
+        }
+    public:
+        marker() {}
+
+        [[nodiscard]] mark_buf* get_buf() {
+            return _bufs.pop_empty();
+        }
+
+        void push_buf(mark_buf* buf) {
+            if (!buf->empty()) _bufs.push_full(buf);
+            else _bufs.push_empty(buf);
         }
 
         void register_root(size_t* root) { _roots.push_back(root); }
