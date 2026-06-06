@@ -20,9 +20,9 @@ namespace gc::detail {
                     auto state = t->load_state();
                     if (state == thd_state::running) {
                         assert(t->get_opcode() == 0);
-                        t->add_pending(opcode);
+                        t->set_opcode(opcode);
                         // Lost CAS here means we went to blocked or dead, as that is the only other legal transition
-                        if (t->try_transition(state, thd_state::running_pending)) break;
+                        if (t->try_transition(state, thd_state::has_pending)) break;
                         continue;
                     }
                     if (state == thd_state::blocked) {
@@ -47,20 +47,18 @@ namespace gc::detail {
         void finish_stw(auto snapshot) {
             for (tcb* t : snapshot) {
                 auto state = t->load_state();
-                if (state == thd_state::handshaking) t->safe_transition(thd_state::blocked);
-                else if (state == thd_state::need_start) t->safe_transition(thd_state::running);
-                t->notify_transition();
+                if (state == thd_state::handshaking) t->transition(thd_state::blocked);
+                else if (state == thd_state::need_start) t->transition(thd_state::running);
                 assert(state == thd_state::handshaking || state == thd_state::running || state == thd_state::need_start);
             }
         }
 
         // These function don't depend on registry lock, functions above do
         // [possible transitions]: handshaking -> blocked
+        // TCB can't be in handshake if it ack-ed
         void complete_handshake(std::vector<tcb*>& snapshot) {
             for (auto t : snapshot) {
-                t->safe_transition(thd_state::blocked);
-                t->notify_transition();
-                // Important to ack after transition
+                t->transition(thd_state::blocked);
                 ack();
             }
         }
@@ -68,11 +66,11 @@ namespace gc::detail {
         // [possible transitions]: running_pending -> running(safe)
         template<typename F>
         void execute_pending(tcb* t, F exec) {
-            assert(t->load_state() == thd_state::running_pending);
+            assert(t->load_state() == thd_state::has_pending);
             // transition to running_pending has release so opcode is surely visible
             exec(t);
-            t->add_pending(0); // reset opcode for sanity
-            t->safe_transition(thd_state::running);
+            t->set_opcode(0); // reset opcode for sanity
+            t->transition(thd_state::running);
         }
 
         // [possible transitions]: running_pending -> running (safe), running -> blocked (not safe)
@@ -81,7 +79,7 @@ namespace gc::detail {
             while (true) {
                 auto state = t->load_state();
                 // GC cycles are rare compared to the number of time we will be doing something blocking
-                if (state == thd_state::running_pending) [[unlikely]] {
+                if (state == thd_state::has_pending) [[unlikely]] {
                     execute_pending(t, std::forward<F>(exec));
                     continue;
                 }
@@ -110,10 +108,10 @@ namespace gc::detail {
         // [possible transitions]: running_pending -> running (safe), running -> dead (not safe)
         template<typename F>
         void thread_exit(tcb* t, F&& exec) {
-            t->get_mark_info().set_ctx_unusable();
+            t->get_mark_info().untrack_stack();
             while (true) {
                 auto state = t->load_state();
-                if (state == thd_state::running_pending) [[unlikely]] {
+                if (state == thd_state::has_pending) [[unlikely]] {
                     execute_pending(t, std::forward<F>(exec));
                     continue;
                 }
@@ -143,5 +141,5 @@ namespace gc::detail {
         }
     };
     // Will get inlined into llvm code
-    inline bool needs_safepoint(tcb* t) { return t->load_state() == thd_state::running_pending; }
+    inline bool needs_safepoint(tcb* t) { return t->load_state() == thd_state::has_pending; }
 }

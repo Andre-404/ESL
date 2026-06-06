@@ -9,19 +9,15 @@ namespace gc::detail {
         size_t _cnt;
         std::array<managed*, 64> _data;
     public:
-        mark_buf() : _data(), _cnt(0){};
+        mark_buf() : _cnt(0), _data(){};
 
         bool push(managed* obj) {
-            if (_cnt == _data.size()) return false;
             _data[_cnt++] = obj;
-            return true;
+            return _cnt == _data.size();
         }
         managed* pop() {
             if (_cnt == 0) return nullptr;
             return _data[--_cnt];
-        }
-        managed* peek() const {
-            return _cnt == 0 ? nullptr : _data[_cnt - 1];
         }
 
         bool full() const {
@@ -37,7 +33,7 @@ namespace gc::detail {
         tstack<mark_buf> _empty;
         std::atomic<size_t> _empty_cnt;
     public:
-        mark_buf_manager() : _empty_cnt(0) {}
+        mark_buf_manager(size_t empty_cnt) : _empty_cnt(empty_cnt) {}
 
         void push_full(mark_buf* buf) { _full.lfpush(buf); }
         mark_buf* pop_full() { return _full.lfpop(); }

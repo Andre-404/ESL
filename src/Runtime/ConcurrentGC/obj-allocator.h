@@ -3,6 +3,7 @@
 
 #include "pg-meta.h"
 
+// TODO: this can be improved to not load from the pg pointer if there is something in the cache
 namespace gc::detail {
     class obj_allocator {
         pg_meta* _pg;
@@ -27,13 +28,11 @@ namespace gc::detail {
         }
     public:
         obj_allocator() : _pg(nullptr), _cache(0), _pos(0) {}
-        obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0) {}
-
-        bool valid() const { return _pg; }
+        explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0) {}
 
         managed* allocate() {
             assert(_pg);
-            if (num_allocated() >= _pg->block_cnt()) return nullptr;
+            if (num_allocated() >= _pg->block_cnt()) [[unlikely]] return nullptr;
             auto cache_pos = get_cached();
             if (cache_pos < 0) return nullptr;
             cache_mark(cache_pos);

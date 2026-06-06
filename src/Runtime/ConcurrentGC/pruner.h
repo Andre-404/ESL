@@ -12,9 +12,8 @@ namespace gc::detail {
         };
         std::atomic<size_t> _live_sz;
         std::array<sz_class_data, config::szclass_cnt> _per_class_frag;
-        double _frag_threshold;
     public:
-        pruner(double frag_threshold) : _frag_threshold(frag_threshold) {};
+        pruner() {};
 
         void reset() {
             memset(_per_class_frag.data(), 0, _per_class_frag.size() * sizeof(sz_class_data));
@@ -40,9 +39,8 @@ namespace gc::detail {
                 } else {
                     // TODO: is this inefficient?
                     auto sz_class = config::sz_to_class(tmp->block_sz());
-                    auto frag = 1.0 - tmp->live_count() / (double)tmp->block_cnt();
-                    // Don't count almost full pages into total, since they wouldn't be targets for copying anyway
-                    if (sz_class != -1 && frag > _frag_threshold) {
+                    if (sz_class != -1) {
+                        auto frag = 1.0 - tmp->live_count() / (double)tmp->block_cnt();
                         _per_class_frag[sz_class].frag_total.fetch_add(frag, std::memory_order_relaxed);
                         _per_class_frag[sz_class].pg_cnt.fetch_add(1, std::memory_order_relaxed);
                     }

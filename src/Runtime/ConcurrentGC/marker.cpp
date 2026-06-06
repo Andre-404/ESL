@@ -7,24 +7,23 @@
 using namespace gc::detail;
 
 
-[[gnu::always_inline]] void marker::push_obj(mark_buf *buf, managed *obj) {
-    if (obj->get_move_state() == obj_move_state::unmanaged) [[unlikely]] return;
-    if (buf->full()) [[unlikely]] return;
+[[gnu::always_inline, nodiscard]] bool marker::push_obj(mark_buf *buf, managed *obj) {
+    if (obj->state() == move_state::unmanaged) [[unlikely]] return false;
 
     auto pg = pg_from_obj(obj);
-    auto won = pg->record_mark(obj, obj->get_move_state() != obj_move_state::none);
-    if (!won || !obj_traceable(obj)) return;
-    buf->push(obj);
+    auto won = pg->record_mark(obj, obj->state() != move_state::none);
+    if (!won || !obj_traceable(obj)) return false;
+    // Don't push buf if we're full
+    return buf->push(obj);
 }
 
-void marker::scan_globals()  {
+void marker::scan_globals(std::span<size_t*> roots)  {
     auto buf = _bufs.pop_empty();
     auto mark = [&](managed* obj) {
-        if (buf->full()) [[unlikely]] buf = replace_buf(buf);
-        push_obj(buf, obj);
+        if (push_obj(buf, obj)) [[unlikely]] buf = replace_buf(buf);
     };
-    for (auto root : _roots) {
-        if (auto ptr = word_to_ptr(*root)) mark(ptr);
+    for (auto root : roots) {
+        if (auto ptr = (managed*)to_accurate_ptr(*root)) mark(ptr);
     }
 
     buf->empty() ? _bufs.push_empty(buf) : _bufs.push_full(buf);
@@ -36,10 +35,9 @@ size_t marker::trace_n(size_t bytes)  {
 
     auto side = _bufs.pop_empty();
     std::function mark = [&](managed* obj) {
-        if (main->full()) [[unlikely]] {
-            if (side->full()) [[unlikely]] main = replace_buf(main);
-            else std::swap(side, main);
-        }
+        if (!push_obj(main, obj)) [[likely]] return;
+        if (side->full()) [[unlikely]] main = replace_buf(main);
+        else std::swap(side, main);
         push_obj(main, obj);
     };
 

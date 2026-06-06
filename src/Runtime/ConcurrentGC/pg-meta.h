@@ -18,24 +18,23 @@ namespace gc::detail {
             return (uint8_t*)this + sizeof(dual_bitmap);
         }
         uint8_t* mark_bits() const {
-            if (!_isflipped) return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
-            return (uint8_t*)this + sizeof(dual_bitmap);
+            if (_isflipped) return (uint8_t*)this + sizeof(dual_bitmap);
+            return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
         }
         void flip() { _isflipped = !_isflipped; }
-        void clear_mark() {
+        void clear_mark() const {
             auto ptr = std::assume_aligned<8>(mark_bits());
             memset(ptr, 0, _bitmap_size);
         }
     };
     class pg_meta : public tnode<pg_meta> {
         // Number of objects live in the last gc cycle
+        const size_t _block_sz;
         std::atomic<uint16_t> _num_live;
-        const uint16_t _block_sz;
         const uint16_t _block_cnt;
         const uint16_t _slot_start;
         std::atomic<uint8_t> _has_pinned;
         dual_bitmap _bitmap;
-        bool _is_large;
 
         static constexpr size_t slots_per_page(size_t X, size_t Y) {
             const size_t m = (X - 32 + 63 * Y) / (64 * Y + 16);
@@ -43,31 +42,27 @@ namespace gc::detail {
             const size_t space = (X - 16 * (m + 2)) / Y;
             return std::min(cap, space);
         }
-
+        // In bytes, 8 byte aligned cache
         static constexpr size_t bitmap_sz(size_t block_cnt) {
             return (block_cnt + 63) / 64 * 8;
         }
-        uint8_t* get_data() const {
-            return (uint8_t*)(this) + _slot_start;
+        static constexpr uint16_t block_cnt(size_t block_sz) {
+            // Each large object has a pg header
+            auto szclass = config::sz_to_class(block_sz);
+            return szclass == -1 ? 1 : slots_per_page(config::page_sz, block_sz);
         }
+        uint8_t* get_data() const { return (uint8_t*)(this) + _slot_start; }
         void add_live() { _num_live.fetch_add(1, std::memory_order_relaxed); }
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
     public:
-        explicit pg_meta(uint16_t block_sz) : _num_live(0), _block_sz(block_sz), _block_cnt(slots_per_page(config::page_sz, _block_sz)),
-            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)), _is_large(false) {}
-
-        // For large objects which are their own pages
-        explicit pg_meta(uint16_t block_sz, size_t page_sz) : _num_live(0), _block_sz(block_sz), _block_cnt(slots_per_page(page_sz, _block_sz)),
-            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)), _is_large(true) {}
+        explicit pg_meta(size_t block_sz) : _block_sz(block_sz), _num_live(0), _block_cnt(block_cnt(block_sz)),
+            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
 
         class pg_slots_iter {
             const pg_meta* _pg;
             uint16_t _i;
         public:
             pg_slots_iter(pg_meta* pg, uint16_t i) : _pg(pg), _i(i) {}
-            pg_slots_iter(pg_meta* pg, managed* ptr) : _pg(pg) {
-                _i = (size_t)(ptr - pg->_slot_start) / pg->block_cnt();
-            }
 
             void next() {
                 _i++;
@@ -100,18 +95,15 @@ namespace gc::detail {
             return nullptr;
         }
 
-        uint16_t block_sz() const {
-            return _block_sz;
-        }
-        uint16_t block_cnt() const {
-            return _block_cnt;
-        }
+        size_t block_sz() const { return _block_sz; }
+        uint16_t block_cnt() const { return _block_cnt; }
+        uint16_t live_count() const { return _num_live.load(std::memory_order_relaxed); }
+        bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
         void reset_trackers() {
             _num_live = 0;
             _has_pinned = false;
             _bitmap.flip();
         }
-
         void recycle() {
             _num_live = 0;
             _has_pinned = false;
@@ -130,25 +122,23 @@ namespace gc::detail {
             if (is_pinned) set_pinned();
             return true;
         }
-
-        void clear_mark_bitmap() { _bitmap.clear_mark(); }
+        void clear_mark_bitmap() const { _bitmap.clear_mark(); }
         size_t& alloc_word(uint16_t pos) const {
             size_t* ptr =(size_t*)_bitmap.alloc_bits();
             return ptr[pos / 8];
         }
-
-        uint16_t live_count() const { return _num_live.load(std::memory_order_relaxed); }
-        bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
-
-        bool is_large_pg() const { return _is_large; }
     };
 
     inline pg_meta* pg_from_obj(managed* obj) {
         return (pg_meta*)((size_t)obj & ~(config::page_sz - 1));
     }
 
-    // sizeof(header) + 2 * sizeof(bitmap size) + object sz
+    // sizeof(header) + 2 * sizeof(bitmap of 1 element) + object sz
     inline size_t large_pg_sz(size_t obj_sz) {
         return sizeof(pg_meta) + 2 + obj_sz;
+    }
+
+    inline bool is_large_pg(pg_meta* pg) {
+        return config::sz_to_class(pg->block_sz()) == -1;
     }
 }

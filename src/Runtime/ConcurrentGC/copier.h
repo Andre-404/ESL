@@ -13,10 +13,9 @@ namespace gc::detail {
     public:
         copier(double evac_threshold) : _evac_threshold(evac_threshold) {}
 
-        void set_evac(double evac_threshold) { _evac_threshold = evac_threshold; }
-
         void copy_objects(pg_meta* pg_list) const;
 
         void update_ptrs(pg_meta* pg) const;
+        void update_globals(std::span<size_t*> roots);
     };
 }

@@ -157,13 +157,9 @@ namespace gc::detail {
     public:
         pg_manager() : _empty_limit(0), _active() {}
 
-        void set_empty_limit(size_t empty_limit) {
-            _empty_limit = empty_limit;
-        }
+        void set_empty_limit(size_t in_bytes) { _empty_limit = in_bytes / config::page_sz; }
 
-        pg_meta* pg_from_ptr(uintptr_t ptr) {
-            return _active.get_pg(ptr);
-        }
+        pg_meta* pg_from_ptr(uintptr_t ptr) { return _active.get_pg(ptr); }
 
         pg_meta* get_new_pg(uint8_t sz_class);
 

@@ -20,18 +20,19 @@ namespace gc::detail {
         szclass_allocator() : _start(nullptr) {};
 
         [[nodiscard]] managed* alloc() {
-            if (!_allocator.valid()) [[unlikely]] return nullptr;
+            if (!_allocator.get_pg()) [[unlikely]] return nullptr;
 
-            if (auto res = _allocator.allocate()) return res;
+            if (auto res = _allocator.allocate()) [[likely]] return res;
 
             if (!find_next_free()) [[unlikely]] return nullptr;
             return _allocator.allocate();
         }
 
         void push_pg(pg_meta* pg) {
-            assert(!(_allocator.valid() && _allocator.get_pg()->next()));
+            // Dont break an existing link
+            assert(!(_allocator.get_pg() && _allocator.get_pg()->next()));
             pg->unlink(); // Sanity check
-            if (_allocator.valid()) {
+            if (_allocator.get_pg()) {
                 cur()->link(pg);
                 _allocator = obj_allocator { *pg };
                 return;
@@ -41,7 +42,7 @@ namespace gc::detail {
         }
 
         void flush_alloc_cache() {
-            if (_allocator.valid()) _allocator.flush_cache();
+            if (_allocator.get_pg()) _allocator.flush_cache();
         }
 
         template<typename F>

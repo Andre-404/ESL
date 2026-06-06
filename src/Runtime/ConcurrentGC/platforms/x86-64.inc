@@ -1,6 +1,6 @@
 // Save rbx, rbx, r12, r13, r14, r15
-consteval size_t reg_storage_sz() {
-    return 6 * sizeof(size_t);
+consteval size_t regs_to_store() {
+    return 6;
 }
 
 __attribute__((noinline)) inline void store_regs(void* storage) {

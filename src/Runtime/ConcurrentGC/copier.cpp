@@ -20,7 +20,7 @@ public:
     pg_list_slot_iter& operator++() {
         _cur_iter.next();
         if (_cur_iter.at_end() && ++_cnt < _pages.size())
-            _cur_iter = pg_meta::pg_slots_iter { _pages[_cnt], (uint16_t)0 };
+            _cur_iter = pg_meta::pg_slots_iter { _pages[_cnt], 0 };
         return *this;
     }
 
@@ -50,7 +50,7 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
         auto [dest, _] = *target_iter;
         obj_copy(src, dest);
-        src->set_move_state(obj_move_state::moved);
+        src->set_state(move_state::moved);
         // Cut the top 16 bits, overwrite stale data of object that was moved
         auto& w = *(size_t*)src;
         w = (w & 0xffff000000000000ull) | ((size_t)dest & 0x0000ffffffffffffull);
@@ -63,12 +63,24 @@ void copier::copy_objects(pg_meta *pg_list) const {
 void copier::update_ptrs(pg_meta *pg) const  {
     if (pg->live_count() == 0) return;
 
-    auto iter = pg_meta::pg_slots_iter { pg, (uint16_t)0 };
+    auto iter = pg_meta::pg_slots_iter { pg, 0 };
 
     while (!iter.at_end()) {
         auto obj = iter.get();
-        if (iter.is_marked()) obj_update_ptrs(obj);
+        if (iter.is_marked()) {
+            if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
+            obj_update_ptrs(obj);
+        }
         iter.next();
+    }
+}
+
+void copier::update_globals(std::span<size_t*> roots) {
+    for (auto root : roots) {
+        auto ptr = to_accurate_ptr(*root);
+        if (!ptr) continue;
+        if (ptr->state() == move_state::moved) ptr = (managed*)(*(size_t*)ptr & 0x0000ffffffffffffull);
+        *root = ptr_to_word(ptr);
     }
 }
 

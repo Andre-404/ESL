@@ -16,7 +16,7 @@ namespace gc::detail {
             if (!res) [[unlikely]] return nullptr;
             res->link(_big_objs);
             _big_objs = res;
-            return pg_meta::pg_slots_iter { res, (uint16_t)0 }.get();
+            return pg_meta::pg_slots_iter { res, 0 }.get();
         }
     public:
         arena() : _debt(0), _big_objs(nullptr) {}

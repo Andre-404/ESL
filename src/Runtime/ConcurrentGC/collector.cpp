@@ -29,15 +29,67 @@ std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
     return blocked;
 }
 
+void collector::force_collection(int64_t sz, tcb* t) {
+    _collection_req.store(request_type::express);
+    _collection_req.notify_all();
+
+    int64_t snapshot = _heuristic.get_live_size() + _alloc_sz;
+    set_paused(t);
+    _collection_req.wait(request_type::express);
+    set_resumed(t);
+    if (snapshot - _heuristic.get_live_size() > sz) return;
+
+    std::cerr
+        <<"Thread "
+        <<std::this_thread::get_id()
+        <<fmt::format("failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
+    std::abort();
+}
+
+void collector::phase1(tcb* t, bool pin) {
+    auto get_base = [&](size_t ptr) -> managed* {
+        auto pg = _pg_manager.pg_from_ptr(ptr);
+        if (!pg) return nullptr;
+        return pg->from_interior((uint8_t*)ptr);
+    };
+    _marker.scan_stack(t->get_mark_info(), pin, get_base);
+}
+
+void collector::phase2(tcb* t) {
+    auto& arena = t->get_arena();
+
+    arena.flush_alloc_caches();
+    arena.remove_debt(arena.get_debt());
+
+    // Have to wait for everyone to flush their alloc caches before we can start accurate marking
+    _synchronizer.ack();
+    _synchronizer.wait_on_all_ack();
+    auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
+
+    phase1(t, copying_collection);
+
+    while (_marker.trace_n(1 << 20)) {}
+    _gate.arrive_and_wait();
+
+    if (copying_collection) [[unlikely]] {
+        arena.mutate_owned(copy_objs_fn());
+        _gate.arrive_and_wait();
+        arena.mutate_owned(update_ptrs_fn());
+        _gate.arrive_and_wait();
+    }
+
+    arena.mutate_owned(prune_pgs_fn());
+}
+
 void collector::mark_phase() {
     auto blocked = post_with_state(gc_state::marking, op_mark_stack);
     for (auto t : blocked) phase1(t, false);
     _synchronizer.complete_handshake(blocked);
+    _marker.scan_globals(_roots);
 }
 
-void collector::stw_phase() {
+size_t collector::stw_phase() {
     auto blocked = post_with_state(gc_state::stw, op_stw);
-    bool copying_collection = _heuristic.should_copy();
 
     for (auto t : blocked) {
         auto& arena = t->get_arena();
@@ -47,8 +99,11 @@ void collector::stw_phase() {
     }
     // Have to wait for everyone to flush their alloc caches before we can start accurate marking
     _synchronizer.wait_on_all_ack();
+    auto snapshot = _alloc_sz.load();
+    auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
 
     for (auto t : blocked) phase1(t, copying_collection);
+    _marker.scan_globals(_roots);
 
     while (_marker.trace_n(config::trace_batch)) {}
     _gate.arrive_and_wait();
@@ -62,6 +117,7 @@ void collector::stw_phase() {
 
         for (auto t : blocked) t->get_arena().mutate_owned(update_ptrs_fn());
         _pg_manager.mutate_owned(update_ptrs_fn());
+        _copier.update_globals(_roots);
         _gate.arrive_and_wait();
 
         _heuristic.set_copy_ms(ms_diff(copy_start));
@@ -71,52 +127,59 @@ void collector::stw_phase() {
     _pg_manager.mutate_owned(prune_pgs_fn());
 
     _tcb_registry.with_snapshot([&](auto& thds) {
-        set_state(gc_state::none);
         _synchronizer.finish_stw(std::views::all(thds));
     });
+    return snapshot;
+}
+
+void collector::end_cycle(size_t alloc_snapshot) {
+    _alloc_sz -= alloc_snapshot;
+    _heuristic.calc(_pruner.get_ppg_frag(), _alloc_sz, _pruner.get_live_size());
+    _pruner.reset();
+    _pg_manager.set_empty_limit(_heuristic.get_live_size() * config::dead_commited_to_live_ratio);
+    // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
+    _collection_req.store(request_type::none, std::memory_order_release);
+    _collection_req.notify_all();
 }
 
 
 [[noreturn]] void collector::concurrent_loop() {
     while (true) {
-        _pg_manager.foreach_active_pg([&](pg_meta* meta) {
-            meta->clear_mark_bitmap();
-        });
-        // TODO: implement waiting between gc cycles
+        _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
+        _collection_req.wait(request_type::none);
         auto mark_start = std::chrono::steady_clock::now();
         mark_phase();
 
-        while (_marker.trace_n(config::trace_batch)) {}
+        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
         _synchronizer.wait_on_all_ack();
         // Drain again after all acks
-        while (_marker.trace_n(config::trace_batch)) {}
+        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
 
         _heuristic.set_mark_ms(ms_diff(mark_start));
 
         _gate.register_waiter();
-        stw_phase();
+        auto snapshot = stw_phase();
         // This makes sure all other threads have left the stw phase
         _gate.arrive_and_wait();
         _gate.deregister_waiter();
-        _pruner.reset();
-        _heuristic.calc(_pruner.get_ppg_frag(), _alloc_sz, _pruner.get_live_size());
+
+        end_cycle(snapshot);
     }
 }
 
-void collector::force_collection(size_t sz) {
-
-    std::cerr
-        <<"Thread "
-        <<std::this_thread::get_id()
-        <<fmt::format("failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
-    std::abort();
+void collector::handle_pending(tcb* t) {
+    auto op = t->get_opcode();
+    if (op == op_mark_stack) {
+        phase1(t, false);
+        _synchronizer.ack();
+    } else if (op == op_stw) {
+        _gate.register_waiter();
+        phase2(t);
+        _gate.deregister_waiter();
+    }
+    else
+        assert(false && "Unreachable");
 }
-
-void collector::set_state(gc_state new_state) {
-    _gc_flag.store((uint8_t)new_state, std::memory_order_seq_cst);
-    _gc_flag.notify_all();
-}
-
 
 void collector::set_paused(tcb *t) {
     t->get_mark_info().capture_ctx();
@@ -133,7 +196,7 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
     _tcb_registry.add(t, [&]() {
         // Threads created during stw will be paused and needs to be started manually
         if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw)
-            t->safe_transition(thd_state::need_start);
+            t->transition(thd_state::need_start);
     });
     return t;
 }
@@ -167,7 +230,7 @@ void collector::flush_wbbuf(tcb *t) {
 }
 
 void collector::register_root(size_t *root) {
-    _marker.register_root(root);
+    _roots.push_back(root);
 }
 
 managed *collector::alloc(size_t sz, tcb * t) {
@@ -179,61 +242,11 @@ managed *collector::alloc(size_t sz, tcb * t) {
     }
     auto res = arena.alloc(sz, _pg_manager);
     if (!res) [[unlikely]] {
-        force_collection(sz);
+        force_collection(sz, t);
         return alloc(sz, t);
     }
     _alloc_sz.fetch_add(sz, std::memory_order_relaxed);
     return res;
-}
-
-void collector::phase1(tcb* t, bool pin) {
-    auto get_base = [&](size_t ptr) -> managed* {
-        auto pg = _pg_manager.pg_from_ptr(ptr);
-        if (!pg) return nullptr;
-        return pg->from_interior((uint8_t*)ptr);
-    };
-    _marker.scan_stack(t->get_mark_info(), pin, get_base);
-}
-
-void collector::phase2(tcb* t) {
-    auto& arena = t->get_arena();
-    // TODO: implement deciding whether collection is copying or not
-    bool copying_collection = _heuristic.should_copy();
-
-    arena.flush_alloc_caches();
-    arena.remove_debt(arena.get_debt());
-
-    // Have to wait for everyone to flush their alloc caches before we can start accurate marking
-    _synchronizer.ack();
-    _synchronizer.wait_on_all_ack();
-
-    phase1(t, copying_collection);
-
-    while (_marker.trace_n(1 << 20)) {}
-    _gate.arrive_and_wait();
-
-    if (copying_collection) [[unlikely]] {
-        arena.mutate_owned(copy_objs_fn());
-        _gate.arrive_and_wait();
-        arena.mutate_owned(update_ptrs_fn());
-        _gate.arrive_and_wait();
-    }
-
-    arena.mutate_owned(prune_pgs_fn());
-}
-
-void collector::handle_pending(tcb* t) {
-    auto op = t->get_opcode();
-    if (op == op_mark_stack) {
-        phase1(t, false);
-        _synchronizer.ack();
-    } else if (op == op_stw) {
-        _gate.register_waiter();
-        phase2(t);
-        _gate.deregister_waiter();
-    }
-    else
-        assert(false && "Unreachable");
 }
 
 void collector::process_pending(tcb *handle) {
