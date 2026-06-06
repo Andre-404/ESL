@@ -14,7 +14,7 @@ namespace gc {
         tcb_handle(size_t* start_args, uint8_t args_cnt) : _start_args(start_args), _args_cnt(args_cnt) {}
 
         std::pair<size_t*, uint8_t> take_start_args() {
-            auto tmp = { _start_args, _args_cnt };
+            auto tmp = std::pair { _start_args, _args_cnt };
             _start_args = nullptr;
             _args_cnt = 0;
             return tmp;

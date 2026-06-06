@@ -868,7 +868,7 @@ void Compiler::setupModule(const llvm::DataLayout& DL){
                              llvm::DEBUG_METADATA_VERSION);
     auto targetTriple = llvm::sys::getDefaultTargetTriple();
     curModule->setDataLayout(DL);
-    curModule->setTargetTriple(targetTriple);
+    curModule->setTargetTriple(llvm::Triple(targetTriple));
 }
 
 void Compiler::optimizeModule(llvm::Module& module){

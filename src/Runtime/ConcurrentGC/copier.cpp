@@ -1,5 +1,6 @@
 #include <span>
 #include <cassert>
+#include <algorithm>
 
 #include "copier.h"
 #include "pg-meta.h"

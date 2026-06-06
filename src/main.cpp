@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32) || defined(WIN32)
     path = "C:\\Temp\\ESL-prez\\main.esl";
 #else
-    path = string(argv[1]);
+    path = "/mnt/c/Temp/ESL-prez/main.esl";
 #endif
     flag = "-jit";
 #else

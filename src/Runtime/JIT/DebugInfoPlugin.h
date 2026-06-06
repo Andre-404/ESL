@@ -4,6 +4,7 @@
 #include "llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include <iostream>
 
 namespace llvm::orc {
     std::pair<std::unique_ptr<DWARFContext>, StringMap<std::unique_ptr<MemoryBuffer>>>
@@ -16,10 +17,9 @@ namespace llvm::orc {
         void modifyPassConfig(MaterializationResponsibility &MR, jitlink::LinkGraph &G, jitlink::PassConfiguration &Config) override{
             Config.PrePrunePasses.push_back([](jitlink::LinkGraph& G){
                 for (auto &Section : G.sections()) {
-                    StringRef SecName = Section.getName();
                     // Every DWARF section should start with this prefix?
                     // Probably better to replace with actual section names
-                    if (SecName.find(".debug_") == 0){
+                    if (Section.getName().find(".debug_") == 0){
                         for (auto sym : Section.symbols())
                             sym->setLive(true);
                     }

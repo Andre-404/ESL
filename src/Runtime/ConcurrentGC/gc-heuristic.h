@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <numeric>
+#include <cmath>
 
 #include "gc-config.h"
 
@@ -29,14 +30,15 @@ namespace gc::detail {
 
         // returns: num of pages that would get freed by compaction, number of bytes that live in these partially filled pages
         auto calc_pgs_freed(auto& ppg_frag) {
-            return std::reduce(ppg_frag.begin(), ppg_frag.end(), std::pair<size_t, size_t> {}, [&](auto p, auto& s) {
-                if (s.pg_cnt == 0) return p;
-                auto f = s.frag_total / s.pg_cnt;
-                auto pages_after  = ceil(s.pg_cnt * (1 - f));
-                p.first += (s.pg_cnt - pages_after);
-                p.second += s.pg_cnt * s.frag_total;
-                return p;
-            });
+            auto res = std::pair<size_t, size_t> {};
+            for (auto& info : ppg_frag) {
+                if (info.pg_cnt == 0) continue;
+                auto f = info.frag_total / info.pg_cnt;
+                auto pages_after  = ceil(info.pg_cnt * (1 - f));
+                res.first += (info.pg_cnt - pages_after);
+                res.second += info.pg_cnt * info.frag_total;
+            }
+            return res;
         }
     public:
         gc_heuristics() : _alloc_rate(0), _mark_rate(0), _copy_rate(0), _mark_ms(0), _copy_ms(0), _live_size(0),

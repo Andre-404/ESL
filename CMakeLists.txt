@@ -33,8 +33,6 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Codegen/DebugEmitter.cpp
         src/Codegen/DebugEmitter.h
         src/Runtime/JIT/JIT.cpp
-        src/Runtime/JIT/SEHFrameRegistrar.h
-        src/Runtime/JIT/SEHFrameRegistrar.cpp
         src/Runtime/JIT/DebugInfoPlugin.cpp
         src/Runtime/JIT/DebugInfoPlugin.h
         src/Codegen/Passes/AST/ASTOptimization.cpp

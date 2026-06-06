@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <span>
 
 namespace gc::detail {
     class pg_meta;

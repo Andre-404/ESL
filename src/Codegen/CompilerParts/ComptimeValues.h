@@ -5,6 +5,7 @@
 #include "TypeHelper.h"
 
 #include <ranges>
+#include <variant>
 
 
 class ComptimeValues {

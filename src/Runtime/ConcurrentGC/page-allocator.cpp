@@ -15,7 +15,7 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
     // posix_memalign can return non zeroed memory so we have to zero it first
     void *page;
     posix_memalign(&page, config::page_sz, config::page_sz);
-    memset(page, 0, PAGE_SIZE);
+    memset(page, 0, config::page_sz);
 #endif
     return new(page) pg_meta(block_sz);
 }
@@ -25,6 +25,7 @@ void pg_allocator::dealloc_pgs(pg_meta* start, pg_meta* end) {
     for (auto pg = start; pg != end; pg = start->next()) VirtualFree(pg, 0, MEM_RELEASE);
     VirtualFree(end, 0, MEM_RELEASE);
 #else
-    free((void*)pg);
+    for (auto pg = start; pg != end; pg = start->next()) free(pg);
+    free(end);
 #endif
 }

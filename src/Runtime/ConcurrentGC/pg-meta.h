@@ -3,6 +3,7 @@
 #include "managed.h"
 #include "tstack.h"
 #include <memory>
+#include <cstring>
 
 namespace gc::detail {
     class dual_bitmap {
