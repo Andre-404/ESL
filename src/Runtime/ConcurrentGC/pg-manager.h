@@ -1,4 +1,5 @@
 #pragma once
+#include <assert.h>
 #include <atomic>
 #include <functional>
 
@@ -104,9 +105,10 @@ namespace gc::detail {
 
         // We could compute end somewhere else but then we'd need to do it again for counting
         void push(pg_meta* start) {
+            assert(start);
             auto to_add = 0;
             auto end = start;
-            while (end && end->next()) {
+            while (end->next()) {
                 end = end->next();
                 to_add++;
             }
@@ -119,10 +121,11 @@ namespace gc::detail {
 
         pg_meta* pop() {
             // Doesn't have to be correct, only used as a fast path since these lists will mostly sit empty
-            // And even if they transiently get a member we don't care
+            // And even if they transiently get a member we don't care, it will get used by another allocation
             if (_sz.load(std::memory_order_relaxed) == 0) return nullptr;
             auto lk = std::lock_guard { _mtx };
             if (!_start) return nullptr;
+            --_sz;
             auto tmp = _start;
             _start = tmp->next();
             tmp->unlink();
@@ -133,6 +136,13 @@ namespace gc::detail {
         void mutate(F mutator) {
             auto lk = std::lock_guard { _mtx };
             _start = mutator(_start);
+            // TODO: inefficient
+            auto tmp = _start;
+            _sz = 0;
+            while (tmp) {
+                _sz.fetch_add(1, std::memory_order_relaxed);
+                tmp = tmp->next();
+            }
         }
     };
 
@@ -159,19 +169,23 @@ namespace gc::detail {
 
         pg_meta* get_big_pg(size_t obj_sz);
 
-        void release_pgs(uint8_t sz_class, pg_meta* first) {
+        // Thread safe
+        void release_pgs(pg_meta* first) {
+            if (!first) return;
+            auto sz_class = config::sz_to_class(first->block_sz());
+            if (sz_class == -1) {
+                _big.push(first);
+                return;
+            }
             _partial[sz_class].push(first);
         }
 
-        void release_big_objs(pg_meta* start) {
-            _big.push(start);
-        }
-
-        void dealloc_pgs(pg_meta* head, bool is_big);
+        void dealloc_pgs(pg_meta* head);
 
         template<typename F>
-        void mutate_partial(F mutator) {
+        void mutate_owned(F mutator) {
             for (auto& list : _partial) list.mutate(mutator);
+            _big.mutate(mutator);
         }
 
         template<typename F>

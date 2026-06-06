@@ -33,9 +33,9 @@ namespace gc::detail {
         const uint16_t _block_sz;
         const uint16_t _block_cnt;
         const uint16_t _slot_start;
-        uint8_t _is_pod;
         std::atomic<uint8_t> _has_pinned;
         dual_bitmap _bitmap;
+        bool _is_large;
 
         static constexpr size_t slots_per_page(size_t X, size_t Y) {
             const size_t m = (X - 32 + 63 * Y) / (64 * Y + 16);
@@ -54,11 +54,11 @@ namespace gc::detail {
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
     public:
         explicit pg_meta(uint16_t block_sz) : _num_live(0), _block_sz(block_sz), _block_cnt(slots_per_page(config::page_sz, _block_sz)),
-            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _is_pod(true), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
+            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)), _is_large(false) {}
 
         // For large objects which are their own pages
         explicit pg_meta(uint16_t block_sz, size_t page_sz) : _num_live(0), _block_sz(block_sz), _block_cnt(slots_per_page(page_sz, _block_sz)),
-            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _is_pod(true), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
+            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)), _is_large(true) {}
 
         class pg_slots_iter {
             const pg_meta* _pg;
@@ -88,11 +88,16 @@ namespace gc::detail {
             }
         };
 
-        managed* slot_containing(uint8_t* ptr) const {
-            auto diff = (ptr - (uint8_t*)this);
-            if (diff < _slot_start) return nullptr;
+        managed* from_interior(uint8_t* interior) const {
+            auto diff = interior - (uint8_t*)this;
+            if (diff < _slot_start || diff >= (_slot_start + block_cnt() * block_sz())) return nullptr;
             diff -= _slot_start;
-            return (managed*)(ptr - diff % _block_sz);
+            auto ptr = (managed*)(interior - diff % _block_sz);
+
+            auto idx = (size_t)(ptr - _slot_start) / block_cnt();
+            size_t* p =(size_t*)_bitmap.alloc_bits();
+            if (p[idx / 8] & (1 << idx % 8)) return ptr;
+            return nullptr;
         }
 
         uint16_t block_sz() const {
@@ -125,6 +130,7 @@ namespace gc::detail {
             if (is_pinned) set_pinned();
             return true;
         }
+
         void clear_mark_bitmap() { _bitmap.clear_mark(); }
         size_t& alloc_word(uint16_t pos) const {
             size_t* ptr =(size_t*)_bitmap.alloc_bits();
@@ -134,8 +140,7 @@ namespace gc::detail {
         uint16_t live_count() const { return _num_live.load(std::memory_order_relaxed); }
         bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
 
-        void set_nonpod() { _is_pod = false; }
-        bool is_pod() const { return _is_pod; }
+        bool is_large_pg() const { return _is_large; }
     };
 
     inline pg_meta* pg_from_obj(managed* obj) {

@@ -1,4 +1,5 @@
 #include <span>
+#include <cassert>
 
 #include "copier.h"
 #include "pg-meta.h"
@@ -6,7 +7,7 @@
 
 using namespace gc::detail;
 
-struct pg_slot { gc::managed* obj; bool is_pod; bool marked; };
+struct pg_slot { gc::managed* obj; bool marked; };
 
 class pg_list_slot_iter {
     std::span<pg_meta*> _pages;
@@ -23,7 +24,7 @@ public:
         return *this;
     }
 
-    pg_slot operator*() const { return { _cur_iter.get(), _pages[_cnt]->is_pod(), _cur_iter.is_marked() }; }
+    pg_slot operator*() const { return { _cur_iter.get(), _cur_iter.is_marked() }; }
     bool operator==(std::default_sentinel_t) const { return _cnt == _pages.size(); }
 
     pg_list_slot_iter& begin() { return *this; }
@@ -38,19 +39,21 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
     auto target_iter = pg_list_slot_iter { target };
 
-    for (auto [src, src_is_pod, marked] : pg_list_slot_iter { source }) {
-        if (!marked) {
-            if (!src_is_pod) obj_destroy(src);
-            continue;
+    for (auto [src, marked] : pg_list_slot_iter { source }) {
+        if (!marked) continue;
+
+        while ((*target_iter).marked) {
+            // Should never be hit since split pages guarantees enough room for copying
+            assert(target_iter != target_iter.end());
+            ++target_iter;
         }
 
-        while ((*target_iter).marked) ++target_iter;
-
-        auto [dest, dest_is_pod, _] = *target_iter;
-        if (!dest_is_pod) obj_destroy(dest);
+        auto [dest, _] = *target_iter;
         obj_copy(src, dest);
         src->set_move_state(obj_move_state::moved);
-        *(size_t*)src |= (size_t)dest & 0xffffffffffff; // Cut the top 16 bits, overwrite stale data of object that was moved
+        // Cut the top 16 bits, overwrite stale data of object that was moved
+        auto& w = *(size_t*)src;
+        w = (w & 0xffff000000000000ull) | ((size_t)dest & 0x0000ffffffffffffull);
         // Need to update the mark bitmap with the new object
         target_iter.get_pg()->record_mark(dest, false);
     }
@@ -64,8 +67,7 @@ void copier::update_ptrs(pg_meta *pg) const  {
 
     while (!iter.at_end()) {
         auto obj = iter.get();
-        if (!iter.is_marked()) continue;
-        obj_update_ptrs(obj);
+        if (iter.is_marked()) obj_update_ptrs(obj);
         iter.next();
     }
 }
@@ -73,7 +75,7 @@ void copier::update_ptrs(pg_meta *pg) const  {
 std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(pg_meta *pg_list) const {
     auto target = std::vector<pg_meta*> {};
     auto source = std::vector<pg_meta*> {};
-    size_t needed_space = 0;
+    int64_t needed_space = 0;
     // Pages that have pinned objects and that are above threshold(but not completely full) become targets
     for (auto pg = pg_list; pg; pg = pg->next()) {
         const auto live = pg->live_count();

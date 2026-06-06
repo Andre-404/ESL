@@ -1,25 +1,29 @@
 #pragma once
 
 #include "pg-meta.h"
+#include <span>
 
 namespace gc::detail {
     // Prunes individual page lists and gathers fragmentation info
     class pruner {
-        std::atomic<double> _frag_total;
-        std::atomic<size_t> _pg_cnt;
+        struct sz_class_data {
+            std::atomic<double> frag_total;
+            std::atomic<size_t> pg_cnt;
+        };
         std::atomic<size_t> _live_sz;
+        std::array<sz_class_data, config::szclass_cnt> _per_class_frag;
+        double _frag_threshold;
     public:
-        pruner();
+        pruner(double frag_threshold) : _frag_threshold(frag_threshold) {};
 
         void reset() {
-            _frag_total = 0;
-            _pg_cnt = 0;
+            memset(_per_class_frag.data(), 0, _per_class_frag.size() * sizeof(sz_class_data));
             _live_sz = 0;
         }
 
-        double get_heap_frag() const {
-            return _pg_cnt == 0 ? 0.0 : _frag_total / _pg_cnt;
-        }
+        std::span<sz_class_data> get_ppg_frag() { return { _per_class_frag }; }
+
+        size_t get_live_size() const { return _live_sz; }
 
         std::pair<pg_meta*, pg_meta*> prune(pg_meta* list) {
             auto empty = (pg_meta*)nullptr;
@@ -34,8 +38,14 @@ namespace gc::detail {
                     tmp->link(empty);
                     empty = tmp;
                 } else {
-                    _frag_total.fetch_add(1.0 - (tmp->live_count() / (double)tmp->block_cnt()), std::memory_order_relaxed);
-                    _pg_cnt.fetch_add(1, std::memory_order_relaxed);
+                    // TODO: is this inefficient?
+                    auto sz_class = config::sz_to_class(tmp->block_sz());
+                    auto frag = 1.0 - tmp->live_count() / (double)tmp->block_cnt();
+                    // Don't count almost full pages into total, since they wouldn't be targets for copying anyway
+                    if (sz_class != -1 && frag > _frag_threshold) {
+                        _per_class_frag[sz_class].frag_total.fetch_add(frag, std::memory_order_relaxed);
+                        _per_class_frag[sz_class].pg_cnt.fetch_add(1, std::memory_order_relaxed);
+                    }
                     _live_sz.fetch_add(tmp->live_count() * tmp->block_sz(), std::memory_order_relaxed);
                     if (!in_use || !in_use_cur) {
                         in_use = tmp;

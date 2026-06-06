@@ -12,7 +12,17 @@ namespace gc::detail {
     public:
         sync_point() : _waiting(0), _expected{0}, _phase(0) {}
         void register_waiter()  { std::lock_guard lk(_mtx); ++_expected; }
-        void unregister_waiter(){ std::lock_guard lk(_mtx); --_expected; }
+        void deregister_waiter() {
+            auto lk = std::unique_lock { _mtx };
+            auto my_phase = _phase;
+            if (_waiting == --_expected) {
+                ++_phase;
+                _waiting = 0;
+                _cv.notify_all();
+            } else {
+                _cv.wait(lk, [&]{ return _phase != my_phase; });
+            }
+        }
 
         void arrive_and_wait() {
             auto lk = std::unique_lock { _mtx };

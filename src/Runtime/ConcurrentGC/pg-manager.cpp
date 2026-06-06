@@ -50,10 +50,10 @@ pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
     return pg;
 }
 
-void pg_manager::dealloc_pgs(pg_meta *head, bool is_big)  {
+void pg_manager::dealloc_pgs(pg_meta *head)  {
     if (!head) return;
     auto tail = head;
-    if (is_big) {
+    if (head->is_large_pg()) {
         while (tail->next()) {
             for (auto i = 0; i < tail->block_sz() / config::page_sz + 1; i++) {
                 auto offset = (pg_meta*)((uint8_t*)tail + i * config::page_sz);
@@ -61,13 +61,14 @@ void pg_manager::dealloc_pgs(pg_meta *head, bool is_big)  {
             }
             tail = tail->next();
         }
+        // Eagerly decommit big objs to free up memory
         _allocator.dealloc_pgs(head, tail);
         return;
     }
 
     for (;; tail = tail->next()) {
         _active.remove(tail);
-        ++_empty_cnt;
+        _empty_cnt.fetch_add(1, std::memory_order_relaxed);
         if (!tail->next() || _empty_cnt >= _empty_limit) break;
     }
     auto to_del = tail->next();

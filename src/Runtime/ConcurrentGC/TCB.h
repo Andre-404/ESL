@@ -29,11 +29,11 @@ namespace gc {
             thd_mark_info() : _wbbuf(nullptr), _stack_start(nullptr), _stack_end(nullptr), _regs() {}
 
             void set_stack_start(size_t start) { _stack_start = (size_t*)start; }
+            void set_ctx_unusable() { _stack_start = nullptr; }
             void capture_ctx() {
                 _stack_end = (size_t*)platform::read_stack();
                 platform::store_regs(_regs.data());
             }
-
             std::pair<std::span<size_t>, std::span<size_t>> get_ctx() {
                 if (!_stack_start) return { {}, {} };
                 return { { _stack_end, (size_t)(_stack_start - _stack_end) }, { (size_t*)_regs.data(), _regs.size() / 8 } };
@@ -43,24 +43,31 @@ namespace gc {
             mark_buf* get_wbbuf() const { return _wbbuf; }
         };
 
-        enum class thd_state : uint8_t { blocked = 0, at_safepoint = 1, running = 2 };
+        // TODO: maybe implement an intrusive dll to store tcbs in registry
+        enum class thd_state : uint8_t { running = 0, running_pending = 1, blocked = 2, handshaking = 3, need_start = 4, dead = 5 };
         class tcb : public tcb_handle {
             thd_mark_info _mark_info;
             std::atomic<thd_state> _thd_state;
+            uint8_t _opcode;
             arena _arena;
         public:
-            tcb(size_t* start_args, uint8_t args_cnt) : tcb_handle(start_args, args_cnt), _thd_state(thd_state::blocked) {}
+            tcb(size_t* start_args, uint8_t args_cnt) : tcb_handle(start_args, args_cnt), _thd_state(thd_state::running), _opcode(0) {}
 
             thd_mark_info& get_mark_info() { return _mark_info; }
             arena& get_arena() { return _arena; }
 
-            thd_state get_state() const {
-                return _thd_state.load(std::memory_order_relaxed);
-            }
-            void set_state(thd_state state) {
-                _thd_state.store(state, std::memory_order_relaxed);
-            }
+            void add_pending(uint8_t opcode) { _opcode = opcode; }
+            // Opcode == 0 is reserved
+            uint8_t get_opcode() const { return _opcode; }
 
+            thd_state load_state() const { return _thd_state.load(std::memory_order_acquire); }
+            void safe_transition(thd_state new_state) { _thd_state.store(new_state, std::memory_order_release); }
+            void notify_transition() { _thd_state.notify_one(); }
+            void wait_transition(thd_state old) const { _thd_state.wait(old); }
+            // acq because we are reading the old state, rel because we are usually publishing opcode before this
+            bool try_transition(thd_state expected_old, thd_state _new) {
+                return _thd_state.compare_exchange_strong(expected_old, _new, std::memory_order_acq_rel);
+            }
         };
     }
 

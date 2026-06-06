@@ -48,7 +48,11 @@ namespace gc {
         constexpr size_t l1_sz = 1ull << l1_bits;
         constexpr size_t l2_sz = 1ull << l2_bits;
 
-        constexpr size_t debt_trigger = 100 * (1 << 10);
+        constexpr int64_t debt_trigger = 100 * (1 << 10);
+
+
+        constexpr size_t trace_batch = 4 * (1 << 20);
+        constexpr double copy_evac_threshold = 0.85;
     }
 
 }

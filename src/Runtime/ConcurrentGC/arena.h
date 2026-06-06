@@ -8,7 +8,7 @@
 namespace gc::detail {
     class arena {
         std::array<szclass_allocator, config::szclass_cnt> _allocators;
-        size_t _debt;
+        int64_t _debt;
         pg_meta* _big_objs;
 
         managed* alloc_big(size_t sz, pg_manager& manager) {
@@ -24,7 +24,7 @@ namespace gc::detail {
             _debt += sz;
             auto szclass = config::sz_to_class(sz);
 
-            if (sz == -1) return alloc_big(sz, manager);
+            if (szclass == -1) return alloc_big(sz, manager);
 
             if (auto res = _allocators[szclass].alloc()) return res;
 
@@ -34,18 +34,15 @@ namespace gc::detail {
             return _allocators[szclass].alloc();
         }
 
-        size_t get_debt() const { return _debt; }
+        int64_t get_debt() const { return _debt; }
         void remove_debt(size_t to_remove) { _debt -= to_remove; }
 
         void flush_alloc_caches() {
             for (auto& alloc : _allocators) alloc.flush_alloc_cache();
         }
         template<typename F>
-        void mutate_caches(F mutator) {
+        void mutate_owned(F mutator) {
             for (auto& alloc : _allocators) alloc.mutate(mutator);
-        }
-        template<typename F>
-        void mutate_objs(F mutator) {
             _big_objs = mutator(_big_objs);
         }
     };

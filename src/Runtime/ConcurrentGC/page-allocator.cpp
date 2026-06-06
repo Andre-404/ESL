@@ -17,6 +17,7 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
     posix_memalign(&page, config::page_sz, config::page_sz);
     memset(page, 0, PAGE_SIZE);
 #endif
+    if (num_pgs > 1) return new(page) pg_meta(block_sz, num_pgs*config::page_sz);
     return new(page) pg_meta(block_sz);
 }
 
