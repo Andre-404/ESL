@@ -9,7 +9,7 @@
 namespace gc {
     class tcb_handle {
         size_t* _start_args;
-        uint8_t _args_cnt;
+        size_t _args_cnt;
     public:
         tcb_handle(size_t* start_args, uint8_t args_cnt) : _start_args(start_args), _args_cnt(args_cnt) {}
 
@@ -47,8 +47,8 @@ namespace gc {
         // TODO: maybe implement an intrusive dll to store tcbs in registry
         enum class thd_state : uint8_t { running = 0, has_pending = 1, blocked = 2, handshaking = 3, need_start = 4, dead = 5 };
         class tcb : public tcb_handle {
-            thd_mark_info _mark_info;
             std::atomic<thd_state> _thd_state;
+            thd_mark_info _mark_info;
             uint8_t _opcode;
             arena _arena;
         public:

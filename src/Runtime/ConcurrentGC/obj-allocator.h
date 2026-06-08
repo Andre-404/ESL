@@ -3,40 +3,57 @@
 
 #include "pg-meta.h"
 
-// TODO: this can be improved to not load from the pg pointer if there is something in the cache
 namespace gc::detail {
     class obj_allocator {
         pg_meta* _pg;
-        size_t _cache;
+        uint64_t _cache;
         uint16_t _pos;
+        // Cached so we don't need to access pg on the hot path, kind of breaks whole encapsulation thing
+        // must never be mutated, not marked const since it deletes the move assignment operator
+        uint16_t _pg_cnt;
+        uint16_t _pg_off;
+        uint16_t _pg_blk_sz;
+        static constexpr uint64_t FULL = ~0ull;
 
-        uint16_t num_allocated() const {
-            return _pos * 8 + std::countr_one(_cache);
-        }
-        [[gnu::hot]] int8_t get_cached() {
-            auto free_in_cache = std::countr_one(_cache);
-            while (free_in_cache == 64 && _pos < _pg->block_cnt()) {
-                _pos += 8;
+        [[gnu::hot, gnu::always_inline]] inline int8_t get_cached() {
+            if (_cache != FULL) [[likely]] return std::countr_one(_cache);
+            // It's very important that alloc bits not get written when the cache fills up
+            // otherwise the following could happen:
+            /*
+             thdA: allocate and flush cache       thdB: start stack scan
+             thdA: in process of setting up obj O thdB: finds object O because it conservativly scans stack
+             thdA: in process of setting up obj   thdB: pushes object Oto mark and then flushes its mark buf
+             thdA: in process of setting up obj   thdGC: starts tracing O while its fields are not set up
+             ------O is now treated as marked even though its fields were garbage, could also crash if typeid is garbage-----
+            */
+            // Flushing cache before allocating means:
+            // all objects in cache have been set up correctly(have to watch out for allocators in constructors of managed objs)
+
+            _pg->alloc_word(_pos) = _cache;
+
+            _pos += 64; // To avoid past end reads
+            while (_pos < _pg_cnt) {
                 _cache = _pg->alloc_word(_pos);
-                free_in_cache = std::countr_one(_cache);
+                if (_cache != FULL) return std::countr_one(_cache);
+                _pos += 64;
             }
-            return free_in_cache == 64 ? -1 : free_in_cache;
+            return -1;
         }
-        void cache_mark(size_t pos) {
-            _cache |= 1 << pos;
-            if (std::countr_one(_cache) == 64) _pg->alloc_word(_pos) = _cache;
+        void cache_mark(uint64_t pos) { _cache |= 1ull << pos; }
+        managed* calc_obj(uint64_t cache_pos) {
+            return (managed*)((uint8_t*)_pg + _pg_off + (_pos + cache_pos)*_pg_blk_sz);
         }
     public:
-        obj_allocator() : _pg(nullptr), _cache(0), _pos(0) {}
-        explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0) {}
+        obj_allocator() : _pg(nullptr), _cache(0), _pos(0), _pg_cnt(0), _pg_off(0), _pg_blk_sz(0) {}
+        explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0), _pg_cnt(_pg->block_cnt()),
+            _pg_off(_pg->start_off()), _pg_blk_sz(_pg->block_sz()) {}
 
         managed* allocate() {
             assert(_pg);
-            if (num_allocated() >= _pg->block_cnt()) [[unlikely]] return nullptr;
             auto cache_pos = get_cached();
-            if (cache_pos < 0) return nullptr;
+            if (cache_pos < 0 || (_pos + cache_pos) >= _pg_cnt) return nullptr;
             cache_mark(cache_pos);
-            return pg_meta::pg_slots_iter { _pg, (uint16_t)(_pos * 8 + cache_pos) }.get();
+            return calc_obj(cache_pos);
         }
 
         void flush_cache() {

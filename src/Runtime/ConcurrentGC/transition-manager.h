@@ -23,6 +23,7 @@ namespace gc::detail {
                         t->set_opcode(opcode);
                         // Lost CAS here means we went to blocked or dead, as that is the only other legal transition
                         if (t->try_transition(state, thd_state::has_pending)) break;
+                        t->set_opcode(0);
                         continue;
                     }
                     if (state == thd_state::blocked) {
@@ -35,6 +36,12 @@ namespace gc::detail {
                     if (state == thd_state::dead) {
                         ack();
                         break;
+                    }
+                    // To be able to post unack has to be 0, so a thread in running_pending has acked and is ready for a new task
+                    // its just lagging behind in some thread local work it needs to do so we wait for it to finish
+                    if (state == thd_state::has_pending) {
+                        t->wait_transition(thd_state::has_pending);
+                        continue;
                     }
                     assert(false && "Unreachable, invariant (running, blocked, dead) violated on post.");
                 }
@@ -49,7 +56,6 @@ namespace gc::detail {
                 auto state = t->load_state();
                 if (state == thd_state::handshaking) t->transition(thd_state::blocked);
                 else if (state == thd_state::need_start) t->transition(thd_state::running);
-                assert(state == thd_state::handshaking || state == thd_state::running || state == thd_state::need_start);
             }
         }
 
@@ -115,7 +121,6 @@ namespace gc::detail {
                     execute_pending(t, std::forward<F>(exec));
                     continue;
                 }
-                assert(state == thd_state::running);
                 if (t->try_transition(state, thd_state::dead)) break;
             }
         }

@@ -3,6 +3,8 @@
 #include <vector>
 #include <span>
 
+#include "managed.h"
+
 namespace gc::detail {
     class pg_meta;
     // Reduces fragmentation through copying and resets color byte to first epoch
@@ -19,4 +21,18 @@ namespace gc::detail {
         void update_ptrs(pg_meta* pg) const;
         void update_globals(std::span<size_t*> roots);
     };
+
+    inline void set_moved(managed* src, managed* dest) {
+        // Save the bottom 16 bits so that we can read the move correctly
+        src->set_state(move_state::moved);
+        auto& w = *(size_t*)src;
+        w = (w & 0x000000000000ffffull) | ((size_t)dest << 16);
+    }
+
+    inline managed* get_moved(managed* obj) {
+        if (obj->state() != move_state::moved) return obj;
+        auto w = *(size_t*)obj;
+        w = w >> 16;
+        return (managed*)w;
+    }
 }

@@ -7,7 +7,6 @@
 #include "Runtime/JIT/JIT.h"
 #include "llvm/Support/TargetSelect.h"
 #include "SemanticAnalysis/semanticAnalyzer.h"
-#include "Runtime/MemoryManagment/garbageCollector.h"
 #include "Codegen/Passes/AST/closureConverter.h"
 #include "Codegen/Passes/AST/ASTToTypedAST.h"
 #include "Codegen/Passes/AST/ASTVerifier.h"

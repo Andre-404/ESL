@@ -9,7 +9,7 @@ namespace gc::detail {
         std::mutex _mtx;
         ankerl::unordered_dense::set<tcb*> _registry;
     public:
-        tcb_registry();
+        tcb_registry() {};
 
         template<typename F>
         void add(tcb* tcb, F under_lock) {

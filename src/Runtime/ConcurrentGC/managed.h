@@ -12,9 +12,16 @@ namespace gc {
     public:
         managed(uint8_t type_id, move_state move_state) : _move_state(move_state), _type_id(type_id) {}
 
-        move_state state() const { return _move_state; }
-
-        void set_state(move_state val) { _move_state = val; }
+        // Using atomic ref so that objects can still be moveable
+        // (moving happens in strictly controlled conditions so no worries about writes to old location)
+        move_state state() {
+            auto ref = std::atomic_ref { _move_state };
+            return ref.load(std::memory_order_acquire);
+        }
+        void set_state(move_state val) {
+            auto ref = std::atomic_ref { _move_state };
+            ref.store(val, std::memory_order_release);
+        }
 
         uint8_t get_type_id() const { return _type_id; }
     };

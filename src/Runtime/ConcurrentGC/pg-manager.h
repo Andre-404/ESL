@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <atomic>
 #include <functional>
+#include <cstring>
 
 #include "page-allocator.h"
 #include "tstack.h"
@@ -12,7 +13,9 @@ namespace gc::detail {
         class l2_cache {
             std::array<pg_meta*, config::l2_sz> _data;
         public:
-            l2_cache() = default;
+            l2_cache() {
+                memset(_data.data(), 0, sizeof(pg_meta*)*config::l2_sz);
+            }
 
             pg_meta* lookup(size_t idx) {
                 auto ref = std::atomic_ref { _data.at(idx) };
@@ -59,13 +62,15 @@ namespace gc::detail {
                 }
             }
         public:
-            cache_iter(ts_cache& cache) : _l1_idx(0), _l2_idx(0), _l2_cache(nullptr), _cache(cache) {}
+            cache_iter(ts_cache& cache) : _l1_idx(0), _l2_idx(0), _l2_cache(nullptr), _cache(cache) {
+                next_l2();
+            }
             cache_iter& operator++() {
-                if (_l2_idx == config::l2_sz) {
+                _l1_idx++;
+                if (_l2_idx >= config::l2_sz) {
                     _l2_idx = 0;
-                    _l1_idx++;
                     next_l2();
-                } else _l2_idx++;
+                }
                 return *this;
             }
 
@@ -76,7 +81,9 @@ namespace gc::detail {
             std::default_sentinel_t end() const { return {}; }
         };
     public:
-        ts_cache() = default;
+        ts_cache() {
+            memset(_top_level.data(), 0, sizeof(l2_cache*) * config::l1_sz);
+        }
 
         void add(uintptr_t pos, pg_meta* pg) {
             store(pos, pg);
@@ -99,20 +106,20 @@ namespace gc::detail {
     class pg_list {
         std::mutex _mtx;
         pg_meta* _start;
-        std::atomic<size_t> _sz;
+        std::atomic<size_t> _sz_hint;
     public:
-        pg_list() : _start(nullptr) {}
+        pg_list() : _start(nullptr), _sz_hint(0) {}
 
         // We could compute end somewhere else but then we'd need to do it again for counting
         void push(pg_meta* start) {
             assert(start);
-            auto to_add = 0;
+            auto to_add = 1;
             auto end = start;
             while (end->next()) {
                 end = end->next();
                 to_add++;
             }
-            _sz.fetch_add(to_add, std::memory_order_release);
+            _sz_hint.fetch_add(to_add, std::memory_order_release);
 
             auto lk = std::lock_guard { _mtx };
             end->link(_start);
@@ -122,10 +129,10 @@ namespace gc::detail {
         pg_meta* pop() {
             // Doesn't have to be correct, only used as a fast path since these lists will mostly sit empty
             // And even if they transiently get a member we don't care, it will get used by another allocation
-            if (_sz.load(std::memory_order_relaxed) == 0) return nullptr;
+            if (_sz_hint.load(std::memory_order_relaxed) == 0) return nullptr;
             auto lk = std::lock_guard { _mtx };
             if (!_start) return nullptr;
-            --_sz;
+            --_sz_hint;
             auto tmp = _start;
             _start = tmp->next();
             tmp->unlink();
@@ -138,9 +145,9 @@ namespace gc::detail {
             _start = mutator(_start);
             // TODO: inefficient
             auto tmp = _start;
-            _sz = 0;
+            _sz_hint = 0;
             while (tmp) {
-                _sz.fetch_add(1, std::memory_order_relaxed);
+                _sz_hint.fetch_add(1, std::memory_order_relaxed);
                 tmp = tmp->next();
             }
         }
@@ -186,7 +193,7 @@ namespace gc::detail {
 
         template<typename F>
         void foreach_active_pg(F func) {
-            for (auto pg : _active.get_iter()) func(pg);
+            for (auto pg : _active.get_iter()) if(pg) func(pg);
         }
     };
 }

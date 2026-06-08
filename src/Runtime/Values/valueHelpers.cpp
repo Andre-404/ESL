@@ -41,15 +41,15 @@ string valueHelpers::typeToStr(Value x) {
         case ValueType::NIL: return "<null>";
         case ValueType::OBJ:
             Obj* ptr = decodeObj(x);
-            switch (ptr->type) {
-                case +ObjType::ARRAY: return "<array>";
-                case +ObjType::CLASS: return "<class " + string(asClass(x)->name) + ">";
-                case +ObjType::CLOSURE: return "<function>";
-                case +ObjType::INSTANCE: return "<instance: " + string(asInstance(x)->klass->name) + ">";
-                case +ObjType::STRING: return "<string>";
-                case +ObjType::HASH_MAP: return "<hash map>";
-                case +ObjType::FILE: return "<file>";
-                case +ObjType::MUTEX: return "<mutex>";
+            switch (ptr->type()) {
+                case ObjType::ARRAY: return "<array>";
+                case ObjType::CLASS: return "<class " + string(asClass(x)->name) + ">";
+                case ObjType::CLOSURE: return "<function>";
+                case ObjType::INSTANCE: return "<instance: " + string(asInstance(x)->klass->name) + ">";
+                case ObjType::STRING: return "<string>";
+                case ObjType::HASH_MAP: return "<hash map>";
+                case ObjType::FILE: return "<file>";
+                case ObjType::MUTEX: return "<mutex>";
             }
     }
     return "error, couldn't determine type of value";

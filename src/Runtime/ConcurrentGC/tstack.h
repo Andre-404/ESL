@@ -6,13 +6,13 @@
 namespace gc::detail {
     template<typename T>
     class tnode {
-        tnode* _next;
+        std::atomic<tnode*> _next;
     public:
         tnode() : _next(nullptr) {}
 
-        void link(tnode* next) { _next = next; }
-        void unlink() { _next = nullptr; }
-        T* next() const { return (T*)_next; }
+        void link(tnode* next) { _next.store(next, std::memory_order_relaxed); }
+        void unlink() { _next.store(nullptr, std::memory_order_relaxed); }
+        T* next() const { return (T*)_next.load(std::memory_order_relaxed); }
     };
 
     template<typename T>

@@ -1,6 +1,5 @@
 #include "../../Includes/rpmalloc/rpmalloc.h"
 #include "pg-manager.h"
-#include "pruner.h"
 
 using namespace gc::detail;
 
@@ -39,12 +38,10 @@ pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
 }
 
 pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
-    // TODO: this +1 is wrong
-    auto pg = _allocator.alloc_pg(obj_sz, obj_sz / config::page_sz + 1);
+    auto pg = _allocator.alloc_pg(obj_sz, (obj_sz + config::page_sz - 1) / config::page_sz);
 
     if (pg) {
-        // TODO: this +1 is wrong, need ceil
-        for (auto i = 0; i < obj_sz / config::page_sz + 1; i++) {
+        for (auto i = 0; i < (obj_sz + config::page_sz - 1) / config::page_sz; i++) {
             auto ptr = (uintptr_t)((uint8_t*)pg + i * config::page_sz);
             _active.add(ptr, pg);
         }

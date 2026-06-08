@@ -81,6 +81,10 @@ namespace gc::detail {
         explicit collector(uint8_t& flag) : _gc_flag(flag), _collection_req(request_type::none), _copier(config::copy_evac_threshold) {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
+        ~collector() {
+            _worker.join();
+        }
+        void thd_prologue(tcb* handle);
         void set_paused(tcb* handle);
         void set_resumed(tcb* handle);
         tcb* create_tcb(size_t* start_args, uint8_t args_cnt);
@@ -92,5 +96,7 @@ namespace gc::detail {
         managed* alloc(size_t sz, tcb* handle);
 
         void process_pending(tcb* handle);
+
+        bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
     };
 }

@@ -34,6 +34,7 @@ public:
     pg_meta* get_pg() const { return _pages[_cnt]; }
 };
 
+
 void copier::copy_objects(pg_meta *pg_list) const {
     auto [target, source] = split_pages(pg_list);
     if (target.empty() || source.empty()) return;
@@ -51,10 +52,7 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
         auto [dest, _] = *target_iter;
         obj_copy(src, dest);
-        src->set_state(move_state::moved);
-        // Cut the top 16 bits, overwrite stale data of object that was moved
-        auto& w = *(size_t*)src;
-        w = (w & 0xffff000000000000ull) | ((size_t)dest & 0x0000ffffffffffffull);
+        set_moved(src, dest);
         // Need to update the mark bitmap with the new object
         target_iter.get_pg()->record_mark(dest, false);
     }
@@ -80,7 +78,7 @@ void copier::update_globals(std::span<size_t*> roots) {
     for (auto root : roots) {
         auto ptr = to_accurate_ptr(*root);
         if (!ptr) continue;
-        if (ptr->state() == move_state::moved) ptr = (managed*)(*(size_t*)ptr & 0x0000ffffffffffffull);
+        ptr = get_moved(ptr);
         *root = ptr_to_word(ptr);
     }
 }

@@ -12,9 +12,9 @@ void ESLJIT::createJIT(){
     global = new ESLJIT();
     ESLJIT& JIT = *global;
     llvm::orc::LLJITBuilder builder;
-    builder.setObjectLinkingLayerCreator(
-            [&JIT](llvm::orc::ExecutionSession &ES) {
 
+    builder.setObjectLinkingLayerCreator(
+            [&JIT](llvm::orc::ExecutionSession &ES, auto& memmng) {
                 auto MemMgr =
                         llvm::orc::MapperJITLinkMemoryManager::CreateWithMapper<llvm::orc::InProcessMemoryMapper>(
                                 /* Slab size, e.g. 1Gb */ 1024 * 1024 * 1024);
@@ -27,12 +27,14 @@ void ESLJIT::createJIT(){
                             JIT.dwarfContext.push_back(std::move(ctx));
                         }));
                 return std::move(Layer);
+
             });
 
     auto JTMB = llvm::cantFail(llvm::orc::JITTargetMachineBuilder::detectHost());
     if (!JTMB.getCodeModel())
         JTMB.setCodeModel(llvm::CodeModel::Small);
     JTMB.setRelocationModel(llvm::Reloc::PIC_);
+    JTMB.addFeatures({"reserve-r15"});
     builder.setJITTargetMachineBuilder(JTMB);
     llvm::cantFail(builder.prepareForConstruction());
     JIT.underlyingJIT = llvm::cantFail(builder.create());

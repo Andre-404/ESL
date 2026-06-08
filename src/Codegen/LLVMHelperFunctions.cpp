@@ -23,9 +23,7 @@ llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
 }
 
 void createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    // First 2 bytes are GC info
-    auto padding = llvm::ArrayType::get(TYPE(Int8), 2);
-    types["Obj"] = llvm::StructType::create(ctx, {padding, TYPE(Int8)}, "Obj");
+    types["Obj"] = llvm::StructType::create(ctx, {TYPE(Int8), TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int32)}, "ObjString");
     types["ObjStringPtr"] = PTR_TY(types["ObjString"]);
@@ -77,7 +75,7 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     fn = wrapFn(CREATE_FUNC(strCmp, false, eslValTy, eslValTy, eslValTy));
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
     // Invoked by gc.safepoint
-    wrapFn(CREATE_FUNC(stopThread, false, TYPE(Void)));
+    wrapFn(CREATE_FUNC(safepoint, false, TYPE(Void)));
     // ret: Value, args: arr size
     wrapFn(CREATE_FUNC(createArr, false, eslValTy, TYPE(Int32)));
     fn = wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
@@ -85,7 +83,7 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     fn = wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
     fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
 
-    wrapFn(CREATE_FUNC(gcInit, false, TYPE(Void), PTR_TY(TYPE(Int64))));
+    wrapFn(CREATE_FUNC(gcInit, false, PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int64))));
     wrapFn(CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy));
     // Marks a pointer to a variable as a gc root, this is used for all global variables
     wrapFn(CREATE_FUNC(addGCRoot, false, TYPE(Void), PTR_TY(eslValTy)));
@@ -121,10 +119,12 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     // ret: void, args: threadData ptr
     wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), ));
 
-    module.getOrInsertGlobal("gcFlag", builder.getInt64Ty());
+    wrapFn(CREATE_FUNC(flush_wb, false, TYPE(Void)));
+
+    module.getOrInsertGlobal("gcFlag", builder.getInt8Ty());
     llvm::GlobalVariable* gvar = module.getNamedGlobal("gcFlag");
     gvar->setLinkage(llvm::GlobalVariable::PrivateLinkage);
-    gvar->setInitializer(builder.getInt64(0));
+    gvar->setInitializer(builder.getInt8(0));
     gvar->setAlignment(llvm::Align::Of<uint64_t>());
 
     buildLLVMNativeFunctions(module, ctx, builder, types);
@@ -234,7 +234,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         builder.CreateRet(builder.CreateIntToPtr(builder.CreateAnd(builder.CreatePtrToInt(f->getArg(0), builder.getInt64Ty()), const1), types["ObjPtr"]));
         llvm::verifyFunction(*f);
     }();
-    // gc.safepoint_poll is used by LLVM to place safepoint polls optimally, LLVM requires this function to have external linkage
+
     [&]{
         llvm::Function *F = llvm::Function::Create(llvm::FunctionType::get(TYPE(Void), false), llvm::Function::ExternalLinkage, "safepoint_poll", module);
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx, "entry", F);
@@ -242,16 +242,21 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         llvm::BasicBlock* runGCBB = llvm::BasicBlock::Create(ctx, "runGC", F);
         llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(ctx, "merge");
 
-        // Atomically load the value
-        auto load = builder.CreateLoad(builder.getInt64Ty(), module.getNamedGlobal("gcFlag"), false);
+        auto *R15MD   = llvm::MDNode::get(ctx, { llvm::MDString::get(ctx, "r15") });
+        auto *MDAsVal = llvm::MetadataAsValue::get(ctx, R15MD);
+        auto tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        auto gep = builder.CreateConstGEP1_32(builder.getInt64Ty(), tcb, 2);
+        auto load = builder.CreateLoad(builder.getInt64Ty(), gep);
         load->setAtomic(llvm::AtomicOrdering::Monotonic);
         load->setAlignment(llvm::Align(8));
+
+        // When thread is in RUNNNING(=0) it can only go to HAS_PENDING(=1) involuntarily
         auto cond = builder.CreateIntCast(load, builder.getInt1Ty(), false);
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, {cond, builder.getInt1(false)});
         // Run gc if flag is true
         builder.CreateCondBr(cond, runGCBB, mergeBB);
         builder.SetInsertPoint(runGCBB);
-        builder.CreateCall(module.getFunction("stopThread"));
+        builder.CreateCall(module.getFunction("safepoint"));
         builder.CreateRetVoid();
 
         F->insert(F->end(), mergeBB);
@@ -331,6 +336,57 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         isObj = builder.CreateZExt(isObj, TYPE(Int8));
         tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
         builder.CreateStore(tmp, ptr);
+        builder.CreateRetVoid();
+        llvm::verifyFunction(*F);
+    }
+    // Really funky since i dont want to define the tcb as a struct
+    {
+        llvm::Function *F = createFunc("gc_write_barrier",llvm::FunctionType::get(TYPE(Void), { eslValTy }, false));
+        auto flag = builder.CreateLoad(builder.getInt8Ty(), module.getNamedGlobal("gcFlag"));
+        flag->setAtomic(llvm::AtomicOrdering::Acquire);
+        auto flag1 = builder.CreateICmpNE(flag, builder.getInt8(0));
+        auto isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(0));
+        llvm::BasicBlock* inactiveWB = llvm::BasicBlock::Create(ctx, "inactive", F);
+        llvm::BasicBlock* activeWB = llvm::BasicBlock::Create(ctx, "checkClassType");
+
+        auto cond = builder.CreateAnd(flag1, isObj);
+        cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, { cond, builder.getInt1(false)});
+        builder.CreateCondBr(cond, activeWB, inactiveWB);
+
+        builder.SetInsertPoint(inactiveWB);
+        builder.CreateRetVoid();
+        F->insert(F->end(), activeWB);
+        builder.SetInsertPoint(activeWB);
+
+        auto *R15MD   = llvm::MDNode::get(ctx, { llvm::MDString::get(ctx, "r15") });
+        auto *MDAsVal = llvm::MetadataAsValue::get(ctx, R15MD);
+        auto tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        auto mark_buf = builder.CreateConstGEP1_32(builder.getInt64Ty(), tcb, 3);
+        mark_buf = builder.CreateLoad(builder.getPtrTy(), mark_buf);
+
+        llvm::Value* cnt = builder.CreateLoad(builder.getInt64Ty(), mark_buf);
+        cnt = builder.CreateAdd(cnt, builder.getInt64(1));
+
+        auto slot = builder.CreateInBoundsGEP(builder.getInt64Ty(), mark_buf, { cnt });
+        auto obj = builder.CreateCall(module.getFunction("decodeObj"), { F->getArg(0) });
+
+        builder.CreateStore(obj, slot);
+        builder.CreateStore(cnt, mark_buf);
+
+        cond = builder.CreateICmpEQ(cnt, builder.getInt64(64));
+        cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, { cond, builder.getInt1(false)});
+
+        llvm::BasicBlock* full_buf = llvm::BasicBlock::Create(ctx, "full_buf");
+        llvm::BasicBlock* partial_buf = llvm::BasicBlock::Create(ctx, "partial_buf", F);
+        builder.CreateCondBr(cond, full_buf, partial_buf);
+
+        builder.SetInsertPoint(partial_buf);
+        builder.CreateRetVoid();
+        F->insert(F->end(), full_buf);
+        builder.SetInsertPoint(full_buf);
+
+        builder.CreateCall(module.getFunction("flush_wb"));
+
         builder.CreateRetVoid();
         llvm::verifyFunction(*F);
     }

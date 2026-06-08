@@ -28,11 +28,9 @@ llvm::Constant* ComptimeValues::createMethodObj(const std::string& name, uint8_t
 }
 
 // TODO: change this to call a gc specified function for header
+// right now its hardcoded to move_state::unmanaged
 llvm::Constant* ComptimeValues::createConstObjHeader(int type) const {
-    auto padding = llvm::ConstantArray::get(
-        llvm::ArrayType::get(_b.getInt8Ty(), 2),{ _b.getInt8(3), _b.getInt8(0) }
-    );
-    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(_b.getContext(), "Obj"),{ padding, _b.getInt8(type)});
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(_b.getContext(), "Obj"), _b.getInt8(4), _b.getInt8(type));
 }
 
 llvm::Constant* ComptimeValues::constObjToVal(llvm::Constant* obj, uint8_t type) const {
@@ -50,7 +48,7 @@ llvm::GlobalVariable* ComptimeValues::storeConstObj(llvm::Constant* obj) const {
 
 llvm::Constant* ComptimeValues::createConstStr(const string& str){
     if(CStrings.contains(str)) return CStrings[str];
-    auto constant = _b.CreateGlobalStringPtr(str, "internal.string");
+    auto constant = _b.CreateGlobalString(str, "internal.string");
 
     CStrings[str] = constant;
     return constant;

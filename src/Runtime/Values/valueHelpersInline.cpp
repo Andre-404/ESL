@@ -17,7 +17,7 @@ static ValueType getType(Value x){
 
 inline Value encodeNumber(double x){ return *reinterpret_cast<Value*>(&x); }
 inline Value encodeBool(bool x){ return mask_signature_bool | x; }
-inline Value encodeObj(object::Obj* x){ return mask_signature_obj | reinterpret_cast<Value>(x) | x->type; }
+inline Value encodeObj(object::Obj* x){ return mask_signature_obj | reinterpret_cast<Value>(x) | +x->type(); }
 inline Value encodeNil(){ return mask_signature_null; }
 
 inline double decodeNumber(Value x){ return *reinterpret_cast<double*>(&x); }

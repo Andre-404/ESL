@@ -46,8 +46,8 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
     // Get all string constants into gc
     pastAllocas([this](auto& tb)  {
         auto val = tb.CreateIntrinsic(tb.getPtrTy(), llvm::Intrinsic::frameaddress, {tb.getInt32(0)});
-        tb.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
-        tb.CreateCall(safeGetFunc("threadInit"), { val, llvm::ConstantPointerNull::get(builder.getPtrTy())});
+        auto res = tb.CreateCall(safeGetFunc("gcInit"), {curModule->getNamedGlobal("gcFlag")});
+        tb.CreateCall(safeGetFunc("threadInit"), { val, res });
         for(auto strObj : _ct.ESL_strings()) {
             tb.CreateCall(safeGetFunc("gcInternStr"), { strObj });
         }
@@ -406,6 +406,9 @@ llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     auto phi = builder.CreatePHI(_tyhelp.getESLValType(), 2, "collection.set");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
+    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+        builder.CreateCall(safeGetFunc("gc_write_barrier"), { phi });
+    }
     return phi;
 }
 
@@ -481,11 +484,7 @@ llvm::Value* Compiler::visitNewExpr(CFG::NewExpr* expr) {
     size_t instSize = curModule->getDataLayout().getTypeAllocSize(klass.instTemplatePtr->getValueType());
     llvm::CallInst* memptr = builder.CreateCall(safeGetFunc("gcAlloc"), {builder.getInt64(instSize)});
 
-    // All the gc info about an object is stored in the first 16 bits of the object
-    auto objInfo = builder.CreateLoad(builder.getInt16Ty(), memptr);
     builder.CreateMemCpy(memptr, memptr->getRetAlign(), klass.instTemplatePtr, klass.instTemplatePtr->getAlign(), builder.getInt64(instSize));
-    // Restore flag
-    builder.CreateStore(objInfo, memptr);
 
     llvm::Value* inst = builder.CreateBitCast(memptr, _tyhelp.internal_obj_ty("ObjPtr"));
     inst = builder.CreateCall(safeGetFunc("encodeObj"), {inst, builder.getInt64(+object::ObjType::INSTANCE)});
@@ -828,6 +827,9 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
 
     if(expr->operationType == CFG::SetType::SET){
         builder.CreateStore(val, fieldPtr);
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
+        }
         return val;
     }
     if(expr->operationType == CFG::SetType::ADD_SET){
@@ -835,6 +837,9 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
         auto storedVal = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
         val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
         builder.CreateStore(val, fieldPtr);
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
+        }
         return val;
     }
     auto storedField = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
@@ -849,6 +854,9 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
 
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
     builder.CreateStore(val, fieldPtr);
+    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+        builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
+    }
     return val;
 }
 
@@ -1398,9 +1406,10 @@ llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
     // Loads arguments from memory passed to wrapper, must load all args before threadInit is called since that function frees the memory
+    auto base = builder.CreateLoad(builder.getPtrTy(), fn->getArg(0));
     vector<llvm::Value*>args;
     for(int i = 0; i < numArgs; i++){
-        llvm::Value* gep = builder.CreateConstInBoundsGEP1_32(_tyhelp.getESLValType(), fn->getArg(0), i + 1);
+        llvm::Value* gep = builder.CreateConstInBoundsGEP1_32(_tyhelp.getESLValType(), base, i + 1);
         args.push_back(builder.CreateLoad(_tyhelp.getESLValType(), gep));
     }
     llvm::Value* funcPtr = builder.CreateLoad(builder.getPtrTy(), fn->getArg(0));

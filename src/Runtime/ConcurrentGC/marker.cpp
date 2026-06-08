@@ -1,4 +1,3 @@
-#pragma once
 #include "marker.h"
 #include "pg-meta.h"
 #include <functional>
@@ -12,8 +11,9 @@ using namespace gc::detail;
 
     auto pg = pg_from_obj(obj);
     auto won = pg->record_mark(obj, obj->state() != move_state::none);
-    if (!won || !obj_traceable(obj)) return false;
-    // Don't push buf if we're full
+    if (!won) return false;
+
+    if (!obj_traceable(obj)) return false;
     return buf->push(obj);
 }
 
@@ -35,10 +35,12 @@ size_t marker::trace_n(size_t bytes)  {
 
     auto side = _bufs.pop_empty();
     std::function mark = [&](managed* obj) {
-        if (!push_obj(main, obj)) [[likely]] return;
-        if (side->full()) [[unlikely]] main = replace_buf(main);
-        else std::swap(side, main);
-        push_obj(main, obj);
+        if (main->full()) [[unlikely]] {
+            if (side->full()) [[unlikely]] main = replace_buf(main);
+            else std::swap(side, main);
+        }
+        // TODO: this needs to be after the full checks because of the swaps we do while reading, any other way to optimize this?
+        (void)push_obj(main, obj);
     };
 
     size_t cnt = 0;

@@ -1,11 +1,12 @@
 #include "mark-buf.h"
+#include "gc-config.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 
 
 using namespace gc::detail;
 
 void mark_buf_manager::push_empty(mark_buf* buf) {
-    if (_empty_cnt.load(std::memory_order_relaxed) < 256) {
+    if (_empty_cnt.load(std::memory_order_relaxed) < gc::config::empty_mark_bufs_limit) {
         ++_empty_cnt;
         return _empty.lfpush(buf);
     }

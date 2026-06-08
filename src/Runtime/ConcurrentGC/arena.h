@@ -21,6 +21,7 @@ namespace gc::detail {
     public:
         arena() : _debt(0), _big_objs(nullptr) {}
         managed* alloc(size_t sz, pg_manager& manager) {
+            // TODO: account for fragmentation here
             _debt += sz;
             auto szclass = config::sz_to_class(sz);
 
@@ -28,10 +29,15 @@ namespace gc::detail {
 
             if (auto res = _allocators[szclass].alloc()) return res;
 
-            if (auto new_pg = manager.get_new_pg(szclass)) _allocators[szclass].push_pg(new_pg);
-            else [[unlikely]] return nullptr;
+            managed* res = nullptr;
+            // Need to loop because get_new_pg can in some cases return a fully allocated page from partial
+            do {
+                if (auto new_pg = manager.get_new_pg(szclass)) _allocators[szclass].push_pg(new_pg);
+                else [[unlikely]] return nullptr; // This should never happen
 
-            return _allocators[szclass].alloc();
+                res = _allocators[szclass].alloc();
+            } while (res == nullptr);
+            return res;
         }
 
         int64_t get_debt() const { return _debt; }

@@ -33,10 +33,9 @@ namespace gc {
         }();
 
 
-
         constexpr int8_t sz_to_class(size_t sz) {
             if (sz > sz_classes[szclass_cnt - 1]) return -1;
-            return sz_to_class_table[sz / 16];
+            return sz == 0 ? 0 : sz_to_class_table[(sz-1) / 16];
         }
 
         constexpr size_t heap_bits = 48; // TODO: shrink to 40 bits once we have a proper allocator

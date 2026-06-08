@@ -17,7 +17,7 @@ namespace gc::detail {
             return _bufs.pop_empty();
         }
     public:
-        marker() : _bufs(config::empty_mark_bufs_limit) {}
+        marker() : _bufs() {}
 
         [[nodiscard]] mark_buf* get_buf() {
             return _bufs.pop_empty();
@@ -35,6 +35,7 @@ namespace gc::detail {
             auto [stack, regs] = info.get_ctx();
             auto buf = _bufs.pop_empty();
             auto mark = [&](managed* obj) {
+                // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
                 if (pin && obj->state() == move_state::none) obj->set_state(move_state::temp_pinned);
                 if (push_obj(buf, obj)) buf = replace_buf(buf);
             };

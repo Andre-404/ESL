@@ -54,15 +54,7 @@ namespace memory {
         uint64_t prevHeapSize;
     };
 
-    class StringInterner{
-    public:
-        void internString(object::ObjString* str);
-        // Optimizes checking to avoid having to hash large strings
-        object::ObjString* checkInterned(object::ObjString* str);
-    private:
-        uint64_t largestStrSize = 0;
-        ankerl::unordered_dense::set<object::ObjString*, object::stringHash, object::stringEQ> interned;
-    };
+
 
 
 

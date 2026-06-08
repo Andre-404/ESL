@@ -16,7 +16,7 @@ DebugEmitter::DebugEmitter(llvm::Module& module, File& file, bool isOpt){
 
 void DebugEmitter::addMainFunc(llvm::Function* func){
     // 0th index is for return type
-    llvm::DITypeRefArray typeVec = builder->getOrCreateTypeArray({types["void"], types["ptr"]});
+    llvm::DITypeArray typeVec = builder->getOrCreateTypeArray({types["void"], types["ptr"]});
     llvm::DISubroutineType* fnSig = builder->createSubroutineType(typeVec);
     llvm::DIFile* file = CU->getFile();
     llvm::DISubprogram* debugFunc = builder->createFunction(file, func->getName(), llvm::StringRef(),

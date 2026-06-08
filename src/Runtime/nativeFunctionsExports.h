@@ -22,14 +22,14 @@ EXPORT Value ms_since_epoch(ObjClosure* ptr){
 
 EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
     asArray(arr)->containsObjects |= isObj(top);
-    asArray(arr)->push(top, memory::getLocalArena());
+    asArray(arr)->push(top);
     return arr;
 }
 
 EXPORT Value input(ObjClosure* ptr){
     string in;
     std::getline(std::cin, in);
-    return encodeObj(ObjString::createStr((char*)in.c_str(), memory::getLocalArena()));
+    return encodeObj(ObjString::createStr((char*)in.c_str()));
 }
 
 EXPORT Value random_num(ObjClosure* ptr){

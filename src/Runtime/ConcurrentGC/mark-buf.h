@@ -33,7 +33,7 @@ namespace gc::detail {
         tstack<mark_buf> _empty;
         std::atomic<size_t> _empty_cnt;
     public:
-        mark_buf_manager(size_t empty_cnt) : _empty_cnt(empty_cnt) {}
+        mark_buf_manager() : _empty_cnt(0) {}
 
         void push_full(mark_buf* buf) { _full.lfpush(buf); }
         mark_buf* pop_full() { return _full.lfpop(); }

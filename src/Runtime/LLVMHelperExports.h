@@ -3,8 +3,8 @@
 #include "../Includes/fmt/format.h"
 #include "../Includes/rpmalloc/rpmalloc.h"
 #include "Values/valueHelpersInline.cpp"
-#include "MemoryManagment/garbageCollector.h"
-#include "MemoryManagment/threadArena.h"
+#include "esl-gc-helpers.h"
+#include "Objects/string-interner.h"
 #include <csetjmp>
 #include <stdarg.h>
 #include "JIT/JIT.h"
@@ -12,20 +12,11 @@
 #include <pthread.h>
 
 
-#define __READ_RBP() __asm__ volatile("movq %%rbp, %0" : "=r"(__rbp))
-#define __READ_RSP() __asm__ volatile("movq %%rsp, %0" : "=r"(__rsp))
 // Functions which the compiler calls, separate from the native functions provided by the language as part of runtime library
 #define EXPORT extern "C" DLLEXPORT
 
-EXPORT NOINLINE void stopThread(){
-    if(!memory::gc) return;
-    // Get stack end(lowest address) and then spill the registers to the stack
-    jmp_buf jb;
-    setjmp(jb);
-    uintptr_t* stackEnd;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(stackEnd));
-
-    memory::gc->suspendThread(std::this_thread::get_id(), stackEnd, memory::getLocalArena());
+EXPORT NOINLINE void safepoint(){
+    gc::exec_at_safepoint(gc::read_tcb());
 }
 
 enum class runtimeErrorType : uint8_t{
@@ -85,7 +76,7 @@ EXPORT void runtimeError(const char* msg, uint8_t errType, uint64_t val1, uint64
 }
 // Both values are known to be strings
 EXPORT Value strAdd(Value lhs, Value rhs){
-    return encodeObj(asString(lhs)->concat(asString(rhs), memory::getLocalArena()));
+    return encodeObj(asString(lhs)->concat(asString(rhs)));
 }
 
 EXPORT Value strCmp(Value lhs, Value rhs){
@@ -93,8 +84,8 @@ EXPORT Value strCmp(Value lhs, Value rhs){
 }
 
 EXPORT Value createArr(uint32_t arrSize){
-    memory::ThreadArena& allocator = memory::getLocalArena();
-    return encodeObj(new(allocator) object::ObjArray(arrSize, allocator));
+    auto ptr = gc::allocate(sizeof(ObjArray));
+    return encodeObj(new(ptr) ObjArray(arrSize));
 }
 
 EXPORT Value* getArrPtr(Value arr){
@@ -105,13 +96,15 @@ EXPORT int64_t getArrSize(Value arr){
     return asArray(arr)->size;
 }
 
-EXPORT void gcInit(uint64_t* gcFlag){
-    memory::gc = new memory::GarbageCollector(*gcFlag);
+EXPORT gc::tcb_handle* gcInit(uint8_t* gcFlag){
+    gc::init_gc(*gcFlag);
+    object::string_interner::init();
+    return gc::create_tcb(nullptr, 0);
 }
 
-// hashMap is guaranteed to be an ObjHashMap, str is guaranteed to be an ObjString
+// TODO: right now we cant allocate this because it uses ankerl::unordered and that can cause issues
 EXPORT Value createHashMap(int nFields, ...){
-    object::ObjHashMap* map = new(memory::getLocalArena()) object::ObjHashMap();
+    auto map = new(gc::allocate(sizeof(ObjHashMap))) object::ObjHashMap();
     va_list ap;
     va_start(ap, nFields);
     for(int i=0; i<nFields; i++){
@@ -123,13 +116,12 @@ EXPORT Value createHashMap(int nFields, ...){
 }
 
 EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...){
-    ObjClosure* closure = static_cast<ObjClosure *>(
-            memory::getLocalArena().alloc(sizeof(ObjClosure) + upvalCount*sizeof(Value)));
+    auto ptr = gc::allocate(sizeof(ObjClosure) + upvalCount*sizeof(Value));
+    ObjClosure* closure = new(ptr) ObjClosure();
     closure->arity = arity;
     closure->name = name;
     closure->func = fn;
     closure->freevarCount = upvalCount;
-    closure->type = +ObjType::CLOSURE;
     va_list ap;
     va_start(ap, upvalCount);
     for(int i=0; i<upvalCount; i++){
@@ -140,7 +132,7 @@ EXPORT Value createClosure(char* fn, int arity, char* name, int upvalCount, ...)
 }
 
 EXPORT void addGCRoot(Value* ptr){
-    memory::gc->addGlobalRoot(ptr);
+    gc::register_root(ptr);
 }
 
 EXPORT Value hashmapGetV(ObjHashMap* map, ObjString* str){
@@ -158,16 +150,17 @@ EXPORT void hashmapSetV(ObjHashMap* map, ObjString* str, Value v){
     else it->second = v;
 }
 
+// TODO: think about if this fucks up the gc in some strange way? related to marking
+// Concern: allocate -> some other thread scans its stack and finds us -> marks us -> tries to trace us -> shit happens
+// Actually, this isn't an issue? since mark bits only get updated on next allocation
 EXPORT Obj* gcAlloc(int64_t bytes){
-    Obj* ptr = (Obj*)memory::getLocalArena().alloc(bytes);
-    ptr->type = +object::ObjType::DEALLOCATED;
-    return ptr;
+    return new(gc::alloc(bytes, gc::read_tcb())) Obj(ObjType::DEALLOCATED, false);
 }
 
 EXPORT void gcInternStr(Value val){
     // Known to be an ObjString
-    ObjString* ptr = reinterpret_cast<ObjString*>(decodeObj(val));
-    memory::gc->interned.internString(ptr);
+    auto ptr = reinterpret_cast<ObjString*>(decodeObj(val));
+    object::string_interner::get().intern(ptr);
 }
 
 using wrapper = void*(*)(void*);
@@ -175,19 +168,24 @@ using wrapper = void*(*)(void*);
 EXPORT void createNewThread(wrapper llvmWrapper, int64_t* alloca, int64_t argc){
     auto mem = rpmalloc(argc*sizeof(Value));
     memcpy(mem, alloca, argc*sizeof(Value));
+    auto tcb = gc::create_tcb(mem, argc);
     pthread_t p;
-    pthread_create(&p, nullptr, llvmWrapper, mem);
+    pthread_create(&p, nullptr, llvmWrapper, tcb);
 }
 
-EXPORT void threadInit(uintptr_t* frameAddr, uintptr_t* storage){
-    if (storage) rpfree(storage);
-    memory::gc->addStackStart(std::this_thread::get_id(), frameAddr);
-    memory::initLocalArena();
+EXPORT void threadInit(uintptr_t* frameAddr, gc::tcb_handle* handle){
+    gc::set_tcb(handle);
+    gc::init_thd(handle, frameAddr);
+    auto [args, _] = handle->take_start_args();
+    if (args) rpfree(args);
 }
 
 EXPORT void threadDestruct(){
-    memory::deleteLocalArena();
-    memory::gc->removeStackStart(std::this_thread::get_id());
+    gc::delete_tcb(gc::read_tcb());
+}
+
+EXPORT void flush_wb() {
+    gc::push_wbbuf(gc::read_tcb());
 }
 
 #undef EXPORT

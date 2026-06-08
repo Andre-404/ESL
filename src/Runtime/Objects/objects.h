@@ -3,10 +3,7 @@
 #include "../../common.h"
 #include <fstream>
 #include <shared_mutex>
-
-namespace memory{
-    class ThreadArena;
-}
+#include "../esl-gc-helpers.h"
 
 namespace object {
 
@@ -26,15 +23,13 @@ namespace object {
     };
     inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
 
-    class Obj{
+    class Obj : public gc::managed{
     public:
-        int8_t GCInfo[2];
-        byte type;
+        Obj(ObjType type, bool is_pinned) : gc::managed(+type, is_pinned ? gc::move_state::pinned : gc::move_state::none) {}
 
+        ObjType type() { return static_cast<ObjType>(get_type_id()); }
         size_t getSize();
         string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
-        // This reroutes the new operator to take memory which the GC gives out
-        void* operator new(const size_t size, memory::ThreadArena& allocator);
     };
 
     void runObjDestructor(object::Obj* obj);
@@ -42,6 +37,7 @@ namespace object {
     // This is a header which is followed by the bytes of the string
     class ObjString : public Obj {
     public:
+        ObjString() : Obj(ObjType::STRING, false) {}
         uint32_t size;
 
         char* get_str() const { return (char*)(this + 1);}
@@ -50,9 +46,9 @@ namespace object {
 
         bool compare(const string other);
 
-        ObjString* concat(ObjString* other, memory::ThreadArena& allocator);
+        ObjString* concat(ObjString* other);
 
-        static ObjString* createStr(char* str, memory::ThreadArena& allocator);
+        static ObjString* createStr(char* str);
 
     };
 
@@ -72,9 +68,11 @@ namespace object {
     public:
         uint32_t capacity;
 
+        ObjArrayStorage() : Obj(ObjType::ARRAY_STORAGE_HEADER, false) {}
+
         inline Value* getData();
 
-        static ObjArrayStorage* allocArray(uint32_t capacity, memory::ThreadArena& allocator);
+        static ObjArrayStorage* allocArray(uint32_t capacity);
     };
 
     class ObjArray : public Obj {
@@ -83,11 +81,11 @@ namespace object {
         uint32_t size;
         ObjArrayStorage* storage;
 
-        ObjArray(memory::ThreadArena& allocator);
-        ObjArray(const size_t size, memory::ThreadArena& allocator);
+        ObjArray();
+        ObjArray(size_t size);
 
         Value* getData();
-        void push(Value item, memory::ThreadArena& allocator);
+        void push(Value item);
     };
 
     // Pointer to a compiled function
@@ -102,6 +100,8 @@ namespace object {
         byte freevarCount;
         Function func;
         char* name;
+
+        ObjClosure() : Obj(ObjType::CLOSURE, false) {}
 
         Value* getFreevarArr();
     };
@@ -123,6 +123,8 @@ namespace object {
         uint32_t fieldArrLen;
         ObjClass* klass;
 
+        ObjInstance() : Obj(ObjType::INSTANCE, false) {}
+
         Value* getFields();
     };
 
@@ -135,11 +137,11 @@ namespace object {
     class ObjFile : public Obj {
     public:
         std::fstream stream;
-        const string path;
+        string path;
         // 0: read, 1: write
         int openType;
 
-        ObjFile(const string& path, int _openType);
+        ObjFile(string& path, int _openType);
         ~ObjFile();
     };
 
@@ -148,7 +150,7 @@ namespace object {
     public:
         std::shared_mutex mtx;
 
-        ObjMutex();
+        ObjMutex() : Obj(ObjType::MUTEX, true) {}
     };
 
 

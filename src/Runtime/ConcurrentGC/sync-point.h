@@ -19,8 +19,6 @@ namespace gc::detail {
                 ++_phase;
                 _waiting = 0;
                 _cv.notify_all();
-            } else {
-                _cv.wait(lk, [&]{ return _phase != my_phase; });
             }
         }
 

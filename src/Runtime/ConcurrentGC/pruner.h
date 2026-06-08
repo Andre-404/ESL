@@ -12,6 +12,17 @@ namespace gc::detail {
         };
         std::atomic<size_t> _live_sz;
         std::array<sz_class_data, config::szclass_cnt> _per_class_frag;
+
+        void add_stats(pg_meta* pg) {
+            // TODO: is this inefficient?
+            auto sz_class = config::sz_to_class(pg->block_sz());
+            if (sz_class != -1) {
+                auto frag = 1.0 - pg->live_count() / (double)pg->block_cnt();
+                _per_class_frag[sz_class].frag_total.fetch_add(frag, std::memory_order_relaxed);
+                _per_class_frag[sz_class].pg_cnt.fetch_add(1, std::memory_order_relaxed);
+            }
+            _live_sz.fetch_add(pg->live_count() * pg->block_sz(), std::memory_order_relaxed);
+        }
     public:
         pruner() {};
 
@@ -25,27 +36,21 @@ namespace gc::detail {
         size_t get_live_size() const { return _live_sz; }
 
         std::pair<pg_meta*, pg_meta*> prune(pg_meta* list) {
-            auto empty = (pg_meta*)nullptr;
             // Done to preserve the order in which pages were allocated
             // TODO: might be better to sort them by address?
+            auto empty = (pg_meta*)nullptr;
             auto in_use = (pg_meta*)nullptr;
             auto in_use_cur = (pg_meta*)nullptr;
             for (auto cur = list; cur;) {
                 auto tmp = cur;
                 cur = cur->next();
+                tmp->unlink();
                 if (tmp->live_count() == 0) {
                     tmp->link(empty);
                     empty = tmp;
                 } else {
-                    // TODO: is this inefficient?
-                    auto sz_class = config::sz_to_class(tmp->block_sz());
-                    if (sz_class != -1) {
-                        auto frag = 1.0 - tmp->live_count() / (double)tmp->block_cnt();
-                        _per_class_frag[sz_class].frag_total.fetch_add(frag, std::memory_order_relaxed);
-                        _per_class_frag[sz_class].pg_cnt.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    _live_sz.fetch_add(tmp->live_count() * tmp->block_sz(), std::memory_order_relaxed);
-                    if (!in_use || !in_use_cur) {
+                    add_stats(tmp);
+                    if (!in_use_cur) {
                         in_use = tmp;
                         in_use_cur = tmp;
                     } else {

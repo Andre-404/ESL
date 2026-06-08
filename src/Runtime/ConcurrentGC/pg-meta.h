@@ -4,6 +4,7 @@
 #include "tstack.h"
 #include <memory>
 #include <cstring>
+#include <algorithm>
 
 namespace gc::detail {
     class dual_bitmap {
@@ -31,33 +32,39 @@ namespace gc::detail {
     class pg_meta : public tnode<pg_meta> {
         // Number of objects live in the last gc cycle
         const size_t _block_sz;
-        std::atomic<uint16_t> _num_live;
         const uint16_t _block_cnt;
         const uint16_t _slot_start;
+        std::atomic<uint16_t> _num_live;
         std::atomic<uint8_t> _has_pinned;
+        // Padding is here because dual_bitmap assumes its bitmap comes after the class itself
+        char _[4];
         dual_bitmap _bitmap;
 
-        static constexpr size_t slots_per_page(size_t X, size_t Y) {
-            const size_t m = (X - 32 + 63 * Y) / (64 * Y + 16);
-            const size_t cap   = 64 * m;
-            const size_t space = (X - 16 * (m + 2)) / Y;
-            return std::min(cap, space);
+        static constexpr auto mapping = []() constexpr {
+            auto arr = std::array<uint16_t, config::szclass_cnt> {};
+            for (size_t i = 0; i < config::szclass_cnt; ++i) {
+                auto max_n = 0;
+                auto b = 1;
+                while (std::min(64ul*b, (config::page_sz - 32 - 16 * b) / config::sz_classes[i]) > max_n) {
+                    max_n = std::min(64ul*b, (config::page_sz - 32 - 16 * b) / config::sz_classes[i]);
+                    b++;
+                }
+                arr[i] = max_n;
+            }
+            return arr;
+        }();
+
+        static constexpr auto block_cnt(size_t sz) {
+            return config::sz_to_class(sz) == -1 ? (uint16_t)1 : mapping[config::sz_to_class(sz)];
         }
-        // In bytes, 8 byte aligned cache
-        static constexpr size_t bitmap_sz(size_t block_cnt) {
-            return (block_cnt + 63) / 64 * 8;
-        }
-        static constexpr uint16_t block_cnt(size_t block_sz) {
-            // Each large object has a pg header
-            auto szclass = config::sz_to_class(block_sz);
-            return szclass == -1 ? 1 : slots_per_page(config::page_sz, block_sz);
-        }
+        static constexpr auto bitmap_sz(size_t cnt) { return (uint16_t)((cnt + 63) / 64 * 8); }
+
         uint8_t* get_data() const { return (uint8_t*)(this) + _slot_start; }
         void add_live() { _num_live.fetch_add(1, std::memory_order_relaxed); }
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
     public:
         explicit pg_meta(size_t block_sz) : _block_sz(block_sz), _num_live(0), _block_cnt(block_cnt(block_sz)),
-            _slot_start(32 * 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
+            _slot_start(32 + 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
 
         class pg_slots_iter {
             const pg_meta* _pg;
@@ -82,22 +89,24 @@ namespace gc::detail {
                 auto ref = std::atomic_ref { _pg->_bitmap.mark_bits()[byte] };
                 return ref.load(std::memory_order_acquire) & (1 << in_byte);
             }
+            size_t internal() const { return _i; };
         };
 
         managed* from_interior(uint8_t* interior) const {
             auto diff = interior - (uint8_t*)this;
-            if (diff < _slot_start || diff >= (_slot_start + block_cnt() * block_sz())) return nullptr;
+            if (diff < _slot_start || diff >= (_slot_start + block_cnt() * _block_sz)) return nullptr;
             diff -= _slot_start;
             auto ptr = (managed*)(interior - diff % _block_sz);
 
-            auto idx = (size_t)(ptr - _slot_start) / block_cnt();
+            auto idx = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;
             size_t* p =(size_t*)_bitmap.alloc_bits();
-            if (p[idx / 8] & (1 << idx % 8)) return ptr;
+            if (p[idx / 64] & (1 << idx % 64)) return ptr;
             return nullptr;
         }
 
         size_t block_sz() const { return _block_sz; }
         uint16_t block_cnt() const { return _block_cnt; }
+        uint16_t start_off() const { return _slot_start; }
         uint16_t live_count() const { return _num_live.load(std::memory_order_relaxed); }
         bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
         void reset_trackers() {
@@ -113,20 +122,21 @@ namespace gc::detail {
         }
 
         bool record_mark(managed* ptr, bool is_pinned) {
-            auto pos = ((size_t)ptr - _slot_start) / _block_sz;
+            if (is_pinned) set_pinned(); // Pin regardless of the fact that the mark bit is set or not
+
+            auto pos = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;
             auto [byte, in_byte] = std::pair { pos / 8, pos % 8};
 
             auto ref = std::atomic_ref { _bitmap.mark_bits()[byte] };
             auto res = ref.fetch_or(1 << in_byte, std::memory_order_acq_rel);
             if (res & (1 << in_byte)) return false;
             add_live();
-            if (is_pinned) set_pinned();
             return true;
         }
         void clear_mark_bitmap() const { _bitmap.clear_mark(); }
         size_t& alloc_word(uint16_t pos) const {
             size_t* ptr =(size_t*)_bitmap.alloc_bits();
-            return ptr[pos / 8];
+            return ptr[pos / 64];
         }
     };
 
@@ -136,7 +146,7 @@ namespace gc::detail {
 
     // sizeof(header) + 2 * sizeof(bitmap of 1 element) + object sz
     inline size_t large_pg_sz(size_t obj_sz) {
-        return sizeof(pg_meta) + 2 + obj_sz;
+        return sizeof(pg_meta) + 2*8 + obj_sz;
     }
 
     inline bool is_large_pg(pg_meta* pg) {

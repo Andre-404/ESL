@@ -47,8 +47,8 @@ void collector::force_collection(int64_t sz, tcb* t) {
 }
 
 void collector::phase1(tcb* t, bool pin) {
-    auto get_base = [&](size_t ptr) -> managed* {
-        auto pg = _pg_manager.pg_from_ptr(ptr);
+    auto get_base = [&](uint8_t* ptr) -> managed* {
+        auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
         if (!pg) return nullptr;
         return pg->from_interior((uint8_t*)ptr);
     };
@@ -144,6 +144,7 @@ void collector::end_cycle(size_t alloc_snapshot) {
 
 
 [[noreturn]] void collector::concurrent_loop() {
+    rpmalloc_thread_initialize();
     while (true) {
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
         _collection_req.wait(request_type::none);
@@ -165,8 +166,9 @@ void collector::end_cycle(size_t alloc_snapshot) {
 
         end_cycle(snapshot);
     }
+    rpmalloc_thread_finalize(1);
 }
-
+// Stw only registers us as waiters and flushes the cache, then _syncronizer will ack for us
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
@@ -179,6 +181,11 @@ void collector::handle_pending(tcb* t) {
     }
     else
         assert(false && "Unreachable");
+}
+
+void collector::thd_prologue(tcb *t) {
+    rpmalloc_thread_initialize();
+    _synchronizer.prologue(t);
 }
 
 void collector::set_paused(tcb *t) {
@@ -198,13 +205,15 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
         if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw)
             t->transition(thd_state::need_start);
     });
+    // TODO: this is kinda inefficient, can we do better?
+    t->get_mark_info().set_wbbuf(_marker.get_buf());
     return t;
 }
 
 void collector::delete_tcb(tcb *t) {
     auto& mark_info = t->get_mark_info();
     mark_info.capture_ctx();
-    // Invariant: every live object must be reachable by the GC at all times — via
+    // Invariant: every live object must be reachable by the GC at all times - via
     // a pending request to a running thread or by reading a blocked thread's
     // resources. Setting a thread DEAD removes its resources from both paths, so
     // we hand any live objects off to global storage before the transition.
@@ -221,6 +230,7 @@ void collector::delete_tcb(tcb *t) {
     _tcb_registry.remove(t);
     // Safe to do since we removed it under lock
     rpfree(t);
+    rpmalloc_thread_finalize(1);
 }
 
 void collector::flush_wbbuf(tcb *t) {
@@ -245,10 +255,16 @@ managed *collector::alloc(size_t sz, tcb * t) {
         force_collection(sz, t);
         return alloc(sz, t);
     }
-    _alloc_sz.fetch_add(sz, std::memory_order_relaxed);
+    if(_alloc_sz.fetch_add(sz, std::memory_order_relaxed) + sz > _heuristic.heap_trigger()
+        && _collection_req.load(std::memory_order_acquire) == request_type::none) {
+        _collection_req = request_type::normal;
+        _collection_req.notify_all();
+    }
     return res;
 }
 
-void collector::process_pending(tcb *handle) {
-    _synchronizer.execute_pending(handle, [&](tcb* t) { handle_pending(t); });
+void collector::process_pending(tcb *t) {
+    auto& mark_info = t->get_mark_info();
+    mark_info.capture_ctx();
+    _synchronizer.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
 }
