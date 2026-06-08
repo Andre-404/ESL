@@ -1412,7 +1412,7 @@ llvm::Function* Compiler::createThreadWrapper(llvm::FunctionType* funcType, int 
         llvm::Value* gep = builder.CreateConstInBoundsGEP1_32(_tyhelp.getESLValType(), base, i + 1);
         args.push_back(builder.CreateLoad(_tyhelp.getESLValType(), gep));
     }
-    llvm::Value* funcPtr = builder.CreateLoad(builder.getPtrTy(), fn->getArg(0));
+    llvm::Value* funcPtr = builder.CreateLoad(builder.getPtrTy(), base);
 
     llvm::Value* frameAddr = builder.CreateIntrinsic(builder.getPtrTy(), llvm::Intrinsic::frameaddress, {builder.getInt32(0)});
     builder.CreateCall(safeGetFunc("threadInit"), { frameAddr, fn->getArg(0) });
