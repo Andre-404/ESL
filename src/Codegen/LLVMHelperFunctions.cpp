@@ -1,10 +1,13 @@
 #include "LLVMHelperFunctions.h"
-#include "../Runtime/LLVMHelperExports.h"
-#include "../Runtime/nativeFunctionsExports.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/Module.h"
+#include "../Runtime/Objects/objects.h"
+#include "../Runtime/Values/valueHelpers.h"
+#include "../Runtime/Values/valueHelpersInline.cpp"
+
+#include <string>
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
     llvm::Function::Create(llvm::FunctionType::get(returnType, {__VA_ARGS__}, isVarArg), llvm::Function::ExternalLinkage, #name, module)
@@ -22,7 +25,7 @@ llvm::Type* llvmHelpers::getESLValType(llvm::LLVMContext& ctx){
     return llvm::PointerType::get(ctx, 1);
 }
 
-void createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+void createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<std::string, llvm::Type*>& types){
     types["Obj"] = llvm::StructType::create(ctx, {TYPE(Int8), TYPE(Int8)}, "Obj");
     types["ObjPtr"] = PTR_TY(types["Obj"]);
     types["ObjString"] = llvm::StructType::create(ctx, {types["Obj"], TYPE(Int32)}, "ObjString");
@@ -51,10 +54,10 @@ void createInternalTypes(llvm::LLVMContext &ctx, ankerl::unordered_dense::map<st
 }
 
 void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
-                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types);
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<std::string, llvm::Type*>& types);
 
 void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMContext& ctx,
-                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
+                                             llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<std::string, llvm::Type*>& types){
     createInternalTypes(ctx, types);
     llvm::Type* eslValTy = getESLValType(ctx);
     auto fn = wrapFn(CREATE_FUNC(runtimeError, false, TYPE(Void), PTR_TY(TYPE(Int8)), TYPE(Int8), TYPE(Int64), TYPE(Int64), TYPE(Int64)));
@@ -139,8 +142,8 @@ static llvm::Constant* ESLConstToI64(llvm::Constant* constant){
 
 
 void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
-                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<string, llvm::Type*>& types){
-    auto createFunc = [&](const string& name, llvm::FunctionType *FT){
+                              llvm::IRBuilder<>& builder, ankerl::unordered_dense::map<std::string, llvm::Type*>& types){
+    auto createFunc = [&](const std::string& name, llvm::FunctionType *FT){
         llvm::Function *F = llvm::Function::Create(FT, llvm::Function::PrivateLinkage, name, module);
         llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx, "entry", F);
         builder.SetInsertPoint(BB);
