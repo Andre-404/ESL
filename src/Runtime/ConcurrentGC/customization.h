@@ -3,6 +3,9 @@
 #include "managed.h"
 #include <functional>
 
+#include "../Objects/objects.h"
+#include "../Values/valueHelpersInline.cpp"
+
 namespace gc {
     uint8_t* to_possible_ptr(size_t word);
     managed* to_accurate_ptr(size_t word);

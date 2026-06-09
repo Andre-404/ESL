@@ -17,6 +17,16 @@ using namespace gc::detail;
     return buf->push(obj);
 }
 
+void marker::flush_wbbuf(mark_buf* buf) {
+    if (buf->empty()) return;
+    auto to_send = _bufs.pop_empty();
+    while (auto obj = buf->pop()) {
+        auto res = push_obj(to_send, obj);
+        assert(!res);
+    }
+    push_buf(to_send);
+}
+
 void marker::scan_globals(std::span<size_t*> roots)  {
     auto buf = _bufs.pop_empty();
     auto mark = [&](managed* obj) {

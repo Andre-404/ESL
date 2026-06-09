@@ -377,7 +377,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         builder.CreateStore(obj, slot);
         builder.CreateStore(cnt, mark_buf);
 
-        cond = builder.CreateICmpEQ(cnt, builder.getInt64(64));
+        cond = builder.CreateICmpEQ(cnt, builder.getInt64(128));
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, { cond, builder.getInt1(false)});
 
         llvm::BasicBlock* full_buf = llvm::BasicBlock::Create(ctx, "full_buf");

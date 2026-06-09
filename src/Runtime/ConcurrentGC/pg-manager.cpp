@@ -76,10 +76,10 @@ void pg_manager::dealloc_pgs(pg_meta *head)  {
     if (!to_del) return;
 
     auto del_tail = to_del;
-    while (del_tail->next()) {
+    do {
         _active.remove(del_tail);
         del_tail = del_tail->next();
-    }
+    } while (del_tail);
     _allocator.dealloc_pgs(to_del, del_tail);
 
 }

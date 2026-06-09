@@ -94,6 +94,7 @@ std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(p
         if (pg->has_pinned() || live >= _evac_threshold*cap) {
             if (live < cap) target.push_back(pg);
             needed_space -= cap - live;
+            assert(live <= cap);
         } else {
             needed_space += live;
             if (live > 0) source.push_back(pg);

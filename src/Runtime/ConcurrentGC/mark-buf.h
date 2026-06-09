@@ -7,7 +7,7 @@
 namespace gc::detail {
     class mark_buf : public tnode<mark_buf> {
         size_t _cnt;
-        std::array<managed*, 64> _data;
+        std::array<managed*, 128> _data;
     public:
         mark_buf() : _cnt(0), _data(){};
 

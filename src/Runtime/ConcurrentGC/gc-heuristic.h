@@ -69,10 +69,18 @@ namespace gc::detail {
 
         bool should_copy() const {  return _should_copy; }
         size_t heap_trigger() const { return _trigger_sz; }
+        size_t stw_trigger() const { return _live_size * (1 + head_room); }
 
         size_t get_live_size() const { return _live_size; }
 
-        void set_mark_ms(size_t ms) { _mark_ms = ms; }
+        void mark_start() {
+            auto tmp = std::chrono::steady_clock::now().time_since_epoch();
+            _mark_ms = std::chrono::duration_cast<std::chrono::milliseconds>(tmp).count();
+        }
+        void mark_end() {
+            auto tmp = std::chrono::steady_clock::now().time_since_epoch();
+            _mark_ms = std::chrono::duration_cast<std::chrono::milliseconds>(tmp).count() - _mark_ms;
+        }
         void set_copy_ms(size_t ms) { _copy_ms = ms; }
     };
 }

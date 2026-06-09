@@ -101,12 +101,14 @@ size_t collector::stw_phase() {
     _synchronizer.wait_on_all_ack();
     auto snapshot = _alloc_sz.load();
     auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
+    set_state(gc_state::none); // Every thread has stopped at this point so this is safe to do
 
     for (auto t : blocked) phase1(t, copying_collection);
     _marker.scan_globals(_roots);
 
     while (_marker.trace_n(config::trace_batch)) {}
     _gate.arrive_and_wait();
+    _heuristic.mark_end();
 
     if (copying_collection) [[unlikely]] {
         auto copy_start = std::chrono::steady_clock::now();
@@ -148,15 +150,15 @@ void collector::end_cycle(size_t alloc_snapshot) {
     while (true) {
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
         _collection_req.wait(request_type::none);
-        auto mark_start = std::chrono::steady_clock::now();
+        _heuristic.mark_start();
         mark_phase();
 
-        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
+        while (_marker.trace_n(config::trace_batch))
+            if (_alloc_sz > _heuristic.stw_trigger() || should_force_stw()) break;
         _synchronizer.wait_on_all_ack();
         // Drain again after all acks
-        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
-
-        _heuristic.set_mark_ms(ms_diff(mark_start));
+        while (_marker.trace_n(config::trace_batch))
+            if (_alloc_sz > _heuristic.stw_trigger() || should_force_stw()) break;
 
         _gate.register_waiter();
         auto snapshot = stw_phase();
@@ -235,8 +237,7 @@ void collector::delete_tcb(tcb *t) {
 
 void collector::flush_wbbuf(tcb *t) {
     auto& info = t->get_mark_info();
-    _marker.push_buf(info.get_wbbuf());
-    info.set_wbbuf(_marker.get_buf());
+    _marker.flush_wbbuf(info.get_wbbuf());
 }
 
 void collector::register_root(size_t *root) {
@@ -252,11 +253,12 @@ managed *collector::alloc(size_t sz, tcb * t) {
     }
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
+    auto is_marking = _gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking;
     if (debt > config::debt_trigger) {
-        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking)
-            _marker.trace_n(debt);
+        if (is_marking) _marker.trace_n(debt);
 
-        if(_alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt > _heuristic.heap_trigger()) {
+        auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
+        if(heap_sz > _heuristic.heap_trigger()) {
             auto old = request_type::none;
             if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
                 _collection_req.notify_all();
@@ -269,5 +271,6 @@ managed *collector::alloc(size_t sz, tcb * t) {
 void collector::process_pending(tcb *t) {
     auto& mark_info = t->get_mark_info();
     mark_info.capture_ctx();
+    flush_wbbuf(t);
     _synchronizer.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
 }

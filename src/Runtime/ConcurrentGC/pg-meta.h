@@ -5,6 +5,7 @@
 #include <memory>
 #include <cstring>
 #include <algorithm>
+#include <cassert>
 
 namespace gc::detail {
     class dual_bitmap {
@@ -131,6 +132,7 @@ namespace gc::detail {
             auto res = ref.fetch_or(1 << in_byte, std::memory_order_acq_rel);
             if (res & (1 << in_byte)) return false;
             add_live();
+            assert(live_count() <= block_cnt());
             return true;
         }
         void clear_mark_bitmap() const { _bitmap.clear_mark(); }

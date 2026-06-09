@@ -51,7 +51,7 @@ namespace gc {
         constexpr int64_t debt_trigger = 100 * (1 << 10);
 
         constexpr size_t empty_mark_bufs_limit = 256;
-        constexpr double dead_commited_to_live_ratio = 0.10;
+        constexpr double dead_commited_to_live_ratio = 0.3;
         constexpr size_t trace_batch = 4 * (1 << 20);
         constexpr double copy_evac_threshold = 0.85;
     }

@@ -69,6 +69,7 @@ namespace gc::detail {
                 _l2_idx++;
                 if (_l2_idx >= config::l2_sz) {
                     _l2_idx = 0;
+                    _l1_idx++;
                     next_l2();
                 }
                 return *this;

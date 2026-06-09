@@ -28,6 +28,8 @@ namespace gc::detail {
             else _bufs.push_empty(buf);
         }
 
+        void flush_wbbuf(mark_buf* buf);
+
         void scan_globals(std::span<size_t*> globals);
 
         template<typename F>
