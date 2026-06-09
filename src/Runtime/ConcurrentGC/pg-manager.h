@@ -66,7 +66,7 @@ namespace gc::detail {
                 next_l2();
             }
             cache_iter& operator++() {
-                _l1_idx++;
+                _l2_idx++;
                 if (_l2_idx >= config::l2_sz) {
                     _l2_idx = 0;
                     next_l2();

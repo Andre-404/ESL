@@ -8,6 +8,8 @@
 
 using namespace gc::detail;
 
+// TODO: handle rare case of failure when allocating
+
 pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
 #ifdef _WIN32
     void* page = VirtualAlloc(nullptr, config::page_sz * num_pgs, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);

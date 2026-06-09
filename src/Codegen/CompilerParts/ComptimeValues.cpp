@@ -32,6 +32,10 @@ llvm::Constant* ComptimeValues::createMethodObj(const std::string& name, uint8_t
 llvm::Constant* ComptimeValues::createConstObjHeader(int type) const {
     return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(_b.getContext(), "Obj"), _b.getInt8(4), _b.getInt8(type));
 }
+// Instead of unmanaged we put none
+llvm::Constant* ComptimeValues::createObjHeader(int type) const {
+    return llvm::ConstantStruct::get(llvm::StructType::getTypeByName(_b.getContext(), "Obj"), _b.getInt8(0), _b.getInt8(type));
+}
 
 llvm::Constant* ComptimeValues::constObjToVal(llvm::Constant* obj, uint8_t type) const {
     auto val = llvm::ConstantExpr::getPtrToInt(obj, _b.getInt64Ty());

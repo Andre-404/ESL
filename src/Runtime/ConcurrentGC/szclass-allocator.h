@@ -8,7 +8,6 @@ namespace gc::detail {
         pg_meta* _start;
         obj_allocator _allocator;
 
-        // TODO: this is inefficient, can we skip entire full pages somehow?
         bool find_next_free() {
             auto pg = cur();
             if (!pg->next()) return false;
@@ -26,8 +25,12 @@ namespace gc::detail {
 
             if (auto res = _allocator.allocate()) [[likely]] return res;
             _allocator.flush_cache();
-            if (!find_next_free()) [[unlikely]] return nullptr;
-            return _allocator.allocate();
+            managed* res = nullptr;
+            do {
+                if (!find_next_free()) [[unlikely]] return nullptr;
+                res = _allocator.allocate();
+            } while(res == nullptr);
+            return res;
         }
 
         void push_pg(pg_meta* pg) {

@@ -51,10 +51,10 @@ namespace gc::detail {
         }
         // Page mutators, shared by stw_phase and phases
         auto copy_objs_fn() const {
-            return [this](pg_meta* start) { _copier.copy_objects(start); return start; };
+            return [this](pg_meta* start) { if (start) _copier.copy_objects(start); return start; };
         }
         auto update_ptrs_fn() const {
-            return [this](pg_meta* start) { _copier.update_ptrs(start); return start; };
+            return [this](pg_meta* start) { if (start) _copier.update_ptrs(start); return start; };
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {

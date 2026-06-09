@@ -366,6 +366,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         auto tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
         auto mark_buf = builder.CreateConstGEP1_32(builder.getInt64Ty(), tcb, 3);
         mark_buf = builder.CreateLoad(builder.getPtrTy(), mark_buf);
+        mark_buf = builder.CreateConstGEP1_32(builder.getInt64Ty(), mark_buf, 1); // Skip over next ptr of linked list
 
         llvm::Value* cnt = builder.CreateLoad(builder.getInt64Ty(), mark_buf);
         cnt = builder.CreateAdd(cnt, builder.getInt64(1));

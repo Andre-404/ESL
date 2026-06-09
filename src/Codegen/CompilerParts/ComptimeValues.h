@@ -17,6 +17,7 @@ class ComptimeValues {
     llvm::Constant* createMethodObj(const std::string& name, uint8_t arity, llvm::Function* method_ptr);
     llvm::Constant* createESLString(const std::string& str);
     llvm::Constant* createConstObjHeader(int type) const;
+    llvm::Constant* createObjHeader(int type) const;
     llvm::Constant* constObjToVal(llvm::Constant* obj, uint8_t type) const;
     llvm::GlobalVariable* storeConstObj(llvm::Constant* obj) const;
     auto ESL_strings() { return ESLStrings | std::views::values; }

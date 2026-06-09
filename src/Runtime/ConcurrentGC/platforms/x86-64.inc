@@ -20,7 +20,6 @@ __attribute__((noinline)) inline void* read_stack() {
     return sp;
 }
 
-// TODO: decide which reg we're gonna use for tcb
 __attribute__((noinline)) inline void* read_tcb() {
     void *sp;
     asm volatile("mov %%r15, %0" : "=r"(sp));

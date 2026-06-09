@@ -245,20 +245,23 @@ void collector::register_root(size_t *root) {
 
 managed *collector::alloc(size_t sz, tcb * t) {
     auto& arena = t->get_arena();
-    if (arena.get_debt() > config::debt_trigger) {
-        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking)
-            arena.remove_debt(_marker.trace_n(config::debt_trigger));
-
-    }
     auto res = arena.alloc(sz, _pg_manager);
     if (!res) [[unlikely]] {
         force_collection(sz, t);
         return alloc(sz, t);
     }
-    if(_alloc_sz.fetch_add(sz, std::memory_order_relaxed) + sz > _heuristic.heap_trigger()
-        && _collection_req.load(std::memory_order_acquire) == request_type::none) {
-        _collection_req = request_type::normal;
-        _collection_req.notify_all();
+    // Only add size when allocation goes through
+    auto debt = arena.get_debt();
+    if (debt > config::debt_trigger) {
+        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking)
+            _marker.trace_n(debt);
+
+        if(_alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt > _heuristic.heap_trigger()) {
+            auto old = request_type::none;
+            if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
+                _collection_req.notify_all();
+        }
+        arena.remove_debt(debt);
     }
     return res;
 }
