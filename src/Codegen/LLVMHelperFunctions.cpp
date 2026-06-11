@@ -247,7 +247,8 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
 
         auto *R15MD   = llvm::MDNode::get(ctx, { llvm::MDString::get(ctx, "r15") });
         auto *MDAsVal = llvm::MetadataAsValue::get(ctx, R15MD);
-        auto tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        llvm::Value* tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        tcb = builder.CreateIntToPtr(tcb, builder.getPtrTy());
         auto gep = builder.CreateConstGEP1_32(builder.getInt64Ty(), tcb, 2);
         auto load = builder.CreateLoad(builder.getInt64Ty(), gep);
         load->setAtomic(llvm::AtomicOrdering::Monotonic);
@@ -331,17 +332,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         builder.CreateRet(tmp);
         llvm::verifyFunction(*F);
     }
-    {
-        llvm::Function *F = createFunc("arrWriteBarrier",llvm::FunctionType::get(TYPE(Void), {types["ObjArrayPtr"], eslValTy}, false));
-        llvm::Value* ptr = builder.CreateConstInBoundsGEP2_32(types["ObjArray"], F->getArg(0), 0, 1);
-        llvm::Value* tmp = builder.CreateLoad(TYPE(Int8), ptr, "has.obj");
-        llvm::Value* isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(1));
-        isObj = builder.CreateZExt(isObj, TYPE(Int8));
-        tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
-        builder.CreateStore(tmp, ptr);
-        builder.CreateRetVoid();
-        llvm::verifyFunction(*F);
-    }
+
     // Really funky since i dont want to define the tcb as a struct
     {
         llvm::Function *F = createFunc("gc_write_barrier",llvm::FunctionType::get(TYPE(Void), { eslValTy }, false));
@@ -350,7 +341,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         auto flag1 = builder.CreateICmpNE(flag, builder.getInt8(0));
         auto isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(0));
         llvm::BasicBlock* inactiveWB = llvm::BasicBlock::Create(ctx, "inactive", F);
-        llvm::BasicBlock* activeWB = llvm::BasicBlock::Create(ctx, "checkClassType");
+        llvm::BasicBlock* activeWB = llvm::BasicBlock::Create(ctx, "active");
 
         auto cond = builder.CreateAnd(flag1, isObj);
         cond = builder.CreateIntrinsic(builder.getInt1Ty(), llvm::Intrinsic::expect, { cond, builder.getInt1(false)});
@@ -363,7 +354,8 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
 
         auto *R15MD   = llvm::MDNode::get(ctx, { llvm::MDString::get(ctx, "r15") });
         auto *MDAsVal = llvm::MetadataAsValue::get(ctx, R15MD);
-        auto tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        llvm::Value* tcb = builder.CreateIntrinsic(builder.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal });
+        tcb = builder.CreateIntToPtr(tcb, builder.getPtrTy());
         auto mark_buf = builder.CreateConstGEP1_32(builder.getInt64Ty(), tcb, 3);
         mark_buf = builder.CreateLoad(builder.getPtrTy(), mark_buf);
         mark_buf = builder.CreateConstGEP1_32(builder.getInt64Ty(), mark_buf, 1); // Skip over next ptr of linked list
@@ -391,6 +383,18 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
 
         builder.CreateCall(module.getFunction("flush_wb"));
 
+        builder.CreateRetVoid();
+        llvm::verifyFunction(*F);
+    }
+
+    {
+        llvm::Function *F = createFunc("arrWriteBarrier",llvm::FunctionType::get(TYPE(Void), {types["ObjArrayPtr"], eslValTy}, false));
+        llvm::Value* ptr = builder.CreateConstInBoundsGEP2_32(types["ObjArray"], F->getArg(0), 0, 1);
+        llvm::Value* tmp = builder.CreateLoad(TYPE(Int8), ptr, "has.obj");
+        llvm::Value* isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(1));
+        isObj = builder.CreateZExt(isObj, TYPE(Int8));
+        tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
+        builder.CreateStore(tmp, ptr);
         builder.CreateRetVoid();
         llvm::verifyFunction(*F);
     }

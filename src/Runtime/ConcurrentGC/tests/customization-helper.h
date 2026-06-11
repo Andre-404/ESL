@@ -31,4 +31,4 @@ namespace gc::detail::test_custom {
 
     inline hook_set hooks;
 
-} // namespace gc::detail::test_custom
+}

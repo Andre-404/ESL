@@ -29,6 +29,10 @@ namespace gc::detail {
             auto ptr = std::assume_aligned<8>(mark_bits());
             memset(ptr, 0, _bitmap_size);
         }
+        void clear_both() {
+            auto ptr = std::assume_aligned<8>((uint8_t*)this + sizeof(dual_bitmap));
+            memset(ptr, 0, _bitmap_size*2);
+        }
     };
     class pg_meta : public tnode<pg_meta> {
         // Number of objects live in the last gc cycle
@@ -38,7 +42,7 @@ namespace gc::detail {
         std::atomic<uint16_t> _num_live;
         std::atomic<uint8_t> _has_pinned;
         // Padding is here because dual_bitmap assumes its bitmap comes after the class itself
-        char _[4];
+        char _[5];
         dual_bitmap _bitmap;
 
         static constexpr auto mapping = []() constexpr {
@@ -64,8 +68,12 @@ namespace gc::detail {
         void add_live() { _num_live.fetch_add(1, std::memory_order_relaxed); }
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
     public:
-        explicit pg_meta(size_t block_sz) : _block_sz(block_sz), _num_live(0), _block_cnt(block_cnt(block_sz)),
-            _slot_start(32 + 2 * bitmap_sz(_block_cnt)), _has_pinned(false), _bitmap(bitmap_sz(_block_cnt)) {}
+        explicit pg_meta(size_t block_sz) : _block_sz(block_sz), _block_cnt(block_cnt(block_sz)), _slot_start(32 + 2 * bitmap_sz(_block_cnt)),
+                                            _num_live(0), _has_pinned(false), _{},
+                                            _bitmap(bitmap_sz(_block_cnt)) {
+            // Pages for large objects are created when an object of that size is needed, thus creating a large obj page == allocating large obj
+            if (config::sz_to_class(_block_sz) == -1) _bitmap.alloc_bits()[0] = 1;
+        }
 
         class pg_slots_iter {
             const pg_meta* _pg;
@@ -101,7 +109,7 @@ namespace gc::detail {
 
             auto idx = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;
             size_t* p =(size_t*)_bitmap.alloc_bits();
-            if (p[idx / 64] & (1 << idx % 64)) return ptr;
+            if (p[idx / 64] & (1ull << idx % 64)) return ptr;
             return nullptr;
         }
 
@@ -119,7 +127,7 @@ namespace gc::detail {
             _num_live = 0;
             _has_pinned = false;
             // Only empty pages get recycled, and their allocated bitmap is empty
-            _bitmap.clear_mark();
+            _bitmap.clear_both();
         }
 
         bool record_mark(managed* ptr, bool is_pinned) {

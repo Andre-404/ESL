@@ -60,17 +60,22 @@ void copier::copy_objects(pg_meta *pg_list) const {
 }
 
 void copier::update_ptrs(pg_meta *pg) const  {
-    if (pg->live_count() == 0) return;
-
-    auto iter = pg_meta::pg_slots_iter { pg, 0 };
-
-    while (!iter.at_end()) {
-        auto obj = iter.get();
-        if (iter.is_marked()) {
-            if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
-            obj_update_ptrs(obj);
+    while (pg) {
+        if (pg->live_count() == 0) {
+            pg = pg->next();
+            continue;
         }
-        iter.next();
+        auto iter = pg_meta::pg_slots_iter { pg, 0 };
+
+        while (!iter.at_end()) {
+            auto obj = iter.get();
+            if (iter.is_marked()) {
+                if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
+                obj_update_ptrs(obj);
+            }
+            iter.next();
+        }
+        pg = pg->next();
     }
 }
 

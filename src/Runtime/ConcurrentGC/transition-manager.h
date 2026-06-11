@@ -91,7 +91,7 @@ namespace gc::detail {
                 }
                 // Only way to enter this function is from running_pending or running, everything else violates invariant
                 assert(state == thd_state::running);
-                if (t->try_transition(state, thd_state::blocked)) break;
+                if (t->try_transition(thd_state::running, thd_state::blocked)) break;
             }
         }
 
@@ -107,7 +107,7 @@ namespace gc::detail {
                     t->wait_transition(thd_state::handshaking); continue;
                 }
                 assert(state == thd_state::blocked);
-                if (t->try_transition(state, thd_state::running)) break;
+                if (t->try_transition(thd_state::blocked, thd_state::running)) break;
             }
         }
 
@@ -121,7 +121,7 @@ namespace gc::detail {
                     execute_pending(t, std::forward<F>(exec));
                     continue;
                 }
-                if (t->try_transition(state, thd_state::dead)) break;
+                if (t->try_transition(thd_state::running, thd_state::dead)) break;
             }
         }
 

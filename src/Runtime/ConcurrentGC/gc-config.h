@@ -43,7 +43,7 @@ namespace gc {
         constexpr size_t l1_bits = 16;
         constexpr size_t l2_bits = heap_bits - l1_bits - pg_bits;
 
-        constexpr size_t page_sz = 1 << pg_bits;
+        constexpr size_t page_sz = 1ull << pg_bits;
         constexpr size_t heap_max_sz = 1ull << heap_bits;
         constexpr size_t l1_sz = 1ull << l1_bits;
         constexpr size_t l2_sz = 1ull << l2_bits;

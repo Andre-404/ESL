@@ -8,7 +8,6 @@ namespace gc {
         auto type = m->get_type_id();
         return type == +ty::ARRAY
             || type == +ty::CLOSURE
-            || type == +ty::ARRAY_STORAGE_HEADER
             || type == +ty::INSTANCE
             || type == +ty::HASH_MAP;
     }
@@ -143,7 +142,7 @@ namespace gc {
                 }
                 break;
             }
-            default: break; // Not traceable
+            default: assert(false && "nontraceable objects should never get to here");
         }
     }
 }

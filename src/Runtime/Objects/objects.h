@@ -7,7 +7,7 @@
 
 namespace object {
 
-    enum class ObjType {
+    enum class ObjType : uint8_t {
         DEALLOCATED,
         STRING,
         CLOSURE,

@@ -136,7 +136,7 @@ size_t collector::stw_phase() {
 
 void collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
-    _heuristic.calc(_pruner.get_ppg_frag(), _alloc_sz, _pruner.get_live_size());
+    _heuristic.calc(_pruner.get_ppg_frag(), alloc_snapshot, _pruner.get_live_size());
     _pruner.reset();
     _pg_manager.set_empty_limit(_heuristic.get_live_size() * config::dead_commited_to_live_ratio);
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
@@ -215,6 +215,7 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
 void collector::delete_tcb(tcb *t) {
     auto& mark_info = t->get_mark_info();
     mark_info.capture_ctx();
+    flush_wbbuf(t);
     // Invariant: every live object must be reachable by the GC at all times - via
     // a pending request to a running thread or by reading a blocked thread's
     // resources. Setting a thread DEAD removes its resources from both paths, so
@@ -271,6 +272,7 @@ managed *collector::alloc(size_t sz, tcb * t) {
 void collector::process_pending(tcb *t) {
     auto& mark_info = t->get_mark_info();
     mark_info.capture_ctx();
+    t->get_arena().flush_alloc_caches();
     flush_wbbuf(t);
     _synchronizer.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
 }

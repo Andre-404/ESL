@@ -20,10 +20,12 @@ namespace gc::detail {
         // Outputs
         size_t _trigger_sz;
         bool _should_copy;
+        size_t _cycles;
 
         constexpr static size_t start_heap = 20 << 20;
         constexpr static size_t heap_max = 1ull << 40;
         constexpr static double head_room = 1.0;
+        constexpr static double min_head_room_ratio = 0.25;
         constexpr static double beta = 3;
         constexpr static double fixed_copy_cost_ms = 1;
 
@@ -42,8 +44,9 @@ namespace gc::detail {
             return res;
         }
     public:
-        gc_heuristics() : _alloc_rate(0), _mark_rate(200000.0), _copy_rate(500000.0), _mark_ms(0), _copy_ms(0), _live_size(0),
-                          _trigger_sz(start_heap), _should_copy(false) {
+        gc_heuristics() : _alloc_rate(0), _mark_rate(200000.0), _copy_rate(500000.0), _mark_ms(0), _copy_ms(0),
+                          _live_size(0),
+                          _trigger_sz(start_heap), _should_copy(false), _cycles(0) {
             _start = std::chrono::steady_clock::now();
         }
 
@@ -52,7 +55,7 @@ namespace gc::detail {
             _start = std::chrono::steady_clock::now();
             auto diff = _start - tmp;
             _live_size = live_sz;
-            _alloc_rate = (double)alloc_sz / std::min(1l, std::chrono::duration_cast<std::chrono::milliseconds>(diff).count());
+            _alloc_rate = (double)alloc_sz / std::max(1l, std::chrono::duration_cast<std::chrono::milliseconds>(diff).count());
             auto mark_rate = _mark_ms == 0 ? _mark_rate : (double)_live_size / _mark_ms;
             auto copy_rate = _copy_ms == 0 ? _copy_rate : (double)_live_size / _copy_ms;
             _mark_rate = 0.7 * _mark_rate + 0.3 * mark_rate;
@@ -60,16 +63,22 @@ namespace gc::detail {
 
             auto [pages_freed, live_bytes] = calc_pgs_freed(ppg_frag);
             auto bytes_saved = pages_freed * config::page_sz;
-
-            // TODO: think of a better cap
-            _trigger_sz = std::max((double)start_heap, live_sz * (1 + head_room - std::min(1.0, _alloc_rate / _mark_rate)));
-            _trigger_sz = std::min(heap_max / 2, _trigger_sz);
             _should_copy = bytes_saved / _alloc_rate > fixed_copy_cost_ms + beta * live_bytes / _copy_rate;
+
+            // TODO: think of a better cap and calculate the cap before stw finishes somehow?
+            auto pressure = std::min(1.0, _alloc_rate / std::max(_mark_rate, 1.0));
+            double headroom = std::max(min_head_room_ratio * head_room, head_room - pressure * head_room);
+            double target = live_sz * (1.0 + headroom);
+            double floor = std::max<double>(start_heap, live_sz);
+
+            _trigger_sz = std::clamp(target, floor, heap_max / 2.0);
+            _cycles++;
         }
 
         bool should_copy() const {  return _should_copy; }
         size_t heap_trigger() const { return _trigger_sz; }
-        size_t stw_trigger() const { return _live_size * (1 + head_room); }
+        // TODO: think this through more carefully
+        size_t stw_trigger() const { return _live_size * (1 + head_room*2); }
 
         size_t get_live_size() const { return _live_size; }
 

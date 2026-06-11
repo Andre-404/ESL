@@ -53,26 +53,27 @@ void pg_manager::dealloc_pgs(pg_meta *head)  {
     if (!head) return;
     auto tail = head;
     if (is_large_pg(head)) {
-        while (tail->next()) {
+        do {
             for (auto i = 0; i < tail->block_sz() / config::page_sz + 1; i++) {
                 auto offset = (pg_meta*)((uint8_t*)tail + i * config::page_sz);
                 _active.remove(offset);
             }
             tail = tail->next();
-        }
+        } while (tail);
         // Eagerly decommit big objs to free up memory
         _allocator.dealloc_pgs(head, tail);
         return;
     }
-
+    pg_meta* to_del = nullptr;
     for (;; tail = tail->next()) {
         _active.remove(tail);
         _empty_cnt.fetch_add(1, std::memory_order_relaxed);
-        if (!tail->next() || _empty_cnt >= _empty_limit) break;
+        if (!tail->next() || _empty_cnt >= _empty_limit) {
+            to_del = tail->next();
+            _empty.lfpush_range(head, tail);
+            break;
+        }
     }
-    auto to_del = tail->next();
-    _empty.lfpush_range(head, tail);
-
     if (!to_del) return;
 
     auto del_tail = to_del;

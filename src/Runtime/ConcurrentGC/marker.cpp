@@ -22,7 +22,7 @@ void marker::flush_wbbuf(mark_buf* buf) {
     auto to_send = _bufs.pop_empty();
     while (auto obj = buf->pop()) {
         auto res = push_obj(to_send, obj);
-        assert(!res);
+        assert(!(res && !buf->empty()));
     }
     push_buf(to_send);
 }
@@ -45,10 +45,7 @@ size_t marker::trace_n(size_t bytes)  {
 
     auto side = _bufs.pop_empty();
     std::function mark = [&](managed* obj) {
-        if (main->full()) [[unlikely]] {
-            if (side->full()) [[unlikely]] main = replace_buf(main);
-            else std::swap(side, main);
-        }
+        if (main->full()) [[unlikely]] main = replace_buf(main);
         // TODO: this needs to be after the full checks because of the swaps we do while reading, any other way to optimize this?
         (void)push_obj(main, obj);
     };
@@ -69,7 +66,7 @@ size_t marker::trace_n(size_t bytes)  {
             }
             continue;
         }
-
+        assert(obj_traceable(obj));
         cnt += obj_size(obj);
         obj_trace(obj, mark);
     }

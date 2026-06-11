@@ -366,11 +366,21 @@ llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
     bool optRhs = exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER));
 
-    if(exprIsComplexType(expr->collection, types::TypeFlag::ARRAY))
-        return setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,expr->dbgInfo.op);
+    if(exprIsComplexType(expr->collection, types::TypeFlag::ARRAY)) {
+        auto el = setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,expr->dbgInfo.op);
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { el });
+        }
+        return el;
+    }
 
-    if(exprIsComplexType(expr->collection, types::TypeFlag::HASHMAP))
-        return setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,expr->dbgInfo.op);
+    if(exprIsComplexType(expr->collection, types::TypeFlag::HASHMAP)) {
+        auto el = setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,expr->dbgInfo.op);
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { el });
+        }
+        return el;
+    }
 
     // Uses switch instead of chained comparisons, this should be faster?
     llvm::Function *F = builder.GetInsertBlock()->getParent();

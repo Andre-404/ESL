@@ -117,11 +117,13 @@ ObjArray::ObjArray() : Obj(ObjType::ARRAY, false) {
     containsObjects = 0;
     storage = ObjArrayStorage::allocArray(8);
     size = 0;
+    gc::write_b(storage);
 }
 ObjArray::ObjArray(const size_t _size) : Obj(ObjType::ARRAY, false) {
     containsObjects = 0;
     size = _size;
     storage = ObjArrayStorage::allocArray(size);
+    gc::write_b(storage);
 }
 
 Value* ObjArray::getData(){
