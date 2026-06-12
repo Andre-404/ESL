@@ -54,7 +54,6 @@ namespace gc::detail {
             if (cache_pos < 0 || (_pos + cache_pos) >= _pg_cnt) return nullptr;
             cache_mark(cache_pos);
             auto res = calc_obj(cache_pos);
-            __builtin_prefetch(res, 1, 3);
             return res;
         }
 

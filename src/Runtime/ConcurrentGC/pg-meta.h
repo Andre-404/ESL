@@ -6,11 +6,12 @@
 #include <cstring>
 #include <algorithm>
 #include <cassert>
+#include <span>
 
 namespace gc::detail {
     class dual_bitmap {
         // Padded to 8bytes
-        uint16_t _bitmap_size;
+        const uint16_t _bitmap_size;
         uint16_t _isflipped;
     public:
         dual_bitmap() : _bitmap_size(0), _isflipped(false) {}
@@ -20,15 +21,15 @@ namespace gc::detail {
             if (_isflipped) return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
             return (uint8_t*)this + sizeof(dual_bitmap);
         }
-        size_t* mark_bits() const {
+        std::span<size_t> mark_bits() const {
             uint8_t* ptr = nullptr;
             if (_isflipped) ptr = (uint8_t*)this + sizeof(dual_bitmap);
             else ptr = (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
-            return (size_t*)ptr;
+            return { (size_t*)ptr, (size_t)(_bitmap_size / 8) };
         }
         void flip() { _isflipped = !_isflipped; }
         void clear_mark() const {
-            auto ptr = std::assume_aligned<8>(mark_bits());
+            auto ptr = std::assume_aligned<8>(mark_bits().data());
             memset(ptr, 0, _bitmap_size);
         }
         void clear_both() {
@@ -140,10 +141,11 @@ namespace gc::detail {
 
             auto ref = std::atomic_ref { _bitmap.mark_bits()[word] };
             auto res = ref.fetch_or(in_word, std::memory_order_relaxed);
-            if (res & in_word) return false;
-            add_live();
-            assert(live_count() <= block_cnt());
-            return true;
+            return (res & in_word) == 0;
+        }
+        void compute_live() {
+            auto p = _bitmap.mark_bits();
+            for (auto w : p) _num_live.fetch_add(std::popcount(w), std::memory_order_relaxed);
         }
         void clear_mark_bitmap() const { _bitmap.clear_mark(); }
         size_t& alloc_word(uint16_t pos) const {

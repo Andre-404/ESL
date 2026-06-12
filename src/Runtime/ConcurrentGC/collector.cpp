@@ -70,6 +70,8 @@ void collector::phase2(tcb* t) {
 
     while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
+    arena.mutate_owned(update_live_fn());
+    _gate.arrive_and_wait();
 
     if (copying_collection) [[unlikely]] {
         arena.mutate_owned(copy_objs_fn());
@@ -112,6 +114,10 @@ size_t collector::stw_phase() {
     _gate.arrive_and_wait();
     _heuristic.mark_end();
 
+    for (auto t : blocked) t->get_arena().mutate_owned(update_live_fn());
+    _pg_manager.mutate_owned(update_live_fn());
+    _gate.arrive_and_wait();
+
     if (copying_collection) [[unlikely]] {
         auto copy_start = std::chrono::steady_clock::now();
 
@@ -147,12 +153,13 @@ void collector::end_cycle(size_t alloc_snapshot) {
 }
 
 
-[[noreturn]] void collector::concurrent_loop() {
+void collector::concurrent_loop() {
     rpmalloc_thread_initialize();
     while (true) {
         _pg_manager.dealloc_pgs();
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
         _collection_req.wait(request_type::none);
+        if (_collection_req.load(std::memory_order_relaxed) == request_type::end) return;
         _heuristic.mark_start();
         mark_phase();
 

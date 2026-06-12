@@ -20,7 +20,8 @@ namespace gc::detail {
     enum class request_type : uint8_t {
         none = 0,
         normal = 1,
-        express = 2
+        express = 2,
+        end = 3
     };
     class collector {
         // Roughly grouped by cache lines
@@ -50,6 +51,16 @@ namespace gc::detail {
             return _collection_req.load(std::memory_order_acquire) == request_type::express;
         }
         // Page mutators, shared by stw_phase and phases
+        auto update_live_fn() const {
+            return [](pg_meta* start) {
+                auto tmp = start;
+                while (tmp) {
+                    tmp->compute_live();
+                    tmp = tmp->next();
+                }
+                return start;
+            };
+        }
         auto copy_objs_fn() const {
             return [this](pg_meta* start) { if (start) _copier.copy_objects(start); return start; };
         }
@@ -74,7 +85,7 @@ namespace gc::detail {
         size_t stw_phase();
         void end_cycle(size_t alloc_snapshot);
 
-        [[noreturn]] void concurrent_loop();
+        void concurrent_loop();
         void handle_pending(tcb* handle);
 
         [[gnu::cold]] void alloc_update(arena& a, size_t debt);
@@ -84,6 +95,8 @@ namespace gc::detail {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {
+            _collection_req = request_type::end;
+            _collection_req.notify_all();
             _worker.join();
         }
         void thd_prologue(tcb* handle);
