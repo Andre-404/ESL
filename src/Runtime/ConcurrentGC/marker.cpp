@@ -7,13 +7,14 @@ using namespace gc::detail;
 
 
 [[gnu::always_inline, nodiscard]] bool marker::push_obj(mark_buf *buf, managed *obj) {
-    if (obj->state() == move_state::unmanaged) [[unlikely]] return false;
+    auto state = obj->state();
+    auto is_traceable = obj_traceable(obj);
+    if (state == move_state::unmanaged) [[unlikely]] return false;
 
     auto pg = pg_from_obj(obj);
-    auto won = pg->record_mark(obj, obj->state() != move_state::none);
-    if (!won) return false;
+    auto won = pg->record_mark(obj, state != move_state::none);
+    if (!won || !is_traceable) return false;
 
-    if (!obj_traceable(obj)) return false;
     return buf->push(obj);
 }
 
@@ -44,7 +45,7 @@ size_t marker::trace_n(size_t bytes)  {
     if (!main) return 0;
 
     auto side = _bufs.pop_empty();
-    std::function mark = [&](managed* obj) {
+    auto mark = [&](managed* obj) {
         if (main->full()) [[unlikely]] main = replace_buf(main);
         // TODO: this needs to be after the full checks because of the swaps we do while reading, any other way to optimize this?
         (void)push_obj(main, obj);

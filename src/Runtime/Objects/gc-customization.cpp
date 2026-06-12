@@ -4,12 +4,11 @@
 
 namespace gc {
     bool obj_traceable(managed* m) {
-        using ty = object::ObjType;
         auto type = m->get_type_id();
-        return type == +ty::ARRAY
-            || type == +ty::CLOSURE
-            || type == +ty::INSTANCE
-            || type == +ty::HASH_MAP;
+        return type == +ObjType::ARRAY
+            || type == +ObjType::CLOSURE
+            || type == +ObjType::INSTANCE
+            || type == +ObjType::HASH_MAP;
     }
     size_t obj_size(managed* m) {
         auto obj = reinterpret_cast<object::Obj*>(m);
@@ -97,7 +96,7 @@ namespace gc {
         return encodeObj((object::Obj*)p);
     }
 
-    void obj_trace(managed* m, std::function<void(managed*)>& cb) {
+    void obj_trace(managed* m, function_ref<void(managed*)> cb) {
         auto obj = reinterpret_cast<object::Obj*>(m);
         switch (obj->type()) {
             case ObjType::ARRAY: {

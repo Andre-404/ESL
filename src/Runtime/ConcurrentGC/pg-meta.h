@@ -20,9 +20,11 @@ namespace gc::detail {
             if (_isflipped) return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
             return (uint8_t*)this + sizeof(dual_bitmap);
         }
-        uint8_t* mark_bits() const {
-            if (_isflipped) return (uint8_t*)this + sizeof(dual_bitmap);
-            return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
+        size_t* mark_bits() const {
+            uint8_t* ptr = nullptr;
+            if (_isflipped) ptr = (uint8_t*)this + sizeof(dual_bitmap);
+            else ptr = (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
+            return (size_t*)ptr;
         }
         void flip() { _isflipped = !_isflipped; }
         void clear_mark() const {
@@ -94,9 +96,9 @@ namespace gc::detail {
             }
 
             bool is_marked() const {
-                auto [byte, in_byte] = std::pair { _i / 8, _i % 8};
-                auto ref = std::atomic_ref { _pg->_bitmap.mark_bits()[byte] };
-                return ref.load(std::memory_order_acquire) & (1 << in_byte);
+                auto [word, in_word] = std::pair { _i / 64, 1ull << (_i % 64) };
+                auto ref = std::atomic_ref { _pg->_bitmap.mark_bits()[word] };
+                return ref.load(std::memory_order_acquire) & in_word;
             }
             size_t internal() const { return _i; };
         };
@@ -134,11 +136,11 @@ namespace gc::detail {
             if (is_pinned) set_pinned(); // Pin regardless of the fact that the mark bit is set or not
 
             auto pos = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;
-            auto [byte, in_byte] = std::pair { pos / 8, pos % 8};
+            auto [word, in_word] = std::pair { pos / 64, 1ull << (pos % 64) };
 
-            auto ref = std::atomic_ref { _bitmap.mark_bits()[byte] };
-            auto res = ref.fetch_or(1 << in_byte, std::memory_order_acq_rel);
-            if (res & (1 << in_byte)) return false;
+            auto ref = std::atomic_ref { _bitmap.mark_bits()[word] };
+            auto res = ref.fetch_or(in_word, std::memory_order_relaxed);
+            if (res & in_word) return false;
             add_live();
             assert(live_count() <= block_cnt());
             return true;

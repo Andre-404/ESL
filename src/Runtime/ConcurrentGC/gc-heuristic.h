@@ -78,7 +78,7 @@ namespace gc::detail {
         bool should_copy() const {  return _should_copy; }
         size_t heap_trigger() const { return _trigger_sz; }
         // TODO: think this through more carefully
-        size_t stw_trigger() const { return _live_size * (1 + head_room*2); }
+        size_t stw_trigger() const { return _live_size * (1 + head_room); }
 
         size_t get_live_size() const { return _live_size; }
 
