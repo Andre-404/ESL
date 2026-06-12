@@ -7,7 +7,7 @@ if(WIN32)
     set(CMAKE_CXX_FLAGS "-march=native -pthread -fno-rtti")
 else()
     set(LLVM_DIR "/usr/lib/llvm-23/lib/cmake/llvm")
-    set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic -march=native -fno-rtti")
+    set(CMAKE_CXX_FLAGS "-Wl,-no-as-needed -rdynamic -march=native -fno-rtti -flto")
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 endif()

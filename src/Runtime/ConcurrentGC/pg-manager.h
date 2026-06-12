@@ -160,6 +160,7 @@ namespace gc::detail {
         std::atomic<size_t> _empty_cnt;
         std::array<pg_list, config::szclass_cnt> _partial;
         pg_list _big;
+        pg_list _to_decommit;
         size_t _empty_limit;
         ts_cache _active;
     public:
@@ -195,6 +196,14 @@ namespace gc::detail {
         template<typename F>
         void foreach_active_pg(F func) {
             for (auto pg : _active.get_iter()) if(pg) func(pg);
+        }
+
+        void dealloc_pgs() {
+            _to_decommit.mutate([&](pg_meta* start) {
+                if (!start) return nullptr;
+                _allocator.dealloc_pgs(start, nullptr);
+                return nullptr;
+            });
         }
     };
 }

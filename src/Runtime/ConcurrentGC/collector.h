@@ -77,6 +77,8 @@ namespace gc::detail {
         [[noreturn]] void concurrent_loop();
         void handle_pending(tcb* handle);
 
+        [[gnu::cold]] void alloc_update(arena& a, size_t debt);
+
     public:
         explicit collector(uint8_t& flag) : _gc_flag(flag), _collection_req(request_type::none), _copier(config::copy_evac_threshold) {
             _worker = std::thread { &collector::concurrent_loop, this };

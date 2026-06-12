@@ -25,7 +25,7 @@ namespace gc::detail {
         constexpr static size_t start_heap = 20 << 20;
         constexpr static size_t heap_max = 1ull << 40;
         constexpr static double head_room = 1.0;
-        constexpr static double min_head_room_ratio = 0.25;
+        constexpr static double min_head_room_ratio = 0.35;
         constexpr static double beta = 3;
         constexpr static double fixed_copy_cost_ms = 1;
 

@@ -10,10 +10,7 @@ namespace gc {
         move_state _move_state;
         uint8_t _type_id;
     public:
-        managed(uint8_t type_id, move_state move_state) : _type_id(type_id) {
-            auto ref = std::atomic_ref { _move_state };
-            ref.store(move_state, std::memory_order_release);
-        }
+        managed(uint8_t type_id, move_state move_state) : _move_state(move_state), _type_id(type_id) {}
 
         // Using atomic ref so that objects can still be moveable
         // (moving happens in strictly controlled conditions so no worries about writes to old location)

@@ -48,12 +48,14 @@ namespace gc::detail {
         explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0), _pg_cnt(_pg->block_cnt()),
             _pg_off(_pg->start_off()), _pg_blk_sz(_pg->block_sz()) {}
 
-        managed* allocate() {
+        [[gnu::hot, gnu::always_inline]] managed* allocate() {
             assert(_pg);
             auto cache_pos = get_cached();
             if (cache_pos < 0 || (_pos + cache_pos) >= _pg_cnt) return nullptr;
             cache_mark(cache_pos);
-            return calc_obj(cache_pos);
+            auto res = calc_obj(cache_pos);
+            __builtin_prefetch(res, 1, 3);
+            return res;
         }
 
         void flush_cache() {

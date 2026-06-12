@@ -68,7 +68,7 @@ void collector::phase2(tcb* t) {
 
     phase1(t, copying_collection);
 
-    while (_marker.trace_n(1 << 20)) {}
+    while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
 
     if (copying_collection) [[unlikely]] {
@@ -102,11 +102,13 @@ size_t collector::stw_phase() {
     auto snapshot = _alloc_sz.load();
     auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
     set_state(gc_state::none); // Every thread has stopped at this point so this is safe to do
+    // Needs to be set before threads start deallocating pages
+    _pg_manager.set_empty_limit(snapshot * config::dead_commited_to_alloced_ratio);
 
     for (auto t : blocked) phase1(t, copying_collection);
     _marker.scan_globals(_roots);
 
-    while (_marker.trace_n(config::trace_batch)) {}
+    while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
     _heuristic.mark_end();
 
@@ -131,6 +133,7 @@ size_t collector::stw_phase() {
     _tcb_registry.with_snapshot([&](auto& thds) {
         _synchronizer.finish_stw(std::views::all(thds));
     });
+
     return snapshot;
 }
 
@@ -138,7 +141,6 @@ void collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
     _heuristic.calc(_pruner.get_ppg_frag(), alloc_snapshot, _pruner.get_live_size());
     _pruner.reset();
-    _pg_manager.set_empty_limit(_heuristic.get_live_size() * config::dead_commited_to_live_ratio);
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
     _collection_req.store(request_type::none, std::memory_order_release);
     _collection_req.notify_all();
@@ -148,6 +150,7 @@ void collector::end_cycle(size_t alloc_snapshot) {
 [[noreturn]] void collector::concurrent_loop() {
     rpmalloc_thread_initialize();
     while (true) {
+        _pg_manager.dealloc_pgs();
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
         _collection_req.wait(request_type::none);
         _heuristic.mark_start();
@@ -183,6 +186,18 @@ void collector::handle_pending(tcb* t) {
     }
     else
         assert(false && "Unreachable");
+}
+
+[[gnu::cold]] void collector::alloc_update(arena& a, size_t debt) {
+    if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking) [[unlikely]] _marker.trace_n(debt);
+
+    auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
+    if(heap_sz > _heuristic.heap_trigger()) {
+        auto old = request_type::none;
+        if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
+            _collection_req.notify_all();
+    }
+    a.remove_debt(debt);
 }
 
 void collector::thd_prologue(tcb *t) {
@@ -254,18 +269,7 @@ managed *collector::alloc(size_t sz, tcb * t) {
     }
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
-    auto is_marking = _gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking;
-    if (debt > config::debt_trigger) {
-        if (is_marking) _marker.trace_n(debt);
-
-        auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
-        if(heap_sz > _heuristic.heap_trigger()) {
-            auto old = request_type::none;
-            if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
-                _collection_req.notify_all();
-        }
-        arena.remove_debt(debt);
-    }
+    if (debt > config::debt_trigger) [[unlikely]] alloc_update(arena, debt);
     return res;
 }
 

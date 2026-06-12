@@ -17,13 +17,8 @@ namespace gc::detail {
         }
 
         pg_meta* cur() const { return _allocator.get_pg(); }
-    public:
-        szclass_allocator() : _start(nullptr) {};
 
-        [[nodiscard]] managed* alloc() {
-            if (!_allocator.get_pg()) [[unlikely]] return nullptr;
-
-            if (auto res = _allocator.allocate()) [[likely]] return res;
+        [[gnu::cold]] managed* alloc_slow() {
             _allocator.flush_cache();
             managed* res = nullptr;
             do {
@@ -31,6 +26,15 @@ namespace gc::detail {
                 res = _allocator.allocate();
             } while(res == nullptr);
             return res;
+        }
+    public:
+        szclass_allocator() : _start(nullptr) {};
+
+        [[nodiscard, gnu::hot, gnu::always_inline]] managed* alloc() {
+            if (!_allocator.get_pg()) [[unlikely]] return nullptr;
+
+            if (auto res = _allocator.allocate()) [[likely]] return res;
+            return alloc_slow();
         }
 
         void push_pg(pg_meta* pg) {
