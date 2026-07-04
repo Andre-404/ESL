@@ -24,7 +24,7 @@ namespace gc::detail {
 
         constexpr static size_t start_heap = 20 << 20;
         constexpr static size_t heap_max = 1ull << 40;
-        constexpr static double head_room = 1.0;
+        constexpr static double head_room = 0.75;
         constexpr static double min_head_room_ratio = 0.35;
         constexpr static double beta = 3;
         constexpr static double fixed_copy_cost_ms = 1;
@@ -77,9 +77,6 @@ namespace gc::detail {
 
         bool should_copy() const {  return _should_copy; }
         size_t heap_trigger() const { return _trigger_sz; }
-        // TODO: think this through more carefully
-        size_t stw_trigger() const { return _live_size * (1 + head_room); }
-
         size_t get_live_size() const { return _live_size; }
 
         void mark_start() {

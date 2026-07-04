@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32) || defined(WIN32)
     path = "C:\\Temp\\ESL-prez\\main.esl";
 #else
-    path = "/mnt/c/Temp/ESL-prez/main.esl";
+    path = string(argv[1]);
 #endif
     flag = "-jit";
 #else
@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
     ESLJIT::createJIT();
     compileCore::Compiler compiler(res.second, classes, transformer.getNativeFuncTypes(),
                                    ESLJIT::getJIT().getDL(), handler);
-    ESLJIT::getJIT().addIRModule(std::move(compiler.compile(res.first, "func.main")));
+    ESLJIT::getJIT().addIRModule(std::move(compiler.compile(std::move(res.first), "func.main")));
     MainFn mainFuncPtr = ESLJIT::getJIT().getMainFunc();
     mainFuncPtr(0, nullptr);
     return 0;

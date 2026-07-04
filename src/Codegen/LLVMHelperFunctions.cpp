@@ -123,6 +123,7 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     wrapFn(CREATE_FUNC(threadDestruct, false, TYPE(Void), ));
 
     wrapFn(CREATE_FUNC(flush_wb, false, TYPE(Void)));
+    wrapFn(CREATE_FUNC(endProgram, false, TYPE(Void)));
 
     module.getOrInsertGlobal("gcFlag", builder.getInt8Ty());
     llvm::GlobalVariable* gvar = module.getNamedGlobal("gcFlag");

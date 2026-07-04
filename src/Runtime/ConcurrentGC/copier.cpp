@@ -94,6 +94,7 @@ std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(p
     int64_t needed_space = 0;
     // Pages that have pinned objects and that are above threshold(but not completely full) become targets
     for (auto pg = pg_list; pg; pg = pg->next()) {
+        pg->compute_live();
         const auto live = pg->live_count();
         const auto cap  = pg->block_cnt();
         if (pg->has_pinned() || live >= _evac_threshold*cap) {

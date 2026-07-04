@@ -44,7 +44,9 @@ namespace gc::detail {
             for (auto cur = list; cur;) {
                 auto tmp = cur;
                 cur = cur->next();
+                __builtin_prefetch(cur, 0, 0);
                 tmp->unlink();
+                tmp->compute_live();
                 if (tmp->live_count() == 0) {
                     tmp->link(empty);
                     empty = tmp;

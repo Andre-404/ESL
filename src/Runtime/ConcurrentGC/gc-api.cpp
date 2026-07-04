@@ -9,6 +9,9 @@ namespace gc {
         rpmalloc_initialize();
         GC = new detail::collector { flag };
     }
+    void end_gc() {
+        delete GC;
+    }
     [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt) {
         return GC->create_tcb(static_cast<size_t*>(start_args), arg_cnt);
     }

@@ -188,4 +188,8 @@ EXPORT void flush_wb() {
     gc::push_wbbuf(gc::read_tcb());
 }
 
+EXPORT void endProgram() {
+    gc::end_gc();
+}
+
 #undef EXPORT

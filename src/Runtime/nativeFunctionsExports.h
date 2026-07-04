@@ -51,6 +51,11 @@ EXPORT Value as_number(ObjClosure* ptr, Value num){
     }
 }
 
+EXPORT Value to_string(ObjClosure* ptr, Value val) {
+    auto str = valueHelpers::toString(val);
+    return encodeObj(ObjString::createStr((char*)str.c_str()));
+}
+
 // doggy?
 EXPORT Value cpu_clock(ObjClosure* ptr){
     return encodeNumber(std::clock());

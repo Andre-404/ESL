@@ -5,6 +5,7 @@
 
 namespace gc {
     void init_gc(uint8_t& flag);
+    void end_gc();
     [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt);
     void init_thd(tcb_handle* handle, void* stack_start);
     void delete_tcb(tcb_handle* handle);

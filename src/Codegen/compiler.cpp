@@ -53,6 +53,8 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
         }
     });
     // Ends the main function
+    builder.CreateCall(safeGetFunc("threadDestruct"));
+    builder.CreateCall(safeGetFunc("endProgram"));
     builder.CreateRetVoid();
     llvm::verifyFunction(*inProgressFuncs.top().fn);
     llvm::verifyModule(*curModule, &llvm::errs());

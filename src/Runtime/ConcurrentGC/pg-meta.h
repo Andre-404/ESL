@@ -42,7 +42,7 @@ namespace gc::detail {
         const size_t _block_sz;
         const uint16_t _block_cnt;
         const uint16_t _slot_start;
-        std::atomic<uint16_t> _num_live;
+        uint16_t _num_live;
         std::atomic<uint8_t> _has_pinned;
         // Padding is here because dual_bitmap assumes its bitmap comes after the class itself
         char _[5];
@@ -68,7 +68,6 @@ namespace gc::detail {
         static constexpr auto bitmap_sz(size_t cnt) { return (uint16_t)((cnt + 63) / 64 * 8); }
 
         uint8_t* get_data() const { return (uint8_t*)(this) + _slot_start; }
-        void add_live() { _num_live.fetch_add(1, std::memory_order_relaxed); }
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
     public:
         explicit pg_meta(size_t block_sz) : _block_sz(block_sz), _block_cnt(block_cnt(block_sz)), _slot_start(32 + 2 * bitmap_sz(_block_cnt)),
@@ -119,7 +118,7 @@ namespace gc::detail {
         size_t block_sz() const { return _block_sz; }
         uint16_t block_cnt() const { return _block_cnt; }
         uint16_t start_off() const { return _slot_start; }
-        uint16_t live_count() const { return _num_live.load(std::memory_order_relaxed); }
+        uint16_t live_count() const { return _num_live; }
         bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
         void reset_trackers() {
             _num_live = 0;
@@ -145,7 +144,7 @@ namespace gc::detail {
         }
         void compute_live() {
             auto p = _bitmap.mark_bits();
-            for (auto w : p) _num_live.fetch_add(std::popcount(w), std::memory_order_relaxed);
+            for (auto w : p) _num_live += std::popcount(w);
         }
         void clear_mark_bitmap() const { _bitmap.clear_mark(); }
         size_t& alloc_word(uint16_t pos) const {

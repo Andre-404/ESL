@@ -3,7 +3,7 @@
 #include <iostream>
 #include <ranges>
 
-#include "../../Includes/fmt/format.h"
+#include "../../Includes/fmt/core.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 
 using namespace gc;
@@ -70,8 +70,6 @@ void collector::phase2(tcb* t) {
 
     while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
-    arena.mutate_owned(update_live_fn());
-    _gate.arrive_and_wait();
 
     if (copying_collection) [[unlikely]] {
         arena.mutate_owned(copy_objs_fn());
@@ -114,10 +112,6 @@ size_t collector::stw_phase() {
     _gate.arrive_and_wait();
     _heuristic.mark_end();
 
-    for (auto t : blocked) t->get_arena().mutate_owned(update_live_fn());
-    _pg_manager.mutate_owned(update_live_fn());
-    _gate.arrive_and_wait();
-
     if (copying_collection) [[unlikely]] {
         auto copy_start = std::chrono::steady_clock::now();
 
@@ -147,8 +141,11 @@ void collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
     _heuristic.calc(_pruner.get_ppg_frag(), alloc_snapshot, _pruner.get_live_size());
     _pruner.reset();
+
+    auto old = _collection_req.load(std::memory_order_relaxed);
+    if (old == request_type::end) return;
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
-    _collection_req.store(request_type::none, std::memory_order_release);
+    _collection_req.compare_exchange_strong(old, request_type::none, std::memory_order_release);
     _collection_req.notify_all();
 }
 
@@ -163,12 +160,10 @@ void collector::concurrent_loop() {
         _heuristic.mark_start();
         mark_phase();
 
-        while (_marker.trace_n(config::trace_batch))
-            if (_alloc_sz > _heuristic.stw_trigger() || should_force_stw()) break;
+        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
         _synchronizer.wait_on_all_ack();
-        // Drain again after all acks
-        while (_marker.trace_n(config::trace_batch))
-            if (_alloc_sz > _heuristic.stw_trigger() || should_force_stw()) break;
+        // Drain again after every thread has marked its stack
+        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
 
         _gate.register_waiter();
         auto snapshot = stw_phase();
@@ -180,7 +175,7 @@ void collector::concurrent_loop() {
     }
     rpmalloc_thread_finalize(1);
 }
-// Stw only registers us as waiters and flushes the cache, then _syncronizer will ack for us
+// Stw only registers us as waiters and flushes the cache, then _synchronizer will ack for us
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
@@ -195,16 +190,14 @@ void collector::handle_pending(tcb* t) {
         assert(false && "Unreachable");
 }
 
-[[gnu::cold]] void collector::alloc_update(arena& a, size_t debt) {
-    if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::marking) [[unlikely]] _marker.trace_n(debt);
-
+[[gnu::cold]] void collector::alloc_update(tcb* t, size_t debt) {
     auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
     if(heap_sz > _heuristic.heap_trigger()) {
         auto old = request_type::none;
         if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
             _collection_req.notify_all();
     }
-    a.remove_debt(debt);
+    t->get_arena().remove_debt(debt);
 }
 
 void collector::thd_prologue(tcb *t) {
@@ -274,9 +267,13 @@ managed *collector::alloc(size_t sz, tcb * t) {
         force_collection(sz, t);
         return alloc(sz, t);
     }
+    if (_gc_flag.load(std::memory_order_relaxed) != (uint8_t)gc_state::none) [[unlikely]] {
+        auto pg = pg_from_obj(res);
+        pg->record_mark(res, false);
+    }
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
-    if (debt > config::debt_trigger) [[unlikely]] alloc_update(arena, debt);
+    if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);
     return res;
 }
 

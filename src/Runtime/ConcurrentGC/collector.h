@@ -88,7 +88,7 @@ namespace gc::detail {
         void concurrent_loop();
         void handle_pending(tcb* handle);
 
-        [[gnu::cold]] void alloc_update(arena& a, size_t debt);
+        [[gnu::cold]] void alloc_update(tcb* t, size_t debt);
 
     public:
         explicit collector(uint8_t& flag) : _gc_flag(flag), _collection_req(request_type::none), _copier(config::copy_evac_threshold) {

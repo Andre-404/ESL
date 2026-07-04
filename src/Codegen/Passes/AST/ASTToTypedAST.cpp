@@ -1337,6 +1337,7 @@ void ASTTransformer::createNativeFn(string name, int arity, types::tyPtr retTy){
 void ASTTransformer::declareNativeFunctions(){
     using namespace types;
     createNativeFn("print", 1, getBasicType(types::TypeFlag::NIL));
+    createNativeFn("to_string", 1, getBasicType(types::TypeFlag::STRING));
     createNativeFn("ms_since_epoch", 0, getBasicType(types::TypeFlag::NUMBER));
     createNativeFn("arr_push", 2, std::make_shared<types::ArrayType>(getBasicType(types::TypeFlag::ANY)));
     createNativeFn("input", 0, getBasicType(types::TypeFlag::STRING));

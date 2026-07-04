@@ -1,7 +1,6 @@
 #pragma once
 #include <assert.h>
 #include <atomic>
-#include <functional>
 #include <cstring>
 
 #include "page-allocator.h"
