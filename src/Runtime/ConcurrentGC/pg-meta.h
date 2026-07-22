@@ -38,7 +38,7 @@ namespace gc::detail {
         }
     };
     class pg_meta : public tnode<pg_meta> {
-        // Number of objects live in the last gc cycle
+        // block_sz must be able to hold large objects so its size_t
         const size_t _block_sz;
         const uint16_t _block_cnt;
         const uint16_t _slot_start;
@@ -164,5 +164,9 @@ namespace gc::detail {
 
     inline bool is_large_pg(pg_meta* pg) {
         return config::sz_to_class(pg->block_sz()) == -1;
+    }
+
+    inline size_t large_pg_num(size_t obj_sz) {
+        return (obj_sz + config::page_sz - 1) / config::page_sz;
     }
 }

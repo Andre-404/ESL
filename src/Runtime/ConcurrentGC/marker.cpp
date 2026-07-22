@@ -37,7 +37,7 @@ void marker::scan_globals(std::span<size_t*> roots)  {
         if (auto ptr = (managed*)to_accurate_ptr(*root)) mark(ptr);
     }
 
-    buf->empty() ? _bufs.push_empty(buf) : _bufs.push_full(buf);
+    push_buf(buf);
 }
 
 size_t marker::trace_n(size_t bytes)  {
@@ -71,8 +71,8 @@ size_t marker::trace_n(size_t bytes)  {
         cnt += obj_size(obj);
         obj_trace(obj, mark);
     }
-    main->empty() ? _bufs.push_empty(main) : _bufs.push_full(main);
-    side->empty() ? _bufs.push_empty(side) : _bufs.push_full(side);
-
+    push_buf(main);
+    push_buf(side);
+    
     return cnt;
 }

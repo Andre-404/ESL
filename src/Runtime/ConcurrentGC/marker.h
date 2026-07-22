@@ -47,8 +47,8 @@ namespace gc::detail {
 
             for (const auto word : regs)
                 if (auto base_ptr = get_base(to_possible_ptr(word))) mark(base_ptr);
-
-            buf->empty() ? _bufs.push_empty(buf) : _bufs.push_full(buf);
+            
+            push_buf(buf);
         }
 
         size_t trace_n(size_t bytes);

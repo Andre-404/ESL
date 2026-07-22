@@ -1,6 +1,6 @@
 #pragma once
-#include <cstdint>
 #include <atomic>
+#include <utility>
 // Treiber stack implementation that offers non thread safe methods to modify and iterate over the stack
 // Handles ABA through pointer tagging
 namespace gc::detail {

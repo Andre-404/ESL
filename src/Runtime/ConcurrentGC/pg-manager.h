@@ -174,7 +174,7 @@ namespace gc::detail {
         pg_meta* get_big_pg(size_t obj_sz);
 
         // Thread safe
-        void release_pgs(pg_meta* first) {
+        void transfer_ownership(pg_meta* first) {
             if (!first) return;
             auto sz_class = config::sz_to_class(first->block_sz());
             if (sz_class == -1) {

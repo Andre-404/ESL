@@ -9,12 +9,6 @@
 using namespace gc;
 using namespace detail;
 
-static size_t ms_diff(auto start) {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-}
-
-static collector* GC = nullptr;
-
 enum gc_operation {
     op_mark_stack = 1,
     op_stw = 2
@@ -23,19 +17,18 @@ enum gc_operation {
 std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
     std::vector<tcb*> blocked;
     _tcb_registry.with_snapshot([&](auto& thds) {
-        set_state(s);
-        blocked = _synchronizer.post(std::views::all(thds), op);
+        _gc_flag.store((uint8_t)s, std::memory_order_release);
+        blocked = _thd_state_mngr.post(std::views::all(thds), op);
     });
     return blocked;
 }
 
 void collector::force_collection(int64_t sz, tcb* t) {
-    _collection_req.store(request_type::express);
-    _collection_req.notify_all();
+    _collection_req.request_express();
 
     int64_t snapshot = _heuristic.get_live_size() + _alloc_sz;
     set_paused(t);
-    _collection_req.wait(request_type::express);
+    _collection_req.await_express_served();
     set_resumed(t);
     if (snapshot - _heuristic.get_live_size() > sz) return;
 
@@ -44,6 +37,64 @@ void collector::force_collection(int64_t sz, tcb* t) {
         <<std::this_thread::get_id()
         <<fmt::format("failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
     std::abort();
+}
+
+size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
+    for (auto t : owned) {
+        auto& arena = t->get_arena();
+        arena.flush_alloc_caches();
+        arena.remove_debt(arena.get_debt());
+        _thd_state_mngr.ack();
+    }
+    // Have to wait for everyone to flush their alloc caches before we can start accurate marking
+    _thd_state_mngr.wait_on_all_ack();
+
+    auto copying = _collection_req.is_express() ? true : _heuristic.should_copy();
+
+    // TODO: this is the only big part of the code that is worker specific, can we move it out?
+    auto snapshot = 0ull;
+    if (is_worker) {
+        snapshot = _alloc_sz.load();
+        // Every thread has stopped at this point so this is safe to do
+        _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
+        // Needs to be set before threads start deallocating pages
+        _pg_manager.set_empty_limit(snapshot * config::dead_commited_to_alloced_ratio);
+    }
+
+    {
+        auto _ = _metrics.maybe_time(gc_metrics::phase::mark, is_worker);
+        for (auto t : owned) phase1(t, copying);
+
+        while (_marker.trace_n(config::trace_batch * 1024)) {}
+        _gate.arrive_and_wait();
+    }
+    _heuristic.mark_end();
+
+    auto for_each_owned = [&](auto f) {
+        for (auto t : owned) t->get_arena().mutate_owned(f);
+        if (is_worker) _pg_manager.mutate_owned(f);
+    };
+
+    if (copying) [[unlikely]] {
+        {
+            auto _ = _metrics.maybe_time(gc_metrics::phase::copy, is_worker);
+            
+            for_each_owned(copy_objs_fn());
+            _gate.arrive_and_wait();
+
+            for_each_owned(update_ptrs_fn());
+            if (is_worker) _copier.update_globals(_roots);
+            _gate.arrive_and_wait();
+        }
+        _heuristic.set_copy_ms(_metrics.last_whole_ms(gc_metrics::phase::copy));
+    } else _heuristic.set_copy_ms(0);
+
+    {
+        auto _ = _metrics.maybe_time(gc_metrics::phase::sweep, is_worker);
+        for_each_owned(prune_pgs_fn());
+    }
+
+    return snapshot;
 }
 
 void collector::phase1(tcb* t, bool pin) {
@@ -56,84 +107,23 @@ void collector::phase1(tcb* t, bool pin) {
 }
 
 void collector::phase2(tcb* t) {
-    auto& arena = t->get_arena();
-
-    arena.flush_alloc_caches();
-    arena.remove_debt(arena.get_debt());
-
-    // Have to wait for everyone to flush their alloc caches before we can start accurate marking
-    _synchronizer.ack();
-    _synchronizer.wait_on_all_ack();
-    auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
-
-    phase1(t, copying_collection);
-
-    while (_marker.trace_n(config::trace_batch * 1024)) {}
-    _gate.arrive_and_wait();
-
-    if (copying_collection) [[unlikely]] {
-        arena.mutate_owned(copy_objs_fn());
-        _gate.arrive_and_wait();
-        arena.mutate_owned(update_ptrs_fn());
-        _gate.arrive_and_wait();
-    }
-
-    arena.mutate_owned(prune_pgs_fn());
+    run_stw({ &t, 1 }, false);
 }
 
 void collector::mark_phase() {
     auto blocked = post_with_state(gc_state::marking, op_mark_stack);
     for (auto t : blocked) phase1(t, false);
-    _synchronizer.complete_handshake(blocked);
+    _thd_state_mngr.complete_handshake(blocked);
     _marker.scan_globals(_roots);
 }
 
 size_t collector::stw_phase() {
+    auto _ = _metrics.time(gc_metrics::phase::pause);
     auto blocked = post_with_state(gc_state::stw, op_stw);
-
-    for (auto t : blocked) {
-        auto& arena = t->get_arena();
-        arena.flush_alloc_caches();
-        arena.remove_debt(arena.get_debt());
-        _synchronizer.ack();
-    }
-    // Have to wait for everyone to flush their alloc caches before we can start accurate marking
-    _synchronizer.wait_on_all_ack();
-    auto snapshot = _alloc_sz.load();
-    auto copying_collection = should_force_stw() ? true : _heuristic.should_copy();
-    set_state(gc_state::none); // Every thread has stopped at this point so this is safe to do
-    // Needs to be set before threads start deallocating pages
-    _pg_manager.set_empty_limit(snapshot * config::dead_commited_to_alloced_ratio);
-
-    for (auto t : blocked) phase1(t, copying_collection);
-    _marker.scan_globals(_roots);
-
-    while (_marker.trace_n(config::trace_batch * 1024)) {}
-    _gate.arrive_and_wait();
-    _heuristic.mark_end();
-
-    if (copying_collection) [[unlikely]] {
-        auto copy_start = std::chrono::steady_clock::now();
-
-        for (auto t : blocked) t->get_arena().mutate_owned(copy_objs_fn());
-        _pg_manager.mutate_owned(copy_objs_fn());
-        _gate.arrive_and_wait();
-
-        for (auto t : blocked) t->get_arena().mutate_owned(update_ptrs_fn());
-        _pg_manager.mutate_owned(update_ptrs_fn());
-        _copier.update_globals(_roots);
-        _gate.arrive_and_wait();
-
-        _heuristic.set_copy_ms(ms_diff(copy_start));
-    } else _heuristic.set_copy_ms(0);
-
-    for (auto t : blocked) t->get_arena().mutate_owned(prune_pgs_fn());
-    _pg_manager.mutate_owned(prune_pgs_fn());
-
-    _tcb_registry.with_snapshot([&](auto& thds) {
-        _synchronizer.finish_stw(std::views::all(thds));
+    auto snapshot = run_stw(blocked, true);
+    _tcb_registry.with_snapshot([&](auto& thds){
+        _thd_state_mngr.finish_stw(std::views::all(thds));
     });
-
     return snapshot;
 }
 
@@ -142,11 +132,8 @@ void collector::end_cycle(size_t alloc_snapshot) {
     _heuristic.calc(_pruner.get_ppg_frag(), alloc_snapshot, _pruner.get_live_size());
     _pruner.reset();
 
-    auto old = _collection_req.load(std::memory_order_relaxed);
-    if (old == request_type::end) return;
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
-    _collection_req.compare_exchange_strong(old, request_type::none, std::memory_order_release);
-    _collection_req.notify_all();
+    _collection_req.clear();
 }
 
 
@@ -155,15 +142,14 @@ void collector::concurrent_loop() {
     while (true) {
         _pg_manager.dealloc_pgs();
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
-        _collection_req.wait(request_type::none);
-        if (_collection_req.load(std::memory_order_relaxed) == request_type::end) return;
+        if (_collection_req.await_request()) return;
         _heuristic.mark_start();
         mark_phase();
 
-        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
-        _synchronizer.wait_on_all_ack();
+        while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
+        _thd_state_mngr.wait_on_all_ack();
         // Drain again after every thread has marked its stack
-        while (_marker.trace_n(config::trace_batch)) if (should_force_stw()) break;
+        while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 
         _gate.register_waiter();
         auto snapshot = stw_phase();
@@ -175,12 +161,13 @@ void collector::concurrent_loop() {
     }
     rpmalloc_thread_finalize(1);
 }
+
 // Stw only registers us as waiters and flushes the cache, then _synchronizer will ack for us
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
         phase1(t, false);
-        _synchronizer.ack();
+        _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();
         phase2(t);
@@ -192,27 +179,23 @@ void collector::handle_pending(tcb* t) {
 
 [[gnu::cold]] void collector::alloc_update(tcb* t, size_t debt) {
     auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
-    if(heap_sz > _heuristic.heap_trigger()) {
-        auto old = request_type::none;
-        if (_collection_req.compare_exchange_strong(old, request_type::normal, std::memory_order_acq_rel))
-            _collection_req.notify_all();
-    }
+    if (heap_sz > _heuristic.heap_trigger()) _collection_req.request_normal();
     t->get_arena().remove_debt(debt);
 }
 
 void collector::thd_prologue(tcb *t) {
     rpmalloc_thread_initialize();
-    _synchronizer.prologue(t);
+    _thd_state_mngr.prologue(t);
 }
 
 void collector::set_paused(tcb *t) {
     t->get_mark_info().capture_ctx();
     flush_wbbuf(t);
-    _synchronizer.enter_blocked(t, [&](tcb* thd) { handle_pending(thd); });
+    _thd_state_mngr.enter_blocked(t, [&](tcb* thd) { handle_pending(thd); });
 }
 
 void collector::set_resumed(tcb *t) {
-    _synchronizer.exit_blocked(t);
+    _thd_state_mngr.exit_blocked(t);
 }
 
 tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
@@ -238,13 +221,13 @@ void collector::delete_tcb(tcb *t) {
     auto& arena = t->get_arena();
     arena.flush_alloc_caches();
     arena.mutate_owned([&](pg_meta* start) {
-        _pg_manager.release_pgs(start);
+        _pg_manager.transfer_ownership(start);
         return nullptr;
     });
     // Guaranteed to be a valid buf
     _marker.push_buf(mark_info.get_wbbuf());
     // Only attempt to leave after handing over resources
-    _synchronizer.thread_exit(t, [&](tcb* thd) { handle_pending(thd); });
+    _thd_state_mngr.thread_exit(t, [&](tcb* thd) { handle_pending(thd); });
     _tcb_registry.remove(t);
     // Safe to do since we removed it under lock
     rpfree(t);
@@ -282,5 +265,5 @@ void collector::process_pending(tcb *t) {
     mark_info.capture_ctx();
     t->get_arena().flush_alloc_caches();
     flush_wbbuf(t);
-    _synchronizer.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
+    _thd_state_mngr.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
 }

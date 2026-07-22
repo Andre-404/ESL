@@ -10,6 +10,8 @@
 #include "sync-point.h"
 #include "transition-manager.h"
 #include "gc-heuristic.h"
+#include "gc-metrics.h"
+#include "collection-request.h"
 
 namespace gc::detail {
     enum class gc_state : uint8_t {
@@ -17,20 +19,14 @@ namespace gc::detail {
         marking = 1,
         stw = 2
     };
-    enum class request_type : uint8_t {
-        none = 0,
-        normal = 1,
-        express = 2,
-        end = 3
-    };
     class collector {
         // Roughly grouped by cache lines
         tcb_registry _tcb_registry;
 
         std::atomic<size_t> _alloc_sz;
-        post_manager _synchronizer;
+        post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
-        std::atomic<request_type> _collection_req;
+        collection_request _collection_req;
         sync_point _gate;
         std::vector<size_t*> _roots;
 
@@ -38,18 +34,14 @@ namespace gc::detail {
         copier _copier;
 
         gc_heuristics _heuristic;
-        pruner _pruner;
-        std::thread _worker;
+        gc_metrics _metrics;
 
+        pruner _pruner;
+        
         // Intentionally last because it contains large cache
         pg_manager _pg_manager;
+        std::thread _worker;
 
-        void set_state(gc_state new_state) {
-            _gc_flag.store((uint8_t)new_state, std::memory_order_release);
-        }
-        bool should_force_stw() const {
-            return _collection_req.load(std::memory_order_acquire) == request_type::express;
-        }
         // Page mutators, shared by stw_phase and phases
         auto update_live_fn() const {
             return [](pg_meta* start) {
@@ -77,6 +69,7 @@ namespace gc::detail {
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
 
         void force_collection(int64_t sz, tcb* handle);
+        size_t run_stw(std::span<tcb*> owned, bool is_worker);
 
         // While phase1 can be serialized for multiple threads, phase2 has to make parallel progress across every thread
         void phase1(tcb* handle, bool pin);
@@ -91,12 +84,11 @@ namespace gc::detail {
         [[gnu::cold]] void alloc_update(tcb* t, size_t debt);
 
     public:
-        explicit collector(uint8_t& flag) : _gc_flag(flag), _collection_req(request_type::none), _copier(config::copy_evac_threshold) {
+        explicit collector(uint8_t& flag) : _gc_flag(flag), _copier(config::copy_evac_threshold) {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {
-            _collection_req = request_type::end;
-            _collection_req.notify_all();
+            _collection_req.shutdown();
             _worker.join();
         }
         void thd_prologue(tcb* handle);
@@ -113,5 +105,7 @@ namespace gc::detail {
         void process_pending(tcb* handle);
 
         bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
+
+        const gc_metrics& metrics() const { return _metrics; }
     };
 }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <numeric>
 #include <cmath>
 
 #include "gc-config.h"

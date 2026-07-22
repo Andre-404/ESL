@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TCB.h"
+#include <vector>
 
 namespace gc::detail {
     class post_manager {

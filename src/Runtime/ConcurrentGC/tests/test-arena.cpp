@@ -196,7 +196,7 @@ TEST(ArenaTest, PartialsTest) {
         a.flush_alloc_caches();
         a.mutate_owned([&](pg_meta* start) {
             if (start) a_start = start;
-            m.release_pgs(start);
+            m.transfer_ownership(start);
             return nullptr;
         });
     }

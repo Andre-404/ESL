@@ -38,10 +38,10 @@ pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
 }
 
 pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
-    auto pg = _allocator.alloc_pg(obj_sz, (obj_sz + config::page_sz - 1) / config::page_sz);
+    auto pg = _allocator.alloc_pg(obj_sz, large_pg_num(obj_sz));
 
     if (pg) {
-        for (auto i = 0; i < (obj_sz + config::page_sz - 1) / config::page_sz; i++) {
+        for (auto i = 0; i < large_pg_num(obj_sz); i++) {
             auto ptr = (uintptr_t)((uint8_t*)pg + i * config::page_sz);
             _active.add(ptr, pg);
         }
@@ -54,7 +54,7 @@ void pg_manager::dealloc_pgs(pg_meta *head)  {
     auto tail = head;
     if (is_large_pg(head)) {
         do {
-            for (auto i = 0; i < tail->block_sz() / config::page_sz + 1; i++) {
+            for (auto i = 0; i < large_pg_num(tail->block_sz()); i++) {
                 auto offset = (pg_meta*)((uint8_t*)tail + i * config::page_sz);
                 _active.remove(offset);
             }
