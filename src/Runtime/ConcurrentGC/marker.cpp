@@ -6,18 +6,6 @@
 using namespace gc::detail;
 
 
-[[gnu::always_inline, nodiscard]] bool marker::push_obj(mark_buf *buf, managed *obj) {
-    auto state = obj->state();
-    auto is_traceable = obj_traceable(obj);
-    if (state == move_state::unmanaged) [[unlikely]] return false;
-
-    auto pg = pg_from_obj(obj);
-    auto won = pg->record_mark(obj, state != move_state::none);
-    if (!won || !is_traceable) return false;
-
-    return buf->push(obj);
-}
-
 void marker::flush_wbbuf(mark_buf* buf) {
     if (buf->empty()) return;
     auto to_send = _bufs.pop_empty();

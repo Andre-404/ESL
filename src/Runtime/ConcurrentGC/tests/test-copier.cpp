@@ -133,6 +133,7 @@ TEST_F(CopierTest, UpdatePtrsCallsObjUpdatePtrsOnMarkedObjectsOnly) {
     rp.mark(0);
     rp.mark(2);
     // slot 1 is unmarked.
+    rp.pg()->compute_live();
 
     std::unordered_set<managed*> updated;
     test_custom::hooks.obj_update_ptrs = [&](managed* m) { updated.insert(m); };
@@ -151,6 +152,7 @@ TEST_F(CopierTest, UpdatePtrsResetsTempPinnedToNone) {
     managed* a = rp.construct(0, 1, move_state::temp_pinned);
     managed* b = rp.construct(1, 1, move_state::pinned);
     rp.mark(0); rp.mark(1);
+    rp.pg()->compute_live();
 
     copier c{0.5};
     c.update_ptrs(rp.pg());
@@ -179,6 +181,7 @@ TEST_F(CopierTest, CopyObjectsWithOnlySourcesConvertsOneToTarget) {
     real_page sa{64}, sb{64};
     sa.construct(0, 1); sa.construct(1, 1); sa.mark(0); sa.mark(1);
     sb.construct(0, 1); sb.construct(1, 1); sb.mark(0); sb.mark(1);
+    sa.pg()->compute_live(); sb.pg()->compute_live();
     pg_meta* head = chain({ &sa, &sb });
 
     int copy_count = 0;
@@ -197,6 +200,7 @@ TEST_F(CopierTest, FullyFullPageIsNeitherSourceNorTarget) {
     }
     real_page sparse{64};
     sparse.construct(0, 1); sparse.mark(0);
+    sparse.pg()->compute_live();
 
     pg_meta* head = chain({ &full, &sparse });
 
@@ -213,10 +217,12 @@ TEST_F(CopierTest, FullyFullPageIsNeitherSourceNorTarget) {
 TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
     real_page pinned{64};
     pinned.construct(0, 1); pinned.mark(0, true);
+    pinned.pg()->compute_live();
 
     real_page sparse{64};
     sparse.construct(0, 1); sparse.construct(1, 1);
     sparse.mark(0); sparse.mark(1);
+    sparse.pg()->compute_live();
 
     pg_meta* head = chain({ &pinned, &sparse });
 
@@ -242,6 +248,8 @@ TEST_F(CopierTest, CopiedObjectsAreMarkedMovedWithForwardingPtr) {
     src.mark(0);
     dst.construct(0, 9);
     dst.mark(0, true);
+    src.pg()->compute_live();
+    dst.pg()->compute_live();
 
     pg_meta* head = chain({ &dst, &src });
 
@@ -259,6 +267,8 @@ TEST_F(CopierTest, CopyObjectsUpdatesTargetMarkBitmap) {
     src.construct(0, 1); src.mark(0);
 
     dst.construct(0, 9); dst.mark(0, true);
+    src.pg()->compute_live();
+    dst.pg()->compute_live();
 
     pg_meta* head = chain({ &dst, &src });
 
@@ -273,6 +283,7 @@ TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
     real_page pinned{64};
     pinned.construct(0, 1);
     pinned.mark(0, true);
+    pinned.pg()->compute_live();
 
     real_page src{64};
     for (uint16_t i = 0; i < 5; ++i) {
@@ -297,6 +308,8 @@ TEST_F(CopierTest, AfterCopySourcePagesAreReset) {
     src.construct(0, 1); src.construct(1, 1);
     src.mark(0); src.mark(1);
     pinned.construct(0, 1); pinned.mark(0, true);
+    src.pg()->compute_live();
+    pinned.pg()->compute_live();
 
     pg_meta* head = chain({ &pinned, &src });
     ASSERT_EQ(src.pg()->live_count(), 2);
@@ -313,6 +326,8 @@ TEST_F(CopierTest, ThresholdZeroPromotesEverythingToTarget) {
     real_page a{64}, b{64};
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
+    a.pg()->compute_live();
+    b.pg()->compute_live();
 
     pg_meta* head = chain({ &a, &b });
 
@@ -328,6 +343,8 @@ TEST_F(CopierTest, ThresholdHighMakesEverySparsePageASourceUntilOneConverts) {
     real_page a{64}, b{64};
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
+    a.pg()->compute_live();
+    b.pg()->compute_live();
 
     pg_meta* head = chain({ &a, &b });
 

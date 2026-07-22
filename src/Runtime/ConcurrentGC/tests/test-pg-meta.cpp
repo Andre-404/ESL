@@ -86,8 +86,8 @@ TEST(PgMetaTest, RecycleClearsMarkBitmapAndCounters) {
     p.pg->recycle();
     EXPECT_EQ(p.pg->live_count(), 0u);
     EXPECT_FALSE(p.pg->has_pinned());
-    // The alloc bitmap was untouched (recycle only clears marks).
-    EXPECT_NE(p.pg->alloc_word(0), 0u);
+    // Recycle clears everything
+    EXPECT_EQ(p.pg->alloc_word(0), 0u);
 }
 
 TEST(PgMetaTest, ResetTrackersZerosCountersAndFlipsBitmap) {

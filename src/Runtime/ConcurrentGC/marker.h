@@ -3,13 +3,26 @@
 
 #include "mark-buf.h"
 #include "customization.h"
+#include "pg-meta.h"
 #include "TCB.h"
 
 namespace gc::detail {
     class marker {
         mark_buf_manager _bufs;
 
-        [[gnu::always_inline, nodiscard]] bool push_obj(mark_buf* buf, managed* obj);
+        // Must stay in the header: scan_stack is a template instantiated in other TUs and
+        // always_inline needs the body available at every call site.
+        [[gnu::always_inline, nodiscard]] bool push_obj(mark_buf* buf, managed* obj) {
+            auto state = obj->state();
+            auto is_traceable = obj_traceable(obj);
+            if (state == move_state::unmanaged) [[unlikely]] return false;
+
+            auto pg = pg_from_obj(obj);
+            auto won = pg->record_mark(obj, state != move_state::none);
+            if (!won || !is_traceable) return false;
+
+            return buf->push(obj);
+        }
         [[nodiscard]] mark_buf* replace_buf(mark_buf* buf) {
             if (!buf->empty()) _bufs.push_full(buf);
             else return buf;

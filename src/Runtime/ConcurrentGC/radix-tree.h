@@ -5,6 +5,9 @@
 #include <span>
 #include <algorithm>
 
+
+#include "bitmap.h"
+
 namespace gc::detail {
     // A packed summary of a contiguous region of pages:
     //   start - length of the free run at the head of the region
@@ -24,8 +27,9 @@ namespace gc::detail {
         static constexpr uint64_t pack(uint32_t start, uint32_t mx, uint32_t end) {
             assert(start <= max_packed && mx <= max_packed && end <= max_packed);
             // start/end reach max_packed only when the whole region is free, in
-            // which case mx == max_packed too, so testing mx alone is enough.
+            // which case mx == max_packed too, so testing mx alone is enough
             if (mx == max_packed) return full_bit;
+
             return  (uint64_t(start) & field_mask)
                  | ((uint64_t(mx)    & field_mask) << field_bits)
                  | ((uint64_t(end)   & field_mask) << (2 * field_bits));
@@ -35,16 +39,14 @@ namespace gc::detail {
             return is_full() ? max_packed : uint32_t((_data >> shift) & field_mask);
         }
 
-        // Longest run of free (0) bits fully inside a word; edges are handled by
-        // the caller's carry. Equivalent to the longest run of 1s in ~x.
-        static constexpr uint32_t longest_free_run(uint64_t x) {
-            uint64_t f = ~x;
+        // Longest run of free (0) bits fully inside a word
+        static constexpr uint32_t internal_free_run(uint64_t x) {
             uint32_t best = 0;
-            while (f) {
-                f >>= std::countr_zero(f);            // skip allocated bits
-                uint32_t run = std::countr_zero(~f);  // length of this free run (< 64)
+            while (x) {
+                x >>= std::countr_one(x);            // skip allocated bits
+                uint32_t run = std::countr_zero(x);  // length of this free run
                 best = std::max(best, run);
-                f >>= run;
+                x >>= run;
             }
             return best;
         }
@@ -62,43 +64,46 @@ namespace gc::detail {
 
         constexpr bool operator==(const summary&) const = default;
 
-        // Summary of a bitmap chunk. Convention: bit == 1 means allocated
         static constexpr summary summarize(std::span<const uint64_t> chunk) {
             constexpr uint32_t NOTSET = ~0u;
+            // chunk is 512 pages so NOTSET is a true sentinel
             uint32_t start = NOTSET, run = 0, mx = 0;
             for (uint64_t x : chunk) {
                 if (x == 0) { run += 64; continue; }
                 run += std::countr_zero(x); // free bits at the low end close the carried run
+
                 if (start == NOTSET) start = run; // first allocated bit fixes the head run
-                mx  = std::max({mx, run, longest_free_run(x)});
-                run = std::countl_zero(x); // free bits at the high end carry forward
+
+                mx  = std::max({mx, run, internal_free_run(x)});
+
+                run = std::countl_zero(x); // free bits at the high end carry forward into the next run
             }
             // no allocated bit: wholly free
             if (start == NOTSET) {
                 uint32_t total = uint32_t(chunk.size()) * 64;
                 return {total, total, total};
             }
-            return {start, std::max(mx, run), run};
+            return { start, std::max(mx, run), run };
         }
 
         // Merge one parent's children. child_cover is the pages each child
-        // covers; the parent covers fanout * child_cover.
+        // covers; the parent covers fanout * child_cover
         static constexpr summary merge(std::span<const summary, fanout> lower, uint32_t child_cover) {
             uint32_t start = 0, mx = 0, end = 0, covered = 0;
             for (summary s : lower) {
-                // start grows while every prior child is wholly free
+                // Start grows while every prior child is wholly free
                 if (start == covered) start += s.start();
                 // max of: cur max, current end + this child start, this child interior max
-                mx  = std::max({mx, end + s.start(), s.max()});
+                mx  = std::max({ mx, end + s.start(), s.max() });
                 // If the child is wholly free extend the end run, otherwise restart it
                 end = (s.end() == child_cover) ? end + s.end() : s.end();
                 covered += child_cover;
             }
-            return {start, mx, end};
+            return { start, mx, end };
         }
     };
 
     class page_allocator {
-        
+        bitmap _bitmap;
     };
 }

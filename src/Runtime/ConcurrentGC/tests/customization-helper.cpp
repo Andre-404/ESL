@@ -12,8 +12,10 @@ namespace gc {
     size_t ptr_to_word(managed* p)          { return test_custom::hooks.ptr_to_word(p); }
 
     // obj_trace receives the mark callback by reference so the marker can
-    // observe child-pushes mid-trace.
-    void obj_trace(managed* m, std::function<void(managed*)>& cb) {
+    // observe child-pushes mid-trace. The hooks still take a std::function&, so wrap the
+    // function_ref the gc now passes; it forwards to the live callback either way.
+    void obj_trace(managed* m, function_ref<void(managed*)> trace) {
+        std::function<void(managed*)> cb = [&](managed* o) { trace(o); };
         test_custom::hooks.obj_trace(m, cb);
     }
 }

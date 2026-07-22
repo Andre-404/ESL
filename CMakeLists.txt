@@ -82,6 +82,7 @@ add_executable(ESL src/main.cpp src/moduleDefs.h src/common.h src/files.h src/fi
         src/Runtime/esl-gc-helpers.h
         src/Runtime/Objects/string-interner.h
         src/Runtime/stub.cpp
+        src/Runtime/ConcurrentGC/bitmap.h
 )
 target_compile_features(ESL PRIVATE cxx_std_20)
 target_compile_options(ESL PRIVATE -ffixed-r15)

@@ -56,12 +56,12 @@ TEST(MarkBufTest, NewBufIsEmpty) {
 TEST(MarkBufTest, PushReturnsFalseUntilFull) {
     auto buf = mark_buf {};
     auto owned = std::vector<std::unique_ptr<managed>> {};
-    for (int i = 0; i < 63; ++i) {
+    for (int i = 0; i < 127; ++i) {
         owned.emplace_back(make_managed((uint8_t)i));
         EXPECT_FALSE(buf.push(owned.back().get())) << "push #" << i;
     }
-    owned.emplace_back(make_managed(63));
-    EXPECT_TRUE(buf.push(owned.back().get())) << "64th push should signal full";
+    owned.emplace_back(make_managed(127));
+    EXPECT_TRUE(buf.push(owned.back().get())) << "128th push should signal full";
     EXPECT_TRUE(buf.full());
     EXPECT_FALSE(buf.empty());
 }

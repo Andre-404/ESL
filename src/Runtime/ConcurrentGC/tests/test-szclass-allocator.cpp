@@ -153,6 +153,7 @@ TEST(SzclassAllocatorTest, FullPageIsSkippedToNextPage) {
         EXPECT_EQ(pg_from_obj(m), a_pg.pg);
         a_pg.pg->record_mark(m, false);
     }
+    a_pg.pg->compute_live();
     ASSERT_EQ(a_pg.pg->live_count(), a_pg.pg->block_cnt());
 
     managed* in_b = s.alloc();

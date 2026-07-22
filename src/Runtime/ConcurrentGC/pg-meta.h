@@ -128,7 +128,7 @@ namespace gc::detail {
         void recycle() {
             _num_live = 0;
             _has_pinned = false;
-            // Only empty pages get recycled, and their allocated bitmap is empty
+            // Only mark needs clearing but reset_trackers flips the bitmaps so we clear everything
             _bitmap.clear_both();
         }
 
