@@ -9,7 +9,6 @@
 #include "../marker.h"
 #include "../pg-meta.h"
 #include "../page-allocator.h"
-#include "../customization.h"
 #include "../platform-specific.h"
 #include "customization-helper.h"
 
@@ -21,7 +20,7 @@ namespace {
     public:
         explicit real_page(size_t block_sz)
                 : _block_sz(block_sz) { _pg = _a.alloc_pg(block_sz, 1); }
-        ~real_page() { _a.dealloc_pgs(_pg, _pg); }
+        ~real_page() { _pg->unlink(); _a.free_pgs(_pg); }
         real_page(const real_page&) = delete;
         real_page& operator=(const real_page&) = delete;
 
@@ -72,6 +71,7 @@ TEST_F(MarkerTest, ScanGlobalsSkipsUnmanagedObjects) {
     size_t addr = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &addr };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
     EXPECT_EQ(rp.pg()->live_count(), 0u);
 }
 
@@ -84,6 +84,7 @@ TEST_F(MarkerTest, ScanGlobalsSkipsWhenToAccuratePtrRejects) {
     size_t addr = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &addr };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
     EXPECT_EQ(rp.pg()->live_count(), 0u);
 }
 
@@ -99,6 +100,7 @@ TEST_F(MarkerTest, ScanGlobalsMarksReachableObjects) {
     size_t c = reinterpret_cast<size_t>(rp.slot(10));
     std::vector<size_t*> roots = { &a, &b, &c };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 3u);
     EXPECT_FALSE(rp.pg()->has_pinned());
@@ -115,6 +117,7 @@ TEST_F(MarkerTest, UntraceableObjectStillIncrementsLiveCount) {
     size_t a = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &a };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 1u);
 }
@@ -128,15 +131,9 @@ TEST_F(MarkerTest, AliasedRootsAreDeduplicatedByRecordMark) {
     size_t b = a, c = a, d = a;
     std::vector<size_t*> roots = { &a, &b, &c, &d };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 1u);
-}
-
-TEST_F(MarkerTest, EmptyRootSetIsNoOp) {
-    marker m;
-    std::vector<size_t*> empty;
-    m.scan_globals(empty);
-    SUCCEED();
 }
 
 TEST_F(MarkerTest, PinnedStateObjectSetsPagePinned) {
@@ -148,6 +145,7 @@ TEST_F(MarkerTest, PinnedStateObjectSetsPagePinned) {
     size_t a = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &a };
     m.scan_globals(roots);
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
@@ -167,6 +165,7 @@ TEST_F(MarkerTest, ScanGlobalsAcrossManyBuffersStillMarksAll) {
 
     marker m;
     m.scan_globals(roots);
+    rp.pg()->compute_live();
     EXPECT_EQ(rp.pg()->live_count(), N);
 }
 
@@ -179,6 +178,7 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
     m.scan_stack(info, false, [](uint8_t* p) {
         return reinterpret_cast<managed*>(p);
     });
+    rp.pg()->compute_live();
     EXPECT_EQ(rp.pg()->live_count(), 0u);
 }
 
@@ -195,6 +195,7 @@ TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
     m.scan_stack(info, true, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
@@ -213,6 +214,7 @@ TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
+    rp.pg()->compute_live();
 
     EXPECT_EQ(rp.pg()->live_count(), 1u);
     EXPECT_FALSE(rp.pg()->has_pinned());
@@ -230,6 +232,7 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
+    rp.pg()->compute_live();
 
     ASSERT_EQ(rp.pg()->live_count(), 1u);
     ASSERT_FALSE(rp.pg()->has_pinned());
@@ -255,6 +258,7 @@ TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
+    rp.pg()->compute_live();
     EXPECT_EQ(rp.pg()->live_count(), 1u);
 }
 

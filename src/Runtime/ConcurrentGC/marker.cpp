@@ -1,6 +1,4 @@
 #include "marker.h"
-#include "pg-meta.h"
-#include <functional>
 
 
 using namespace gc::detail;
@@ -32,7 +30,6 @@ size_t marker::trace_n(size_t bytes)  {
     auto main = _bufs.pop_full();
     if (!main) return 0;
 
-    auto side = _bufs.pop_empty();
     auto mark = [&](managed* obj) {
         if (main->full()) [[unlikely]] main = replace_buf(main);
         // TODO: this needs to be after the full checks because of the swaps we do while reading, any other way to optimize this?
@@ -43,16 +40,9 @@ size_t marker::trace_n(size_t bytes)  {
     while (cnt < bytes) {
         auto obj = main->pop();
         if (!obj) [[unlikely]] {
-            if (!side->empty()) {
-                std::swap(main, side);
-            } else {
-                _bufs.push_empty(main);
-                main = _bufs.pop_full();
-                if (!main) [[unlikely]] {
-                    _bufs.push_empty(side);
-                    return cnt;
-                }
-            }
+            _bufs.push_empty(main);
+            main = _bufs.pop_full();
+            if (!main) [[unlikely]] return cnt;
             continue;
         }
         assert(obj_traceable(obj));
@@ -60,7 +50,6 @@ size_t marker::trace_n(size_t bytes)  {
         obj_trace(obj, mark);
     }
     push_buf(main);
-    push_buf(side);
     
     return cnt;
 }

@@ -22,18 +22,18 @@ namespace gc::detail {
             /*
              thdA: allocate and flush cache       thdB: start stack scan
              thdA: in process of setting up obj O thdB: finds object O because it conservativly scans stack
-             thdA: in process of setting up obj   thdB: pushes object Oto mark and then flushes its mark buf
+             thdA: in process of setting up obj   thdB: pushes object O to mark and then flushes its mark buf
              thdA: in process of setting up obj   thdGC: starts tracing O while its fields are not set up
              ------O is now treated as marked even though its fields were garbage, could also crash if typeid is garbage-----
             */
             // Flushing cache before allocating means:
             // all objects in cache have been set up correctly(have to watch out for allocators in constructors of managed objs)
 
-            _pg->alloc_word(_pos) = _cache;
+            _pg->store_alloc_word(_pos, _cache);
 
             _pos += 64; // To avoid past end reads
             while (_pos < _pg_cnt) {
-                _cache = _pg->alloc_word(_pos);
+                _cache = _pg->load_alloc_word(_pos);
                 if (_cache != FULL) return std::countr_one(_cache);
                 _pos += 64;
             }
@@ -45,7 +45,7 @@ namespace gc::detail {
         }
     public:
         obj_allocator() : _pg(nullptr), _cache(0), _pos(0), _pg_cnt(0), _pg_off(0), _pg_blk_sz(0) {}
-        explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->alloc_word(0)), _pos(0), _pg_cnt(_pg->block_cnt()),
+        explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->load_alloc_word(0)), _pos(0), _pg_cnt(_pg->block_cnt()),
             _pg_off(_pg->start_off()), _pg_blk_sz(_pg->block_sz()) {}
 
         [[gnu::hot, gnu::always_inline]] managed* allocate() {
@@ -58,7 +58,7 @@ namespace gc::detail {
         }
 
         void flush_cache() {
-            _pg->alloc_word(_pos) = _cache;
+            _pg->store_alloc_word(_pos, _cache);
         }
 
         pg_meta* get_pg() const { return _pg; }

@@ -2,90 +2,86 @@
 
 #include <chrono>
 #include <cmath>
+#include <atomic>
 
 #include "gc-config.h"
 
 namespace gc::detail {
+    using gc_clock = std::chrono::steady_clock;
+
+    struct cycle_stats {
+        std::chrono::nanoseconds mark_time { 0 };  // request accepted -> end of STW marking
+        std::chrono::nanoseconds copy_time { 0 };  // zero when the cycle did not copy
+        size_t allocated_bytes = 0;   // mutator allocation since the previous cycle
+        size_t live_bytes      = 0;
+        size_t evac_gain_bytes = 0;   // whole pages compaction would hand back
+        size_t evac_move_bytes = 0;   // live bytes compaction would have to move
+    };
+
+    struct gc_tuning {
+        size_t initial_heap = 20u << 20;
+        size_t max_heap     = config::heap_max_sz;
+        double max_headroom = 0.75;    // trigger = live * (1 + headroom)
+        double min_headroom = 0.2625;
+        double copy_bias    = 3.0;     // >1 biases against compacting
+        std::chrono::nanoseconds copy_fixed_cost = std::chrono::milliseconds(1);
+        double rate_alpha        = 0.3;
+        double initial_mark_rate = 200e6;   // replaced by the first real measurement
+        double initial_copy_rate = 500e6;
+    };
+
     class gc_heuristics {
-        // all in B/ms
-        double _alloc_rate;
-        double _mark_rate;
-        double _copy_rate;
-        std::chrono::steady_clock::time_point _start;
-        size_t _mark_ms;
-        size_t _copy_ms;
-        size_t _live_size;
+        gc_tuning _cfg;
+        double _alloc_rate, _mark_rate, _copy_rate;   // bytes/second, collector-private
+        gc_clock::time_point _cycle_start;
+        size_t _cycles = 0;
 
-        // Outputs
-        size_t _trigger_sz;
-        bool _should_copy;
-        size_t _cycles;
+        // The only members a mutator may touch.
+        std::atomic<size_t> _trigger;
+        std::atomic<size_t> _live_size;
+        std::atomic<bool>   _should_copy;
 
-        constexpr static size_t start_heap = 20 << 20;
-        constexpr static size_t heap_max = 1ull << 40;
-        constexpr static double head_room = 0.75;
-        constexpr static double min_head_room_ratio = 0.35;
-        constexpr static double beta = 3;
-        constexpr static double fixed_copy_cost_ms = 1;
+        static double secs(std::chrono::nanoseconds d) { return std::chrono::duration<double>(d).count(); }
 
-        // returns: num of pages that would get freed by compaction, number of bytes that live in these partially filled pages
-        auto calc_pgs_freed(auto& ppg_frag) {
-            auto res = std::pair<size_t, size_t> {};
-            for (int i = 0; i < config::szclass_cnt; i++) {
-                auto& info = ppg_frag[i];
-                if (info.pg_cnt == 0) continue;
-                auto avg_frag = info.frag_total / info.pg_cnt;
-                auto pages_after  = ceil(info.pg_cnt * (1 - avg_frag));
-                res.first += (info.pg_cnt - pages_after);
-                // total pgs * avg frag per page * pg size, estimate because we don't take in slot fragmentation into consideration
-                res.second += info.pg_cnt * avg_frag * config::page_sz;
-            }
-            return res;
+        static double sample(size_t bytes, std::chrono::nanoseconds d, double fallback) {
+            return (bytes == 0 || d <= std::chrono::nanoseconds::zero()) ? fallback : double(bytes) / secs(d);
+        }
+        void blend(double& est, double s) const { est = (1.0 - _cfg.rate_alpha) * est + _cfg.rate_alpha * s; }
+
+        bool decide_copy(const cycle_stats& s) const {
+            if (s.evac_gain_bytes == 0) return false;
+            double bought = double(s.evac_gain_bytes) / std::max(_alloc_rate, 1.0);
+            double cost   = secs(_cfg.copy_fixed_cost)
+                          + _cfg.copy_bias * double(s.evac_move_bytes) / std::max(_copy_rate, 1.0);
+            return bought > cost;
+        }
+        size_t next_trigger(size_t live) const {
+            double pressure = std::clamp(_alloc_rate / std::max(_mark_rate, 1.0), 0.0, 1.0);
+            double headroom = std::lerp(_cfg.max_headroom, _cfg.min_headroom, pressure);
+            double floor    = double(std::max<size_t>(_cfg.initial_heap, live));
+            return size_t(std::clamp(double(live) * (1.0 + headroom), floor, _cfg.max_heap / 2.0));
         }
     public:
-        gc_heuristics() : _alloc_rate(0), _mark_rate(200000.0), _copy_rate(500000.0), _mark_ms(0), _copy_ms(0),
-                          _live_size(0),
-                          _trigger_sz(start_heap), _should_copy(false), _cycles(0) {
-            _start = std::chrono::steady_clock::now();
+        explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
+            : _cfg(cfg), _alloc_rate(0), _mark_rate(cfg.initial_mark_rate), _copy_rate(cfg.initial_copy_rate),
+              _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0), _should_copy(false) {}
+
+        size_t heap_trigger() const { return _trigger.load(std::memory_order_relaxed); }
+        size_t live_size()    const { return _live_size.load(std::memory_order_relaxed); }
+        bool   should_copy()  const { return _should_copy.load(std::memory_order_relaxed); }
+        size_t cycles()       const { return _cycles; }
+
+        void end_cycle(gc_clock::time_point now, const cycle_stats& s) {
+            auto wall = now - _cycle_start;
+            _cycle_start = now;
+            blend(_alloc_rate, sample(s.allocated_bytes, wall,        _alloc_rate));
+            blend(_mark_rate,  sample(s.live_bytes,      s.mark_time, _mark_rate));
+            blend(_copy_rate,  sample(s.evac_move_bytes, s.copy_time, _copy_rate));
+
+            _should_copy.store(decide_copy(s), std::memory_order_relaxed);
+            _live_size.store(s.live_bytes, std::memory_order_relaxed);
+            _trigger.store(next_trigger(s.live_bytes), std::memory_order_release);
+            ++_cycles;
         }
-
-        void calc(auto ppg_frag, size_t alloc_sz, size_t live_sz) {
-            auto tmp = _start;
-            _start = std::chrono::steady_clock::now();
-            auto diff = _start - tmp;
-            _live_size = live_sz;
-            _alloc_rate = (double)alloc_sz / std::max(1l, std::chrono::duration_cast<std::chrono::milliseconds>(diff).count());
-            auto mark_rate = _mark_ms == 0 ? _mark_rate : (double)_live_size / _mark_ms;
-            auto copy_rate = _copy_ms == 0 ? _copy_rate : (double)_live_size / _copy_ms;
-            _mark_rate = 0.7 * _mark_rate + 0.3 * mark_rate;
-            _copy_rate = 0.7 * _copy_rate + 0.3 * copy_rate;
-
-            auto [pages_freed, live_bytes] = calc_pgs_freed(ppg_frag);
-            auto bytes_saved = pages_freed * config::page_sz;
-            _should_copy = bytes_saved / _alloc_rate > fixed_copy_cost_ms + beta * live_bytes / _copy_rate;
-
-            // TODO: think of a better cap and calculate the cap before stw finishes somehow?
-            auto pressure = std::min(1.0, _alloc_rate / std::max(_mark_rate, 1.0));
-            double headroom = std::max(min_head_room_ratio * head_room, head_room - pressure * head_room);
-            double target = live_sz * (1.0 + headroom);
-            double floor = std::max<double>(start_heap, live_sz);
-
-            _trigger_sz = std::clamp(target, floor, heap_max / 2.0);
-            _cycles++;
-        }
-
-        bool should_copy() const {  return _should_copy; }
-        size_t heap_trigger() const { return _trigger_sz; }
-        size_t get_live_size() const { return _live_size; }
-
-        void mark_start() {
-            auto tmp = std::chrono::steady_clock::now().time_since_epoch();
-            _mark_ms = std::chrono::duration_cast<std::chrono::milliseconds>(tmp).count();
-        }
-        void mark_end() {
-            auto tmp = std::chrono::steady_clock::now().time_since_epoch();
-            _mark_ms = std::chrono::duration_cast<std::chrono::milliseconds>(tmp).count() - _mark_ms;
-        }
-        void set_copy_ms(size_t ms) { _copy_ms = ms; }
     };
 }

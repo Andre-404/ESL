@@ -1,5 +1,4 @@
 #pragma once
-#include <cstdint>
 
 namespace gc::detail::platform {
 #ifdef UNIT_TESTS

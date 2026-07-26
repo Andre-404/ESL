@@ -40,5 +40,8 @@ namespace gc::detail {
 
         void push_empty(mark_buf*);
         mark_buf* pop_empty();
+
+        // Used for tests
+        size_t pooled() const { return _empty_cnt.load(std::memory_order_relaxed); }
     };
 }

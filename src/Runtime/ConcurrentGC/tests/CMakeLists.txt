@@ -1,5 +1,13 @@
-cmake_minimum_required(VERSION 3.22)
-project(gc_tests C CXX)
+cmake_minimum_required(VERSION 3.25)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(gc_tests C CXX)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake")
+    include(ESLBuildOptions)
+    esl_use_lld()
+    # Must run before googletest is fetched so it gets instrumented too.
+    esl_apply_sanitizer()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +42,14 @@ add_library(gc_under_test STATIC
 target_include_directories(gc_under_test PUBLIC ../../../Includes/)
 target_link_libraries(gc_under_test PUBLIC Threads::Threads)
 
+# PUBLIC, and on the library rather than the executable. platform-specific.h
+# selects platforms/testing.inc on this define, and TCB.h sizes a member array
+# with platform::regs_to_store() - 6 under x86-64.inc, 16 under testing.inc. With
+# the define on the test executable alone, the library and the tests disagreed on
+# sizeof(tcb) while collector.cpp sized its rpmalloc allocation from the
+# library's view.
+target_compile_definitions(gc_under_test PUBLIC UNIT_TESTS=1)
+
 add_executable(run_tests
         test-tstack.cpp
         test-mark-buf.cpp
@@ -42,6 +58,7 @@ add_executable(run_tests
         test-tcb-registry.cpp
         test-transition-manager.cpp
         test-pg-meta.cpp
+        test-pg-list.cpp
         test-obj-allocator.cpp
         test-szclass-allocator.cpp
         test-marker.cpp
@@ -50,11 +67,12 @@ add_executable(run_tests
         test-copier.cpp
         test-arena.cpp
         test-pruner.cpp
-        # test-gc-heuristic.cpp  -- stale: calls gc_heuristics::set_mark_ms, removed by the
-        # mark_start/mark_end refactor. Excluded so the rest of the suite builds.
+        test-radix-tree.cpp
+        test-bitmap.cpp
+        test-page-allocator.cpp
+        test-gc-heuristic.cpp
         test-collector.cpp
 )
-target_compile_definitions(run_tests PUBLIC UNIT_TESTS=1)
 target_link_libraries(run_tests
         PRIVATE
         gc_under_test
@@ -62,4 +80,5 @@ target_link_libraries(run_tests
         Threads::Threads
 )
 
+esl_sanitizer_test_launcher(run_tests)
 gtest_discover_tests(run_tests)

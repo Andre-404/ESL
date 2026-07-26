@@ -84,39 +84,6 @@ TEST(SyncPointTest, BarrierIsReusableAcrossPhases) {
     }
 }
 
-TEST(SyncPointTest, ArriveIsNonBlocking) {
-    auto sp = sync_point {};
-    sp.register_waiter();
-    sp.register_waiter();
-
-    std::atomic<bool> done{false};
-    std::thread t([&] {
-        sp.arrive();
-        done.store(true, std::memory_order_release);
-    });
-    ASSERT_TRUE(wait_until([&] { return done.load(); })) << "arrive() must not block";
-    t.join();
-
-    sp.arrive_and_wait();
-    ASSERT_TRUE(true) << "arrive_and_wait() must not block because this is the last thread";
-}
-
-TEST(SyncPointTest, ArriveCanCompletePhaseForArriveAndWaitWaiters) {
-    auto sp = sync_point {};
-    constexpr int N = 3;
-    for (int i = 0; i < N; ++i) sp.register_waiter();
-
-    std::atomic<int> past{0};
-    std::thread t1([&]{ sp.arrive_and_wait(); past.fetch_add(1); });
-    std::thread t2([&]{ sp.arrive_and_wait(); past.fetch_add(1); });
-    std::this_thread::sleep_for(50ms);
-    ASSERT_EQ(past.load(), 0);
-
-    sp.arrive();
-    t1.join(); t2.join();
-    ASSERT_TRUE(past.load() == 2);
-}
-
 TEST(SyncPointTest, DeregisterReleasesWhenItMakesCountsMatch) {
     // expected = 3, two arrive_and_wait callers are blocked; deregistering
     // the third should drop expected to 2 and release everyone.

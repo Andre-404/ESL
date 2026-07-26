@@ -92,7 +92,7 @@ TEST(SzclassAllocatorTest, FlushAllocCachePropagatesToCurrentPage) {
     ASSERT_NE(s.alloc(), nullptr);
     ASSERT_NE(s.alloc(), nullptr);
     s.flush_alloc_cache();
-    EXPECT_EQ(p.pg->alloc_word(0), 0b11ull);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0b11ull);
 }
 
 TEST(SzclassAllocatorTest, MutateReplacesStartChain) {

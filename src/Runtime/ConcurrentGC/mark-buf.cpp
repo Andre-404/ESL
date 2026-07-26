@@ -9,6 +9,7 @@ void mark_buf_manager::push_empty(mark_buf* buf) {
     if (_empty_cnt.fetch_add(1, std::memory_order_relaxed) < config::empty_mark_bufs_limit) {
         return _empty.lfpush(buf);
     }
+    _empty_cnt.fetch_sub(1, std::memory_order_relaxed);
     rpfree(buf);
 }
 

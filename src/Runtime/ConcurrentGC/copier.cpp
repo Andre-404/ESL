@@ -56,7 +56,8 @@ void copier::copy_objects(pg_meta *pg_list) const {
         // Need to update the mark bitmap with the new object
         target_iter.get_pg()->record_mark(dest, false);
     }
-    for (auto pg : source) pg->reset_trackers();
+    // Clear both bitmaps so that pruner correctly deduces compute_live -> 0
+    for (auto pg : source) pg->recycle();
 }
 
 void copier::update_ptrs(pg_meta *pg) const  {

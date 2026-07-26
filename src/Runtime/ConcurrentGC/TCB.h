@@ -7,7 +7,12 @@
 #include "arena.h"
 
 namespace gc {
+    // TODO (CRITICAL): _start_args arent scanned during marking nor updated during copying
+    // thread A creates new tcb and passes args, thread B start in need_start and doesnt spill its args on the stack
+    // a collection happens and _start_args arent collected properly
+    // possible fix: introduce a "temp roots" that are scanned conservativly (to avoid wiring in more machinery)
     class tcb_handle {
+    protected:
         size_t* _start_args;
         size_t _args_cnt;
     public:

@@ -68,9 +68,7 @@ namespace gc::detail {
             auto& s = get(p);
             return s.samples ? to_ms(s.total) / s.samples : 0.0;
         }
-        size_t last_whole_ms(phase p) const {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(get(p).last).count();
-        }
+        ns last(phase p) const { return get(p).last; }
         size_t cycles() const { return get(phase::pause).samples; }
 
         std::string report() const {

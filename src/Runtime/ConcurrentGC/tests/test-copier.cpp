@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -9,7 +8,7 @@
 #include "../copier.h"
 #include "../pg-meta.h"
 #include "../page-allocator.h"
-#include "../customization.h"
+#include "../pruner.h"
 #include "customization-helper.h"
 
 using namespace gc;
@@ -22,7 +21,7 @@ namespace {
         explicit real_page(size_t block_sz) : _block_sz(block_sz) {
             _pg = _a.alloc_pg(block_sz, 1);
         }
-        ~real_page() { _a.dealloc_pgs(_pg, _pg); }
+        ~real_page() { _pg->unlink(); _a.free_pgs(_pg); }
         real_page(const real_page&) = delete;
         real_page& operator=(const real_page&) = delete;
 
@@ -40,6 +39,13 @@ namespace {
         // Mark slot i in the page's mark bitmap (also bumps live_count).
         bool mark(uint16_t i, bool pinned = false) {
             return _pg->record_mark(slot(i), pinned);
+        }
+
+        // Set slot i's alloc bit, which is what obj_allocator's cache flush would have done
+        // for a real allocation. Pages built by hand otherwise carry an empty alloc bitmap,
+        // which hides what evacuation is supposed to do to it.
+        void allocate(uint16_t i) {
+            _pg->store_alloc_word(i, _pg->load_alloc_word(i) | (1ull << (i % 64)));
         }
 
     private:
@@ -274,6 +280,8 @@ TEST_F(CopierTest, CopyObjectsUpdatesTargetMarkBitmap) {
 
     copier c{0.5};
     c.copy_objects(head);
+    src.pg()->compute_live();
+    dst.pg()->compute_live();
 
     EXPECT_EQ(dst.pg()->live_count(), 2);
     EXPECT_EQ(src.pg()->live_count(), 0);
@@ -354,4 +362,79 @@ TEST_F(CopierTest, ThresholdHighMakesEverySparsePageASourceUntilOneConverts) {
     copier c{2.0};
     c.copy_objects(head);
     EXPECT_EQ(copies, 1);
+}
+// ---------------------------------------------------------------------------------------
+// Evacuation must leave a source page genuinely empty.
+//
+// copy_objects used to call reset_trackers() on source pages, which only flips the two
+// bitmaps. The flip republished the pre-copy alloc bitmap as the live one, so every
+// moved-from corpse read back as an allocated object, the pruner never saw the page as
+// empty, and the page was never returned to the allocator. These pin the whole sequence:
+// the page is empty, the pruner frees it, and the live accounting counts survivors once.
+// ---------------------------------------------------------------------------------------
+namespace {
+    // A dense pinned target plus a sparse source, wired into one list. Both pages carry
+    // realistic alloc bits so the post-copy state of the source is observable.
+    struct evac_fixture {
+        real_page src { 64 };
+        real_page dst { 64 };
+
+        evac_fixture() {
+            for (uint16_t i = 0; i < 2; ++i) {
+                src.construct(i, 1);
+                src.allocate(i);
+                src.mark(i);
+            }
+            // Pinned, so split_pages keeps it a target no matter how sparse it is.
+            dst.construct(0, 9);
+            dst.allocate(0);
+            dst.mark(0, true);
+            src.pg()->compute_live();
+            dst.pg()->compute_live();
+        }
+        pg_meta* list() { dst.pg()->link(src.pg()); return dst.pg(); }
+    };
+}
+
+TEST_F(CopierTest, EvacuatedSourcePageHasNoAllocatedSlots) {
+    evac_fixture f;
+    copier c{0.5};
+    c.copy_objects(f.list());
+
+    for (uint16_t i = 0; i < f.src.pg()->block_cnt(); ++i)
+        EXPECT_EQ(f.src.pg()->from_interior(f.src.slot_addr(i)), nullptr)
+            << "slot " << i << " of an evacuated page must not read back as allocated";
+}
+
+TEST_F(CopierTest, CopyThenPruneFreesTheEvacuatedSourcePage) {
+    evac_fixture f;
+    auto* head = f.list();
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    std::vector<pg_meta*> freed;
+    pruner p;
+    auto* in_use = p.prune(head, [&](pg_meta* pg) { freed.push_back(pg); });
+
+    ASSERT_EQ(freed.size(), 1u) << "the evacuated page is empty and must go back to the allocator";
+    EXPECT_EQ(freed[0], f.src.pg());
+    EXPECT_EQ(in_use, f.dst.pg());
+    EXPECT_EQ(in_use->next(), nullptr);
+}
+
+TEST_F(CopierTest, CopyThenPruneCountsSurvivorsOnce) {
+    evac_fixture f;
+    auto* head = f.list();
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    pruner p;
+    p.prune(head, [](pg_meta*) {});
+
+    // One resident plus the two that moved in, on the target page alone. Counting the
+    // evacuated originals again - or counting the target twice, once while splitting pages
+    // and once while pruning - both show up here.
+    EXPECT_EQ(p.get_live_size(), 3u * 64u);
 }

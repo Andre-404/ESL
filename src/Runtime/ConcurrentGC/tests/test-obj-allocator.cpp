@@ -97,10 +97,10 @@ TEST(ObjAllocatorTest, FlushCacheWritesBitmapToPage) {
     ASSERT_NE(a.allocate(), nullptr);
     ASSERT_NE(a.allocate(), nullptr);
     ASSERT_NE(a.allocate(), nullptr);
-    EXPECT_EQ(p.pg->alloc_word(0), 0u);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0u);
 
     a.flush_cache();
-    EXPECT_EQ(p.pg->alloc_word(0), 0b111ull);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0b111ull);
 }
 
 TEST(ObjAllocatorTest, RebindToSamePagePicksUpAlreadyAllocatedSlots) {

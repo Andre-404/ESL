@@ -1,10 +1,12 @@
 #include "collector.h"
 
+#include <atomic>
 #include <iostream>
 #include <ranges>
 
 #include "../../Includes/fmt/core.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
+#include "gc-heuristic.h"
 
 using namespace gc;
 using namespace detail;
@@ -26,16 +28,16 @@ std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
 void collector::force_collection(int64_t sz, tcb* t) {
     _collection_req.request_express();
 
-    int64_t snapshot = _heuristic.get_live_size() + _alloc_sz;
+    int64_t snapshot = _heuristic.live_size() + _alloc_sz;
     set_paused(t);
     _collection_req.await_express_served();
     set_resumed(t);
-    if (snapshot - _heuristic.get_live_size() > sz) return;
+    if (snapshot - _heuristic.live_size() > sz) return;
 
     std::cerr
         <<"Thread "
         <<std::this_thread::get_id()
-        <<fmt::format("failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
+        <<fmt::format(" failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
     std::abort();
 }
 
@@ -43,12 +45,15 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
     for (auto t : owned) {
         auto& arena = t->get_arena();
         arena.flush_alloc_caches();
-        arena.remove_debt(arena.get_debt());
+        auto dbt = arena.get_debt();
+        _alloc_sz += dbt;
+        arena.remove_debt(dbt);
         _thd_state_mngr.ack();
     }
     // Have to wait for everyone to flush their alloc caches before we can start accurate marking
     _thd_state_mngr.wait_on_all_ack();
 
+    // decision to copy happens after every thread has paused(wait_on_all_ack) so this is stable across all threads
     auto copying = _collection_req.is_express() ? true : _heuristic.should_copy();
 
     // TODO: this is the only big part of the code that is worker specific, can we move it out?
@@ -57,18 +62,17 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
         snapshot = _alloc_sz.load();
         // Every thread has stopped at this point so this is safe to do
         _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
-        // Needs to be set before threads start deallocating pages
-        _pg_manager.set_empty_limit(snapshot * config::dead_commited_to_alloced_ratio);
     }
 
     {
+        // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
         auto _ = _metrics.maybe_time(gc_metrics::phase::mark, is_worker);
         for (auto t : owned) phase1(t, copying);
 
         while (_marker.trace_n(config::trace_batch * 1024)) {}
         _gate.arrive_and_wait();
     }
-    _heuristic.mark_end();
+    if (is_worker) _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
 
     auto for_each_owned = [&](auto f) {
         for (auto t : owned) t->get_arena().mutate_owned(f);
@@ -86,8 +90,8 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
             if (is_worker) _copier.update_globals(_roots);
             _gate.arrive_and_wait();
         }
-        _heuristic.set_copy_ms(_metrics.last_whole_ms(gc_metrics::phase::copy));
-    } else _heuristic.set_copy_ms(0);
+        if (is_worker) _cycle.copy_time = _metrics.last(gc_metrics::phase::copy);
+    }
 
     {
         auto _ = _metrics.maybe_time(gc_metrics::phase::sweep, is_worker);
@@ -129,9 +133,13 @@ size_t collector::stw_phase() {
 
 void collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
-    _heuristic.calc(_pruner.get_ppg_frag(), alloc_snapshot, _pruner.get_live_size());
+    _cycle.allocated_bytes = alloc_snapshot;
+    _cycle.live_bytes      = _pruner.get_live_size();
+    auto evac = _pruner.estimate_evacuation();
+    _cycle.evac_gain_bytes = evac.gain_bytes;
+    _cycle.evac_move_bytes = evac.move_bytes;
+    _heuristic.end_cycle(gc_clock::now(), _cycle);
     _pruner.reset();
-
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
     _collection_req.clear();
 }
@@ -140,10 +148,9 @@ void collector::end_cycle(size_t alloc_snapshot) {
 void collector::concurrent_loop() {
     rpmalloc_thread_initialize();
     while (true) {
-        _pg_manager.dealloc_pgs();
-        _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
-        if (_collection_req.await_request()) return;
-        _heuristic.mark_start();
+        if (_collection_req.await_request()) break;
+        _cycle = {};
+        _cycle.mark_time = gc_clock::now().time_since_epoch();
         mark_phase();
 
         while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
@@ -158,6 +165,10 @@ void collector::concurrent_loop() {
         _gate.deregister_waiter();
 
         end_cycle(snapshot);
+
+        _pg_manager.free_pgs();
+
+        _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
     }
     rpmalloc_thread_finalize(1);
 }
@@ -178,7 +189,7 @@ void collector::handle_pending(tcb* t) {
 }
 
 [[gnu::cold]] void collector::alloc_update(tcb* t, size_t debt) {
-    auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.get_live_size();
+    auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.live_size();
     if (heap_sz > _heuristic.heap_trigger()) _collection_req.request_normal();
     t->get_arena().remove_debt(debt);
 }
@@ -204,9 +215,10 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
         // Threads created during stw will be paused and needs to be started manually
         if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw)
             t->transition(thd_state::need_start);
+
+        // TODO: this is kinda inefficient, can we do better?
+        t->get_mark_info().set_wbbuf(_marker.get_buf());
     });
-    // TODO: this is kinda inefficient, can we do better?
-    t->get_mark_info().set_wbbuf(_marker.get_buf());
     return t;
 }
 

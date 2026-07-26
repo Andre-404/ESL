@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "gc-config.h"
 #include "page-allocator.h"
 #include "tstack.h"
 
@@ -28,6 +29,7 @@ namespace gc::detail {
         };
 
         std::array<l2_cache*, config::l1_sz> _top_level;
+        uintptr_t _base;
 
         l2_cache& get_or_create_l2(size_t idx);
         l2_cache* get_l2(size_t idx) {
@@ -36,10 +38,13 @@ namespace gc::detail {
             return existing;
         }
 
-        static std::pair<size_t, size_t> get_offset(uintptr_t ptr) {
-            auto offset = ptr;
-            auto l1_idx = (offset >> (config::pg_bits + config::l2_bits)) & (config::l1_sz - 1);
-            auto l2_idx = (offset >> config::pg_bits) & (config::l2_sz - 1);
+        // Indexed by page number within the heap reservation, not by absolute address:
+        // l1_bits + l2_bits only span the page index now, so absolute addresses would
+        // alias distinct pages onto the same slot.
+        std::pair<size_t, size_t> get_offset(uintptr_t ptr) const {
+            auto idx = (ptr - _base) >> config::pg_bits;
+            auto l1_idx = (idx >> config::l2_bits) & (config::l1_sz - 1);
+            auto l2_idx = idx & (config::l2_sz - 1);
             return { l1_idx, l2_idx };
         }
 
@@ -81,7 +86,7 @@ namespace gc::detail {
             std::default_sentinel_t end() const { return {}; }
         };
     public:
-        ts_cache() {
+        explicit ts_cache(uintptr_t base) : _base(base) {
             memset(_top_level.data(), 0, sizeof(l2_cache*) * config::l1_sz);
         }
 
@@ -106,35 +111,32 @@ namespace gc::detail {
     class pg_list {
         std::mutex _mtx;
         pg_meta* _start;
-        std::atomic<size_t> _sz_hint;
+         std::atomic<bool> _maybe_has_pages;
     public:
-        pg_list() : _start(nullptr), _sz_hint(0) {}
+        pg_list() : _start(nullptr), _maybe_has_pages(false) {}
 
         // We could compute end somewhere else but then we'd need to do it again for counting
         void push(pg_meta* start) {
             assert(start);
-            auto to_add = 1;
             auto end = start;
-            while (end->next()) {
-                end = end->next();
-                to_add++;
-            }
-            _sz_hint.fetch_add(to_add, std::memory_order_release);
+            while (end->next()) end = end->next();
 
             auto lk = std::lock_guard { _mtx };
             end->link(_start);
             _start = start;
+            _maybe_has_pages.store(true, std::memory_order_release);
         }
 
         pg_meta* pop() {
-            // Doesn't have to be correct, only used as a fast path since these lists will mostly sit empty
-            // And even if they transiently get a member we don't care, it will get used by another allocation
-            if (_sz_hint.load(std::memory_order_relaxed) == 0) return nullptr;
+             if (!_maybe_has_pages.load(std::memory_order_acquire)) return nullptr;
             auto lk = std::lock_guard { _mtx };
-            if (!_start) return nullptr;
-            --_sz_hint;
+            if (!_start) { 
+                _maybe_has_pages.store(false, std::memory_order_relaxed);
+                return nullptr;
+            }
             auto tmp = _start;
             _start = tmp->next();
+            if (!_start) _maybe_has_pages.store(false, std::memory_order_relaxed);
             tmp->unlink();
             return tmp;
         }
@@ -143,29 +145,19 @@ namespace gc::detail {
         void mutate(F mutator) {
             auto lk = std::lock_guard { _mtx };
             _start = mutator(_start);
-            // TODO: inefficient
-            auto tmp = _start;
-            _sz_hint = 0;
-            while (tmp) {
-                _sz_hint.fetch_add(1, std::memory_order_relaxed);
-                tmp = tmp->next();
-            }
+            _maybe_has_pages.store(_start != nullptr, std::memory_order_release);
         }
     };
 
     class pg_manager {
         pg_allocator _allocator;
-        tstack<pg_meta> _empty;
-        std::atomic<size_t> _empty_cnt;
-        std::array<pg_list, config::szclass_cnt> _partial;
-        pg_list _big;
-        pg_list _to_decommit;
-        size_t _empty_limit;
+        tstack<pg_meta> _pending_free;
+        // +1 for big objects
+        std::array<pg_list, config::szclass_cnt+1> _partial;
         ts_cache _active;
     public:
-        pg_manager() : _empty_limit(0), _active() {}
-
-        void set_empty_limit(size_t in_bytes) { _empty_limit = in_bytes / config::page_sz; }
+        // _allocator is declared first, so its reservation exists before _active indexes on it
+        pg_manager() : _active(uintptr_t(_allocator.heap_base())) {}
 
         pg_meta* pg_from_ptr(uintptr_t ptr) { return _active.get_pg(ptr); }
 
@@ -177,19 +169,14 @@ namespace gc::detail {
         void transfer_ownership(pg_meta* first) {
             if (!first) return;
             auto sz_class = config::sz_to_class(first->block_sz());
-            if (sz_class == -1) {
-                _big.push(first);
-                return;
-            }
             _partial[sz_class].push(first);
         }
 
-        void dealloc_pgs(pg_meta* head);
+        void schedule_free(pg_meta* pg);
 
         template<typename F>
         void mutate_owned(F mutator) {
             for (auto& list : _partial) list.mutate(mutator);
-            _big.mutate(mutator);
         }
 
         template<typename F>
@@ -197,12 +184,6 @@ namespace gc::detail {
             for (auto pg : _active.get_iter()) if(pg) func(pg);
         }
 
-        void dealloc_pgs() {
-            _to_decommit.mutate([&](pg_meta* start) {
-                if (!start) return nullptr;
-                _allocator.dealloc_pgs(start, nullptr);
-                return nullptr;
-            });
-        }
+        void free_pgs();
     };
 }

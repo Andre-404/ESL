@@ -4,6 +4,7 @@
 #include <thread>
 #include <atomic>
 #include <unordered_set>
+#include "../gc-config.h"
 #include "../mark-buf.h"
 #include "../managed.h"
 #include "rpmalloc/rpmalloc.h"
@@ -75,14 +76,14 @@ TEST(MarkBufTest, PopFromEmptyReturnsNullptrAndDoesNotUnderflow) {
 
 TEST(MarkBufTest, FillThenDrainRestoresEmpty) {
     auto buf = mark_buf {};
-    auto items = std::array<managed*, 64> {};
+    auto items = std::array<managed*, 128> {};
     for (auto& p : items) p = make_managed();
     for (auto* p : items) buf.push(p);
     ASSERT_TRUE(buf.full());
 
     auto popped = 0;
     while (buf.pop()) ++popped;
-    EXPECT_EQ(popped, 64);
+    EXPECT_EQ(popped, 128);
     EXPECT_TRUE(buf.empty());
     EXPECT_FALSE(buf.full());
 
@@ -171,4 +172,74 @@ TEST(MarkBufManagerTest, ConcurrentEmptyPoolPushPopNoLossNoDuplicate) {
     }
     for (auto& th : threads) th.join();
     EXPECT_EQ(total_popped.load(), kThreads * kOpsPerThread);
+}
+
+// The empty pool reserves a slot with fetch_add before checking the cap, so a push that turns
+// out to be over the cap has to give that reservation back. It used to just free the buffer
+// and leave the counter raised, which ratcheted up until every subsequent push looked over the
+// limit - at which point the pool stopped pooling and every mark buffer went through malloc.
+TEST(MarkBufManagerTest, OverflowingThePoolDoesNotStrandTheCounter) {
+    ensure_rpmalloc_thread_ready();
+    auto mgr = mark_buf_manager {};
+    constexpr auto cap = gc::config::empty_mark_bufs_limit;
+
+    auto bufs = std::vector<mark_buf*> {};
+    for (size_t i = 0; i < cap * 2; ++i) bufs.push_back(mgr.pop_empty());
+    for (auto* b : bufs) mgr.push_empty(b);
+
+    EXPECT_EQ(mgr.pooled(), cap)
+        << "after overflowing by " << cap << " the counter must still match what the pool holds";
+}
+
+TEST(MarkBufManagerTest, PoolStillPoolsAfterAnOverflowEpisode) {
+    ensure_rpmalloc_thread_ready();
+    auto mgr = mark_buf_manager {};
+    constexpr auto cap = gc::config::empty_mark_bufs_limit;
+
+    // Overflow it, then drain it completely.
+    auto bufs = std::vector<mark_buf*> {};
+    for (size_t i = 0; i < cap * 2; ++i) bufs.push_back(mgr.pop_empty());
+    for (auto* b : bufs) mgr.push_empty(b);
+    for (size_t i = 0; i < cap; ++i) ASSERT_NE(mgr.pop_empty(), nullptr);
+
+    EXPECT_EQ(mgr.pooled(), 0u) << "draining the pool must bring the count back to zero";
+
+    // A drained pool has to accept a full cap worth of buffers again.
+    for (size_t i = 0; i < cap; ++i) mgr.push_empty(mgr.pop_empty());
+    EXPECT_EQ(mgr.pooled(), 1u) << "each push/pop pair nets out";
+
+    auto refill = std::vector<mark_buf*> {};
+    for (size_t i = 0; i < cap; ++i) refill.push_back(mgr.pop_empty());
+    for (auto* b : refill) mgr.push_empty(b);
+    EXPECT_EQ(mgr.pooled(), cap);
+}
+
+TEST(MarkBufManagerTest, ConcurrentOverflowKeepsTheCounterWithinTheCap) {
+    ensure_rpmalloc_thread_ready();
+    auto mgr = mark_buf_manager {};
+    constexpr auto cap = gc::config::empty_mark_bufs_limit;
+    constexpr int kThreads = 8, kOps = 500;
+
+    auto threads = std::vector<std::thread> {};
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&] {
+            ensure_rpmalloc_thread_ready();
+            // 8 threads holding 64 each is twice the cap, so the run spends its time pushing
+            // over the limit - which is the only path that touches the reservation.
+            auto held = std::vector<mark_buf*> {};
+            for (int i = 0; i < kOps; ++i) {
+                held.push_back(mgr.pop_empty());
+                if (held.size() == 64) {
+                    for (auto* b : held) mgr.push_empty(b);
+                    held.clear();
+                }
+            }
+            for (auto* b : held) mgr.push_empty(b);
+        });
+    }
+    for (auto& th : threads) th.join();
+
+    // Racing pushes can transiently overshoot by one per thread, which is harmless, but the
+    // count must not have drifted off into the thousands.
+    EXPECT_LE(mgr.pooled(), cap + kThreads);
 }

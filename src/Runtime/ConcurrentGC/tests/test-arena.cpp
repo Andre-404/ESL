@@ -1,12 +1,9 @@
 #include <gtest/gtest.h>
 #include <cstring>
-#include <new>
 #include <unordered_set>
 #include <vector>
 #include "../arena.h"
-#include "../pruner.h"
 #include "../pg-manager.h"
-#include "../page-allocator.h"
 #include "../pg-meta.h"
 
 using namespace gc;
@@ -34,7 +31,7 @@ TEST(ArenaTest, AllocOfUnknownSizeRoutesToBigPage) {
     // 4000 isn't a configured size class.
     auto* obj = a.alloc(4000, m);
     ASSERT_NE(obj, nullptr);
-    EXPECT_TRUE(is_large_pg(pg_from_obj(obj)));
+    EXPECT_TRUE(pg_from_obj(obj)->is_large());
 }
 
 TEST(ArenaTest, AllocOfSizeZeroRoutesToBigPage) {
@@ -42,7 +39,7 @@ TEST(ArenaTest, AllocOfSizeZeroRoutesToBigPage) {
     pg_manager m;
     auto* obj = a.alloc(0, m);
     ASSERT_NE(obj, nullptr);
-    EXPECT_FALSE(is_large_pg(pg_from_obj(obj)));
+    EXPECT_FALSE(pg_from_obj(obj)->is_large());
     EXPECT_EQ(a.get_debt(), 0) << "size-zero alloc doesn't move debt";
 }
 
@@ -101,7 +98,7 @@ TEST(ArenaTest, BigAllocsAccumulateOnTheBigChain) {
 
     std::unordered_set<pg_meta*> seen;
     a.mutate_owned([&](pg_meta* head) {
-        if (head && is_large_pg(head)) {
+        if (head && head->is_large()) {
             for (auto* p = head; p; p = p->next()) seen.insert(p);
         }
         return head;
@@ -121,7 +118,7 @@ TEST(ArenaTest, BigAllocChainPrependsNewestFirst) {
 
     pg_meta* head = nullptr;
     a.mutate_owned([&](pg_meta* h) {
-        if (h && is_large_pg(h)) head = h;
+        if (h && h->is_large()) head = h;
         return h;
     });
     ASSERT_NE(head, nullptr);
@@ -153,10 +150,10 @@ TEST(ArenaTest, FlushAllocCachesPropagatesBitsToTheActivePage) {
     a.alloc(64, m);
     a.alloc(64, m);
 
-    EXPECT_EQ(pg_from_obj(o)->alloc_word(0), 0u);
+    EXPECT_EQ(pg_from_obj(o)->load_alloc_word(0), 0u);
 
     a.flush_alloc_caches();
-    EXPECT_EQ(pg_from_obj(o)->alloc_word(0) & 0b111ull, 0b111ull);
+    EXPECT_EQ(pg_from_obj(o)->load_alloc_word(0) & 0b111ull, 0b111ull);
 }
 
 TEST(ArenaTest, AllocBigReturnsPointerInsideTheAllocatedPage) {

@@ -27,6 +27,7 @@ namespace gc::detail {
         post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
         collection_request _collection_req;
+
         sync_point _gate;
         std::vector<size_t*> _roots;
 
@@ -34,7 +35,8 @@ namespace gc::detail {
         copier _copier;
 
         gc_heuristics _heuristic;
-        gc_metrics _metrics;
+        cycle_stats   _cycle;
+        gc_metrics    _metrics;
 
         pruner _pruner;
         
@@ -43,16 +45,6 @@ namespace gc::detail {
         std::thread _worker;
 
         // Page mutators, shared by stw_phase and phases
-        auto update_live_fn() const {
-            return [](pg_meta* start) {
-                auto tmp = start;
-                while (tmp) {
-                    tmp->compute_live();
-                    tmp = tmp->next();
-                }
-                return start;
-            };
-        }
         auto copy_objs_fn() const {
             return [this](pg_meta* start) { if (start) _copier.copy_objects(start); return start; };
         }
@@ -61,9 +53,8 @@ namespace gc::detail {
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {
-                auto [empty, in_use] = _pruner.prune(start);
-                _pg_manager.dealloc_pgs(empty);
-                return in_use;
+                auto fn = [&](pg_meta* pg) { _pg_manager.schedule_free(pg); };
+                return _pruner.prune(start, fn);
             };
         }
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
@@ -84,12 +75,14 @@ namespace gc::detail {
         [[gnu::cold]] void alloc_update(tcb* t, size_t debt);
 
     public:
-        explicit collector(uint8_t& flag) : _gc_flag(flag), _copier(config::copy_evac_threshold) {
+        explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
+            : _gc_flag(flag), _copier(config::copy_evac_threshold), _heuristic(tuning) {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {
             _collection_req.shutdown();
             _worker.join();
+            printf("%s\n", _metrics.report().c_str());
         }
         void thd_prologue(tcb* handle);
         void set_paused(tcb* handle);

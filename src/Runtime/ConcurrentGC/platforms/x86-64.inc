@@ -1,3 +1,5 @@
+#include <cstdint>
+
 // Save rbx, rbx, r12, r13, r14, r15
 consteval std::size_t regs_to_store() {
     return 6;

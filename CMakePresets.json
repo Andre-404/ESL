@@ -1,0 +1,258 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 25,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_C_COMPILER": "/usr/lib/llvm-23/bin/clang",
+                "CMAKE_CXX_COMPILER": "/usr/lib/llvm-23/bin/clang++"
+            }
+        },
+        {
+            "name": "debug",
+            "inherits": "base",
+            "displayName": "Debug",
+            "description": "Unoptimized with assertions, shared libLLVM, no LTO. The everyday build.",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "ESL_LLVM_STATIC": "OFF",
+                "ESL_LTO": "OFF"
+            }
+        },
+        {
+            "name": "release",
+            "inherits": "base",
+            "displayName": "Release",
+            "description": "Optimized, LTO, statically linked LLVM components. Produces a standalone ESL binary.",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ESL_LLVM_STATIC": "ON",
+                "ESL_LTO": "ON"
+            }
+        },
+        {
+            "name": "release-with-deb",
+            "inherits": "base",
+            "displayName": "Release with deb info",
+            "description": "Optimized, LTO, statically linked LLVM components. Produces a standalone ESL binary.",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "ESL_LLVM_STATIC": "ON",
+                "ESL_LTO": "ON"
+            }
+        },
+        {
+            "name": "sanitizer-base",
+            "hidden": true,
+            "inherits": "base",
+            "description": "Sanitizers target the GC, so the compiler executable is skipped - it costs minutes of LLVM linking and is not what is being instrumented.",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "ESL_BUILD_COMPILER": "OFF",
+                "ESL_LTO": "OFF"
+            }
+        },
+        {
+            "name": "asan",
+            "inherits": "sanitizer-base",
+            "displayName": "ASan + UBSan",
+            "description": "Out of bounds access, use after free, and undefined behaviour in the GC test suite.",
+            "cacheVariables": {
+                "ESL_SANITIZER": "address+undefined"
+            }
+        },
+        {
+            "name": "tsan",
+            "inherits": "sanitizer-base",
+            "displayName": "TSan",
+            "description": "Data races in the GC test suite.",
+            "cacheVariables": {
+                "ESL_SANITIZER": "thread"
+            }
+        },
+        {
+            "name": "ubsan",
+            "inherits": "sanitizer-base",
+            "displayName": "UBSan",
+            "description": "Undefined behaviour only - cheaper than asan, useful when asan's allocator interception gets in the way.",
+            "cacheVariables": {
+                "ESL_SANITIZER": "undefined"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan",
+            "targets": [
+                "run_tests"
+            ]
+        },
+        {
+            "name": "tsan",
+            "configurePreset": "tsan",
+            "targets": [
+                "run_tests"
+            ]
+        },
+        {
+            "name": "ubsan",
+            "configurePreset": "ubsan",
+            "targets": [
+                "run_tests"
+            ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "test-base",
+            "hidden": true,
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 300
+            }
+        },
+        {
+            "name": "debug",
+            "inherits": "test-base",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "release",
+            "inherits": "test-base",
+            "configurePreset": "release"
+        },
+        {
+            "name": "asan",
+            "inherits": "test-base",
+            "configurePreset": "asan",
+            "environment": {
+                "ASAN_OPTIONS": "detect_leaks=0:abort_on_error=1",
+                "UBSAN_OPTIONS": "print_stacktrace=1"
+            }
+        },
+        {
+            "name": "tsan",
+            "inherits": "test-base",
+            "configurePreset": "tsan",
+            "environment": {
+                "TSAN_OPTIONS": "halt_on_error=0:second_deadlock_stack=1"
+            }
+        },
+        {
+            "name": "ubsan",
+            "inherits": "test-base",
+            "configurePreset": "ubsan",
+            "environment": {
+                "UBSAN_OPTIONS": "print_stacktrace=1"
+            }
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug"
+                },
+                {
+                    "type": "test",
+                    "name": "debug"
+                }
+            ]
+        },
+        {
+            "name": "release",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "release"
+                },
+                {
+                    "type": "build",
+                    "name": "release"
+                },
+                {
+                    "type": "test",
+                    "name": "release"
+                }
+            ]
+        },
+        {
+            "name": "asan",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "asan"
+                },
+                {
+                    "type": "build",
+                    "name": "asan"
+                },
+                {
+                    "type": "test",
+                    "name": "asan"
+                }
+            ]
+        },
+        {
+            "name": "tsan",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "tsan"
+                },
+                {
+                    "type": "build",
+                    "name": "tsan"
+                },
+                {
+                    "type": "test",
+                    "name": "tsan"
+                }
+            ]
+        },
+        {
+            "name": "ubsan",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "ubsan"
+                },
+                {
+                    "type": "build",
+                    "name": "ubsan"
+                },
+                {
+                    "type": "test",
+                    "name": "ubsan"
+                }
+            ]
+        }
+    ]
+}

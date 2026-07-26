@@ -9,6 +9,7 @@ namespace gc {
     [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt);
     void init_thd(tcb_handle* handle, void* stack_start);
     void delete_tcb(tcb_handle* handle);
+    // Must be done once at the start of the program from a single thread
     void register_root(size_t* root);
     void enter_blocked(tcb_handle* handle);
     void exit_blocked(tcb_handle* handle);

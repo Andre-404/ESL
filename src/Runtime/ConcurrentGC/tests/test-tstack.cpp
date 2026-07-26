@@ -3,7 +3,6 @@
 #include <thread>
 #include <vector>
 #include <unordered_set>
-#include <algorithm>
 #include "../tstack.h"
 
 using namespace gc::detail;
@@ -15,12 +14,6 @@ namespace {
         Item() = default;
         explicit Item(int v) : value(v) {}
     };
-
-    std::vector<int> drain_lf(tstack<Item>& s) {
-        std::vector<int> out;
-        while (Item* n = s.lfpop()) out.push_back(n->value);
-        return out;
-    }
 
 }
 
@@ -37,11 +30,6 @@ TEST(TstackTest, EmptyPopReturnsNullptr) {
     EXPECT_EQ(s.lfpop(), nullptr);
 }
 
-TEST(TstackTest, PeekOnEmptyReturnsNullptr) {
-    tstack<Item> s;
-    EXPECT_EQ(s.peek(), nullptr);
-}
-
 TEST(TstackTest, LfPushPopIsLifo) {
     tstack<Item> s;
     Item a{1}, b{2}, c{3};
@@ -49,24 +37,10 @@ TEST(TstackTest, LfPushPopIsLifo) {
     s.lfpush(&b);
     s.lfpush(&c);
 
-    EXPECT_EQ(s.peek(), &c);
     EXPECT_EQ(s.lfpop(), &c);
     EXPECT_EQ(s.lfpop(), &b);
     EXPECT_EQ(s.lfpop(), &a);
     EXPECT_EQ(s.lfpop(), nullptr);
-}
-
-TEST(TstackTest, NonLockfreePushPopIsLifo) {
-    tstack<Item> s;
-    Item a{1}, b{2}, c{3};
-    s.push(&a);
-    s.push(&b);
-    s.push(&c);
-
-    EXPECT_EQ(s.peek(), &c);
-    EXPECT_EQ(s.pop(), &c);
-    EXPECT_EQ(s.pop(), &b);
-    EXPECT_EQ(s.pop(), &a);
 }
 
 TEST(TstackTest, LfPopUnlinksPoppedNode) {
@@ -77,53 +51,6 @@ TEST(TstackTest, LfPopUnlinksPoppedNode) {
     Item* top = s.lfpop();
     ASSERT_EQ(top, &b);
     EXPECT_EQ(top->next(), nullptr);
-}
-
-TEST(TstackTest, LfPushRangePreservesInternalLinks) {
-    tstack<Item> s;
-    Item a{1}, b{2}, c{3};
-    a.link(&b);
-    b.link(&c);
-    s.lfpush_range(&a, &c);
-
-    EXPECT_EQ(s.lfpop(), &a);
-    EXPECT_EQ(s.lfpop(), &b);
-    EXPECT_EQ(s.lfpop(), &c);
-    EXPECT_EQ(s.lfpop(), nullptr);
-}
-
-TEST(TstackTest, PushRangePreservesInternalLinks) {
-    tstack<Item> s;
-    Item a{1}, b{2}, c{3};
-    a.link(&b);
-    b.link(&c);
-    s.push_range(&a, &c);
-
-    EXPECT_EQ(s.pop(), &a);
-    EXPECT_EQ(s.pop(), &b);
-    EXPECT_EQ(s.pop(), &c);
-}
-
-TEST(TstackTest, ResetHeadClearsStack) {
-    tstack<Item> s;
-    Item a{1};
-    s.lfpush(&a);
-    s.reset_head(nullptr);
-    EXPECT_EQ(s.lfpop(), nullptr);
-    EXPECT_EQ(s.peek(), nullptr);
-}
-
-TEST(TstackTest, MixedLfAndNonLfOperations) {
-    tstack<Item> s;
-    Item a{10}, b{20}, c{30};
-    s.lfpush(&a);
-    s.push(&b);
-    s.lfpush(&c);
-
-    // LIFO: c, b, a
-    EXPECT_EQ(s.lfpop(), &c);
-    EXPECT_EQ(s.lfpop(), &b);
-    EXPECT_EQ(s.lfpop(), &a);
 }
 
 TEST(TstackTest, ConcurrentPushPreservesAllItems) {

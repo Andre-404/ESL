@@ -1,6 +1,4 @@
 #pragma once
-#include <vector>
-
 #include "mark-buf.h"
 #include "customization.h"
 #include "pg-meta.h"

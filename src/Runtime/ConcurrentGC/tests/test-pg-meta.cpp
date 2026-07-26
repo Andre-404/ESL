@@ -2,7 +2,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
-#include <unordered_set>
 #include "../pg-meta.h"
 #include "../obj-allocator.h"
 
@@ -64,17 +63,17 @@ TEST(PgMetaTest, BitmapsAlignedTo8Bytes) {
         page_buf p{sz};
         auto bitmap_sz = (p.pg->block_cnt() + 63) / 64 * 8; // 8 byte aligned
 
-        EXPECT_EQ(p.pg->alloc_word(0) % 8, 0);
+        EXPECT_EQ(p.pg->load_alloc_word(0) % 8, 0);
         p.pg->reset_trackers(); // To flip the bitmaps
-        EXPECT_EQ(p.pg->alloc_word(0) % 8, 0);
+        EXPECT_EQ(p.pg->load_alloc_word(0) % 8, 0);
     }
 }
 
 TEST(PgMetaTest, AllocWordStartsZeroAndIsWritable) {
     page_buf p{64};
-    EXPECT_EQ(p.pg->alloc_word(0), 0u);
-    p.pg->alloc_word(0) = 0xDEADBEEFCAFEBABEull;
-    EXPECT_EQ(p.pg->alloc_word(0), 0xDEADBEEFCAFEBABEull);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0u);
+    p.pg->store_alloc_word(0, 0xDEADBEEFCAFEBABEull);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0xDEADBEEFCAFEBABEull);
 }
 
 TEST(PgMetaTest, RecycleClearsMarkBitmapAndCounters) {
@@ -87,26 +86,26 @@ TEST(PgMetaTest, RecycleClearsMarkBitmapAndCounters) {
     EXPECT_EQ(p.pg->live_count(), 0u);
     EXPECT_FALSE(p.pg->has_pinned());
     // Recycle clears everything
-    EXPECT_EQ(p.pg->alloc_word(0), 0u);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0u);
 }
 
 TEST(PgMetaTest, ResetTrackersZerosCountersAndFlipsBitmap) {
     page_buf p{64};
     // Write through the current alloc word; after reset_trackers, the bitmap
     // halves swap roles, so alloc_word now reads the other (zero) half.
-    p.pg->alloc_word(0) = 0xAAAAAAAAAAAAAAAAull;
+    p.pg->store_alloc_word(0, 0xAAAAAAAAAAAAAAAAull);
     p.pg->reset_trackers();
     EXPECT_EQ(p.pg->live_count(), 0u);
     EXPECT_FALSE(p.pg->has_pinned());
-    EXPECT_EQ(p.pg->alloc_word(0), 0u);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0u);
 }
 
 TEST(PgMetaTest, FlipIsItsOwnInverse) {
     page_buf p{64};
-    p.pg->alloc_word(0) = 0x1111ull;
+    p.pg->store_alloc_word(0, 0x1111ull);
     p.pg->reset_trackers();
     p.pg->reset_trackers();
-    EXPECT_EQ(p.pg->alloc_word(0), 0x1111ull);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0x1111ull);
 }
 
 TEST(PgSlotsIterTest, IteratesExactlyBlockCntSlots) {
@@ -165,12 +164,16 @@ TEST(PgFromObj, RoundsPointerDownToPageBoundary) {
 }
 
 TEST(LargePgHelpers, SizeFormulaAndClassification) {
-    EXPECT_EQ(large_pg_sz(100), sizeof(pg_meta) + 2*8 + 100);
+    auto large_sz = config::sz_classes.back() + 1ull;
+    EXPECT_EQ(
+        pg_meta::header_bytes(large_sz) + large_sz,
+        sizeof(pg_meta) + 2*8 + large_sz
+    );
 
-    page_buf small{64};
-    page_buf large{config::sz_classes.back() + 1};
-    EXPECT_FALSE(is_large_pg(small.pg));
-    EXPECT_TRUE(is_large_pg(large.pg));
+    page_buf small{ 64 };
+    page_buf large { large_sz };
+    EXPECT_FALSE(small.pg->is_large());
+    EXPECT_TRUE(large.pg->is_large());
 }
 
 
@@ -184,6 +187,7 @@ namespace {
 TEST(RecordMarkTest, FirstMarkReturnsTrueAndIncrementsLive) {
     page_buf p{64};
     EXPECT_TRUE(p.pg->record_mark(slot_of(p, 0), false));
+    p.pg->compute_live();
     EXPECT_EQ(p.pg->live_count(), 1u);
     EXPECT_FALSE(p.pg->has_pinned());
 }
@@ -192,6 +196,7 @@ TEST(RecordMarkTest, DuplicateMarkReturnsFalseAndLeavesLiveUnchanged) {
     page_buf p{64};
     ASSERT_TRUE(p.pg->record_mark(slot_of(p, 3), false));
     EXPECT_FALSE(p.pg->record_mark(slot_of(p, 3), false)) << "marking the same slot twice must not re-count it";
+    p.pg->compute_live();
     EXPECT_EQ(p.pg->live_count(), 1u);
 }
 
@@ -213,6 +218,7 @@ TEST(RecordMarkTest, MarkingAllSlotsBringsLiveToBlockCnt) {
     for (uint16_t i = 0; i < p.pg->block_cnt(); ++i) {
         ASSERT_TRUE(p.pg->record_mark(slot_of(p, i), false));
     }
+    p.pg->compute_live();
     EXPECT_EQ(p.pg->live_count(), p.pg->block_cnt());
 }
 
@@ -233,6 +239,7 @@ TEST(RecordMarkTest, RecycleClearsMarksAndCounters) {
     page_buf p{64};
     p.pg->record_mark(slot_of(p, 1), true);
     p.pg->record_mark(slot_of(p, 2), false);
+    p.pg->compute_live();
     ASSERT_EQ(p.pg->live_count(), 2u);
     ASSERT_TRUE(p.pg->has_pinned());
 
@@ -251,6 +258,7 @@ TEST(RecordMarkTest, WorksAtTheLastSlotIndex) {
     page_buf p{32};
     uint16_t last = p.pg->block_cnt() - 1;
     EXPECT_TRUE(p.pg->record_mark(slot_of(p, last), false));
+    p.pg->compute_live();
     EXPECT_EQ(p.pg->live_count(), 1u);
 
     pg_meta::pg_slots_iter it{p.pg, last};
@@ -260,6 +268,7 @@ TEST(RecordMarkTest, WorksAtTheLastSlotIndex) {
 TEST(RecordMarkTest, ResetFlipsBitmaps) {
     page_buf p{64};
     p.pg->record_mark(slot_of(p, 1), false);
+    p.pg->compute_live();
     ASSERT_EQ(p.pg->live_count(), 1u);
 
     p.pg->reset_trackers();
@@ -270,7 +279,7 @@ TEST(RecordMarkTest, ResetFlipsBitmaps) {
         EXPECT_FALSE(it.is_marked()) << "slot " << i;
         it.next();
     }
-    EXPECT_EQ(p.pg->alloc_word(0), 0b10);
+    EXPECT_EQ(p.pg->load_alloc_word(0), 0b10);
 }
 
 TEST(FromInteriorTest, PointerBeforeSlotAreaReturnsNullptr) {
@@ -334,4 +343,66 @@ TEST(FromInteriorTest, WorksAtFirstAndLastSlot) {
     EXPECT_EQ(p.pg->from_interior(first + 5),  reinterpret_cast<managed*>(first));
     EXPECT_EQ(p.pg->from_interior(last),       reinterpret_cast<managed*>(last));
     EXPECT_EQ(p.pg->from_interior(last + 31),  reinterpret_cast<managed*>(last));
+}
+
+// compute_live used to add to the live count instead of setting it. A copying cycle computes
+// it twice on the same page - once while the copier splits pages into sources and targets, and
+// again while the pruner walks them - so every surviving page reported double its live count,
+// which fed straight into the fragmentation stats and the heap trigger.
+TEST(RecordMarkTest, ComputeLiveIsIdempotent) {
+    page_buf p{64};
+    p.pg->record_mark(slot_of(p, 0), false);
+    p.pg->record_mark(slot_of(p, 1), false);
+    p.pg->record_mark(slot_of(p, 2), false);
+
+    p.pg->compute_live();
+    ASSERT_EQ(p.pg->live_count(), 3u);
+    p.pg->compute_live();
+    EXPECT_EQ(p.pg->live_count(), 3u) << "computing the live count twice must not double it";
+    p.pg->compute_live();
+    EXPECT_EQ(p.pg->live_count(), 3u);
+}
+
+TEST(RecordMarkTest, ComputeLiveAfterResetStartsFromZero) {
+    page_buf p{64};
+    p.pg->record_mark(slot_of(p, 0), false);
+    p.pg->compute_live();
+    ASSERT_EQ(p.pg->live_count(), 1u);
+
+    // reset_trackers flips the bitmaps, so the marks it just adopted are gone from the mark
+    // half; recomputing has to report the new half, not accumulate onto the old count.
+    p.pg->reset_trackers();
+    p.pg->compute_live();
+    EXPECT_EQ(p.pg->live_count(), 0u);
+}
+
+// The alloc bitmap is the boundary between an allocating thread and the collector's
+// conservative stack scan. An object whose alloc word has not been flushed yet is deliberately
+// invisible: obj_allocator only publishes a word once every object in it is fully constructed,
+// so a scan that found one earlier could trace a half-built object.
+TEST(FromInteriorTest, UnflushedAllocationIsDeliberatelyInvisible) {
+    page_buf p{64};
+    obj_allocator a{*p.pg};
+    auto* slot = reinterpret_cast<uint8_t*>(a.allocate());
+    ASSERT_NE(slot, nullptr);
+
+    EXPECT_EQ(p.pg->from_interior(slot), nullptr)
+        << "before the cache flush the slot is not yet published to the collector";
+
+    a.flush_cache();
+    EXPECT_EQ(p.pg->from_interior(slot), reinterpret_cast<managed*>(slot))
+        << "the flush is what makes the object findable";
+}
+
+TEST(FromInteriorTest, AllocWordAccessorsRoundTripEveryBit) {
+    page_buf p{64};
+    // load/store_alloc_word index by bit and address the containing word, so a bit in the
+    // second word must not disturb the first.
+    ASSERT_GT(p.pg->block_cnt(), 64u) << "need a page with more than one alloc word";
+    p.pg->store_alloc_word(0, 0b1011ull);
+    p.pg->store_alloc_word(64, 0b1ull);
+
+    EXPECT_EQ(p.pg->load_alloc_word(0),  0b1011ull);
+    EXPECT_EQ(p.pg->load_alloc_word(63), 0b1011ull) << "bit 63 lives in the same word as bit 0";
+    EXPECT_EQ(p.pg->load_alloc_word(64), 0b1ull);
 }

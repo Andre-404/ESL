@@ -13,14 +13,17 @@ namespace gc::detail {
         // Padded to 8bytes
         const uint16_t _bitmap_size;
         uint16_t _isflipped;
+
+        uint64_t* alloc_bits() const {
+            uint8_t* ptr = nullptr;
+            if (_isflipped) ptr = (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
+            else ptr = (uint8_t*)this + sizeof(dual_bitmap);
+            return (uint64_t*)ptr;
+        }
     public:
         dual_bitmap() : _bitmap_size(0), _isflipped(false) {}
         dual_bitmap(uint16_t _bitmap_sz) : _bitmap_size(_bitmap_sz), _isflipped(false) {}
 
-        uint8_t* alloc_bits() const {
-            if (_isflipped) return (uint8_t*)this + sizeof(dual_bitmap) + _bitmap_size;
-            return (uint8_t*)this + sizeof(dual_bitmap);
-        }
         std::span<size_t> mark_bits() const {
             uint8_t* ptr = nullptr;
             if (_isflipped) ptr = (uint8_t*)this + sizeof(dual_bitmap);
@@ -36,7 +39,24 @@ namespace gc::detail {
             auto ptr = std::assume_aligned<8>((uint8_t*)this + sizeof(dual_bitmap));
             memset(ptr, 0, _bitmap_size*2);
         }
+
+        // Alloc bits are written by the owning thread (obj_allocator's cache flush) and read
+        // concurrently by the collector's conservative stack scan, so they are only reachable
+        // through these two. Relaxed is enough: a reader that misses a not-yet-flushed bit
+        // concludes "slot not allocated", which is exactly what the pre-flush window means
+        // everywhere else in the allocator.
+        size_t load_alloc(size_t bit) const {
+            return std::atomic_ref { alloc_bits()[bit / 64] }.load(std::memory_order_relaxed);
+        }
+        void store_alloc(size_t bit, size_t val) const {
+            std::atomic_ref { alloc_bits()[bit / 64] }.store(val, std::memory_order_relaxed);
+        }
     };
+    
+    inline size_t large_pg_num(size_t obj_sz) {
+        return (obj_sz + config::page_sz - 1) / config::page_sz;
+    }
+
     class pg_meta : public tnode<pg_meta> {
         // block_sz must be able to hold large objects so its size_t
         const size_t _block_sz;
@@ -48,7 +68,7 @@ namespace gc::detail {
         char _[5];
         dual_bitmap _bitmap;
 
-        static constexpr auto mapping = []() constexpr {
+        static constexpr auto class_to_slot_n = []() constexpr {
             auto arr = std::array<uint16_t, config::szclass_cnt> {};
             for (size_t i = 0; i < config::szclass_cnt; ++i) {
                 auto max_n = 0;
@@ -63,9 +83,23 @@ namespace gc::detail {
         }();
 
         static constexpr auto block_cnt(size_t sz) {
-            return config::sz_to_class(sz) == -1 ? (uint16_t)1 : mapping[config::sz_to_class(sz)];
+            return config::sz_to_class(sz) == config::large_class ? (uint16_t)1 : class_to_slot_n[config::sz_to_class(sz)];
         }
-        static constexpr auto bitmap_sz(size_t cnt) { return (uint16_t)((cnt + 63) / 64 * 8); }
+        static constexpr uint16_t bitmap_sz(size_t cnt) { return (uint16_t)((cnt + 63) / 64 * 8); }
+
+        // Shrinking page_sz is what can push a size class off the end of a page, and nothing
+        // else catches it: block_cnt/slot_start are constexpr, so a bad geometry only shows up
+        // as slots running past the page at runtime.
+        static_assert([]() constexpr {
+            for (std::size_t i = 0; i < config::szclass_cnt; ++i) {
+                auto sz  = config::sz_classes[i];
+                auto cnt = class_to_slot_n[i];
+                if (cnt == 0) return false;
+                auto start = 32 + 2 * ((std::size_t(cnt) + 63) / 64 * 8);
+                if (start + std::size_t(cnt) * sz > config::page_sz) return false;
+            }
+            return true;
+        }(), "a size class does not fit in a page: check config::page_sz vs sz_classes");
 
         uint8_t* get_data() const { return (uint8_t*)(this) + _slot_start; }
         void set_pinned() { _has_pinned.store(true, std::memory_order_relaxed); }
@@ -74,7 +108,7 @@ namespace gc::detail {
                                             _num_live(0), _has_pinned(false), _{},
                                             _bitmap(bitmap_sz(_block_cnt)) {
             // Pages for large objects are created when an object of that size is needed, thus creating a large obj page == allocating large obj
-            if (config::sz_to_class(_block_sz) == -1) _bitmap.alloc_bits()[0] = 1;
+            if (config::sz_to_class(_block_sz) == config::large_class) _bitmap.store_alloc(0, 1);
         }
 
         class pg_slots_iter {
@@ -100,7 +134,6 @@ namespace gc::detail {
                 auto ref = std::atomic_ref { _pg->_bitmap.mark_bits()[word] };
                 return ref.load(std::memory_order_acquire) & in_word;
             }
-            size_t internal() const { return _i; };
         };
 
         managed* from_interior(uint8_t* interior) const {
@@ -110,13 +143,21 @@ namespace gc::detail {
             auto ptr = (managed*)(interior - diff % _block_sz);
 
             auto idx = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;
-            size_t* p =(size_t*)_bitmap.alloc_bits();
-            if (p[idx / 64] & (1ull << idx % 64)) return ptr;
+            if (_bitmap.load_alloc(idx) & (1ull << idx % 64)) return ptr;
             return nullptr;
         }
 
+        static constexpr std::size_t header_bytes(size_t block_sz) {
+            return 32 + 2 * bitmap_sz(block_cnt(block_sz));
+        }
         size_t block_sz() const { return _block_sz; }
         uint16_t block_cnt() const { return _block_cnt; }
+        // Anything past the largest size class gets a page of its own, sized to the object.
+        bool is_large() const { return config::sz_to_class(_block_sz) == config::large_class; }
+        // How many pages back this pg_meta. The single source of truth for what the page
+        // allocator handed out, and so for what it must take back.
+        // TODO: need to change this if we're gonna have a multipage buffer for small objects
+        size_t num_pages() const { return is_large() ? large_pg_num(_block_sz) : 1; }
         uint16_t start_off() const { return _slot_start; }
         uint16_t live_count() const { return _num_live; }
         bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
@@ -144,29 +185,16 @@ namespace gc::detail {
         }
         void compute_live() {
             auto p = _bitmap.mark_bits();
+            _num_live = 0;
             for (auto w : p) _num_live += std::popcount(w);
         }
         void clear_mark_bitmap() const { _bitmap.clear_mark(); }
-        size_t& alloc_word(uint16_t pos) const {
-            size_t* ptr =(size_t*)_bitmap.alloc_bits();
-            return ptr[pos / 64];
-        }
+
+        size_t load_alloc_word(uint16_t bit) const  { return _bitmap.load_alloc(bit); }
+        void   store_alloc_word(uint16_t bit, size_t w) const { _bitmap.store_alloc(bit, w); }
     };
 
     inline pg_meta* pg_from_obj(managed* obj) {
         return (pg_meta*)((size_t)obj & ~(config::page_sz - 1));
-    }
-
-    // sizeof(header) + 2 * sizeof(bitmap of 1 element) + object sz
-    inline size_t large_pg_sz(size_t obj_sz) {
-        return sizeof(pg_meta) + 2*8 + obj_sz;
-    }
-
-    inline bool is_large_pg(pg_meta* pg) {
-        return config::sz_to_class(pg->block_sz()) == -1;
-    }
-
-    inline size_t large_pg_num(size_t obj_sz) {
-        return (obj_sz + config::page_sz - 1) / config::page_sz;
     }
 }

@@ -23,15 +23,6 @@ pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
     auto pg = _partial[sz_class].pop();
     if (pg) return pg;
 
-    pg = _empty.lfpop();
-    if (pg) {
-        --_empty_cnt;
-        pg = new (pg) pg_meta(config::sz_classes[sz_class]);
-        _active.add((uintptr_t)pg, pg);
-        pg->recycle();
-        return pg;
-    }
-
     pg = _allocator.alloc_pg(config::sz_classes[sz_class], 1);
     if (pg) _active.add((uintptr_t)pg, pg);
     return pg;
@@ -41,7 +32,7 @@ pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
     auto pg = _allocator.alloc_pg(obj_sz, large_pg_num(obj_sz));
 
     if (pg) {
-        for (auto i = 0; i < large_pg_num(obj_sz); i++) {
+        for (size_t i = 0; i < pg->num_pages(); i++) {
             auto ptr = (uintptr_t)((uint8_t*)pg + i * config::page_sz);
             _active.add(ptr, pg);
         }
@@ -49,37 +40,18 @@ pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
     return pg;
 }
 
-void pg_manager::dealloc_pgs(pg_meta *head)  {
-    if (!head) return;
-    auto tail = head;
-    if (is_large_pg(head)) {
-        do {
-            for (auto i = 0; i < large_pg_num(tail->block_sz()); i++) {
-                auto offset = (pg_meta*)((uint8_t*)tail + i * config::page_sz);
-                _active.remove(offset);
-            }
-            tail = tail->next();
-        } while (tail);
-        // Eagerly decommit big objs to free up memory
-        _allocator.dealloc_pgs(head, tail);
-        return;
+// TODO: move removing from active pgs to free_pgs -> it always happens before next mark phase
+void pg_manager::schedule_free(pg_meta* pg)  {
+    if (!pg) return;
+    for (size_t i = 0; i < pg->num_pages(); i++) {
+        auto offset = (pg_meta*)((uint8_t*)pg + i * config::page_sz);
+        _active.remove(offset);
     }
-    pg_meta* to_del = nullptr;
-    for (;; tail = tail->next()) {
-        _active.remove(tail);
-        _empty_cnt.fetch_add(1, std::memory_order_relaxed);
-        if (!tail->next() || _empty_cnt >= _empty_limit) {
-            to_del = tail->next();
-            _empty.lfpush_range(head, tail);
-            break;
-        }
-    }
-    if (!to_del) return;
+    _pending_free.lfpush(pg);
+    
+}
 
-    auto del_tail = to_del;
-    do {
-        _active.remove(del_tail);
-        del_tail = del_tail->next();
-    } while (del_tail);
-    _to_decommit.push(to_del);
+void pg_manager::free_pgs() {
+    auto worklist = _pending_free.lf_reset_head(nullptr);
+    _allocator.free_pgs(worklist);
 }

@@ -12,7 +12,7 @@ namespace gc::detail {
         pg_meta* _big_objs;
 
         managed* alloc_big(size_t sz, pg_manager& manager) {
-            auto res = manager.get_big_pg(large_pg_sz(sz));
+            auto res = manager.get_big_pg(pg_meta::header_bytes(sz) + sz);
             if (!res) [[unlikely]] return nullptr;
             res->link(_big_objs);
             _big_objs = res;
@@ -23,7 +23,8 @@ namespace gc::detail {
             managed* res = nullptr;
             // Need to loop because get_new_pg can in some cases return a fully allocated page from partial
             do {
-                if (auto new_pg = manager.get_new_pg(szclass)) _allocators[szclass].push_pg(new_pg);
+                if (auto new_pg = manager.get_new_pg(szclass)) 
+                    _allocators[szclass].push_pg(new_pg);
                 else [[unlikely]] return nullptr; // This should never happen
 
                 res = _allocators[szclass].alloc();
@@ -36,9 +37,11 @@ namespace gc::detail {
             // TODO: account for fragmentation here
             _debt += sz;
             auto szclass = config::sz_to_class(sz);
-            if (szclass == -1) return alloc_big(sz, manager);
+            if (szclass == config::large_class) return alloc_big(sz, manager);
             if (auto res = _allocators[szclass].alloc()) return res;
-            return alloc_slow(szclass, manager);
+            auto res = alloc_slow(szclass, manager);
+            if (!res) _debt -= sz;
+            return res;
         }
 
         int64_t get_debt() const { return _debt; }
