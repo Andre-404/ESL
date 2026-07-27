@@ -53,7 +53,8 @@ namespace gc::detail {
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {
-                auto fn = [&](pg_meta* pg) { _pg_manager.schedule_free(pg); };
+                auto b = _pg_manager.start_batch();
+                auto fn = [&](pg_meta* pg) { b.add(pg); };
                 return _pruner.prune(start, fn);
             };
         }
@@ -67,6 +68,7 @@ namespace gc::detail {
         void phase2(tcb* handle);
         void mark_phase();
         size_t stw_phase();
+        void collect_metrics();
         void end_cycle(size_t alloc_snapshot);
 
         void concurrent_loop();

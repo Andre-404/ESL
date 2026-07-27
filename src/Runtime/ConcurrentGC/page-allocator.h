@@ -12,7 +12,7 @@ namespace gc::detail {
     struct scavenge_policy {
         double headroom      = 0.0625; // keep demand*(1+headroom) resident before scavenging
         double thrash_gain   = 0.5;    // widen the band by this * observed refault rate
-        double decay_per_sec = 0.139;  // demand-peak half-life ~5s (ln2/5)
+        double decay_per_sec = std::log(2) / 5;  // demand-peak half-life ~5s
         double base_cpu      = 0.01;   // steady-state scavenger CPU budget
         double max_cpu       = 0.08;   // budget cap when far above goal
         double cpu_gain      = 0.07;   // extra budget per unit of excess/goal
@@ -20,7 +20,7 @@ namespace gc::detail {
                                         // (64 granules is 4 MiB at 8K pages, 32 MiB at 64K)
         double quantum_ns    = 1e6;    // aim for ~1ms of decommit work per wake
         double ewma_alpha    = 0.1;    // smoothing for the measured ns-per-granule
-        double init_ns_per_granule = 3000; // first-quantum cost guess, refined by pace()
+        double init_ns_per_granule = 3000; // first-quantum cost guess
         std::chrono::nanoseconds idle_sleep{ std::chrono::milliseconds(50) };
         std::chrono::nanoseconds max_sleep{ std::chrono::seconds(1) };
     };
@@ -85,8 +85,7 @@ namespace gc::detail {
 
         uint8_t* base() const { return _base; }
 
-        // Granules currently backed by physical memory. The scavenger drives this down toward
-        // whatever the policy's goal allows, so it is what you watch to see it make progress.
+        // Used by tests
         std::size_t resident() const { return _resident.load(std::memory_order_relaxed); }
     };
 

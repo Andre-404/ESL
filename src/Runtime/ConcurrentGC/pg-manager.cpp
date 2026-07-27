@@ -40,18 +40,30 @@ pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
     return pg;
 }
 
-// TODO: move removing from active pgs to free_pgs -> it always happens before next mark phase
-void pg_manager::schedule_free(pg_meta* pg)  {
-    if (!pg) return;
-    for (size_t i = 0; i < pg->num_pages(); i++) {
-        auto offset = (pg_meta*)((uint8_t*)pg + i * config::page_sz);
-        _active.remove(offset);
-    }
-    _pending_free.lfpush(pg);
-    
+size_t compute_idx(pg_meta* pg, size_t base) {
+    auto offset = (size_t)pg - base;
+    return offset / gc::config::free_batch_sz;
 }
-
 void pg_manager::free_pgs() {
-    auto worklist = _pending_free.lf_reset_head(nullptr);
-    _allocator.free_pgs(worklist);
+    std::array<pg_meta*, config::heap_max_sz / config::free_batch_sz> buf {};
+    auto wl = _pending_free.lf_reset_head(nullptr);
+    size_t lo = ~size_t(0), hi = 0;
+    while (wl) {
+        auto tmp = wl;
+        wl = wl->next();
+        for (size_t i = 0; i < tmp->num_pages(); i++) {
+            auto offset = (pg_meta*)((uint8_t*)tmp + i * config::page_sz);
+            _active.remove(offset);
+        }
+        auto idx = compute_idx(tmp, (size_t)_allocator.heap_base());
+        lo = std::min(lo, idx);
+        hi = std::max(hi, idx);
+        tmp->link(buf[idx]);
+        buf[idx] = tmp;
+    }
+
+    for (auto i = lo; i <= hi; i++) {
+        auto pg = buf[i];
+        if (pg) _allocator.free_pgs(pg);
+    }
 }

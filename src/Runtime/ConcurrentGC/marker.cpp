@@ -31,9 +31,8 @@ size_t marker::trace_n(size_t bytes)  {
     if (!main) return 0;
 
     auto mark = [&](managed* obj) {
-        if (main->full()) [[unlikely]] main = replace_buf(main);
-        // TODO: this needs to be after the full checks because of the swaps we do while reading, any other way to optimize this?
-        (void)push_obj(main, obj);
+        if (push_obj(main, obj)) [[unlikely]]
+            main = replace_buf(main);
     };
 
     size_t cnt = 0;

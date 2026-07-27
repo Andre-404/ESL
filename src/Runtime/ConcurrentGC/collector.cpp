@@ -66,7 +66,7 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
 
     {
         // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
-        auto _ = _metrics.maybe_time(gc_metrics::phase::mark, is_worker);
+        auto _ = _metrics.time(gc_metrics::phase::mark);
         for (auto t : owned) phase1(t, copying);
 
         while (_marker.trace_n(config::trace_batch * 1024)) {}
@@ -80,21 +80,18 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
     };
 
     if (copying) [[unlikely]] {
-        {
-            auto _ = _metrics.maybe_time(gc_metrics::phase::copy, is_worker);
-            
-            for_each_owned(copy_objs_fn());
-            _gate.arrive_and_wait();
+        auto _ = _metrics.time(gc_metrics::phase::copy);
 
-            for_each_owned(update_ptrs_fn());
-            if (is_worker) _copier.update_globals(_roots);
-            _gate.arrive_and_wait();
-        }
-        if (is_worker) _cycle.copy_time = _metrics.last(gc_metrics::phase::copy);
+        for_each_owned(copy_objs_fn());
+        _gate.arrive_and_wait();
+
+        for_each_owned(update_ptrs_fn());
+        if (is_worker) _copier.update_globals(_roots);
+        _gate.arrive_and_wait();
     }
 
     {
-        auto _ = _metrics.maybe_time(gc_metrics::phase::sweep, is_worker);
+        auto _ = _metrics.time(gc_metrics::phase::sweep);
         for_each_owned(prune_pgs_fn());
     }
 
@@ -111,6 +108,7 @@ void collector::phase1(tcb* t, bool pin) {
 }
 
 void collector::phase2(tcb* t) {
+    auto _ = _metrics.time(gc_metrics::phase::pause);
     run_stw({ &t, 1 }, false);
 }
 
@@ -129,6 +127,14 @@ size_t collector::stw_phase() {
         _thd_state_mngr.finish_stw(std::views::all(thds));
     });
     return snapshot;
+}
+
+void collector::collect_metrics() {
+    using phase = gc_metrics::phase;
+    _metrics.collect(phase::pause);
+    _metrics.collect(phase::mark);
+    _metrics.collect(phase::sweep);
+    _cycle.copy_time = _metrics.collect(phase::copy);
 }
 
 void collector::end_cycle(size_t alloc_snapshot) {
@@ -164,6 +170,7 @@ void collector::concurrent_loop() {
         _gate.arrive_and_wait();
         _gate.deregister_waiter();
 
+        collect_metrics();
         end_cycle(snapshot);
 
         _pg_manager.free_pgs();

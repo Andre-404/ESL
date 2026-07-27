@@ -1,4 +1,7 @@
 #pragma once
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
 
 namespace gc::detail::platform {
 #ifdef UNIT_TESTS

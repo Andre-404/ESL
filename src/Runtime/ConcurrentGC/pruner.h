@@ -4,7 +4,6 @@
 
 #include "gc-config.h"
 #include "pg-meta.h"
-#include "support.h"
 
 
 namespace gc::detail {
@@ -38,7 +37,8 @@ namespace gc::detail {
 
         size_t get_live_size() const { return _live_sz; }
 
-        pg_meta* prune(pg_meta* list, function_ref<void(pg_meta*)> on_empty) {
+        template<typename F>
+        pg_meta* prune(pg_meta* list, F on_empty) {
             // Done to preserve the order in which pages were allocated
             // TODO: might be better to sort them by address?
             auto in_use = (pg_meta*)nullptr;
@@ -46,7 +46,6 @@ namespace gc::detail {
             for (auto cur = list; cur;) {
                 auto tmp = cur;
                 cur = cur->next();
-                __builtin_prefetch(cur, 0, 0);
                 tmp->unlink();
                 tmp->compute_live();
                 if (tmp->live_count() == 0) {

@@ -87,7 +87,9 @@ TEST(TreeGeometry, SmallGeometryHasTheExpectedShape) {
 TEST(TreeGeometry, RealHeapGeometryMatchesThePlan) {
     EXPECT_EQ(heap_geometry::levels, 5u);
     EXPECT_EQ(heap_geometry::level_pages[0], summary::max_packed);
-    EXPECT_EQ(heap_geometry::level_entries[0], 64u);
+    // The roots tile the heap - find() scans all of them as a single window
+    EXPECT_EQ(heap_geometry::level_entries[0], config::total_pages / summary::max_packed);
+    EXPECT_EQ(heap_geometry::level_entries[0] * heap_geometry::level_pages[0], config::total_pages);
     EXPECT_EQ(heap_geometry::chunks, config::total_pages / config::chunk_pages);
     // Every level-0 entry must be exactly representable, which is what the full bit encodes.
     EXPECT_EQ(heap_geometry::level_pages[0], 1u << 21);

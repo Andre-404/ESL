@@ -151,10 +151,29 @@ namespace gc::detail {
 
     class pg_manager {
         pg_allocator _allocator;
-        tstack<pg_meta> _pending_free;
         // +1 for big objects
         std::array<pg_list, config::szclass_cnt+1> _partial;
+        tstack<pg_meta> _pending_free;
         ts_cache _active;
+
+        class batch {
+            pg_meta* _start;
+            pg_meta* _end;
+            tstack<pg_meta>& _sink;
+
+        public:
+            batch(tstack<pg_meta>& sink) : _start(nullptr), _end(nullptr), _sink(sink) {}
+
+            ~batch() {
+                if (_end) _sink.lfpush_range(_start, _end);
+            }
+            
+            void add(pg_meta* pg) {
+                if (!_end) _end = pg;
+                pg->link(_start);
+                _start = pg;
+            }
+        };
     public:
         // _allocator is declared first, so its reservation exists before _active indexes on it
         pg_manager() : _active(uintptr_t(_allocator.heap_base())) {}
@@ -172,7 +191,7 @@ namespace gc::detail {
             _partial[sz_class].push(first);
         }
 
-        void schedule_free(pg_meta* pg);
+        batch start_batch() { return { _pending_free }; }
 
         template<typename F>
         void mutate_owned(F mutator) {

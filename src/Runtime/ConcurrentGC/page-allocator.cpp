@@ -46,6 +46,7 @@ namespace {
     #endif
     }
 
+    // On linux madvise(populate_write) seems to kill perf
     bool commit_pages(void* addr, std::size_t bytes) {
     #ifdef _WIN32
         return VirtualAlloc(addr, bytes, MEM_COMMIT, PAGE_READWRITE) != nullptr;
@@ -322,15 +323,10 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
 }
 
 void pg_allocator::free_pgs(pg_meta* start) {
+    auto b = _pages.begin_free();
     while (start) {
-        auto freed = 0ull;
-        auto b = _pages.begin_free();
-        while (start && freed < config::free_batch_sz) {
-            auto tmp = start;
-            start = start->next();
-
-            freed += tmp->num_pages() * config::page_sz;
-            b.add(tmp, tmp->num_pages());
-        }
+        auto tmp = start;
+        start = start->next();
+        b.add(tmp, tmp->num_pages());
     }
 }

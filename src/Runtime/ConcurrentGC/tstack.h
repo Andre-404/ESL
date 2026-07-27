@@ -64,6 +64,17 @@ namespace gc::detail {
             node->unlink();
             return (T*)node;
         }
+        void lfpush_range(tnode<T>* first, tnode<T>* last) {
+            auto ref = std::atomic_ref { _head };
+            auto old_head = ref.load(std::memory_order_relaxed);
+            tnode<T>* new_head;
+
+            do {
+                auto [ptr, cnt] = unpack_node(old_head);
+                last->link(ptr);
+                new_head = pack_node(first, cnt + 1);
+            } while (!ref.compare_exchange_weak(old_head, new_head, std::memory_order_release,std::memory_order_relaxed));
+        }
 
         T* lf_reset_head(tnode<T>* new_head) {
             auto ref = std::atomic_ref { _head };

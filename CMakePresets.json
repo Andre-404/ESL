@@ -36,7 +36,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "ESL_LLVM_STATIC": "ON",
-                "ESL_LTO": "ON"
+                "ESL_LTO": "ON",
+                "ESL_BUILD_TESTS": "OFF"
             }
         },
         {
@@ -47,7 +48,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "ESL_LLVM_STATIC": "ON",
-                "ESL_LTO": "ON"
+                "ESL_LTO": "ON",
+                "ESL_BUILD_TESTS": "OFF"
             }
         },
         {
@@ -97,6 +99,10 @@
         {
             "name": "release",
             "configurePreset": "release"
+        },
+        {
+            "name": "releasewdeb",
+            "configurePreset": "release-with-deb"
         },
         {
             "name": "asan",
