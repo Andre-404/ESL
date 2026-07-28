@@ -17,9 +17,11 @@ namespace gc::detail {
             _registry.insert(tcb);
             under_lock();
         }
-        void remove(tcb* tcb) {
+        template<typename F>
+        void remove(tcb* tcb, F under_lock) {
             auto lk = std::lock_guard { _mtx };
             _registry.erase(tcb);
+            under_lock();
         }
 
         template<typename F>

@@ -45,6 +45,7 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
     for (auto t : owned) {
         auto& arena = t->get_arena();
         arena.flush_alloc_caches();
+
         auto dbt = arena.get_debt();
         _alloc_sz += dbt;
         arena.remove_debt(dbt);
@@ -255,12 +256,13 @@ void collector::delete_tcb(tcb *t) {
         _pg_manager.transfer_ownership(start);
         return nullptr;
     });
-    // Guaranteed to be a valid buf
-    _marker.push_buf(mark_info.get_wbbuf());
-    mark_info.set_wbbuf(nullptr);
     // Only attempt to leave after handing over resources
     _thd_state_mngr.thread_exit(t, [&](tcb* thd) { handle_pending(thd); });
-    _tcb_registry.remove(t);
+    _tcb_registry.remove(t, [&]() {
+        // Guaranteed to be a valid buf
+        _marker.push_buf(mark_info.get_wbbuf());
+        mark_info.set_wbbuf(nullptr);
+    });
     // Safe to do since we removed it under lock
     rpfree(t);
     rpmalloc_thread_finalize(1);
