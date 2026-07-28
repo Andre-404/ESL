@@ -115,8 +115,8 @@ ObjArrayStorage* ObjArrayStorage::allocArray(uint32_t desiredSize){
 
 ObjArray::ObjArray() : Obj(ObjType::ARRAY, false) {
     containsObjects = 0;
-    storage = ObjArrayStorage::allocArray(8);
     size = 0;
+    storage = ObjArrayStorage::allocArray(8);
     gc::write_b(storage);
 }
 ObjArray::ObjArray(const size_t _size) : Obj(ObjType::ARRAY, false) {

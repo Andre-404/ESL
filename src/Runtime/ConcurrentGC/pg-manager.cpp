@@ -20,10 +20,13 @@ ts_cache::l2_cache& ts_cache::get_or_create_l2(size_t idx)  {
 }
 
 pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
-    auto pg = _partial[sz_class].pop();
-    if (pg) return pg;
+    if (!_partial[sz_class].approx_empty()) {
+        auto _ = std::lock_guard { _part_mtx };
+        auto pg = _partial[sz_class].pop();
+        if (pg) return pg;
+    }
 
-    pg = _allocator.alloc_pg(config::sz_classes[sz_class], 1);
+    auto pg = _allocator.alloc_pg(config::sz_classes[sz_class], 1);
     if (pg) _active.add((uintptr_t)pg, pg);
     return pg;
 }

@@ -108,10 +108,10 @@ namespace gc::detail {
     };
 
 
+    // Deliberately not thread safe
     class pg_list {
-        std::mutex _mtx;
         pg_meta* _start;
-         std::atomic<bool> _maybe_has_pages;
+        std::atomic<bool> _maybe_has_pages;
     public:
         pg_list() : _start(nullptr), _maybe_has_pages(false) {}
 
@@ -121,15 +121,12 @@ namespace gc::detail {
             auto end = start;
             while (end->next()) end = end->next();
 
-            auto lk = std::lock_guard { _mtx };
             end->link(_start);
             _start = start;
             _maybe_has_pages.store(true, std::memory_order_release);
         }
 
         pg_meta* pop() {
-             if (!_maybe_has_pages.load(std::memory_order_acquire)) return nullptr;
-            auto lk = std::lock_guard { _mtx };
             if (!_start) { 
                 _maybe_has_pages.store(false, std::memory_order_relaxed);
                 return nullptr;
@@ -143,17 +140,22 @@ namespace gc::detail {
 
         template<typename F>
         void mutate(F mutator) {
-            auto lk = std::lock_guard { _mtx };
             _start = mutator(_start);
             _maybe_has_pages.store(_start != nullptr, std::memory_order_release);
+        }
+
+        bool approx_empty() {
+            return !_maybe_has_pages.load(std::memory_order_acquire);
         }
     };
 
     class pg_manager {
         pg_allocator _allocator;
+        tstack<pg_meta> _pending_free;
+        std::mutex _part_mtx;
         // +1 for big objects
         std::array<pg_list, config::szclass_cnt+1> _partial;
-        tstack<pg_meta> _pending_free;
+        // For sorting before pg allocator handoff
         std::array<pg_meta*, config::heap_max_sz / config::free_batch_sz> _buckets;
         ts_cache _active;
 
@@ -188,6 +190,7 @@ namespace gc::detail {
         // Thread safe
         void transfer_ownership(pg_meta* first) {
             if (!first) return;
+            auto _ = std::lock_guard { _part_mtx };
             auto sz_class = config::sz_to_class(first->block_sz());
             _partial[sz_class].push(first);
         }
@@ -196,6 +199,7 @@ namespace gc::detail {
 
         template<typename F>
         void mutate_owned(F mutator) {
+            auto _ = std::lock_guard { _part_mtx };
             for (auto& list : _partial) list.mutate(mutator);
         }
 
