@@ -27,8 +27,7 @@ namespace gc::detail {
             return false;
         }
 
-        // Raise an urgent, out-of-memory collection, overriding any pending
-        // normal request. The caller is expected to block until it is served
+        // The caller is expected to block until express is served
         // Refuses to request express if end is posted
         void request_express() {
             auto expected = type::none;
@@ -61,7 +60,7 @@ namespace gc::detail {
         // CAS so that we don't overwrite end request
         void clear() {
             auto expected = _req.load(std::memory_order_relaxed);
-            if (expected == type::end ) return;
+            if (expected == type::end) return;
             _req.compare_exchange_strong(expected, type::none, std::memory_order_release);
             _req.notify_all();
         }

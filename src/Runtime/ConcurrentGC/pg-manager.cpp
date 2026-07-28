@@ -45,7 +45,6 @@ size_t compute_idx(pg_meta* pg, size_t base) {
     return offset / gc::config::free_batch_sz;
 }
 void pg_manager::free_pgs() {
-    std::array<pg_meta*, config::heap_max_sz / config::free_batch_sz> buf {};
     auto wl = _pending_free.lf_reset_head(nullptr);
     size_t lo = ~size_t(0), hi = 0;
     while (wl) {
@@ -58,12 +57,12 @@ void pg_manager::free_pgs() {
         auto idx = compute_idx(tmp, (size_t)_allocator.heap_base());
         lo = std::min(lo, idx);
         hi = std::max(hi, idx);
-        tmp->link(buf[idx]);
-        buf[idx] = tmp;
+        tmp->link(_buckets[idx]);
+        _buckets[idx] = tmp;
     }
 
     for (auto i = lo; i <= hi; i++) {
-        auto pg = buf[i];
+        auto pg = std::exchange(_buckets[i], nullptr);
         if (pg) _allocator.free_pgs(pg);
     }
 }

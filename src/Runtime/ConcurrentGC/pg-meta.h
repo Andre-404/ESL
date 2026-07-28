@@ -2,6 +2,7 @@
 #include "gc-config.h"
 #include "managed.h"
 #include "tstack.h"
+#include <atomic>
 #include <memory>
 #include <cstring>
 #include <algorithm>
@@ -46,10 +47,10 @@ namespace gc::detail {
         // concludes "slot not allocated", which is exactly what the pre-flush window means
         // everywhere else in the allocator.
         size_t load_alloc(size_t bit) const {
-            return std::atomic_ref { alloc_bits()[bit / 64] }.load(std::memory_order_relaxed);
+            return std::atomic_ref { alloc_bits()[bit / 64] }.load(std::memory_order_acquire);
         }
         void store_alloc(size_t bit, size_t val) const {
-            std::atomic_ref { alloc_bits()[bit / 64] }.store(val, std::memory_order_relaxed);
+            std::atomic_ref { alloc_bits()[bit / 64] }.store(val, std::memory_order_release);
         }
     };
     

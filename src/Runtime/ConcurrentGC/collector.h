@@ -1,6 +1,7 @@
 #pragma once
 
 #include <thread>
+#include <unordered_map>
 
 #include "pg-manager.h"
 #include "copier.h"
@@ -30,13 +31,14 @@ namespace gc::detail {
 
         sync_point _gate;
         std::vector<size_t*> _roots;
+        std::unordered_map<tcb*, std::span<size_t>> _temp_roots;
 
         marker _marker;
         copier _copier;
 
         gc_heuristics _heuristic;
-        cycle_stats   _cycle;
         gc_metrics    _metrics;
+        cycle_stats   _cycle;
 
         pruner _pruner;
         

@@ -16,11 +16,11 @@ namespace gc {
         // (moving happens in strictly controlled conditions so no worries about writes to old location)
         move_state state() {
             auto ref = std::atomic_ref { _move_state };
-            return ref.load(std::memory_order_acquire);
+            return ref.load(std::memory_order_relaxed);
         }
         void set_state(move_state val) {
             auto ref = std::atomic_ref { _move_state };
-            ref.store(val, std::memory_order_release);
+            ref.store(val, std::memory_order_relaxed);
         }
 
         uint8_t get_type_id() const { return _type_id; }

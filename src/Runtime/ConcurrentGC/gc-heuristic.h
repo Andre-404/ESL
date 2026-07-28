@@ -23,6 +23,8 @@ namespace gc::detail {
         size_t max_heap     = config::heap_max_sz;
         double max_headroom = 0.75;    // trigger = live * (1 + headroom)
         double min_headroom = 0.2625;
+        // Half-life of the live-set peak the trigger is sized against
+        double live_peak_halflife = 5.0;
         double copy_bias    = 3.0;     // >1 biases against compacting
         std::chrono::nanoseconds copy_fixed_cost = std::chrono::milliseconds(1);
         double rate_alpha        = 0.3;
@@ -33,6 +35,7 @@ namespace gc::detail {
     class gc_heuristics {
         gc_tuning _cfg;
         double _alloc_rate, _mark_rate, _copy_rate;   // bytes/second, collector-private
+        double _peak_live;                            // decaying max of recent live sets
         gc_clock::time_point _cycle_start;
         size_t _cycles = 0;
 
@@ -59,12 +62,13 @@ namespace gc::detail {
             double pressure = std::clamp(_alloc_rate / std::max(_mark_rate, 1.0), 0.0, 1.0);
             double headroom = std::lerp(_cfg.max_headroom, _cfg.min_headroom, pressure);
             double floor    = double(std::max<size_t>(_cfg.initial_heap, live));
-            return size_t(std::clamp(double(live) * (1.0 + headroom), floor, _cfg.max_heap / 2.0));
+            double basis    = std::max(double(live), _peak_live);
+            return size_t(std::clamp(basis * (1.0 + headroom), floor, _cfg.max_heap / 2.0));
         }
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
             : _cfg(cfg), _alloc_rate(0), _mark_rate(cfg.initial_mark_rate), _copy_rate(cfg.initial_copy_rate),
-              _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0), _should_copy(false) {}
+              _peak_live(0), _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0), _should_copy(false) {}
 
         size_t heap_trigger() const { return _trigger.load(std::memory_order_relaxed); }
         size_t live_size()    const { return _live_size.load(std::memory_order_relaxed); }
@@ -77,6 +81,11 @@ namespace gc::detail {
             blend(_alloc_rate, sample(s.allocated_bytes, wall,        _alloc_rate));
             blend(_mark_rate,  sample(s.live_bytes,      s.mark_time, _mark_rate));
             blend(_copy_rate,  sample(s.evac_move_bytes, s.copy_time, _copy_rate));
+
+            _peak_live = std::max(
+                double(s.live_bytes),
+                _peak_live * std::exp2(-std::max(0.0, secs(wall)) / _cfg.live_peak_halflife)
+            );
 
             _should_copy.store(decide_copy(s), std::memory_order_relaxed);
             _live_size.store(s.live_bytes, std::memory_order_relaxed);

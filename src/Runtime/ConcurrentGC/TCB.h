@@ -77,6 +77,10 @@ namespace gc {
             bool try_transition(thd_state expected, thd_state desired) {
                 return _thd_state.compare_exchange_strong(expected, desired, std::memory_order_acq_rel);
             }
+
+            std::pair<size_t*, uint8_t> peek_start_args() {
+                return { _start_args, _args_cnt };
+            }
         };
     }
 

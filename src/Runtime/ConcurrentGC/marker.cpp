@@ -26,7 +26,7 @@ void marker::scan_globals(std::span<size_t*> roots)  {
     push_buf(buf);
 }
 
-size_t marker::trace_n(size_t bytes)  {
+[[gnu::hot]] size_t marker::trace_n(size_t bytes)  {
     auto main = _bufs.pop_full();
     if (!main) return 0;
 

@@ -27,5 +27,11 @@ namespace gc::detail {
             auto lk = std::lock_guard { _mtx };
             consume(_registry);
         }
+
+        template<typename F>
+        void under_lock(F f) {
+            auto lk = std::lock_guard { _mtx };
+            f();
+        }
     };
 }

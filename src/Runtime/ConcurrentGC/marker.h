@@ -10,7 +10,7 @@ namespace gc::detail {
 
         // Must stay in the header: scan_stack is a template instantiated in other TUs and
         // always_inline needs the body available at every call site.
-        [[gnu::always_inline, nodiscard]] bool push_obj(mark_buf* buf, managed* obj) {
+        [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj) {
             auto state = obj->state();
             auto is_traceable = obj_traceable(obj);
             if (state == move_state::unmanaged) [[unlikely]] return false;
@@ -44,6 +44,21 @@ namespace gc::detail {
         void scan_globals(std::span<size_t*> globals);
 
         template<typename F>
+        void scan_temp(std::span<size_t> tmp, F get_base) {
+            auto buf = _bufs.pop_empty();
+            auto mark = [&](managed* obj) {
+                // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
+                if (obj->state() == move_state::none) obj->set_state(move_state::temp_pinned);
+                if (push_obj(buf, obj)) buf = replace_buf(buf);
+            };
+            // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
+            for (auto word : tmp)
+                if (auto base_ptr = get_base(to_possible_ptr(word))) mark(base_ptr);
+            
+            push_buf(buf);
+        }
+
+        template<typename F>
         void scan_stack(thd_mark_info& info, bool pin, F get_base) {
             auto [stack, regs] = info.get_ctx();
             auto buf = _bufs.pop_empty();
@@ -62,6 +77,6 @@ namespace gc::detail {
             push_buf(buf);
         }
 
-        size_t trace_n(size_t bytes);
+        [[gnu::hot]] size_t trace_n(size_t bytes);
     };
 }

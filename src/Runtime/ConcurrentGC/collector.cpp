@@ -68,6 +68,14 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
         // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
         auto _ = _metrics.time(gc_metrics::phase::mark);
         for (auto t : owned) phase1(t, copying);
+        if (is_worker) {
+            auto get_base = [&](uint8_t* ptr) -> managed* {
+                auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
+                if (!pg) return nullptr;
+                return pg->from_interior((uint8_t*)ptr);
+            };
+            for (auto [tcb, sp] : _temp_roots) _marker.scan_temp(sp, get_base);
+        }
 
         while (_marker.trace_n(config::trace_batch * 1024)) {}
         _gate.arrive_and_wait();
@@ -204,6 +212,7 @@ void collector::handle_pending(tcb* t) {
 void collector::thd_prologue(tcb *t) {
     rpmalloc_thread_initialize();
     _thd_state_mngr.prologue(t);
+    _tcb_registry.under_lock([&](){ _temp_roots.erase(t); });
 }
 
 void collector::set_paused(tcb *t) {
@@ -220,8 +229,10 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
     auto t = new (rpmalloc(sizeof(tcb))) tcb { start_args, args_cnt };
     _tcb_registry.add(t, [&]() {
         // Threads created during stw will be paused and needs to be started manually
-        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw)
+        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw) {
             t->transition(thd_state::need_start);
+            _temp_roots.insert_or_assign(t, std::span<size_t>{ start_args, args_cnt });
+        }
 
         // TODO: this is kinda inefficient, can we do better?
         t->get_mark_info().set_wbbuf(_marker.get_buf());
@@ -245,6 +256,7 @@ void collector::delete_tcb(tcb *t) {
     });
     // Guaranteed to be a valid buf
     _marker.push_buf(mark_info.get_wbbuf());
+    mark_info.set_wbbuf(nullptr);
     // Only attempt to leave after handing over resources
     _thd_state_mngr.thread_exit(t, [&](tcb* thd) { handle_pending(thd); });
     _tcb_registry.remove(t);
@@ -269,10 +281,8 @@ managed *collector::alloc(size_t sz, tcb * t) {
         force_collection(sz, t);
         return alloc(sz, t);
     }
-    if (_gc_flag.load(std::memory_order_relaxed) != (uint8_t)gc_state::none) [[unlikely]] {
-        auto pg = pg_from_obj(res);
-        pg->record_mark(res, false);
-    }
+    if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none) [[unlikely]]
+        pg_from_obj(res)->record_mark(res, false);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
     if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);

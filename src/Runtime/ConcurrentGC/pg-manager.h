@@ -154,6 +154,7 @@ namespace gc::detail {
         // +1 for big objects
         std::array<pg_list, config::szclass_cnt+1> _partial;
         tstack<pg_meta> _pending_free;
+        std::array<pg_meta*, config::heap_max_sz / config::free_batch_sz> _buckets;
         ts_cache _active;
 
         class batch {
@@ -176,7 +177,7 @@ namespace gc::detail {
         };
     public:
         // _allocator is declared first, so its reservation exists before _active indexes on it
-        pg_manager() : _active(uintptr_t(_allocator.heap_base())) {}
+        pg_manager() : _active(uintptr_t(_allocator.heap_base())), _buckets(), _partial() {}
 
         pg_meta* pg_from_ptr(uintptr_t ptr) { return _active.get_pg(ptr); }
 

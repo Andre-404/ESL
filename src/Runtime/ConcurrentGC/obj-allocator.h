@@ -29,7 +29,7 @@ namespace gc::detail {
             // Flushing cache before allocating means:
             // all objects in cache have been set up correctly(have to watch out for allocators in constructors of managed objs)
 
-            _pg->store_alloc_word(_pos, _cache);
+            flush_cache();
 
             _pos += 64; // To avoid past end reads
             while (_pos < _pg_cnt) {
@@ -58,6 +58,7 @@ namespace gc::detail {
         }
 
         void flush_cache() {
+            if (_pos >= _pg_cnt) return;
             _pg->store_alloc_word(_pos, _cache);
         }
 
