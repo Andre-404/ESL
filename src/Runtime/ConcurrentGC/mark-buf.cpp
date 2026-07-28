@@ -28,6 +28,7 @@ mark_buf *mark_buf_manager::pop_empty() {
 void mark_buf_manager::remove_empty() {
     while (_empty_cnt.load(std::memory_order_relaxed) > config::empty_mark_bufs_limit) {
         auto buf = _empty.lfpop();
+        if (!buf) return;
         rpfree(buf);
         _empty_cnt.fetch_sub(1, std::memory_order_relaxed);
     }

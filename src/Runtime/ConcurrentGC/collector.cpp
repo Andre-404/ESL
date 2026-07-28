@@ -185,7 +185,7 @@ void collector::concurrent_loop() {
         _pg_manager.free_pgs();
 
         _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
-        _marker.remove_empty();
+        _tcb_registry.under_lock([&] { _marker.remove_empty(); });
     }
     rpmalloc_thread_finalize(1);
 }
