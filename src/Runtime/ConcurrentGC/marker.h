@@ -33,11 +33,11 @@ namespace gc::detail {
         [[nodiscard]] mark_buf* get_buf() {
             return _bufs.pop_empty();
         }
-
         void push_buf(mark_buf* buf) {
             if (!buf->empty()) _bufs.push_full(buf);
             else _bufs.push_empty(buf);
         }
+        void remove_empty() { _bufs.remove_empty(); }
 
         void flush_wbbuf(mark_buf* buf);
 

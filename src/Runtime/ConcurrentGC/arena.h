@@ -13,7 +13,10 @@ namespace gc::detail {
 
         managed* alloc_big(size_t sz, pg_manager& manager) {
             auto res = manager.get_big_pg(pg_meta::header_bytes(sz) + sz);
-            if (!res) [[unlikely]] return nullptr;
+            if (!res) [[unlikely]] {
+                _debt -= sz;
+                return nullptr;
+            }
             res->link(_big_objs);
             _big_objs = res;
             return pg_meta::pg_slots_iter { res, 0 }.get();

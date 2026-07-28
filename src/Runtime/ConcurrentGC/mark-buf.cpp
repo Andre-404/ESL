@@ -13,11 +13,8 @@ using namespace gc::detail;
     thdA: rpfree      thdB: deref what thdA just freed
 */
 void mark_buf_manager::push_empty(mark_buf* buf) {
-    if (_empty_cnt.fetch_add(1, std::memory_order_relaxed) < config::empty_mark_bufs_limit) {
-        return _empty.lfpush(buf);
-    }
-    _empty_cnt.fetch_sub(1, std::memory_order_relaxed);
-    rpfree(buf);
+    _empty_cnt.fetch_add(1, std::memory_order_relaxed);
+    _empty.lfpush(buf);
 }
 
 mark_buf *mark_buf_manager::pop_empty() {
@@ -26,4 +23,12 @@ mark_buf *mark_buf_manager::pop_empty() {
         return buf;
     }
     return new(rpmalloc(sizeof(mark_buf))) mark_buf();
+}
+
+void mark_buf_manager::remove_empty() {
+    while (_empty_cnt.load(std::memory_order_relaxed) > config::empty_mark_bufs_limit) {
+        auto buf = _empty.lfpop();
+        rpfree(buf);
+        _empty_cnt.fetch_sub(1, std::memory_order_relaxed);
+    }
 }
