@@ -60,6 +60,14 @@ namespace gc::detail {
                 return _pruner.prune(start, fn);
             };
         }
+        auto get_obj_base() {
+            return [&](uint8_t* ptr) -> managed* {
+                auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
+                if (!pg) return nullptr;
+                return pg->from_interior((uint8_t*)ptr);
+            };
+        }
+
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
 
         void force_collection(int64_t sz, tcb* handle);

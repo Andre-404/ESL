@@ -59,23 +59,17 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
 
     // TODO: this is the only big part of the code that is worker specific, can we move it out?
     auto snapshot = 0ull;
-    if (is_worker) {
-        snapshot = _alloc_sz.load();
-        // Every thread has stopped at this point so this is safe to do
-        _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
-    }
 
     {
         // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
         auto _ = _metrics.time(gc_metrics::phase::mark);
         for (auto t : owned) phase1(t, copying);
         if (is_worker) {
-            auto get_base = [&](uint8_t* ptr) -> managed* {
-                auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
-                if (!pg) return nullptr;
-                return pg->from_interior((uint8_t*)ptr);
-            };
-            for (auto [tcb, sp] : _temp_roots) _marker.scan_temp(sp, get_base);
+            for (auto [tcb, sp] : _temp_roots) _marker.scan_temp(sp, get_obj_base());
+            _marker.scan_globals(_roots);
+            snapshot = _alloc_sz.load();
+            // Every thread has stopped at this point so this is safe to do
+            _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
         }
 
         while (_marker.trace_n(config::trace_batch * 1024)) {}
@@ -108,12 +102,7 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
 }
 
 void collector::phase1(tcb* t, bool pin) {
-    auto get_base = [&](uint8_t* ptr) -> managed* {
-        auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
-        if (!pg) return nullptr;
-        return pg->from_interior((uint8_t*)ptr);
-    };
-    _marker.scan_stack(t->get_mark_info(), pin, get_base);
+    _marker.scan_stack(t->get_mark_info(), pin, get_obj_base());
 }
 
 void collector::phase2(tcb* t) {
