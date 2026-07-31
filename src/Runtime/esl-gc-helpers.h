@@ -18,7 +18,8 @@ namespace gc {
         write_barrier(read_tcb(), obj);
     }
 
-    inline managed* allocate(size_t sz) {
-        return alloc(sz, read_tcb());
+    template<typename T, typename... Args>
+    [[nodiscard]] T* esl_make_gc(size_t extra_bytes, Args&&... args) {
+        return make_gc<T>(read_tcb(), extra_bytes, std::forward<Args>(args)...);
     }
 }

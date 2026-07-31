@@ -12,12 +12,11 @@ namespace gc::detail {
         // always_inline needs the body available at every call site.
         [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj) {
             auto state = obj->state();
-            auto is_traceable = obj_traceable(obj);
             if (state == move_state::unmanaged) [[unlikely]] return false;
 
             auto pg = pg_from_obj(obj);
             auto won = pg->record_mark(obj, state != move_state::none);
-            if (!won || !is_traceable) return false;
+            if (!won || !obj_traceable(obj)) return false;
 
             return buf->push(obj);
         }
@@ -44,11 +43,11 @@ namespace gc::detail {
         void scan_globals(std::span<size_t*> globals);
 
         template<typename F>
-        void scan_temp(std::span<size_t> tmp, F get_base) {
+        void scan_temp(std::span<size_t> tmp, F get_base, bool is_copying) {
             auto buf = _bufs.pop_empty();
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
-                if (obj->state() == move_state::none) obj->set_state(move_state::temp_pinned);
+                if (obj->state() == move_state::none && is_copying) obj->set_state(move_state::temp_pinned);
                 if (push_obj(buf, obj)) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <mutex>
 #include <ranges>
 
 #include "../../Includes/fmt/core.h"
@@ -65,7 +66,9 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
         auto _ = _metrics.time(gc_metrics::phase::mark);
         for (auto t : owned) phase1(t, copying);
         if (is_worker) {
-            for (auto [tcb, sp] : _temp_roots) _marker.scan_temp(sp, get_obj_base());
+            // Scan temps in stw when noone can mutate them
+            for (auto [tcb, sp] : _temp_roots)
+                _marker.scan_temp(sp, get_obj_base(), copying);
             _marker.scan_globals(_roots);
             snapshot = _alloc_sz.load();
             // Every thread has stopped at this point so this is safe to do
@@ -114,7 +117,15 @@ void collector::mark_phase() {
     auto blocked = post_with_state(gc_state::marking, op_mark_stack);
     for (auto t : blocked) phase1(t, false);
     _thd_state_mngr.complete_handshake(blocked);
-    _marker.scan_globals(_roots);
+    _thd_state_mngr.wait_on_all_ack();
+    // Must be under lock because we can be adding global variables dynamically
+    // (need to fix this honestly and add every global as root on start of program)
+    {
+        auto _ = std::scoped_lock { _root_mtx };
+        _marker.scan_globals(_roots);
+    }
+    
+    while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 }
 
 size_t collector::stw_phase() {
@@ -156,11 +167,6 @@ void collector::concurrent_loop() {
         _cycle = {};
         _cycle.mark_time = gc_clock::now().time_since_epoch();
         mark_phase();
-
-        while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
-        _thd_state_mngr.wait_on_all_ack();
-        // Drain again after every thread has marked its stack
-        while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 
         _gate.register_waiter();
         auto snapshot = stw_phase();
@@ -266,6 +272,7 @@ void collector::flush_wbbuf(tcb *t) {
 }
 
 void collector::register_root(size_t *root) {
+    auto _ = std::scoped_lock { _root_mtx };
     _roots.push_back(root);
 }
 

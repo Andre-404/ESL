@@ -1,14 +1,12 @@
 #include "valueHelpers.h"
-#include "../../ErrorHandling/errorHandler.h"
-#include "../../Includes/fmt/format.h"
-#include "valueHelpersInline.cpp"
+#include "../../Includes/fmt/core.h"
+#include "valueHelpersInline.h"
 #include <iostream>
-#include <iomanip>
 
 using namespace object;
 using namespace valueHelpers;
 
-string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
+string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj*>> stack){
     switch(getType(x)){
         case ValueType::NUMBER:
             if(isInt(x)) return std::to_string(static_cast<int64_t>(round(decodeNumber(x))));
@@ -18,11 +16,11 @@ string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::
         case ValueType::NIL:
             return "null";
         case ValueType::OBJ:
-            Obj* ptr = decodeObj(x);
-            if (!stack) stack = std::make_shared<ankerl::unordered_dense::set<object::Obj*>>();
+            auto ptr = decodeObj(x);
+            if (!stack) stack = std::make_shared<ankerl::unordered_dense::set<object::rt_obj*>>();
             if (stack->contains(ptr)) return fmt::format("[Circular ref {:#08x}]", reinterpret_cast<uint64_t>(ptr));
             stack->insert(ptr);
-            string str = ptr->toString(stack);
+            string str = ptr->to_str(stack);
             stack->erase(ptr);
             return str;
     }
@@ -40,16 +38,15 @@ string valueHelpers::typeToStr(Value x) {
         case ValueType::BOOL: return "<bool>";
         case ValueType::NIL: return "<null>";
         case ValueType::OBJ:
-            Obj* ptr = decodeObj(x);
+            auto ptr = decodeObj(x);
             switch (ptr->type()) {
-                case ObjType::ARRAY: return "<array>";
-                case ObjType::CLASS: return "<class " + string(asClass(x)->name) + ">";
-                case ObjType::CLOSURE: return "<function>";
-                case ObjType::INSTANCE: return "<instance: " + string(asInstance(x)->klass->name) + ">";
-                case ObjType::STRING: return "<string>";
-                case ObjType::HASH_MAP: return "<hash map>";
-                case ObjType::FILE: return "<file>";
-                case ObjType::MUTEX: return "<mutex>";
+                case rt_type::ARRAY: return "<array>";
+                case rt_type::CLOSURE: return "<function>";
+                case rt_type::INSTANCE: return "<instance: " + string(asInstance(x)->get_class()->name) + ">";
+                case rt_type::STRING: return "<string>";
+                case rt_type::HASH_MAP: return "<hash map>";
+                case rt_type::FILE: return "<file>";
+                case rt_type::MUTEX: return "<mutex>";
             }
     }
     return "error, couldn't determine type of value";

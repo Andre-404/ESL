@@ -3,23 +3,7 @@
 #include "../Objects/objects.h"
 
 namespace object {
-	class Obj;
-
-	class ObjString;
-
-	class ObjArray;
-
-	class ObjClosure;
-
-	class ObjClass;
-
-	class ObjInstance;
-
-    class ObjHashMap;
-
-	class ObjFile;
-
-	class ObjMutex;
+	class rt_obj;;
 }
 
 enum class ValueType {
@@ -53,7 +37,7 @@ constexpr uint64_t mask_signature_null = mask_qnan | mask_type_null;
 constexpr uint64_t mask_signature_obj = mask_qnan | mask_type_obj;
 
 namespace valueHelpers {
-    string toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::Obj *>> stack = nullptr);
+    string toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj *>> stack = nullptr);
 
     void print(Value x);
 

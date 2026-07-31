@@ -5,8 +5,9 @@
 #include "llvm/IR/Module.h"
 #include "../Runtime/Objects/objects.h"
 #include "../Runtime/Values/valueHelpers.h"
-#include "../Runtime/Values/valueHelpersInline.cpp"
+#include "../Runtime/Values/valueHelpersInline.h"
 
+#include <llvm-23/llvm/Support/AtomicOrdering.h>
 #include <string>
 
 #define CREATE_FUNC(name, isVarArg, returnType, ...) \
@@ -81,10 +82,6 @@ void llvmHelpers::addHelperFunctionsToModule(llvm::Module& module, llvm::LLVMCon
     wrapFn(CREATE_FUNC(safepoint, false, TYPE(Void)));
     // ret: Value, args: arr size
     wrapFn(CREATE_FUNC(createArr, false, eslValTy, TYPE(Int32)));
-    fn = wrapFn(CREATE_FUNC(getArrPtr, false, PTR_TY(eslValTy), eslValTy));
-    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
-    fn = wrapFn(CREATE_FUNC(getArrSize, false, TYPE(Int64), eslValTy));
-    fn->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
 
     wrapFn(CREATE_FUNC(gcInit, false, PTR_TY(TYPE(Int8)), PTR_TY(TYPE(Int64))));
     wrapFn(CREATE_FUNC(gcInternStr, false ,TYPE(Void), eslValTy));
@@ -299,7 +296,7 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
         llvm::Value* subclassIdxEnd = F->getArg(2);
 
         auto cond1 = builder.CreateCall(module.getFunction("isObjType"),
-                                        {inst, builder.getInt8(+ObjType::INSTANCE)});
+                                        {inst, builder.getInt8(+rt_type::INSTANCE)});
 
         llvm::BasicBlock* notObjBB = llvm::BasicBlock::Create(ctx, "notObj");
         llvm::BasicBlock* checkTypeBB = llvm::BasicBlock::Create(ctx, "checkClassType", F);
@@ -391,11 +388,20 @@ void buildLLVMNativeFunctions(llvm::Module& module, llvm::LLVMContext& ctx,
     {
         llvm::Function *F = createFunc("arrWriteBarrier",llvm::FunctionType::get(TYPE(Void), {types["ObjArrayPtr"], eslValTy}, false));
         llvm::Value* ptr = builder.CreateConstInBoundsGEP2_32(types["ObjArray"], F->getArg(0), 0, 1);
-        llvm::Value* tmp = builder.CreateLoad(TYPE(Int8), ptr, "has.obj");
         llvm::Value* isObj = builder.CreateCall(module.getFunction("isObj"), F->getArg(1));
-        isObj = builder.CreateZExt(isObj, TYPE(Int8));
-        tmp = builder.CreateOr(tmp, isObj, "has.obj.new");
-        builder.CreateStore(tmp, ptr);
+
+        auto is_obj = llvm::BasicBlock::Create(ctx, "is.obj");
+        auto no_obj = llvm::BasicBlock::Create(ctx, "no.obj", F);
+        builder.CreateCondBr(isObj, is_obj, no_obj);
+
+        builder.SetInsertPoint(no_obj);
+        builder.CreateRetVoid();
+        F->insert(F->end(), is_obj);
+        builder.SetInsertPoint(is_obj);
+
+        auto st = builder.CreateStore(builder.getInt8(1), ptr);
+        st->setAtomic(llvm::AtomicOrdering::Release);
+
         builder.CreateRetVoid();
         llvm::verifyFunction(*F);
     }

@@ -1,6 +1,5 @@
 #include "objects.h"
-#include "../../Includes/fmt/format.h"
-#include "../Values/valueHelpersInline.cpp"
+#include "../Values/valueHelpersInline.h"
 #include "../../Includes/rapidhash.h"
 #include "string-interner.h"
 
@@ -8,39 +7,34 @@ using namespace object;
 using namespace valueHelpers;
 
 #pragma region Obj
-size_t Obj::getSize(){
+size_t rt_obj::get_sz(){
     switch(type()){
-        case ObjType::STRING: return sizeof(ObjString) + ((ObjString*)this)->size;
-        case ObjType::ARRAY: return sizeof(ObjArray);
-        case ObjType::ARRAY_STORAGE_HEADER: return sizeof(ObjArrayStorage) + ((ObjArrayStorage*)this)->capacity*sizeof(Value);
-        case ObjType::CLOSURE: return sizeof(ObjClosure) + ((ObjClosure*)this)->freevarCount*sizeof(Value);
-        case ObjType::CLASS: return sizeof(ObjClass);
-        case ObjType::INSTANCE: return sizeof(ObjInstance) + ((ObjInstance*)this)->fieldArrLen*sizeof(Value);
-        case ObjType::HASH_MAP: return sizeof(ObjHashMap);
-        case ObjType::FILE: return sizeof(ObjFile);
-        case ObjType::MUTEX: return sizeof(ObjMutex);
+        case rt_type::STRING: return sizeof(rt_string) + ((rt_string*)this)->sz();
+        case rt_type::ARRAY: return sizeof(rt_arr);
+        case rt_type::ARRAY_STORAGE_HEADER: return sizeof(rt_arr_store) + ((rt_arr_store*)this)->get_data().size() * sizeof(Value);
+        case rt_type::CLOSURE: return sizeof(rt_closure) + ((rt_closure*)this)->get_env().size()*sizeof(Value);
+        case rt_type::INSTANCE: return sizeof(rt_inst) + ((rt_inst*)this)->get_fields().size()*sizeof(Value);
+        case rt_type::HASH_MAP: return sizeof(rt_hashmap);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
     __builtin_unreachable();
 }
 
-string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack){
+string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj*>> stack){
     switch(type()){
-        case ObjType::STRING: return string(reinterpret_cast<ObjString*>(this)->get_str());
-        case ObjType::ARRAY:{
-            auto arr = reinterpret_cast<ObjArray*>(this);
+        case rt_type::STRING: return string(reinterpret_cast<rt_string*>(this)->get_str());
+        case rt_type::ARRAY:{
+            auto arr = reinterpret_cast<rt_arr*>(this);
             string str = "[";
-            for(int i = 0; i < arr->size; i++){
-                str.append(" " + valueHelpers::toString(arr->getData()[i], stack)).append(",");
-            }
+            for (auto val : arr->get_data())
+                str.append(" " + valueHelpers::toString(val, stack)).append(",");
             str.erase(str.size() - 1).append(" ]");
             return str;
         }
-        case ObjType::CLOSURE: return "<" + string(reinterpret_cast<ObjClosure*>(this)->name) + ">";
-        case ObjType::CLASS: return "<class " + string(reinterpret_cast<ObjClass*>(this)->name) + ">";
-        case ObjType::INSTANCE: return "<" + string(reinterpret_cast<ObjInstance*>(this)->klass->name) + " instance>";
-        case ObjType::HASH_MAP:{
-            auto map = reinterpret_cast<ObjHashMap*>(this);
+        case rt_type::CLOSURE: return "<" + string(reinterpret_cast<rt_closure*>(this)->name()) + ">";
+        case rt_type::INSTANCE: return "<" + string(reinterpret_cast<rt_inst*>(this)->get_class()->name) + " instance>";
+        /*case rt_type::HASH_MAP:{
+            auto map = reinterpret_cast<rt_hashmap*>(this);
             string str = "{";
             for(auto it : map->fields){
                 str.append(" \"").append(string(it.first->get_str())).append("\" : ");
@@ -48,9 +42,7 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
             }
             str.erase(str.size() - 1).append(" }");
             return str;
-        }
-        case ObjType::FILE: return "<file>";
-        case ObjType::MUTEX: return "<mutex>";
+        }*/
         default: break;
     }
     return "cannot stringfy object";
@@ -58,108 +50,83 @@ string Obj::toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>>
 #pragma endregion
 
 #pragma region ObjString
-bool ObjString::compare(ObjString* other) {
-	return size == other->size && std::strcmp(get_str(), other->get_str()) == 0;
+bool rt_string::compare(rt_string* other) {
+	return _size == other->_size && std::strcmp(get_str(), other->get_str()) == 0;
 }
 
-bool ObjString::compare(const string other) {
+bool rt_string::compare(const string other) {
 	return std::strcmp(get_str(), other.c_str()) == 0;
 }
 
-ObjString* ObjString::concat(ObjString* other) {
-    auto ptr = gc::allocate(sizeof(ObjString) + size + other->size +1);
-    auto newStr = new(ptr) ObjString {};
-    newStr->size = size + other->size;
+rt_string* rt_string::concat(rt_string* other) {
+    auto ptr = gc::esl_make_gc<rt_string>(_size + other->_size + 1, _size + other->_size, get_str());
 
-    std::memcpy(newStr->get_str(), get_str(), size);
-    std::memcpy(newStr->get_str() + size, other->get_str(), other->size+1);
+    std::memcpy(ptr->get_str() + _size, other->get_str(), other->_size+1);
 
-    return object::string_interner::get().check_interned(newStr);
+    return object::string_interner::get().check_interned(ptr);
 }
 
-ObjString* ObjString::createStr(char* str){
-    auto ptr = gc::allocate(sizeof(ObjString) + std::strlen(str) +1);
-    auto newStr = new(ptr) ObjString {};
-    newStr->size = std::strlen(str);
-    strcpy(newStr->get_str(), str);
-    return object::string_interner::get().check_interned(newStr);
+rt_string* rt_string::create(char* str){
+    auto ptr = gc::esl_make_gc<rt_string>(std::strlen(str) + 1, std::strlen(str), str);
+    return object::string_interner::get().check_interned(ptr);
 }
 
-uint64_t stringHash::operator()(const ObjString* str) const noexcept{
-    return rapidhash(str->get_str(), str->size);
-}
-#pragma endregion
-
-#pragma region ObjClosure
-Value* ObjClosure::getFreevarArr(){
-    return reinterpret_cast<Value *>(this + 1);
+uint64_t rt_string::hash::operator()(const rt_string* str) const noexcept{
+    return rapidhash(str->get_str(), str->_size);
 }
 #pragma endregion
 
 #pragma region ObjArray
 
-Value* ObjArrayStorage::getData(){
-    return (Value*)(((char*)this)+sizeof(ObjArrayStorage));
+rt_arr_store::rt_arr_store(uint32_t cap, std::span<Value> init)
+    : rt_obj(rt_type::ARRAY_STORAGE_HEADER, false), _contains_obj(0), _capacity(cap) {
+    auto s = get_data();
+    bool found = false;
+    for (size_t i = 0; i < init.size(); i++) {
+        s[i] = init[i];
+        if (isObj(init[i])) {
+            found = true;
+            gc::write_b(decodeObj(init[i]));
+        }
+    }
+    memset(&s[init.size()], 0, (cap - init.size())*sizeof(Value));
+    if (found) _contains_obj = 1;
 }
 
-ObjArrayStorage* ObjArrayStorage::allocArray(uint32_t desiredSize){
+
+rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init){
     auto capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
     if(capacity > (1ull << 31)){
         // TODO: error
     }
-    auto ptr = gc::allocate(sizeof(ObjArrayStorage) + capacity * sizeof(Value));
-    auto store = new(ptr) ObjArrayStorage {};
-    store->capacity = capacity;
-    return store;
+    return gc::esl_make_gc<rt_arr_store>(capacity * sizeof(Value), capacity, init);
 }
 
-ObjArray::ObjArray() : Obj(ObjType::ARRAY, false) {
-    containsObjects = 0;
-    size = 0;
-    storage = ObjArrayStorage::allocArray(8);
-    gc::write_b(storage);
-}
-ObjArray::ObjArray(const size_t _size) : Obj(ObjType::ARRAY, false) {
-    containsObjects = 0;
-    size = _size;
-    storage = ObjArrayStorage::allocArray(size);
-    gc::write_b(storage);
+rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY, false) {
+    _size = size;
+    _storage = nullptr;
 }
 
-Value* ObjArray::getData(){
-    return storage->getData();
+void rt_arr::gc_init() {
+    _storage = rt_arr_store::alloc(_size, {});
+    gc::write_b(_storage);
 }
-void ObjArray::push(Value item){
-    if(size == storage->capacity){
-        ObjArrayStorage* newStorage = ObjArrayStorage::allocArray(storage->capacity+1);
-        memcpy(newStorage->getData(), storage->getData(), size*sizeof(Value));
-        storage = newStorage;
-        gc::write_b(storage);
+
+void rt_arr::push(Value item){
+    auto cap = _storage->get_data().size();
+    if(_size == cap){
+        auto _new = rt_arr_store::alloc(cap+1, get_data());
+        _storage = _new;
+        gc::write_b(_storage);
     }
-    getData()[size++] = item;
+    _storage->get_data()[_size++] = item;
     if (isObj(item)) {
-        containsObjects = 1;
+        _storage->set_has_obj();
         gc::write_b(decodeObj(item));
     }
 }
 #pragma endregion
 
-#pragma region ObjInstance
-Value* ObjInstance::getFields(){
-    return (Value*)(((char*)this)+sizeof(ObjInstance));
-}
-#pragma endregion
-
 #pragma region ObjHashMap
-ObjHashMap::ObjHashMap() : Obj(ObjType::HASH_MAP, false) {}
-#pragma endregion
-
-#pragma region ObjFile
-ObjFile::ObjFile(string& _path, int _openType) : Obj(ObjType::FILE, true), path(_path) {
-    openType = _openType;
-	stream.open(path, std::ios::in | std::ios::out);
-}
-ObjFile::~ObjFile() {
-	stream.close();
-}
+rt_hashmap::rt_hashmap() : rt_obj(rt_type::HASH_MAP, false) {}
 #pragma endregion

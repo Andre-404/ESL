@@ -1,9 +1,9 @@
 #include "TypeHelper.h"
-#include "../LLVMHelperFunctions.h"
+#include "RuntimeBridge.h"
 
 
-TypeHelper::TypeHelper(llvm::IRBuilder<>& b, llvm::Module& mod, const ankerl_map<std::string, std::pair<int, int>>& _hierarchy) : _b(b) {
-    llvmHelpers::addHelperFunctionsToModule(mod, _b.getContext(), _b, _named_types);
+TypeHelper::TypeHelper(llvm::IRBuilder<>& b, runtime_bridge& bridge, const ankerl_map<std::string, std::pair<int, int>>& _hierarchy)
+    : _b(b), _bridge(bridge) {
     _func_attrs.push_back(llvm::Attribute::get(_b.getContext(), "uwtable", "sync"));
     _func_attrs.push_back(llvm::Attribute::get(_b.getContext(), "no-trapping-math", "true"));
     _class_hierarchy = _hierarchy;
@@ -36,16 +36,12 @@ llvm::Constant* TypeHelper::ConstCastToESLVal(llvm::Constant* constant) const {
 }
 
 llvm::Type* TypeHelper::getESLValType() const {
-    return llvmHelpers::getESLValType(_b.getContext());
-}
-
-llvm::Type* TypeHelper::internal_obj_ty(const std::string& name) const {
-    return _named_types.at(name);
+    return runtime_bridge::eslValType(_b.getContext());
 }
 
 llvm::FunctionType* TypeHelper::getFuncType(int argCount) const {
+    // First argument is always the closure structure which is an ESL val
     vector params = { getESLValType() };
-    // First argument is always the closure structure;
     for(int i = 0; i < argCount; i++) params.push_back(getESLValType());
     llvm::FunctionType* fty = llvm::FunctionType::get(getESLValType(), params, false);
     return fty;

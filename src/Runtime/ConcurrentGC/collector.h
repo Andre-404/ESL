@@ -30,6 +30,7 @@ namespace gc::detail {
         collection_request _collection_req;
 
         sync_point _gate;
+        std::mutex _root_mtx;
         std::vector<size_t*> _roots;
         std::unordered_map<tcb*, std::span<size_t>> _temp_roots;
 

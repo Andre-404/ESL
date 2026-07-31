@@ -1,42 +1,40 @@
 #pragma once
-#include "../ErrorHandling/errorHandler.h"
-#include "../Includes/fmt/format.h"
+#include "../Includes/fmt/core.h"
+#include "Objects/objects.h"
 #include "Values/valueHelpers.h"
-#include "Values/valueHelpersInline.cpp"
+#include "Values/valueHelpersInline.h"
 #include <iostream>
-#include "MemoryManagment/threadArena.h"
 
 using namespace object;
 
 #define EXPORT extern "C" DLLEXPORT
 
-EXPORT Value print(ObjClosure* ptr, Value x){
+EXPORT Value print(void*, Value x){
     std::cout<< valueHelpers::toString(x)<<std::endl;
     return encodeNil();
 }
 
-EXPORT Value ms_since_epoch(ObjClosure* ptr){
+EXPORT Value ms_since_epoch(void*){
     double duration = duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     return encodeNumber(duration);
 }
 
-EXPORT Value arr_push(ObjClosure* ptr, Value arr, Value top){
-    asArray(arr)->containsObjects |= isObj(top);
+EXPORT Value arr_push(void*, Value arr, Value top){
     asArray(arr)->push(top);
     return arr;
 }
 
-EXPORT Value input(ObjClosure* ptr){
+EXPORT Value input(void*){
     string in;
     std::getline(std::cin, in);
-    return encodeObj(ObjString::createStr((char*)in.c_str()));
+    return encodeObj(rt_string::create((char*)in.c_str()));
 }
 
-EXPORT Value random_num(ObjClosure* ptr){
+EXPORT Value random_num(void*){
     return encodeNumber(rand());
 }
 
-EXPORT Value as_number(ObjClosure* ptr, Value num){
+EXPORT Value as_number(void*, Value num){
     if (isNumber(num)) { return num; }
     if (!isString(num)){
         std::cerr << "Cannot convert value to number.\n"; 
@@ -51,18 +49,18 @@ EXPORT Value as_number(ObjClosure* ptr, Value num){
     }
 }
 
-EXPORT Value to_string(ObjClosure* ptr, Value val) {
+EXPORT Value to_string(void*, Value val) {
     auto str = valueHelpers::toString(val);
-    return encodeObj(ObjString::createStr((char*)str.c_str()));
+    return encodeObj(rt_string::create((char*)str.c_str()));
 }
 
 // doggy?
-EXPORT Value cpu_clock(ObjClosure* ptr){
+EXPORT Value cpu_clock(void*){
     return encodeNumber(std::clock());
 }
 
 // doggy?
-EXPORT Value clocks_per_sec(ObjClosure* ptr){
+EXPORT Value clocks_per_sec(void*){
     return encodeNumber(CLOCKS_PER_SEC);
 }
 

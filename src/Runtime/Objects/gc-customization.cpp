@@ -1,83 +1,80 @@
 #include "../ConcurrentGC/customization.h"
 #include "objects.h"
-#include "../Values/valueHelpersInline.cpp"
+#include "../Values/valueHelpersInline.h"
 
 namespace gc {
     bool obj_traceable(managed* m) {
         auto type = m->get_type_id();
-        return type == +ObjType::ARRAY
-            || type == +ObjType::CLOSURE
-            || type == +ObjType::INSTANCE
-            || type == +ObjType::HASH_MAP;
+        return type == +rt_type::ARRAY
+            || type == +rt_type::ARRAY_STORAGE_HEADER
+            || type == +rt_type::CLOSURE
+            || type == +rt_type::INSTANCE
+            || type == +rt_type::HASH_MAP;
     }
     size_t obj_size(managed* m) {
-        auto obj = reinterpret_cast<object::Obj*>(m);
-        return obj->getSize();
+        auto obj = reinterpret_cast<object::rt_obj*>(m);
+        return obj->get_sz();
     }
     void obj_copy(managed* s, managed* d) {
-        auto obj = reinterpret_cast<object::Obj*>(s);
+        auto obj = reinterpret_cast<object::rt_obj*>(s);
         switch (obj->type()) {
-            case ObjType::ARRAY:
-            case ObjType::CLOSURE:
-            case ObjType::INSTANCE:
-            case ObjType::STRING:
-            case ObjType::CLASS:
+            case rt_type::ARRAY:
+            case rt_type::CLOSURE:
+            case rt_type::INSTANCE:
+            case rt_type::STRING:
                 // TODO: map needs to become pod
-            case ObjType::HASH_MAP:
-            case ObjType::ARRAY_STORAGE_HEADER: {
+            case rt_type::HASH_MAP:
+            case rt_type::ARRAY_STORAGE_HEADER: {
                 // POD gets memcpy
-                memcpy(d, s, obj->getSize());
+                memcpy(d, s, obj->get_sz());
                 break;
             }
-            case ObjType::DEALLOCATED: break;
-            case ObjType::FILE:
-            case ObjType::MUTEX:
-            case ObjType::CHANNEL:
-            case ObjType::WAIT_GROUP:
+            case rt_type::FILE:
+            case rt_type::MUTEX:
+            case rt_type::CHANNEL:
+            case rt_type::WAIT_GROUP:
                 assert(false && "obj_copy called on pinned obj?");
                 break;
         }
     }
+    // Done during STW, no need to worry about syncronization
     void obj_update_ptrs(managed* m) {
-        auto obj = reinterpret_cast<object::Obj*>(m);
+        auto obj = reinterpret_cast<object::rt_obj*>(m);
         switch (obj->type()) {
-            case ObjType::ARRAY: {
-                auto arr = (ObjArray *)obj;
-                // If array doesn't contain objects(arrays of nums are common) don't try to mark contents of arr
-                arr->storage = (ObjArrayStorage*)gc::to_moved_ptr(arr->storage);
-                if(!arr->containsObjects) break;
-                Value* data = arr->getData();
-                for(int i = 0; i < arr->size; i++){
-                    auto val = data[i];
-                    if (isObj(val))
-                        data[i] = encodeObj((Obj*)gc::to_moved_ptr(decodeObj(val)));
+            case rt_type::ARRAY: {
+                auto arr = (rt_arr *)obj;
+                if (arr->get_store())
+                    arr->upd_storage([](rt_arr_store* store) {
+                        return (rt_arr_store*)gc::to_moved_ptr(store);
+                    });
+                break;
+            }
+            case rt_type::ARRAY_STORAGE_HEADER: {
+                auto arr = (rt_arr_store *)obj;
+                if(!arr->has_obj()) break;
+                auto s = arr->get_data();
+                for (auto& v : arr->get_data()) {
+                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
                 }
                 break;
             }
-            case ObjType::CLOSURE: {
-                auto cl = (ObjClosure *)obj;
-                for (int i = 0; i < cl->freevarCount; i++) {
-                    auto val = cl->getFreevarArr()[i];
-                    if (isObj(val))
-                        cl->getFreevarArr()[i] = encodeObj((Obj*)gc::to_moved_ptr(decodeObj(val)));
+            case rt_type::CLOSURE: {
+                auto cl = (rt_closure *)obj;
+                for (auto& v : cl->get_env()) {
+                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
                 }
                 break;
             }
-            case ObjType::INSTANCE: {
-                auto inst = (ObjInstance *)obj;
-                Value* fields = inst->getFields();
-                for (int i = 0; i < inst->fieldArrLen; i++) {
-                    auto val = fields[i];
-                    if (isObj(val))
-                        fields[i] = encodeObj((Obj*)gc::to_moved_ptr(decodeObj(val)));
+            case rt_type::INSTANCE: {
+                auto inst = (rt_inst *)obj;
+                for (auto& v : inst->get_fields()) {
+                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
                 }
                 break;
             }
             // TODO: i think we're gonna need to completely rehash map on every move? right now it can't be allocated so its fine
-            case ObjType::HASH_MAP: {
-                auto map = (ObjHashMap *)obj;
-                for (auto &field: map->fields) {
-                }
+            case rt_type::HASH_MAP: {
+                auto map = (rt_hashmap *)obj;
                 break;
             }
             default: break; // Not traceable
@@ -93,52 +90,42 @@ namespace gc {
         return nullptr;
     }
     size_t ptr_to_word(managed* p) {
-        return encodeObj((object::Obj*)p);
+        return encodeObj((object::rt_obj*)p);
     }
 
     void obj_trace(managed* m, function_ref<void(managed*)> cb) {
-        auto obj = reinterpret_cast<object::Obj*>(m);
+        auto obj = reinterpret_cast<object::rt_obj*>(m);
         switch (obj->type()) {
-            case ObjType::ARRAY: {
-                auto arr = (ObjArray *)obj;
-                // If array doesn't contain objects(arrays of nums are common) don't try to mark contents of arr
-                cb(arr->storage);
-                if(!arr->containsObjects) break;
-                Value* data = arr->getData();
-                arr->containsObjects = 0;
-                for(int i = 0; i < arr->size; i++){
-                    auto val = data[i];
-                    if (isObj(val)){
-                        cb(decodeObj(val));
-                        arr->containsObjects = 1;
-                    }
-                }
+            case rt_type::ARRAY: {
+                auto arr = (rt_arr *)obj;
+                if (arr->get_store()) cb(arr->get_store());
                 break;
             }
-            case ObjType::CLOSURE: {
-                auto cl = (ObjClosure *)obj;
-                for (int i = 0; i < cl->freevarCount; i++) {
-                    auto val = cl->getFreevarArr()[i];
+            case rt_type::ARRAY_STORAGE_HEADER: {
+                auto store = (rt_arr_store *)obj;
+                if(!store->has_obj()) break;
+                for (auto val : store->get_data()) {
                     if (isObj(val)) cb(decodeObj(val));
                 }
                 break;
             }
-            case ObjType::INSTANCE: {
-                auto inst = (ObjInstance *)obj;
-                Value* fields = inst->getFields();
-                for (int i = 0; i < inst->fieldArrLen; i++) {
-                    auto val = fields[i];
+            case rt_type::CLOSURE: {
+                auto cl = (rt_closure *)obj;
+                for (auto val : cl->get_env()) {
                     if (isObj(val)) cb(decodeObj(val));
                 }
                 break;
             }
-            case ObjType::HASH_MAP: {
-                auto map = (ObjHashMap *)obj;
-                for (auto &field: map->fields) {
-                    cb(field.first);
-                    auto val = field.second;
+            case rt_type::INSTANCE: {
+                auto inst = (rt_inst *)obj;
+                for (auto val : inst->get_fields()) {
                     if (isObj(val)) cb(decodeObj(val));
                 }
+                break;
+            }
+            // TODO: handle this
+            case rt_type::HASH_MAP: {
+                auto map = (rt_hashmap *)obj;
                 break;
             }
             default: assert(false && "nontraceable objects should never get to here");

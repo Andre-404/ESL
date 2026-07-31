@@ -40,17 +40,19 @@ namespace compileCore {
     class Class{
     public:
         llvm::Constant* classPtr;
-        llvm::GlobalVariable* instTemplatePtr;
+        // Nulled [N x Value] that create_inst copies into a fresh instance. Just the fields: the
+        // header and class pointer are the runtime's job now.
+        llvm::GlobalVariable* fieldTemplatePtr;
         std::shared_ptr<types::ClassType> ty;
         vector<llvm::Constant*> methodArr;
         llvm::Constant* methodArrPtr;
 
-        Class(llvm::Constant* classPtr, llvm::GlobalVariable* instTemplatePtr, std::shared_ptr<types::ClassType> ty,
+        Class(llvm::Constant* classPtr, llvm::GlobalVariable* fieldTemplatePtr, std::shared_ptr<types::ClassType> ty,
               vector<llvm::Constant*> methodArr, llvm::Constant* methodArrPtr) :
-            classPtr(classPtr), instTemplatePtr(instTemplatePtr), ty(ty), methodArr(methodArr), methodArrPtr(methodArrPtr) {}
+            classPtr(classPtr), fieldTemplatePtr(fieldTemplatePtr), ty(ty), methodArr(methodArr), methodArrPtr(methodArrPtr) {}
         Class(){
             classPtr = nullptr;
-            instTemplatePtr = nullptr;
+            fieldTemplatePtr = nullptr;
             ty = nullptr;
             methodArrPtr = nullptr;
         }
@@ -127,6 +129,8 @@ class Compiler : public CFG::CFGCodeGen {
         std::stack<llvm::BasicBlock*> breakJumpDest;
         std::stack<llvm::BasicBlock*> advanceJumpDest;
 
+        // Must stay first: it creates the layouts and function declarations everything else uses
+        runtime_bridge _bridge;
         TypeHelper _tyhelp;
         ComptimeValues _ct;
         RuntimeTypecheck _rt;

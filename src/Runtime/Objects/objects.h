@@ -1,156 +1,154 @@
 #pragma once
 #include "../../Includes/unorderedDense.h"
 #include "../../common.h"
-#include <fstream>
-#include <shared_mutex>
+#include <atomic>
+#include <cstring>
 #include "../esl-gc-helpers.h"
 
 namespace object {
 
-    enum class ObjType : uint8_t {
-        DEALLOCATED,
+    enum class rt_type : uint8_t {
         STRING,
         CLOSURE,
-        CLASS,
         INSTANCE,
         ARRAY,
         ARRAY_STORAGE_HEADER,
         HASH_MAP,
+        HASHMAP_STORAGE_HEADER,
         FILE,
         MUTEX,
         CHANNEL,
-        WAIT_GROUP
+        WAIT_GROUP,
+        SOCKET
     };
-    inline constexpr unsigned operator+ (ObjType const val) { return static_cast<byte>(val); }
+    inline constexpr unsigned operator+ (rt_type const val) { return static_cast<byte>(val); }
 
-    class Obj : public gc::managed{
+    class rt_obj : public gc::managed {
     public:
-        Obj(ObjType type, bool is_pinned) : gc::managed(+type, is_pinned ? gc::move_state::pinned : gc::move_state::none) {}
+        rt_obj(rt_type type, bool is_pinned) : gc::managed(+type, is_pinned ? gc::move_state::pinned : gc::move_state::none) {}
 
-        ObjType type() { return static_cast<ObjType>(get_type_id()); }
-        size_t getSize();
-        string toString(std::shared_ptr<ankerl::unordered_dense::set<object::Obj*>> stack);
+        rt_type type() { return static_cast<rt_type>(get_type_id()); }
+        size_t get_sz();
+        string to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj*>> stack);
     };
-
-    void runObjDestructor(object::Obj* obj);
 
     // This is a header which is followed by the bytes of the string
-    class ObjString : public Obj {
+    class rt_string : public rt_obj {
+        uint32_t _size;
     public:
-        ObjString() : Obj(ObjType::STRING, false) {}
-        uint32_t size;
+        struct hash {
+            uint64_t operator()(const object::rt_string* str) const noexcept;
+        };
+
+        struct equality {
+            bool operator()(object::rt_string* x, object::rt_string* y) const {
+                return x->compare(y);
+            }
+        };
+        
+        rt_string(uint32_t sz, char* str) : rt_obj(rt_type::STRING, false), _size(sz) {
+            strcpy(get_str(), str);
+        }
 
         char* get_str() const { return (char*)(this + 1);}
+        uint32_t sz() const { return _size; }
 
-        bool compare(ObjString* other);
+        bool compare(rt_string* other);
 
         bool compare(const string other);
 
-        ObjString* concat(ObjString* other);
+        rt_string* concat(rt_string* other);
 
-        static ObjString* createStr(char* str);
+        static rt_string* create(char* str);
 
     };
 
-    struct stringHash {
-        uint64_t operator()(const object::ObjString* str) const noexcept;
-    };
+    class rt_arr_store : public rt_obj {
+        byte _contains_obj; // Optimization flag
+        uint32_t _capacity;
 
-    struct stringEQ
-    {
-        bool operator()(object::ObjString* x, object::ObjString* y) const {
-            return x->compare(y);
+    public:
+        // TODO: move this to cpp and add init vals
+        rt_arr_store(uint32_t cap, std::span<Value> init);
+
+        std::span<Value> get_data() { return { (Value*)((this+1)), _capacity }; }
+        void set_has_obj() {
+            std::atomic_ref<byte> { _contains_obj }.store(1, std::memory_order_release);
         }
+        bool has_obj() {
+            auto ref = std::atomic_ref<byte> { _contains_obj };
+            return ref.load(std::memory_order_acquire) != 0;
+        }
+
+        static rt_arr_store* alloc(uint32_t capacity, std::span<Value> init);
     };
 
-    // Header for array storage
-    class ObjArrayStorage : public Obj{
+    class rt_arr : public rt_obj {
+        uint32_t _size;
+        rt_arr_store* _storage;
     public:
-        uint32_t capacity;
+        rt_arr(size_t size);
 
-        ObjArrayStorage() : Obj(ObjType::ARRAY_STORAGE_HEADER, false) {}
+        void gc_init();
 
-        inline Value* getData();
-
-        static ObjArrayStorage* allocArray(uint32_t capacity);
-    };
-
-    class ObjArray : public Obj {
-    public:
-        byte containsObjects;
-        uint32_t size;
-        ObjArrayStorage* storage;
-
-        ObjArray();
-        ObjArray(size_t size);
-
-        Value* getData();
+        std::span<Value> get_data() { return { _storage->get_data().data(), _size }; }
+        // Used by gc customization
+        template<typename F>
+        void upd_storage(F get_new) { _storage = get_new(_storage); }
+        rt_arr_store* get_store() { return _storage; }
         void push(Value item);
     };
 
-    // Pointer to a compiled function
-    using Function = char*;
-    using CheckFieldFunc = int (*)(ObjString*);
+    using compiled_fn = void*;
+    using name_field_map = int (*)(rt_string*);
 
     // Multiple closures with different freevars can point to the same function
-    class ObjClosure : public Obj {
+    class rt_closure : public rt_obj {
+        byte _arity;
+        byte _env_cnt; // number of variables captured as part of the func env
+        compiled_fn _func;
+        char* _name;
     public:
-        // A function can have a maximum of 255 parameters and 255 upvalues
-        byte arity;
-        byte freevarCount;
-        Function func;
-        char* name;
+        rt_closure(byte arity, byte env_cnt, compiled_fn f, char* name) 
+            : rt_obj(rt_type::CLOSURE, false), _arity(arity),
+            _env_cnt(env_cnt), _func(f), _name(name) {}
 
-        ObjClosure() : Obj(ObjType::CLOSURE, false) {}
-
-        Value* getFreevarArr();
+        std::span<Value> get_env() { return {reinterpret_cast<Value *>(this + 1), _env_cnt }; }
+        
+        char* name() { return _name; }
+        byte arity() { return _arity; }
     };
 
-    class ObjClass : public Obj {
-    public:
+    // Never created at runtime, only emitted by the compiler.
+    // Compiler appends the method array directly behind the class and
+    // tags those closures as objects, and mask_payload_obj reserves the low 4 bits of a Value for the
+    // type tag, so anything taggable must be 16 byte aligned. Without this the array starts at offset
+    // 40 and every other method gets a corrupted tag.
+    struct alignas(16) comp_class{
         uint16_t methodArrLen;
         uint16_t fieldsArrLen;
         uint32_t classHierarchyStart;
         uint32_t classHierarchyEnd;
         const char* name;
-        CheckFieldFunc getMethod;
-        CheckFieldFunc getField;
+        name_field_map getMethod;
+        name_field_map getField;
     };
 
-    // ObjInstance is a header followed by array of values(fields)
-    class ObjInstance : public Obj {
+    class rt_inst : public rt_obj {
+        comp_class* _klass;
     public:
-        uint32_t fieldArrLen;
-        ObjClass* klass;
+        rt_inst(comp_class* klass, Value* field_init) : rt_obj(rt_type::INSTANCE, false), _klass(klass) {
+            memcpy(get_fields().data(), field_init, get_fields().size() * sizeof(Value));
+        }
 
-        ObjInstance() : Obj(ObjType::INSTANCE, false) {}
-
-        Value* getFields();
+        std::span<Value> get_fields() { return { (Value*)(this+1), _klass->fieldsArrLen }; }
+        comp_class* get_class() { return _klass; }
     };
 
-    class ObjHashMap : public Obj{
+    class rt_hashmap : public rt_obj {
+        ankerl::unordered_dense::map<object::rt_string*, Value> fields;
     public:
-        ankerl::unordered_dense::map<object::ObjString*, Value> fields;
-        ObjHashMap();
-    };
-
-    class ObjFile : public Obj {
-    public:
-        std::fstream stream;
-        string path;
-        // 0: read, 1: write
-        int openType;
-
-        ObjFile(string& path, int _openType);
-        ~ObjFile();
-    };
-
-    // Language representation of a mutex object
-    class ObjMutex : public Obj {
-    public:
-        std::shared_mutex mtx;
-
-        ObjMutex() : Obj(ObjType::MUTEX, true) {}
+        rt_hashmap();
     };
 
 

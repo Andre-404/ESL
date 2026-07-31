@@ -5,17 +5,17 @@ namespace object {
 
     class string_interner{
         uint64_t largestStrSize = 0;
-        ankerl::unordered_dense::set<ObjString*, stringHash, stringEQ> interned;
+        ankerl::unordered_dense::set<rt_string*, rt_string::hash, rt_string::equality> interned;
         inline static string_interner* global = nullptr;
     public:
         // Not thread safe
-        void intern(ObjString* str) {
+        void intern(rt_string* str) {
             interned.insert(str);
-            if(str->size > largestStrSize) largestStrSize = str->size;
+            if(str->sz() > largestStrSize) largestStrSize = str->sz();
         }
         // Optimizes checking to avoid having to hash large strings
-        ObjString* check_interned(ObjString* str) {
-            if(str->size > largestStrSize) return str;
+        rt_string* check_interned(rt_string* str) {
+            if(str->sz() > largestStrSize) return str;
             auto it = interned.find(str);
             if(it != interned.end()) return *it;
             return str;

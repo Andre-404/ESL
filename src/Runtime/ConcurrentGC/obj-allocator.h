@@ -54,6 +54,8 @@ namespace gc::detail {
             if (cache_pos < 0 || (_pos + cache_pos) >= _pg_cnt) return nullptr;
             cache_mark(cache_pos);
             auto res = calc_obj(cache_pos);
+            // This is load bearing (described in get_cached), here for having a way to check the invariant
+            assert((_pg->load_alloc_word(_pos) & (1ull << cache_pos)) == 0);
             return res;
         }
 

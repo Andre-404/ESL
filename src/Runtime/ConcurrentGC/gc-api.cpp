@@ -30,7 +30,7 @@ namespace gc {
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
 
-    [[nodiscard]] managed* alloc(size_t sz, tcb_handle* handle) {
+    [[nodiscard]] managed* detail::alloc(size_t sz, tcb_handle* handle) {
         return GC->alloc(sz, t(handle));
     }
 
