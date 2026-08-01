@@ -86,6 +86,8 @@ namespace object {
     class rt_arr : public rt_obj {
         uint32_t _size;
         rt_arr_store* _storage;
+
+        void reserve(uint32_t min_cap);
     public:
         rt_arr(size_t size);
 
@@ -96,7 +98,21 @@ namespace object {
         template<typename F>
         void upd_storage(F get_new) { _storage = get_new(_storage); }
         rt_arr_store* get_store() { return _storage; }
+
+        uint32_t size() const { return _size; }
+        uint32_t capacity() { return _storage->get_data().size(); }
+
         void push(Value item);
+        // Returns the removed element, nil if the array is empty
+        Value pop();
+        // Grows with copies of fill, or shrinks and zeroes the dropped slots
+        void resize(uint32_t new_size, Value fill);
+        // index is clamped to _size, so index == _size appends
+        void insert(uint32_t index, Value item);
+        // No-op if index is out of range
+        void erase(uint32_t index);
+        // Zeroes the entire storage(not just the live part) and sets size to 0
+        void clear();
     };
 
     using compiled_fn = void*;
