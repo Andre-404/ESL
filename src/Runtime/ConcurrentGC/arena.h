@@ -11,7 +11,7 @@ namespace gc::detail {
         int64_t _debt;
         pg_meta* _big_objs;
 
-        managed* alloc_big(size_t sz, pg_manager& manager) {
+        [[gnu::cold]] managed* alloc_big(size_t sz, pg_manager& manager) {
             auto res = manager.get_big_pg(pg_meta::header_bytes(sz) + sz);
             if (!res) [[unlikely]] {
                 _debt -= sz;

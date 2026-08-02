@@ -26,7 +26,7 @@ std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
     return blocked;
 }
 
-[[gnu::cold, clang::noinline]]void collector::force_collection(int64_t sz, tcb* t) {
+[[gnu::cold, clang::noinline]] void collector::force_collection(int64_t sz, tcb* t) {
     _collection_req.request_express();
 
     int64_t snapshot = _heuristic.live_size() + _alloc_sz;
@@ -207,7 +207,7 @@ void collector::handle_pending(tcb* t) {
         assert(false && "Unreachable");
 }
 
-[[gnu::cold]] void collector::alloc_update(tcb* t, size_t debt) {
+[[gnu::cold, clang::noinline]] void collector::alloc_update(tcb* t, size_t debt) {
     auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.live_size();
     if (heap_sz > _heuristic.heap_trigger()) _collection_req.request_normal();
     t->get_arena().remove_debt(debt);
@@ -287,7 +287,7 @@ managed *collector::alloc(size_t sz, tcb * t) {
         force_collection(sz, t);
         return alloc(sz, t);
     }
-    if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none) [[unlikely]]
+    if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none)
         pg_from_obj(res)->record_mark(res, false);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();

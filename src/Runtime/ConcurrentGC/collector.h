@@ -72,8 +72,6 @@ namespace gc::detail {
         enum class stw_role : uint8_t { mutator, collector };
 
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
-
-        void force_collection(int64_t sz, tcb* handle);
         void stw_enter(std::span<tcb*> owned);
         size_t stw_mark(std::span<tcb*> owned, stw_role role, bool copying);
         void stw_copy(std::span<tcb*> owned, stw_role role);
@@ -89,7 +87,8 @@ namespace gc::detail {
         void concurrent_loop();
         void handle_pending(tcb* handle);
 
-        [[gnu::cold]] void alloc_update(tcb* t, size_t debt);
+        [[gnu::cold, clang::noinline]] void alloc_update(tcb* t, size_t debt);
+        [[gnu::cold, clang::noinline]] void force_collection(int64_t sz, tcb* handle);
 
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 

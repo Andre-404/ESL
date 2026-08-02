@@ -174,7 +174,7 @@ namespace gc::detail {
             _bitmap.clear_both();
         }
 
-        bool record_mark(managed* ptr, bool is_pinned) {
+        [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
             if (is_pinned) set_pinned(); // Pin regardless of the fact that the mark bit is set or not
 
             auto pos = (size_t)((uint8_t*)ptr - get_data()) / _block_sz;

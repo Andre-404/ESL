@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <cassert>
 
 namespace gc {
     namespace config {
@@ -23,20 +24,23 @@ namespace gc {
             return arr;
         }();
 
+        // Inverting is a divide by the granularity, because each run is an arithmetic
+        // progression. The offsets are there because a class is a ceiling, not a floor:
+        // small class k holds (k+1)*16 bytes and so covers (16k, 16k+16], open at the
+        // bottom, which is what the -1 accounts for. The medium run starts one byte past
+        // the last small class for the same reason. Both granularities are powers of two,
+        // so neither division emits a div.
+        // sz == 0 is asserted instead of handled: sz - 1 would wrap and name a class that
+        // does not exist, and no caller can reach it since every allocation is at least
+        // sizeof(managed).
         constexpr int8_t sz_to_class(std::size_t sz) {
-            if (sz > sz_classes[szclass_cnt - 1]) return large_class;
-
-            constexpr auto sz_to_class_table = []() constexpr {
-                auto arr = std::array<uint8_t, sz_classes[szclass_cnt - 1] / 16> {};
-                uint8_t cur_sz_class = 0;
-                for (std::size_t i = 0; i < sz_classes[szclass_cnt - 1]; i += 16) {
-                    if (i >= sz_classes[cur_sz_class]) cur_sz_class++;
-                    arr[i / 16] = cur_sz_class;
-                }
-                return arr;
-            }();
-
-            return sz == 0 ? 0 : sz_to_class_table[(sz-1) / 16];
+            assert(sz > 0);
+            auto last_small = sz_classes[small_sz_classes - 1];
+            auto last_medium = sz_classes[szclass_cnt - 1];
+            if (sz > last_medium) return large_class;
+            if (sz > last_small)
+                return small_sz_classes + ((sz - (last_small + 1)) / med_granularity);
+            return (sz - 1) / smalL_granularity;
         }
 
         // Allocator stuff
