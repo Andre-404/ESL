@@ -47,7 +47,7 @@ namespace gc::detail {
         pg_manager _pg_manager;
         std::thread _worker;
 
-        // Page mutators, shared by stw_phase and phases
+        // Page mutators, shared by mutator and worker stw functions
         auto copy_objs_fn() const {
             return [this](pg_meta* start) { if (start) _copier.copy_objects(start); return start; };
         }
@@ -69,16 +69,20 @@ namespace gc::detail {
             };
         }
 
+        enum class stw_role : uint8_t { mutator, collector };
+
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
 
         void force_collection(int64_t sz, tcb* handle);
-        size_t run_stw(std::span<tcb*> owned, bool is_worker);
+        void stw_enter(std::span<tcb*> owned);
+        size_t stw_mark(std::span<tcb*> owned, stw_role role, bool copying);
+        void stw_copy(std::span<tcb*> owned, stw_role role);
+        void stw_prune(std::span<tcb*> owned, stw_role role);
+        size_t stw(std::span<tcb*> owned, stw_role role);
 
-        // While phase1 can be serialized for multiple threads, phase2 has to make parallel progress across every thread
-        void phase1(tcb* handle, bool pin);
-        void phase2(tcb* handle);
-        void mark_phase();
-        size_t stw_phase();
+        void concurrent_mark();
+        size_t worker_stw();
+        void mutator_stw(tcb* handle);
         void collect_metrics();
         void end_cycle(size_t alloc_snapshot);
 

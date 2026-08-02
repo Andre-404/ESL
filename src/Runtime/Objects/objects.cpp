@@ -167,7 +167,7 @@ void rt_arr::insert(uint32_t index, Value item){
     auto data = _storage->get_data();
     memmove(&data[index + 1], &data[index], (_size - index) * sizeof(Value));
     // Barrier after the shift, since every element moved is treated as being inserted again
-    if (_storage->has_obj()) barrier_range(data, index, _size);
+    if (_storage->has_obj()) barrier_range(data, index + 1, _size + 1);
     data[index] = item;
     _size++;
     if (isObj(item)) {

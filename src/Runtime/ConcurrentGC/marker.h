@@ -16,7 +16,7 @@ namespace gc::detail {
 
             auto pg = pg_from_obj(obj);
             auto won = pg->record_mark(obj, state != move_state::none);
-            if (!won || !obj_traceable(obj)) return false;
+            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
 
             return buf->push(obj);
         }

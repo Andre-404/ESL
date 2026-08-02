@@ -26,7 +26,7 @@ std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
     return blocked;
 }
 
-void collector::force_collection(int64_t sz, tcb* t) {
+[[gnu::cold, clang::noinline]]void collector::force_collection(int64_t sz, tcb* t) {
     _collection_req.request_express();
 
     int64_t snapshot = _heuristic.live_size() + _alloc_sz;
@@ -42,7 +42,7 @@ void collector::force_collection(int64_t sz, tcb* t) {
     std::abort();
 }
 
-size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
+void collector::stw_enter(std::span<tcb*> owned) {
     for (auto t : owned) {
         auto& arena = t->get_arena();
         arena.flush_alloc_caches();
@@ -54,68 +54,67 @@ size_t collector::run_stw(std::span<tcb*> owned, bool is_worker) {
     }
     // Have to wait for everyone to flush their alloc caches before we can start accurate marking
     _thd_state_mngr.wait_on_all_ack();
+}
 
-    // decision to copy happens after every thread has paused(wait_on_all_ack) so this is stable across all threads
-    auto copying = _collection_req.is_express() ? true : _heuristic.should_copy();
+size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
+    // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
+    auto _ = _metrics.time(gc_metrics::phase::mark);
+    for (auto t : owned)
+        _marker.scan_stack(t->get_mark_info(), copying, get_obj_base());
 
-    // TODO: this is the only big part of the code that is worker specific, can we move it out?
-    auto snapshot = 0ull;
-
-    {
-        // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
-        auto _ = _metrics.time(gc_metrics::phase::mark);
-        for (auto t : owned) phase1(t, copying);
-        if (is_worker) {
-            // Scan temps in stw when noone can mutate them
-            for (auto [tcb, sp] : _temp_roots)
-                _marker.scan_temp(sp, get_obj_base(), copying);
-            _marker.scan_globals(_roots);
-            snapshot = _alloc_sz.load();
-            // Every thread has stopped at this point so this is safe to do
-            _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
-        }
-
-        while (_marker.trace_n(config::trace_batch * 1024)) {}
-        _gate.arrive_and_wait();
-    }
-    if (is_worker) _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
-
-    auto for_each_owned = [&](auto f) {
-        for (auto t : owned) t->get_arena().mutate_owned(f);
-        if (is_worker) _pg_manager.mutate_owned(f);
-    };
-
-    if (copying) [[unlikely]] {
-        auto _ = _metrics.time(gc_metrics::phase::copy);
-
-        for_each_owned(copy_objs_fn());
-        _gate.arrive_and_wait();
-
-        for_each_owned(update_ptrs_fn());
-        if (is_worker) _copier.update_globals(_roots);
-        _gate.arrive_and_wait();
+    size_t snapshot = 0;
+    if (role == stw_role::collector) {
+        // Scan temps in stw when noone can mutate them
+        for (auto [tcb, sp] : _temp_roots)
+            _marker.scan_temp(sp, get_obj_base(), copying);
+        _marker.scan_globals(_roots);
+        snapshot = _alloc_sz.load();
+        // Every thread has stopped at this point so this is safe to do
+        _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
     }
 
-    {
-        auto _ = _metrics.time(gc_metrics::phase::sweep);
-        for_each_owned(prune_pgs_fn());
-    }
-
+    while (_marker.trace_n(config::trace_batch * 1024)) {}
+    _gate.arrive_and_wait();
+    if (role == stw_role::collector)
+        _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
     return snapshot;
 }
 
-void collector::phase1(tcb* t, bool pin) {
-    _marker.scan_stack(t->get_mark_info(), pin, get_obj_base());
+void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
+    auto _ = _metrics.time(gc_metrics::phase::copy);
+
+    for (auto t : owned) t->get_arena().mutate_owned(copy_objs_fn());
+    if (role == stw_role::collector) _pg_manager.mutate_owned(copy_objs_fn());
+    _gate.arrive_and_wait();
+
+    for (auto t : owned) t->get_arena().mutate_owned(update_ptrs_fn());
+    if (role == stw_role::collector) {
+        _pg_manager.mutate_owned(update_ptrs_fn());
+        _copier.update_globals(_roots);
+    }
+    _gate.arrive_and_wait();
 }
 
-void collector::phase2(tcb* t) {
-    auto _ = _metrics.time(gc_metrics::phase::pause);
-    run_stw({ &t, 1 }, false);
+void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
+    auto _ = _metrics.time(gc_metrics::phase::sweep);
+    for (auto t : owned) t->get_arena().mutate_owned(prune_pgs_fn());
+    if (role == stw_role::collector) _pg_manager.mutate_owned(prune_pgs_fn());
 }
 
-void collector::mark_phase() {
+size_t collector::stw(std::span<tcb*> owned, stw_role role) {
+    stw_enter(owned);
+    // Decided after stw_enter's wait_on_all_ack
+    auto copying = _collection_req.is_express() || _heuristic.should_copy();
+    auto snapshot = stw_mark(owned, role, copying);
+    if (copying) [[unlikely]] stw_copy(owned, role);
+    stw_prune(owned, role);
+    return snapshot;
+}
+
+void collector::concurrent_mark() {
     auto blocked = post_with_state(gc_state::marking, op_mark_stack);
-    for (auto t : blocked) phase1(t, false);
+    for (auto t : blocked)
+        _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
     // Must be under lock because we can be adding global variables dynamically
@@ -128,14 +127,19 @@ void collector::mark_phase() {
     while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 }
 
-size_t collector::stw_phase() {
+size_t collector::worker_stw() {
     auto _ = _metrics.time(gc_metrics::phase::pause);
     auto blocked = post_with_state(gc_state::stw, op_stw);
-    auto snapshot = run_stw(blocked, true);
+    auto snapshot = stw(blocked, stw_role::collector);
     _tcb_registry.with_snapshot([&](auto& thds){
         _thd_state_mngr.finish_stw(std::views::all(thds));
     });
     return snapshot;
+}
+
+void collector::mutator_stw(tcb* handle) {
+    auto _ = _metrics.time(gc_metrics::phase::pause);
+    stw({ &handle, 1 }, stw_role::mutator);
 }
 
 void collector::collect_metrics() {
@@ -166,10 +170,10 @@ void collector::concurrent_loop() {
         if (_collection_req.await_request()) break;
         _cycle = {};
         _cycle.mark_time = gc_clock::now().time_since_epoch();
-        mark_phase();
+        concurrent_mark();
 
         _gate.register_waiter();
-        auto snapshot = stw_phase();
+        auto snapshot = worker_stw();
         // This makes sure all other threads have left the stw phase
         _gate.arrive_and_wait();
         _gate.deregister_waiter();
@@ -192,11 +196,11 @@ void collector::concurrent_loop() {
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
-        phase1(t, false);
+         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();
-        phase2(t);
+        mutator_stw(t);
         _gate.deregister_waiter();
     }
     else
