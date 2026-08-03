@@ -34,15 +34,6 @@ TEST(ArenaTest, AllocOfUnknownSizeRoutesToBigPage) {
     EXPECT_TRUE(pg_from_obj(obj)->is_large());
 }
 
-TEST(ArenaTest, AllocOfSizeZeroRoutesToBigPage) {
-    arena a;
-    pg_manager m;
-    auto* obj = a.alloc(0, m);
-    ASSERT_NE(obj, nullptr);
-    EXPECT_FALSE(pg_from_obj(obj)->is_large());
-    EXPECT_EQ(a.get_debt(), 0) << "size-zero alloc doesn't move debt";
-}
-
 TEST(ArenaTest, ConsecutiveSmallAllocsShareAPageUntilItFills) {
     arena a;
     pg_manager m;

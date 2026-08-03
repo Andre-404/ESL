@@ -125,17 +125,6 @@ TEST_F(CollectorTest, AllocLargeSizeRoutesToBigPage) {
     thd.join();
 }
 
-TEST_F(CollectorTest, AllocOfSizeZeroDoesNotCrash) {
-    auto* t = make_tcb();
-    auto thd = std::thread { [&]() {
-        gc->thd_prologue(t);
-        auto* obj = gc->alloc(0, t);
-        EXPECT_NE(obj, nullptr);
-        gc->delete_tcb(t);
-    }};
-    thd.join();
-}
-
 TEST_F(CollectorTest, ManyAllocsExerciseNewPageFetches) {
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {

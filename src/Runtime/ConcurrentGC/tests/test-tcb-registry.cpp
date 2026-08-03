@@ -26,7 +26,7 @@ TEST(TcbRegistryTest, RemoveErases) {
     tcb_registry reg;
     tcb t{nullptr, 0};
     reg.add(&t, []{});
-    reg.remove(&t);
+    reg.remove(&t, []{});
 
     reg.with_snapshot([&](auto& set) {
         EXPECT_EQ(set.size(), 0u);
@@ -64,7 +64,7 @@ TEST(TcbRegistryTest, ConcurrentAddRemoveDoesNotCorruptRegistry) {
         threads.emplace_back([&, t] {
             for (auto& tt : per_thread[t]) reg.add(tt, []{});
             for (auto& tt : per_thread[t]) {
-                reg.remove(tt);
+                reg.remove(tt, []{});
                 delete tt;
             }
         });
