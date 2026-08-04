@@ -4,88 +4,20 @@
 #include <chrono>
 #include <condition_variable>
 #include <thread>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
 
 #include <algorithm>
 
+#include "os-memory.h"
 #include "page-allocator.h"
 
 using namespace gc;
 using namespace gc::detail;
 
 namespace {
-    void* reserve_heap(std::size_t bytes) {
-    #ifdef _WIN32
-        return VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-    #else
-        constexpr auto align = config::page_sz*8;
-        auto total = bytes + align;
-        auto p = mmap(nullptr, total, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0
-        );
-        if (p == MAP_FAILED) return nullptr;
-
-        auto addr = uintptr_t(p);
-        auto aligned = (addr + align - 1) & ~uintptr_t(align - 1);
-        if (auto prefix = aligned - addr) munmap(p, prefix);
-        if (auto suffix = total - (aligned - addr) - bytes)
-            munmap((void*)(aligned + bytes), suffix);
-        return (void*)aligned;
-    #endif
-    }
-
-    bool free_pages(void* addr, std::size_t bytes) {
-    #ifdef _WIN32
-        return VirtualAlloc(addr, bytes, MEM_DECOMMIT, PAGE_READWRITE) != nullptr;
-    #else
-        return madvise(addr, bytes, MADV_DONTNEED) == 0;
-    #endif
-    }
-
-    // On linux madvise(populate_write) seems to kill perf
-    bool commit_pages(void* addr, std::size_t bytes) {
-    #ifdef _WIN32
-        return VirtualAlloc(addr, bytes, MEM_COMMIT, PAGE_READWRITE) != nullptr;
-    #else
-        return true;
-    #endif
-    }
-
-    // Unlike reserve_heap this doesn't align to page sz
-    void* map_rw(std::size_t bytes) {
-    #ifdef _WIN32
-        return VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    #else
-        auto p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        return p == MAP_FAILED ? nullptr : p;
-    #endif
-    }
-
-    void release(void* p, std::size_t bytes) {
-        if (!p) return;
-    #ifdef _WIN32
-        (void)bytes;
-        VirtualFree(p, 0, MEM_RELEASE);
-    #else
-        munmap(p, bytes);
-    #endif
-    }
-
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;
     constexpr std::size_t meta_bytes = (alloc_words + committed_words) * sizeof(uint64_t)
                                      + heap_geometry::total_entries * sizeof(summary);
-
-    template<typename T>
-    T* carve(uint8_t*& cursor, std::size_t n) {
-        auto* p = reinterpret_cast<T*>(cursor);
-        cursor += n * sizeof(T);
-        return p;
-    }
 
     constexpr auto G = config::commit_granule;
     constexpr auto granule_bytes = G * config::page_sz;
@@ -176,22 +108,24 @@ namespace {
 
 page_allocator::page_allocator(scavenge_policy policy) :
     _base(nullptr), _meta(nullptr), _scavenge_idx(0), _in_use(0), _resident(0), _policy(policy) {
-    _base = (uint8_t*)reserve_heap(config::heap_max_sz);
-    _meta = map_rw(meta_bytes);
+    // Aligned to the commit granule, not the page: every commit and decommit is issued
+    // on a whole granule, so a base off that grid would straddle the ends of the range.
+    _base = (uint8_t*)os::reserve(config::heap_max_sz, granule_bytes);
+    _meta = os::map_rw(meta_bytes);
 
     if (!_base || !_meta) {
-        release(_base, config::heap_max_sz);
-        release(_meta, meta_bytes);
+        os::release(_base, config::heap_max_sz);
+        os::release(_meta, meta_bytes);
         throw std::bad_alloc{};
     }
 
     auto cursor = (uint8_t*)_meta;
 
-    auto words = carve<uint64_t>(cursor, alloc_words);
-    auto sums = carve<summary>(cursor, heap_geometry::total_entries);
+    auto words = os::carve<uint64_t>(cursor, alloc_words);
+    auto sums = os::carve<summary>(cursor, heap_geometry::total_entries);
     _tree = radix_tree { sums, words };
 
-    _committed = bitmap { carve<uint64_t>(cursor, committed_words) };
+    _committed = bitmap { os::carve<uint64_t>(cursor, committed_words) };
 
     assert(cursor == (uint8_t*)_meta + meta_bytes && "meta_bytes disagrees with the layout");
     _scavenger = std::jthread { [&](auto st) { scavenge_loop(st); } };
@@ -200,8 +134,8 @@ page_allocator::page_allocator(scavenge_policy policy) :
 page_allocator::~page_allocator() {
     _scavenger.request_stop();
     _scavenger.join();
-    release(_base, config::heap_max_sz);
-    release(_meta, meta_bytes);
+    os::release(_base, config::heap_max_sz);
+    os::release(_meta, meta_bytes);
 }
 
 bool page_allocator::ensure_committed(std::size_t start, std::size_t n) {
@@ -214,7 +148,7 @@ bool page_allocator::ensure_committed(std::size_t start, std::size_t n) {
         auto hi = lo;
         while (hi <= end && !_committed.test(hi)) ++hi;
 
-        if (!commit_pages(_base + lo * granule_bytes, (hi - lo) * granule_bytes))
+        if (!os::commit(_base + lo * granule_bytes, (hi - lo) * granule_bytes))
             return false;
 
         _committed.set_range(lo, hi-lo);
@@ -260,7 +194,7 @@ std::size_t page_allocator::scavenge(std::size_t max_granules) {
         while (lo > 0 && can_free(lo - 1) && (hi - lo) < (max_granules - released)) --lo;
 
         auto n = hi - lo;
-        if (free_pages(_base + lo * granule_bytes, n * granule_bytes)) {
+        if (os::decommit(_base + lo * granule_bytes, n * granule_bytes)) {
             released += n;
             _resident.fetch_sub(n, std::memory_order_relaxed);
             _committed.clear_range(lo, n);

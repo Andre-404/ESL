@@ -72,6 +72,8 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Codegen/CompilerParts/InstBuilder.cpp
         src/Codegen/CompilerParts/BridgeObjects.cpp
         src/Codegen/CompilerParts/RuntimeBridge.cpp
+        src/Runtime/ConcurrentGC/os-memory.cpp
+        src/Runtime/ConcurrentGC/gc-bits.cpp
         src/Runtime/ConcurrentGC/page-allocator.cpp
         src/Runtime/ConcurrentGC/pg-manager.cpp
         src/Runtime/ConcurrentGC/copier.cpp

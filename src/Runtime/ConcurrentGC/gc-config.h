@@ -63,11 +63,30 @@ namespace gc {
         static_assert(total_pages % chunk_pages == 0);
         static_assert(total_pages % (chunk_pages * commit_granule) == 0);
 
+        // Bitmap arenas. Two halves, reserved as one range and bump allocated; see gc-bits.h
+        // for why the lifetimes let them be bump-only.
+        //
+        // Sizing. A run's bitmap is one bit per block, so the worst case is the smallest size
+        // class - one bit per 16 bytes, or run_bytes/128 - and a heap made entirely of that
+        // class needs heap/128 of live bitmaps per half. On top of that, a run created and
+        // freed inside a single cycle keeps its slot until the next flip, so the churn a cycle
+        // can bump is bounded by what it allocates. Doubling covers it:
+        //
+        //     half = heap_max_sz / 64      i.e. heap_bits - 6
+        //
+        // At heap_bits 40 that is 16 GiB a half, 32 GiB reserved. Address space only - what is
+        // actually backed tracks live bitmaps, which for any realistic class mix is far below
+        // the class-0 bound (a 512 byte class needs 1/4096 of the heap, not 1/128).
+        constexpr std::size_t bits_arena_bits = heap_bits - 6;
+        constexpr std::size_t bits_arena_sz = 1ull << bits_arena_bits;
+        constexpr std::size_t bits_region_sz = 2 * bits_arena_sz;
+        constexpr std::size_t bits_commit_sz = 64ull << 10;
+
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 
         constexpr std::size_t empty_mark_bufs_limit = 256;
-        constexpr std::size_t trace_batch = 4 * (1 << 20);
+        constexpr std::size_t trace_batch = 16 * (1 << 20);
         constexpr double copy_evac_threshold = 0.85;
         constexpr std::size_t free_batch_sz = 128 * 1024 * 1024;
     }

@@ -32,6 +32,8 @@ add_library(gc_under_test STATIC
         ../mark-buf.cpp
         ../marker.cpp
         ../copier.cpp
+        ../os-memory.cpp
+        ../gc-bits.cpp
         ../page-allocator.cpp
         ../pg-manager.cpp
         ../collector.cpp
@@ -70,6 +72,7 @@ add_executable(run_tests
         test-radix-tree.cpp
         test-bitmap.cpp
         test-page-allocator.cpp
+        test-gc-bits.cpp
         test-gc-heuristic.cpp
         test-collector.cpp
 )
