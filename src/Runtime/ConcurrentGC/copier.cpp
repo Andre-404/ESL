@@ -56,27 +56,19 @@ void copier::copy_objects(pg_meta *pg_list) const {
         // Need to update the mark bitmap with the new object
         target_iter.get_pg()->record_mark(dest, false);
     }
-    // Clear both bitmaps so that pruner correctly deduces compute_live -> 0
-    for (auto pg : source) pg->recycle();
+    // Drained: the pruner retires an inactive page without bothering to count it
+    for (auto pg : source) pg->mark_inactive();
 }
 
 void copier::update_ptrs(pg_meta *pg) const  {
-    while (pg) {
-        if (pg->live_count() == 0) {
-            pg = pg->next();
-            continue;
+    for (; pg; pg = pg->next()) {
+        if (!pg->is_active()) continue;
+        for (auto it = pg_meta::pg_slots_iter { pg, 0 }; !it.at_end(); it.next()) {
+            if (!it.is_marked()) continue;
+            auto obj = it.get();
+            if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
+            obj_update_ptrs(obj);
         }
-        auto iter = pg_meta::pg_slots_iter { pg, 0 };
-
-        while (!iter.at_end()) {
-            auto obj = iter.get();
-            if (iter.is_marked()) {
-                if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
-                obj_update_ptrs(obj);
-            }
-            iter.next();
-        }
-        pg = pg->next();
     }
 }
 
@@ -89,14 +81,16 @@ void copier::update_globals(std::span<size_t*> roots) {
     }
 }
 
+// TODO: might be better to have a linked list aware sort to reduce memory usage
+// its 1mb of pointers per 1gb of heap so memory allocation might be slower then cache misses on sorting
+// with new dense side array for pg_meta linked list sorting might actually be rather fast
 std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(pg_meta *pg_list) const {
     auto target = std::vector<pg_meta*> {};
     auto source = std::vector<pg_meta*> {};
     int64_t needed_space = 0;
     // Pages that have pinned objects and that are above threshold(but not completely full) become targets
     for (auto pg = pg_list; pg; pg = pg->next()) {
-        pg->compute_live();
-        const auto live = pg->live_count();
+        const auto live = pg->compute_live();
         const auto cap  = pg->block_cnt();
         if (pg->has_pinned() || live >= _evac_threshold*cap) {
             if (live < cap) target.push_back(pg);
@@ -107,7 +101,6 @@ std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(p
             if (live > 0) source.push_back(pg);
         }
     }
-    std::ranges::sort(source, {}, &pg_meta::live_count);
     while (needed_space > 0) {
         auto pg = source.back();
         source.pop_back();

@@ -1,67 +1,43 @@
-#include "../../Includes/rpmalloc/rpmalloc.h"
+#include <utility>
+
 #include "pg-manager.h"
+#include "gc-config.h"
 
 using namespace gc::detail;
 
-ts_cache::l2_cache& ts_cache::get_or_create_l2(size_t idx)  {
-    auto ref = std::atomic_ref { _top_level.at(idx) };
-    auto existing = ref.load(std::memory_order_acquire);
-    if (existing) return *existing;
-
-    auto new_cache = new (rpmalloc(sizeof(l2_cache))) l2_cache();
-
-    l2_cache* expected = nullptr;
-    if (ref.compare_exchange_strong(expected, new_cache, std::memory_order_release, std::memory_order_acquire)) {
-        return *new_cache;
+pg_meta* pg_manager::new_pg(size_t obj_sz) {
+    auto cl = config::sz_to_class(obj_sz);
+    if (cl == config::large_class) [[unlikely]] {
+        auto n = (obj_sz + config::page_sz - 1) / config::page_sz;
+        return _allocator.alloc_pg(obj_sz, n);
     }
-    // Lost the race, another thread already created l2 table for this memory region
-    rpfree(new_cache);
-    return *expected;
-}
 
-pg_meta *pg_manager::get_new_pg(uint8_t sz_class)  {
-    if (!_partial[sz_class].approx_empty()) {
+    if (!_partial[cl].approx_empty()) {
         auto _ = std::lock_guard { _part_mtx };
-        auto pg = _partial[sz_class].pop();
+        auto pg = _partial[cl].pop();
         if (pg) return pg;
     }
 
-    auto pg = _allocator.alloc_pg(config::sz_classes[sz_class], 1);
-    if (pg) _active.add((uintptr_t)pg, pg);
-    return pg;
+    return _allocator.alloc_pg(config::sz_classes[cl], config::small_obj_pgs);
 }
 
-pg_meta *pg_manager::get_big_pg(size_t obj_sz) {
-    auto pg = _allocator.alloc_pg(obj_sz, large_pg_num(obj_sz));
-
-    if (pg) {
-        for (size_t i = 0; i < pg->num_pages(); i++) {
-            auto ptr = (uintptr_t)((uint8_t*)pg + i * config::page_sz);
-            _active.add(ptr, pg);
-        }
-    }
-    return pg;
+static size_t compute_idx(pg_meta* pg, pg_meta* base) {
+    auto offset = pg - base;
+    return offset * gc::config::page_sz / gc::config::free_batch_sz;
 }
 
-size_t compute_idx(pg_meta* pg, size_t base) {
-    auto offset = (size_t)pg - base;
-    return offset / gc::config::free_batch_sz;
-}
 void pg_manager::free_pgs() {
     auto wl = _pending_free.lf_reset_head(nullptr);
     size_t lo = ~size_t(0), hi = 0;
     while (wl) {
-        auto tmp = wl;
+        auto pg = wl;
         wl = wl->next();
-        for (size_t i = 0; i < tmp->num_pages(); i++) {
-            auto offset = (pg_meta*)((uint8_t*)tmp + i * config::page_sz);
-            _active.remove(offset);
-        }
-        auto idx = compute_idx(tmp, (size_t)_allocator.heap_base());
+        pg->mark_inactive();
+        auto idx = compute_idx(pg, _allocator.meta_base());
         lo = std::min(lo, idx);
         hi = std::max(hi, idx);
-        tmp->link(_buckets[idx]);
-        _buckets[idx] = tmp;
+        pg->link(_buckets[idx]);
+        _buckets[idx] = pg;
     }
 
     for (auto i = lo; i <= hi; i++) {

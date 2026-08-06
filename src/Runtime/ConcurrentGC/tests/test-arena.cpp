@@ -21,7 +21,7 @@ TEST(ArenaTest, AllocOfSizeInSizeClassPlacesObjectOnAPageOfThatSize) {
     for (size_t sz : config::sz_classes) {
         auto* obj = a.alloc(sz, m);
         ASSERT_NE(obj, nullptr) << "sz=" << sz;
-        EXPECT_EQ(pg_from_obj(obj)->block_sz(), sz) << "sz=" << sz;
+        EXPECT_EQ(pg_meta::head_from_ptr(obj)->block_sz(), sz) << "sz=" << sz;
     }
 }
 
@@ -31,7 +31,7 @@ TEST(ArenaTest, AllocOfUnknownSizeRoutesToBigPage) {
     // 4000 isn't a configured size class.
     auto* obj = a.alloc(4000, m);
     ASSERT_NE(obj, nullptr);
-    EXPECT_TRUE(pg_from_obj(obj)->is_large());
+    EXPECT_TRUE(pg_meta::head_from_ptr(obj)->szclass() == config::large_class);
 }
 
 TEST(ArenaTest, ConsecutiveSmallAllocsShareAPageUntilItFills) {
@@ -42,17 +42,15 @@ TEST(ArenaTest, ConsecutiveSmallAllocsShareAPageUntilItFills) {
     ASSERT_NE(a1, nullptr);
     ASSERT_NE(a2, nullptr);
     EXPECT_NE(a1, a2);
-    EXPECT_EQ(pg_from_obj(a1), pg_from_obj(a2)) << "both allocations should come from the same just-fetched page";
+    EXPECT_EQ(pg_meta::head_from_ptr(a1), pg_meta::head_from_ptr(a2)) << "both allocations should come from the same just-fetched page";
 }
 
-TEST(ArenaTest, FirstAllocLandsAtPageStartOff) {
+TEST(ArenaTest, FirstAllocLandsAtTheStartOfThePage) {
     arena a;
     pg_manager m;
     auto* obj = a.alloc(64, m);
     ASSERT_NE(obj, nullptr);
-    auto* pg = pg_from_obj(obj);
-    auto pg_addr = reinterpret_cast<uintptr_t>(pg);
-    EXPECT_EQ(reinterpret_cast<uintptr_t>(obj), pg_addr + pg->start_off());
+    EXPECT_EQ(reinterpret_cast<uint8_t*>(obj), pg_meta::head_from_ptr(obj)->get_data());
 }
 
 TEST(ArenaTest, ConsecutiveSmallAllocsAreSpacedByBlockSize) {
@@ -72,9 +70,9 @@ TEST(ArenaTest, DistinctSizeClassesUseDistinctPages) {
     auto* o64 = a.alloc(64, m);
     ASSERT_NE(o32, nullptr);
     ASSERT_NE(o64, nullptr);
-    EXPECT_NE(pg_from_obj(o32), pg_from_obj(o64));
-    EXPECT_EQ(pg_from_obj(o32)->block_sz(), 32);
-    EXPECT_EQ(pg_from_obj(o64)->block_sz(), 64);
+    EXPECT_NE(pg_meta::head_from_ptr(o32), pg_meta::head_from_ptr(o64));
+    EXPECT_EQ(pg_meta::head_from_ptr(o32)->block_sz(), 32);
+    EXPECT_EQ(pg_meta::head_from_ptr(o64)->block_sz(), 64);
 }
 
 TEST(ArenaTest, BigAllocsAccumulateOnTheBigChain) {
@@ -89,15 +87,15 @@ TEST(ArenaTest, BigAllocsAccumulateOnTheBigChain) {
 
     std::unordered_set<pg_meta*> seen;
     a.mutate_owned([&](pg_meta* head) {
-        if (head && head->is_large()) {
+        if (head && head->szclass() == config::large_class) {
             for (auto* p = head; p; p = p->next()) seen.insert(p);
         }
         return head;
     });
     EXPECT_EQ(seen.size(), 3);
-    EXPECT_TRUE(seen.count(pg_from_obj(o1)));
-    EXPECT_TRUE(seen.count(pg_from_obj(o2)));
-    EXPECT_TRUE(seen.count(pg_from_obj(o3)));
+    EXPECT_TRUE(seen.count(pg_meta::head_from_ptr(o1)));
+    EXPECT_TRUE(seen.count(pg_meta::head_from_ptr(o2)));
+    EXPECT_TRUE(seen.count(pg_meta::head_from_ptr(o3)));
 }
 
 TEST(ArenaTest, BigAllocChainPrependsNewestFirst) {
@@ -109,13 +107,13 @@ TEST(ArenaTest, BigAllocChainPrependsNewestFirst) {
 
     pg_meta* head = nullptr;
     a.mutate_owned([&](pg_meta* h) {
-        if (h && h->is_large()) head = h;
+        if (h && h->szclass() == config::large_class) head = h;
         return h;
     });
     ASSERT_NE(head, nullptr);
-    EXPECT_EQ(head, pg_from_obj(o3)) << "newest allocation should be at head";
-    EXPECT_EQ(head->next(), pg_from_obj(o2));
-    EXPECT_EQ(head->next()->next(), pg_from_obj(o1));
+    EXPECT_EQ(head, pg_meta::head_from_ptr(o3)) << "newest allocation should be at head";
+    EXPECT_EQ(head->next(), pg_meta::head_from_ptr(o2));
+    EXPECT_EQ(head->next()->next(), pg_meta::head_from_ptr(o1));
 }
 
 TEST(ArenaTest, MutateOwnedVisitsEverySizeClassAndBigChain) {
@@ -141,10 +139,10 @@ TEST(ArenaTest, FlushAllocCachesPropagatesBitsToTheActivePage) {
     a.alloc(64, m);
     a.alloc(64, m);
 
-    EXPECT_EQ(pg_from_obj(o)->load_alloc_word(0), 0u);
+    EXPECT_EQ(pg_meta::head_from_ptr(o)->load_alloc_word(0), 0u);
 
     a.flush_alloc_caches();
-    EXPECT_EQ(pg_from_obj(o)->load_alloc_word(0) & 0b111ull, 0b111ull);
+    EXPECT_EQ(pg_meta::head_from_ptr(o)->load_alloc_word(0) & 0b111ull, 0b111ull);
 }
 
 TEST(ArenaTest, AllocBigReturnsPointerInsideTheAllocatedPage) {
@@ -152,10 +150,10 @@ TEST(ArenaTest, AllocBigReturnsPointerInsideTheAllocatedPage) {
     pg_manager m;
     auto* obj = a.alloc(4000, m);
     ASSERT_NE(obj, nullptr);
-    auto* pg = pg_from_obj(obj);
-    auto base = reinterpret_cast<uintptr_t>(pg);
-    EXPECT_GE(reinterpret_cast<uintptr_t>(obj), base + pg->start_off());
-    EXPECT_LT(reinterpret_cast<uintptr_t>(obj), base + config::page_sz);
+    auto* pg = pg_meta::head_from_ptr(obj);
+    auto offset = reinterpret_cast<uint8_t*>(obj) - pg->get_data();
+    EXPECT_GE(offset, 0);
+    EXPECT_LT(offset, (ptrdiff_t)(pg->num_pages() * config::page_sz));
 }
 
 TEST(ArenaTest, AllocAcrossManySmallSizesAccumulatesDebtCorrectly) {
@@ -175,8 +173,9 @@ TEST(ArenaTest, PartialsTest) {
     pg_meta* a_start = nullptr;
     {
         arena a;
-        // Over allocates into second page, we don't care about that since first page will be popped into arena B
-        for (int i = 0; i < config::page_sz / 64; ++i) {
+        // One past a full page, so the last object lands on a second, barely used page - that
+        // is the one arena B has to end up allocating into
+        for (size_t i = 0; i < config::blocks_in_pg(config::sz_to_class(64)) + 1; ++i) {
             auto ptr = a.alloc(64, m);
             objs.push_back(ptr);
             ASSERT_NE(ptr, nullptr);
@@ -196,6 +195,6 @@ TEST(ArenaTest, PartialsTest) {
         return start;
     });
 
-    EXPECT_EQ(pg_from_obj(objs.back()), pg_from_obj(ptr)) << "b uses second partial page";
+    EXPECT_EQ(pg_meta::head_from_ptr(objs.back()), pg_meta::head_from_ptr(ptr)) << "b uses second partial page";
     EXPECT_EQ(a_start, b_start) << "b reuses pages from a";
 }

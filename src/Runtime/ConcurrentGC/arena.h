@@ -12,7 +12,7 @@ namespace gc::detail {
         pg_meta* _big_objs;
 
         [[gnu::cold]] managed* alloc_big(size_t sz, pg_manager& manager) {
-            auto res = manager.get_big_pg(pg_meta::header_bytes(sz) + sz);
+            auto res = manager.new_pg(sz);
             if (!res) [[unlikely]] {
                 _debt -= sz;
                 return nullptr;
@@ -26,7 +26,7 @@ namespace gc::detail {
             managed* res = nullptr;
             // Need to loop because get_new_pg can in some cases return a fully allocated page from partial
             do {
-                if (auto new_pg = manager.get_new_pg(szclass)) 
+                if (auto new_pg = manager.new_pg(config::sz_classes[szclass])) 
                     _allocators[szclass].push_pg(new_pg);
                 else [[unlikely]] return nullptr; // This should never happen
 

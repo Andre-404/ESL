@@ -105,9 +105,9 @@ TEST_F(CollectorTest, AllocOfDifferentSizesUsesDifferentPages) {
         ASSERT_NE(o32,  nullptr);
         ASSERT_NE(o64,  nullptr);
         ASSERT_NE(o128, nullptr);
-        EXPECT_NE(pg_from_obj(o32),  pg_from_obj(o64));
-        EXPECT_NE(pg_from_obj(o64),  pg_from_obj(o128));
-        EXPECT_NE(pg_from_obj(o32),  pg_from_obj(o128));
+        EXPECT_NE(pg_meta::head_from_ptr(o32),  pg_meta::head_from_ptr(o64));
+        EXPECT_NE(pg_meta::head_from_ptr(o64),  pg_meta::head_from_ptr(o128));
+        EXPECT_NE(pg_meta::head_from_ptr(o32),  pg_meta::head_from_ptr(o128));
         gc->delete_tcb(t);
     }};
     thd.join();
@@ -119,7 +119,7 @@ TEST_F(CollectorTest, AllocLargeSizeRoutesToBigPage) {
         gc->thd_prologue(t);
         auto* obj = gc->alloc(4000, t);
         ASSERT_NE(obj, nullptr);
-        EXPECT_TRUE(pg_from_obj(obj)->is_large());
+        EXPECT_TRUE(pg_meta::head_from_ptr(obj)->szclass() == config::large_class);
         gc->delete_tcb(t);
     }};
     thd.join();
@@ -130,13 +130,14 @@ TEST_F(CollectorTest, ManyAllocsExerciseNewPageFetches) {
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         std::vector<managed*> objs;
-        for (int i = 0; i < config::page_sz * 2 / 64; ++i) {
+        // One past two full pages, so a third fetch is forced
+        for (size_t i = 0; i < config::blocks_in_pg(config::sz_to_class(64)) * 2 + 1; ++i) {
             auto* o = gc->alloc(64, t);
             ASSERT_NE(o, nullptr) << "alloc #" << i;
             objs.push_back(o);
         }
         std::unordered_set<pg_meta*> pages;
-        for (auto* o : objs) pages.insert(pg_from_obj(o));
+        for (auto* o : objs) pages.insert(pg_meta::head_from_ptr(o));
         EXPECT_GE(pages.size(), 3u);
         gc->delete_tcb(t);
     }};
@@ -144,20 +145,18 @@ TEST_F(CollectorTest, ManyAllocsExerciseNewPageFetches) {
 }
 
 TEST_F(CollectorTest, AllocReturnsObjectsAtPageSlots) {
-    // Every returned pointer should land at start_off + k*block_sz for
-    // some non-negative k within the page.
+    // Every returned pointer should land at slot k of its page, for some non-negative k
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         for (int i = 0; i < 50; ++i) {
             auto* o = gc->alloc(64, t);
             ASSERT_NE(o, nullptr);
-            auto* pg = pg_from_obj(o);
-            auto base   = reinterpret_cast<uintptr_t>(pg);
-            auto offset = reinterpret_cast<uintptr_t>(o) - base;
-            EXPECT_GE(offset, pg->start_off());
-            EXPECT_LT(offset, config::page_sz);
-            EXPECT_EQ((offset - pg->start_off()) % pg->block_sz(), 0u);
+            auto* pg = pg_meta::head_from_ptr(o);
+            auto offset = reinterpret_cast<uint8_t*>(o) - pg->get_data();
+            EXPECT_GE(offset, 0);
+            EXPECT_LT(offset, (ptrdiff_t)config::page_sz);
+            EXPECT_EQ(offset % pg->block_sz(), 0u);
         }
         gc->delete_tcb(t);
     }};
@@ -182,7 +181,7 @@ TEST_F(CollectorTest, TCBDeathReusePages) {
     }};
     thd.join();
 
-    EXPECT_EQ(pg_from_obj(o), pg_from_obj(o2));
+    EXPECT_EQ(pg_meta::head_from_ptr(o), pg_meta::head_from_ptr(o2));
 }
 
 TEST_F(CollectorTest, SetPausedAndResumed) {
@@ -320,9 +319,9 @@ TEST_F(CollectorTest, ManyShortLivedThreadsInWavesLightLoad) {
             auto* tcb = make_tcb();
             threads.emplace_back([&, tcb]{
                 gc->thd_prologue(tcb);
-                pg_from_obj(gc->alloc(64, tcb));
-                pg_from_obj(gc->alloc(32, tcb));
-                pg_from_obj(gc->alloc(128, tcb));
+                pg_meta::head_from_ptr(gc->alloc(64, tcb));
+                pg_meta::head_from_ptr(gc->alloc(32, tcb));
+                pg_meta::head_from_ptr(gc->alloc(128, tcb));
                 gc->delete_tcb(tcb);
             });
         }
@@ -619,7 +618,7 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
     for (int i = 0; i < kRoots; ++i) {
         auto* obj = to_accurate_ptr(roots[i]);
         ASSERT_NE(obj, nullptr) << "root " << i << " was cleared";
-        auto* pg = pg_from_obj(obj);
+        auto* pg = pg_meta::head_from_ptr(obj);
         EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
             << "root " << i << " no longer points at an allocated slot";
     }
@@ -711,7 +710,7 @@ TEST_F(CollectorCopyingTest, RootsSurviveCompactingCycles) {
         ASSERT_NE(obj, nullptr) << "root " << i << " was cleared";
         EXPECT_EQ(obj->state(), move_state::none)
             << "root " << i << " still points at a forwarding stub rather than where it moved to";
-        auto* pg = pg_from_obj(obj);
+        auto* pg = pg_meta::head_from_ptr(obj);
         EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
             << "root " << i << " no longer points at an allocated slot";
     }

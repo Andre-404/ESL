@@ -1,10 +1,12 @@
 #pragma once
+#include <atomic>
 #include <mutex>
 #include <chrono>
 #include <cmath>
 #include <stop_token>
 #include <thread>
 
+#include "gc-bits.h"
 #include "pg-meta.h"
 #include "radix-tree.h"
 
@@ -29,16 +31,19 @@ namespace gc::detail {
         std::mutex _mtx;
         uint8_t* _base;
         void* _meta;
+        pg_meta* _pg_headers;
         radix_tree _tree;
-        bitmap _committed;      // one bit per commit granule, not per page
-        std::atomic<std::size_t> _in_use;   // granules currently allocated
-        std::atomic<std::size_t> _resident;   // granules physically backed
+        bitmap _committed; // one bit per commit granule, not per page
+        std::atomic<std::size_t> _hdrs_committed; // pg headers are never decommited, is that okay?
+        std::atomic<std::size_t> _in_use;         // granules currently allocated
+        std::atomic<std::size_t> _resident;       // granules physically backed
         int64_t _scavenge_idx; // Idx in granules
         scavenge_policy _policy;
         std::jthread _scavenger;
 
 
         bool ensure_committed(std::size_t start, std::size_t n);
+        bool commit_headers(std::size_t start, std::size_t n);
         void* claim_span(std::size_t start, std::size_t n);
         void free(void* addr, std::size_t npages);
 
@@ -84,6 +89,12 @@ namespace gc::detail {
         free_batch begin_free() { return { *this }; }
 
         uint8_t* base() const { return _base; }
+        pg_meta* pgs_base() const { return _pg_headers; }
+        bool pg_active(pg_meta* pg) {
+            auto off = pg - _pg_headers;
+            if (off < 0 || (std::size_t)off >= _hdrs_committed.load(std::memory_order_acquire)) return false;
+            return (_pg_headers + off)->is_active();
+        }
 
         // Used by tests
         std::size_t resident() const { return _resident.load(std::memory_order_relaxed); }
@@ -91,10 +102,16 @@ namespace gc::detail {
 
     class pg_allocator {
         page_allocator _pages;
+        gc_bits _bits;
+
     public:
         pg_allocator() = default;
 
         uint8_t* heap_base() const { return _pages.base(); }
+        pg_meta* meta_base() const { return _pages.pgs_base(); }
+        // The alloc/mark bitmap arena the headers point into; the collector drives its flip.
+        gc_bits& bits() { return _bits; }
+        bool pg_active(pg_meta* pg) { return _pages.pg_active(pg); }
 
         pg_meta* alloc_pg(size_t block_sz, size_t num_pgs);
         void free_pgs(pg_meta* start);

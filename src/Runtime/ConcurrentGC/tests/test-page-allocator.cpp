@@ -172,21 +172,21 @@ TEST(PageAllocatorTest, ScavengedRunIsReusable) {
     free_run(pa, again, n);
 }
 
-// The header is what pg_meta's constructor assumes is clean; slots past it are guarded by
-// the alloc bitmap, exactly as pg_meta::recycle() already assumes.
+// A reused page is handed a freshly constructed header and a fresh pair of bitmaps, so nothing
+// the previous occupant left behind can read back as live or allocated.
 TEST(PageAllocatorTest, RecycledPageGetsACleanPgMetaHeader) {
     pg_allocator pa;
     auto* pg = pa.alloc_pg(64, 1);
     ASSERT_NE(pg, nullptr);
     pa.free_pgs(pg);
     // Dirty it only after freeing: while it is live the header holds the list link that
-    // free_pgs walks. Freeing leaves the pages mapped, so this is a legal write.
-    memset((uint8_t*)pg, 0xFF, config::page_sz);
+    // free_pgs walks. Freeing leaves the header mapped, so this is a legal write.
+    memset((uint8_t*)pg, 0xFF, sizeof(pg_meta));
 
     auto* again = pa.alloc_pg(64, 1);
     ASSERT_EQ(again, pg) << "expected the same page back";
     EXPECT_EQ(again->block_sz(), 64u);
-    EXPECT_EQ(again->live_count(), 0u);
+    EXPECT_EQ(again->compute_live(), 0u);
     // Both bitmaps must read clean, or a recycled page would look fully allocated.
     for (uint16_t i = 0; i < again->block_cnt(); ++i)
         ASSERT_EQ(again->load_alloc_word(i) & (1ull << (i % 64)), 0ull) << "slot " << i;

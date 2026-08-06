@@ -33,16 +33,14 @@ std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
     set_paused(t);
     _collection_req.await_express_served();
     set_resumed(t);
-    if (snapshot - _heuristic.live_size() > sz) return;
+    if (snapshot - (int64_t)_heuristic.live_size() > sz) return;
 
-    std::cerr
-        <<"Thread "
-        <<std::this_thread::get_id()
-        <<fmt::format(" failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
+    std::cerr << "Thread " << std::this_thread::get_id()
+        << fmt::format(" failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
     std::abort();
 }
 
-void collector::stw_enter(std::span<tcb*> owned) {
+void collector::stw_enter(std::span<tcb*> owned, stw_role role) {
     for (auto t : owned) {
         auto& arena = t->get_arena();
         arena.flush_alloc_caches();
@@ -54,6 +52,7 @@ void collector::stw_enter(std::span<tcb*> owned) {
     }
     // Have to wait for everyone to flush their alloc caches before we can start accurate marking
     _thd_state_mngr.wait_on_all_ack();
+    if (role == stw_role::collector) _pg_manager.bits().flip();
 }
 
 size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
@@ -64,7 +63,7 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
 
     size_t snapshot = 0;
     if (role == stw_role::collector) {
-        // Scan temps in stw when noone can mutate them
+        // Safe to scan roots because all mutators are stopped
         for (auto [tcb, sp] : _temp_roots)
             _marker.scan_temp(sp, get_obj_base(), copying);
         _marker.scan_globals(_roots);
@@ -83,26 +82,21 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
 void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::copy);
 
-    for (auto t : owned) t->get_arena().mutate_owned(copy_objs_fn());
-    if (role == stw_role::collector) _pg_manager.mutate_owned(copy_objs_fn());
+    mutate_all(owned, role, copy_objs_fn());
     _gate.arrive_and_wait();
 
-    for (auto t : owned) t->get_arena().mutate_owned(update_ptrs_fn());
-    if (role == stw_role::collector) {
-        _pg_manager.mutate_owned(update_ptrs_fn());
-        _copier.update_globals(_roots);
-    }
+    mutate_all(owned, role, update_ptrs_fn());
+    if (role == stw_role::collector) _copier.update_globals(_roots);
     _gate.arrive_and_wait();
 }
 
 void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::sweep);
-    for (auto t : owned) t->get_arena().mutate_owned(prune_pgs_fn());
-    if (role == stw_role::collector) _pg_manager.mutate_owned(prune_pgs_fn());
+    mutate_all(owned, role, prune_pgs_fn());
 }
 
 size_t collector::stw(std::span<tcb*> owned, stw_role role) {
-    stw_enter(owned);
+    stw_enter(owned, role);
     // Decided after stw_enter's wait_on_all_ack
     auto copying = _collection_req.is_express() || _heuristic.should_copy();
     auto snapshot = stw_mark(owned, role, copying);
@@ -150,17 +144,18 @@ void collector::collect_metrics() {
     _cycle.copy_time = _metrics.collect(phase::copy);
 }
 
-void collector::end_cycle(size_t alloc_snapshot) {
+uint64_t* collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
     _cycle.allocated_bytes = alloc_snapshot;
-    _cycle.live_bytes      = _pruner.get_live_size();
+    _cycle.live_bytes      = _pruner.live_bytes();
     auto evac = _pruner.estimate_evacuation();
     _cycle.evac_gain_bytes = evac.gain_bytes;
     _cycle.evac_move_bytes = evac.move_bytes;
     _heuristic.end_cycle(gc_clock::now(), _cycle);
-    _pruner.reset();
+    auto res = _pruner.end_cycle();
     // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
     _collection_req.clear();
+    return res;
 }
 
 
@@ -179,11 +174,12 @@ void collector::concurrent_loop() {
         _gate.deregister_waiter();
 
         collect_metrics();
-        end_cycle(snapshot);
 
+        auto watermark = end_cycle(snapshot);
+
+        _pg_manager.bits().clear_mark(watermark);
         _pg_manager.free_pgs();
 
-        _pg_manager.foreach_active_pg([&](pg_meta* meta) { meta->clear_mark_bitmap(); });
         _tcb_registry.under_lock([&] {
             assert(_gc_flag.load(std::memory_order_acquire) == 0);
             _marker.remove_empty();
@@ -288,7 +284,7 @@ managed *collector::alloc(size_t sz, tcb * t) {
         return alloc(sz, t);
     }
     if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none)
-        pg_from_obj(res)->record_mark(res, false);
+        pg_meta::head_from_ptr(res)->record_mark(res, false);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
     if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);

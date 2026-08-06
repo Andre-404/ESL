@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <new>
 #include <thread>
 
 #include <algorithm>
@@ -14,6 +15,11 @@ using namespace gc;
 using namespace gc::detail;
 
 namespace {
+    constexpr std::size_t hdr_commit_sz = 64ull << 10;
+    constexpr std::size_t hdrs_per_chunk = hdr_commit_sz / sizeof(pg_meta);
+    constexpr std::size_t hdr_chunks = (heap_geometry::total_pages + hdrs_per_chunk - 1) / hdrs_per_chunk;
+    constexpr std::size_t reserve_bytes = config::heap_max_sz + (hdr_chunks * hdr_commit_sz);
+
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;
     constexpr std::size_t meta_bytes = (alloc_words + committed_words) * sizeof(uint64_t)
@@ -107,14 +113,16 @@ namespace {
 }
 
 page_allocator::page_allocator(scavenge_policy policy) :
-    _base(nullptr), _meta(nullptr), _scavenge_idx(0), _in_use(0), _resident(0), _policy(policy) {
-    // Aligned to the commit granule, not the page: every commit and decommit is issued
-    // on a whole granule, so a base off that grid would straddle the ends of the range.
-    _base = (uint8_t*)os::reserve(config::heap_max_sz, granule_bytes);
+    _base(nullptr), _meta(nullptr), _pg_headers(nullptr), _hdrs_committed(0),
+    _scavenge_idx(0), _in_use(0), _resident(0), _policy(policy) {
+    // Heap and headers are one reservation, aligned so the low heap_bits of any heap address
+    // are its offset within it - the masking pg_meta does to get from a pointer to a header
+    _base = (uint8_t*)os::reserve(reserve_bytes, config::heap_max_sz);
+    _pg_headers = (pg_meta*)(_base + config::heap_max_sz);
     _meta = os::map_rw(meta_bytes);
 
     if (!_base || !_meta) {
-        os::release(_base, config::heap_max_sz);
+        os::release(_base, reserve_bytes);
         os::release(_meta, meta_bytes);
         throw std::bad_alloc{};
     }
@@ -134,11 +142,27 @@ page_allocator::page_allocator(scavenge_policy policy) :
 page_allocator::~page_allocator() {
     _scavenger.request_stop();
     _scavenger.join();
-    os::release(_base, config::heap_max_sz);
+    os::release(_base, reserve_bytes);
     os::release(_meta, meta_bytes);
 }
 
+bool page_allocator::commit_headers(std::size_t start, std::size_t n) {
+    auto need = std::min(start + n + 1, config::total_pages);
+    auto from = _hdrs_committed.load(std::memory_order_acquire);
+    if (need <= from) return true;
+
+    // Out to the chunk boundary, which is inside the reservation because it was rounded out
+    // to whole chunks
+    auto to = (need + hdrs_per_chunk - 1) / hdrs_per_chunk * hdrs_per_chunk;
+    if (!os::commit(_pg_headers + from, (to - from) * sizeof(pg_meta))) return false;
+
+    _hdrs_committed.store(to, std::memory_order_release);
+    return true;
+}
+
 bool page_allocator::ensure_committed(std::size_t start, std::size_t n) {
+    if (!commit_headers(start, n)) return false;
+
     auto lo = granule_of(start);
     auto end = granule_of(start + n - 1);
 
@@ -209,10 +233,10 @@ std::size_t page_allocator::scavenge(std::size_t max_granules) {
 void page_allocator::scavenge_loop(std::stop_token st) {
     auto h = heuristic { _policy };
     auto mtx = std::mutex {};
-    // Owned purely for the cv's benefit
+    // Held across the loop; wait_for is what drops and retakes it
     auto lk = std::unique_lock { mtx };
     auto cv = std::condition_variable_any {};
-    
+
     using clock = std::chrono::steady_clock;
 
     while (!st.stop_requested()) {
@@ -224,7 +248,7 @@ void page_allocator::scavenge_loop(std::stop_token st) {
         auto work_time = clock::now() - now;
         auto sleep = h.pace(released, work_time);
 
-        cv.wait_for(mtx, st, sleep, [&]{ return st.stop_requested(); });
+        cv.wait_for(lk, st, sleep, [&]{ return st.stop_requested(); });
     }
 }
 
@@ -243,24 +267,39 @@ void* page_allocator::alloc_aligned(std::size_t npages, std::size_t align) {
 }
 
 void page_allocator::free(void* addr, std::size_t npages) {
-    assert(_tree.bits().all_set(page_idx(addr), npages) && "freeing pages that are not allocated");
-    
-    _tree.mark_free(page_idx(addr), npages);
-    _in_use.fetch_sub(granules_unalloced(page_idx(addr), npages, _tree), std::memory_order_relaxed);
+    auto idx = page_idx(addr);
+    assert(_tree.bits().all_set(idx, npages) && "freeing pages that are not allocated");
+
+    _tree.mark_free(idx, npages);
+    _in_use.fetch_sub(granules_unalloced(idx, npages, _tree), std::memory_order_relaxed);
 }
 
 pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
     auto* page = _pages.alloc(num_pgs);
     if (!page) [[unlikely]] return nullptr;
-    std::memset(page, 0, pg_meta::header_bytes(block_sz));
-    return new(page) pg_meta(block_sz);
+
+    // When allocating new pages both halves come back zeroed
+    auto blocks = config::blocks_in_pg(config::sz_to_class(block_sz));
+    auto alloc = _bits.alloc_bits(blocks);
+    auto mark = _bits.mark_bits(blocks);
+    if (alloc.empty() || mark.empty()) [[unlikely]] {
+        _pages.begin_free().add(page, num_pgs);
+        return nullptr;
+    }
+
+    auto pg_off = ((uint8_t*)page - heap_base()) / config::page_sz;
+    auto head = new(meta_base() + pg_off) pg_meta(block_sz, alloc.data(), mark.data());
+    for (std::size_t i = 1; i < num_pgs; ++i)
+        pg_meta::emplace_continuation(head + i, int32_t(i), num_pgs);
+
+    return head;
 }
 
 void pg_allocator::free_pgs(pg_meta* start) {
     auto b = _pages.begin_free();
     while (start) {
-        auto tmp = start;
+        auto* head = start;
         start = start->next();
-        b.add(tmp, tmp->num_pages());
+        b.add(head->get_data(), head->num_pages());
     }
 }

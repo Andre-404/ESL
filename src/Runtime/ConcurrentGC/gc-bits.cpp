@@ -42,24 +42,33 @@ bool gc_bits::ensure_committed(half& h, uint8_t* base, std::size_t end) {
     return true;
 }
 
-uint8_t* gc_bits::bump(half& h, uint8_t* base, std::size_t bits) {
-    if (bits == 0) return nullptr;
+std::span<uint64_t> gc_bits::bump(half& h, uint8_t* base, std::size_t bits, bool should_zero) {
+    if (bits == 0) return {};
     // Bitmaps are read and written a word at a time through atomic_ref<uint64_t>,
     // so every slot has to land 8-aligned
-    auto n = (bits + 63) / 64 * sizeof(uint64_t);
+    auto words = (bits + 63) / 64;
+    auto n = words * sizeof(uint64_t);
 
     auto off = h.cursor.fetch_add(n, std::memory_order_relaxed);
     // TODO: this mathematically shouldn't be possible? can we drop the check
-    if (off + n > config::bits_arena_sz) [[unlikely]] return nullptr;
+    if (off + n > config::bits_arena_sz) [[unlikely]] return {};
 
-    auto commit_fail = off + n > h.committed.load(std::memory_order_acquire)
-                           && !ensure_committed(h, base, off + n);
-    
-    if (commit_fail) [[unlikely]] return nullptr;
+    if (off + n > h.committed.load(std::memory_order_acquire)
+        && !ensure_committed(h, base, off + n)) [[unlikely]] return {};
 
     auto p = base + off;
-    memset(p, 0, n);
-    return p;
+    if (should_zero) memset(p, 0, n);
+    // Span length is in words, not bytes: callers walk it as the bitmap it is, and the
+    // pruner takes data() + size() as the slot's end address.
+    return { (uint64_t*)p, words };
+}
+
+void gc_bits::clear_mark(uint64_t *watermark) {
+    auto h = _live.load(std::memory_order_acquire) ^ 1;
+    auto b = half_base(h);
+    auto n = (uint8_t*)watermark - b;
+    if (n <= 0) return;
+    memset(b, 0, n);
 }
 
 void gc_bits::flip() {

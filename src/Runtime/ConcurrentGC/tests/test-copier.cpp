@@ -10,56 +10,19 @@
 #include "../page-allocator.h"
 #include "../pruner.h"
 #include "customization-helper.h"
+#include "pg-fixture.h"
 
 using namespace gc;
 using namespace gc::detail;
+using gc::test::test_page;
 
 namespace {
-
-    class real_page {
-    public:
-        explicit real_page(size_t block_sz) : _block_sz(block_sz) {
-            _pg = _a.alloc_pg(block_sz, 1);
-        }
-        ~real_page() { _pg->unlink(); _a.free_pgs(_pg); }
-        real_page(const real_page&) = delete;
-        real_page& operator=(const real_page&) = delete;
-
-        pg_meta* pg() const { return _pg; }
-        size_t block_sz() const { return _block_sz; }
-
-        managed* construct(uint16_t i, uint8_t type_id, move_state st = move_state::none) {
-            return new (slot_addr(i)) managed(type_id, st);
-        }
-        managed* slot(uint16_t i) const { return reinterpret_cast<managed*>(slot_addr(i)); }
-        uint8_t* slot_addr(uint16_t i) const {
-            return reinterpret_cast<uint8_t*>(_pg) + _pg->start_off() + i * _block_sz;
-        }
-
-        // Mark slot i in the page's mark bitmap (also bumps live_count).
-        bool mark(uint16_t i, bool pinned = false) {
-            return _pg->record_mark(slot(i), pinned);
-        }
-
-        // Set slot i's alloc bit, which is what obj_allocator's cache flush would have done
-        // for a real allocation. Pages built by hand otherwise carry an empty alloc bitmap,
-        // which hides what evacuation is supposed to do to it.
-        void allocate(uint16_t i) {
-            _pg->store_alloc_word(i, _pg->load_alloc_word(i) | (1ull << (i % 64)));
-        }
-
-    private:
-        pg_allocator _a;
-        pg_meta*     _pg = nullptr;
-        size_t       _block_sz;
-    };
-
     class CopierTest : public ::testing::Test {
     protected:
         void SetUp() override { test_custom::hooks.reset(); }
         void TearDown() override { test_custom::hooks.reset(); }
 
-        static pg_meta* chain(std::initializer_list<real_page*> pages) {
+        static pg_meta* chain(std::initializer_list<test_page*> pages) {
             if (pages.size() == 0) return nullptr;
             pg_meta* prev = nullptr;
             pg_meta* head = nullptr;
@@ -75,7 +38,7 @@ namespace {
 }
 
 TEST_F(CopierTest, UpdateGlobalsLeavesUnmovedPointerEncoded) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(0, 1, move_state::none);
 
     copier c{ 0.5 };
@@ -87,8 +50,8 @@ TEST_F(CopierTest, UpdateGlobalsLeavesUnmovedPointerEncoded) {
 }
 
 TEST_F(CopierTest, UpdateGlobalsFollowsForwardingPointerForMovedObjects) {
-    real_page rp_src{64};
-    real_page rp_dst{64};
+    test_page rp_src{64};
+    test_page rp_dst{64};
     managed* src  = rp_src.construct(0, 1, move_state::none);
     managed* dest = rp_dst.construct(0, 2, move_state::none);
 
@@ -116,7 +79,7 @@ TEST_F(CopierTest, UpdateGlobalsSkipsRootsThatToAccuratePtrRejects) {
 }
 
 TEST_F(CopierTest, UpdateGlobalsRunsPtrToWordOnEveryUpdate) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(0, 1);
 
     test_custom::hooks.ptr_to_word = [](managed* p) {
@@ -132,14 +95,13 @@ TEST_F(CopierTest, UpdateGlobalsRunsPtrToWordOnEveryUpdate) {
 }
 
 TEST_F(CopierTest, UpdatePtrsCallsObjUpdatePtrsOnMarkedObjectsOnly) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1);
     rp.construct(1, 1);
     rp.construct(2, 1);
     rp.mark(0);
     rp.mark(2);
     // slot 1 is unmarked.
-    rp.pg()->compute_live();
 
     std::unordered_set<managed*> updated;
     test_custom::hooks.obj_update_ptrs = [&](managed* m) { updated.insert(m); };
@@ -154,11 +116,10 @@ TEST_F(CopierTest, UpdatePtrsCallsObjUpdatePtrsOnMarkedObjectsOnly) {
 }
 
 TEST_F(CopierTest, UpdatePtrsResetsTempPinnedToNone) {
-    real_page rp{64};
+    test_page rp{64};
     managed* a = rp.construct(0, 1, move_state::temp_pinned);
     managed* b = rp.construct(1, 1, move_state::pinned);
     rp.mark(0); rp.mark(1);
-    rp.pg()->compute_live();
 
     copier c{0.5};
     c.update_ptrs(rp.pg());
@@ -168,7 +129,7 @@ TEST_F(CopierTest, UpdatePtrsResetsTempPinnedToNone) {
 }
 
 TEST_F(CopierTest, UpdatePtrsOnEmptyPageDoesNothing) {
-    real_page rp{64};
+    test_page rp{64};
     bool any_update = false;
     test_custom::hooks.obj_update_ptrs = [&](managed*) { any_update = true; };
 
@@ -184,10 +145,9 @@ TEST_F(CopierTest, CopyObjectsOnEmptyListIsNoOp) {
 }
 
 TEST_F(CopierTest, CopyObjectsWithOnlySourcesConvertsOneToTarget) {
-    real_page sa{64}, sb{64};
+    test_page sa{64}, sb{64};
     sa.construct(0, 1); sa.construct(1, 1); sa.mark(0); sa.mark(1);
     sb.construct(0, 1); sb.construct(1, 1); sb.mark(0); sb.mark(1);
-    sa.pg()->compute_live(); sb.pg()->compute_live();
     pg_meta* head = chain({ &sa, &sb });
 
     int copy_count = 0;
@@ -200,13 +160,12 @@ TEST_F(CopierTest, CopyObjectsWithOnlySourcesConvertsOneToTarget) {
 }
 
 TEST_F(CopierTest, FullyFullPageIsNeitherSourceNorTarget) {
-    real_page full{64};
+    test_page full{64};
     for (uint16_t i = 0; i < full.pg()->block_cnt(); ++i) {
         full.construct(i, 1); full.mark(i);
     }
-    real_page sparse{64};
+    test_page sparse{64};
     sparse.construct(0, 1); sparse.mark(0);
-    sparse.pg()->compute_live();
 
     pg_meta* head = chain({ &full, &sparse });
 
@@ -221,14 +180,12 @@ TEST_F(CopierTest, FullyFullPageIsNeitherSourceNorTarget) {
 }
 
 TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
-    real_page pinned{64};
+    test_page pinned{64};
     pinned.construct(0, 1); pinned.mark(0, true);
-    pinned.pg()->compute_live();
 
-    real_page sparse{64};
+    test_page sparse{64};
     sparse.construct(0, 1); sparse.construct(1, 1);
     sparse.mark(0); sparse.mark(1);
-    sparse.pg()->compute_live();
 
     pg_meta* head = chain({ &pinned, &sparse });
 
@@ -243,19 +200,17 @@ TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
     EXPECT_EQ(copies.size(), 2u);
     // Every destination must be on the pinned page
     for (auto [s, d] : copies) {
-        EXPECT_EQ(pg_from_obj(d), pinned.pg());
-        EXPECT_EQ(pg_from_obj(s), sparse.pg());
+        EXPECT_EQ(pg_meta::head_from_ptr(d), pinned.pg());
+        EXPECT_EQ(pg_meta::head_from_ptr(s), sparse.pg());
     }
 }
 
 TEST_F(CopierTest, CopiedObjectsAreMarkedMovedWithForwardingPtr) {
-    real_page src{64}, dst{64};
+    test_page src{64}, dst{64};
     managed* src_obj = src.construct(0, 7);
     src.mark(0);
     dst.construct(0, 9);
     dst.mark(0, true);
-    src.pg()->compute_live();
-    dst.pg()->compute_live();
 
     pg_meta* head = chain({ &dst, &src });
 
@@ -265,35 +220,30 @@ TEST_F(CopierTest, CopiedObjectsAreMarkedMovedWithForwardingPtr) {
     EXPECT_EQ(src_obj->state(), move_state::moved)<<"dest ptr can't overwrite moved byte";
 
     auto fwd = get_moved(src_obj);
-    EXPECT_EQ(pg_from_obj(fwd), dst.pg());
+    EXPECT_EQ(pg_meta::head_from_ptr(fwd), dst.pg());
 }
 
 TEST_F(CopierTest, CopyObjectsUpdatesTargetMarkBitmap) {
-    real_page src{64}, dst{64};
+    test_page src{64}, dst{64};
     src.construct(0, 1); src.mark(0);
 
     dst.construct(0, 9); dst.mark(0, true);
-    src.pg()->compute_live();
-    dst.pg()->compute_live();
 
     pg_meta* head = chain({ &dst, &src });
 
     copier c{0.5};
     c.copy_objects(head);
-    src.pg()->compute_live();
-    dst.pg()->compute_live();
 
-    EXPECT_EQ(dst.pg()->live_count(), 2);
-    EXPECT_EQ(src.pg()->live_count(), 0);
+    EXPECT_EQ(dst.pg()->compute_live(), 2);
+    EXPECT_FALSE(src.pg()->is_active()) << "the drained page is retired, not recounted";
 }
 
 TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
-    real_page pinned{64};
+    test_page pinned{64};
     pinned.construct(0, 1);
     pinned.mark(0, true);
-    pinned.pg()->compute_live();
 
-    real_page src{64};
+    test_page src{64};
     for (uint16_t i = 0; i < 5; ++i) {
         src.construct(i, 1);
         src.mark(i);
@@ -310,32 +260,28 @@ TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
     EXPECT_EQ(copies, 5) << "one obj_copy per marked source slot";
 }
 
-TEST_F(CopierTest, AfterCopySourcePagesAreReset) {
-    real_page src{64};
-    real_page pinned{64};
+TEST_F(CopierTest, AfterCopySourcePagesAreRetired) {
+    test_page src{64};
+    test_page pinned{64};
     src.construct(0, 1); src.construct(1, 1);
     src.mark(0); src.mark(1);
     pinned.construct(0, 1); pinned.mark(0, true);
-    src.pg()->compute_live();
-    pinned.pg()->compute_live();
 
     pg_meta* head = chain({ &pinned, &src });
-    ASSERT_EQ(src.pg()->live_count(), 2);
+    ASSERT_EQ(src.pg()->compute_live(), 2);
 
     copier c{0.5};
     c.copy_objects(head);
 
-    EXPECT_EQ(src.pg()->live_count(), 0);
+    EXPECT_FALSE(src.pg()->is_active());
     EXPECT_FALSE(src.pg()->has_pinned());
 }
 
 
 TEST_F(CopierTest, ThresholdZeroPromotesEverythingToTarget) {
-    real_page a{64}, b{64};
+    test_page a{64}, b{64};
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
-    a.pg()->compute_live();
-    b.pg()->compute_live();
 
     pg_meta* head = chain({ &a, &b });
 
@@ -348,11 +294,9 @@ TEST_F(CopierTest, ThresholdZeroPromotesEverythingToTarget) {
 }
 
 TEST_F(CopierTest, ThresholdHighMakesEverySparsePageASourceUntilOneConverts) {
-    real_page a{64}, b{64};
+    test_page a{64}, b{64};
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
-    a.pg()->compute_live();
-    b.pg()->compute_live();
 
     pg_meta* head = chain({ &a, &b });
 
@@ -366,18 +310,18 @@ TEST_F(CopierTest, ThresholdHighMakesEverySparsePageASourceUntilOneConverts) {
 // ---------------------------------------------------------------------------------------
 // Evacuation must leave a source page genuinely empty.
 //
-// copy_objects used to call reset_trackers() on source pages, which only flips the two
-// bitmaps. The flip republished the pre-copy alloc bitmap as the live one, so every
-// moved-from corpse read back as an allocated object, the pruner never saw the page as
-// empty, and the page was never returned to the allocator. These pin the whole sequence:
-// the page is empty, the pruner frees it, and the live accounting counts survivors once.
+// copy_objects used to flip the source page's two bitmaps, which republished the pre-copy
+// alloc bitmap as the live one: every moved-from corpse read back as an allocated object, the
+// pruner never saw the page as empty, and the page was never returned to the allocator. It now
+// marks the page inactive instead. These pin the whole sequence: the corpses are unreachable,
+// the pruner frees the page, and the live accounting counts survivors once.
 // ---------------------------------------------------------------------------------------
 namespace {
     // A dense pinned target plus a sparse source, wired into one list. Both pages carry
     // realistic alloc bits so the post-copy state of the source is observable.
     struct evac_fixture {
-        real_page src { 64 };
-        real_page dst { 64 };
+        test_page src { 64 };
+        test_page dst { 64 };
 
         evac_fixture() {
             for (uint16_t i = 0; i < 2; ++i) {
@@ -389,21 +333,20 @@ namespace {
             dst.construct(0, 9);
             dst.allocate(0);
             dst.mark(0, true);
-            src.pg()->compute_live();
-            dst.pg()->compute_live();
         }
         pg_meta* list() { dst.pg()->link(src.pg()); return dst.pg(); }
     };
 }
 
-TEST_F(CopierTest, EvacuatedSourcePageHasNoAllocatedSlots) {
+TEST_F(CopierTest, EvacuatedSourcePageIsRejectedByPointerLookup) {
     evac_fixture f;
     copier c{0.5};
     c.copy_objects(f.list());
 
-    for (uint16_t i = 0; i < f.src.pg()->block_cnt(); ++i)
-        EXPECT_EQ(f.src.pg()->from_interior(f.src.slot_addr(i)), nullptr)
-            << "slot " << i << " of an evacuated page must not read back as allocated";
+    // from_interior is never reached for an inactive page: the lookup that guards it rejects
+    // the whole page, which is what keeps a moved-from corpse from reading back as an object.
+    EXPECT_FALSE(f.src.pg()->is_active());
+    EXPECT_FALSE(gc::test::heap().pg_active(f.src.pg()));
 }
 
 TEST_F(CopierTest, CopyThenPruneFreesTheEvacuatedSourcePage) {
@@ -415,7 +358,7 @@ TEST_F(CopierTest, CopyThenPruneFreesTheEvacuatedSourcePage) {
 
     std::vector<pg_meta*> freed;
     pruner p;
-    auto* in_use = p.prune(head, [&](pg_meta* pg) { freed.push_back(pg); });
+    auto* in_use = p.prune(head, gc::test::bits(), [&](pg_meta* pg) { freed.push_back(pg); });
 
     ASSERT_EQ(freed.size(), 1u) << "the evacuated page is empty and must go back to the allocator";
     EXPECT_EQ(freed[0], f.src.pg());
@@ -431,10 +374,10 @@ TEST_F(CopierTest, CopyThenPruneCountsSurvivorsOnce) {
     c.copy_objects(head);
 
     pruner p;
-    p.prune(head, [](pg_meta*) {});
+    p.prune(head, gc::test::bits(), [](pg_meta*) {});
 
     // One resident plus the two that moved in, on the target page alone. Counting the
     // evacuated originals again - or counting the target twice, once while splitting pages
     // and once while pruning - both show up here.
-    EXPECT_EQ(p.get_live_size(), 3u * 64u);
+    EXPECT_EQ(p.live_bytes(), 3u * 64u);
 }

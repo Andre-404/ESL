@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <span>
 
 #include "gc-config.h"
 
@@ -47,7 +48,7 @@ namespace gc::detail {
 
         uint8_t* half_base(uint8_t h) const { return _base + std::size_t(h) * config::bits_arena_sz; }
         bool ensure_committed(half& h, uint8_t* base, std::size_t end);
-        uint8_t* bump(half& h, uint8_t* base, std::size_t bits);
+        std::span<uint64_t> bump(half& h, uint8_t* base, std::size_t bits, bool should_zero);
 
     public:
         gc_bits();
@@ -55,20 +56,21 @@ namespace gc::detail {
         gc_bits(const gc_bits&) = delete;
         gc_bits& operator=(const gc_bits&) = delete;
 
-        uint8_t* alloc_bits(std::size_t bits) {
+        std::span<uint64_t> alloc_bits(std::size_t bits) {
             auto h = _live.load(std::memory_order_acquire);
-            return bump(_halves[h], half_base(h), bits);
+            return bump(_halves[h], half_base(h), bits, true);
         }
 
-        uint8_t* mark_bits(std::size_t bits) {
+        std::span<uint64_t> mark_bits(std::size_t bits, bool should_zero = true) {
             auto h = _live.load(std::memory_order_acquire) ^ 1;
-            return bump(_halves[h], half_base(h), bits);
+            return bump(_halves[h], half_base(h), bits, should_zero);
         }
 
         // Must run at a safepoint: it invalidates every pointer handed out of the alloc half
         void flip();
+        // Zeroes the mark half up to the pruner's watermark, i.e. every slot it handed out
+        void clear_mark(uint64_t* watermark);
 
-        // Bytes bumped in the fuller half, for pressure checks. Saturates at capacity.
         std::size_t used() const;
         static constexpr std::size_t capacity() { return config::bits_arena_sz; }
     };

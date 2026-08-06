@@ -34,8 +34,8 @@ namespace {
     };
 
     slot claim(gc_bits& b, std::size_t bits, uint64_t tag, bool mark) {
-        auto p = (uint64_t*)(mark ? b.mark_bits(bits) : b.alloc_bits(bits));
-        return { p, p ? words_for(bits) : 0, tag };
+        auto s = mark ? b.mark_bits(bits) : b.alloc_bits(bits);
+        return { s.data(), s.size(), tag };
     }
 
     // Writes the whole word span, which is what a real bitmap does as soon as a block in its
@@ -77,10 +77,11 @@ TEST(GcBitsTest, ConsecutiveSlotsAreAtLeastAsFarApartAsTheyAreLarge) {
         auto b = gc_bits {};
         auto a = b.alloc_bits(bits);
         auto c = b.alloc_bits(bits);
-        ASSERT_NE(a, nullptr);
-        ASSERT_NE(c, nullptr);
-        EXPECT_GE(std::size_t(c - a), bytes_for(bits))
-            << "bits=" << bits << ": slots are " << (c - a) << " bytes apart but each needs "
+        ASSERT_FALSE(a.empty());
+        ASSERT_FALSE(c.empty());
+        auto apart = std::size_t((uint8_t*)c.data() - (uint8_t*)a.data());
+        EXPECT_GE(apart, bytes_for(bits))
+            << "bits=" << bits << ": slots are " << apart << " bytes apart but each needs "
             << bytes_for(bits) << " (" << words_for(bits) << " words)";
     }
 }
@@ -89,8 +90,8 @@ TEST(GcBitsTest, SlotsAreEightAligned) {
     auto b = gc_bits {};
     for (auto bits : bit_counts) {
         auto p = b.alloc_bits(bits);
-        ASSERT_NE(p, nullptr);
-        EXPECT_EQ(uintptr_t(p) % alignof(uint64_t), 0u) << "bits=" << bits;
+        ASSERT_FALSE(p.empty());
+        EXPECT_EQ(uintptr_t(p.data()) % alignof(uint64_t), 0u) << "bits=" << bits;
     }
 }
 
@@ -110,8 +111,8 @@ TEST(GcBitsTest, WritingOneSlotDoesNotDisturbTheNext) {
 
 TEST(GcBitsTest, ZeroSizedRequestIsRejected) {
     auto b = gc_bits {};
-    EXPECT_EQ(b.alloc_bits(0), nullptr);
-    EXPECT_EQ(b.mark_bits(0), nullptr);
+    EXPECT_TRUE(b.alloc_bits(0).empty());
+    EXPECT_TRUE(b.mark_bits(0).empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +123,8 @@ TEST(GcBitsTest, ZeroSizedRequestIsRejected) {
 // becomes the alloc bitmap at the flip, so an overlap would corrupt live allocation state.
 TEST(GcBitsTest, AllocAndMarkComeFromDifferentHalves) {
     auto b = gc_bits {};
-    auto a = b.alloc_bits(4096);
-    auto m = b.mark_bits(4096);
+    auto a = (uint8_t*)b.alloc_bits(4096).data();
+    auto m = (uint8_t*)b.mark_bits(4096).data();
     ASSERT_NE(a, nullptr);
     ASSERT_NE(m, nullptr);
 
@@ -135,8 +136,8 @@ TEST(GcBitsTest, FlipResetsTheOutgoingHalfAndSwapsRoles) {
     auto b = gc_bits {};
     constexpr std::size_t bits = 512;   // 64 bytes
 
-    auto a0 = b.alloc_bits(bits);   // live half, offset 0
-    auto m0 = b.mark_bits(bits);    // spare half, offset 0
+    auto a0 = b.alloc_bits(bits).data();   // live half, offset 0
+    auto m0 = b.mark_bits(bits).data();    // spare half, offset 0
     ASSERT_NE(a0, nullptr);
     ASSERT_NE(m0, nullptr);
 
@@ -144,21 +145,21 @@ TEST(GcBitsTest, FlipResetsTheOutgoingHalfAndSwapsRoles) {
 
     // The old live half held nothing but dead alloc bitmaps, so it rewinds and is now where
     // mark bitmaps land.
-    EXPECT_EQ(b.mark_bits(bits), a0);
+    EXPECT_EQ(b.mark_bits(bits).data(), a0);
     // The old mark bitmaps are the alloc bitmaps now, so allocating past them must not reuse
     // their storage.
-    EXPECT_EQ(b.alloc_bits(bits), m0 + bytes_for(bits));
+    EXPECT_EQ(b.alloc_bits(bits).data(), m0 + words_for(bits));
 }
 
 TEST(GcBitsTest, TwoFlipsReturnToTheOriginalHalf) {
     auto b = gc_bits {};
-    auto a0 = b.alloc_bits(512);
+    auto a0 = b.alloc_bits(512).data();
     ASSERT_NE(a0, nullptr);
 
     b.flip();
     b.flip();
 
-    EXPECT_EQ(b.alloc_bits(512), a0);
+    EXPECT_EQ(b.alloc_bits(512).data(), a0);
 }
 
 // Storage a flip recycles must come back clean across its whole word span - a short memset
@@ -189,17 +190,17 @@ TEST(GcBitsTest, ExhaustionReturnsNullUntilTheNextFlip) {
     // capacity() is bytes, so this is one word more than a half can hold.
     constexpr std::size_t too_many = gc_bits::capacity() * 8 + 64;
 
-    EXPECT_EQ(b.alloc_bits(too_many), nullptr);
+    EXPECT_TRUE(b.alloc_bits(too_many).empty());
     // The cursor is left past the end on purpose, so the half stays closed.
-    EXPECT_EQ(b.alloc_bits(64), nullptr);
+    EXPECT_TRUE(b.alloc_bits(64).empty());
     EXPECT_EQ(b.used(), gc_bits::capacity()) << "used() must clamp the overshoot";
 
     // A failure in one half leaves the other untouched.
-    EXPECT_NE(b.mark_bits(64), nullptr);
+    EXPECT_FALSE(b.mark_bits(64).empty());
 
     b.flip();
     // The exhausted half was the live one, so the flip rewound it; it is the mark half now.
-    EXPECT_NE(b.mark_bits(64), nullptr);
+    EXPECT_FALSE(b.mark_bits(64).empty());
     EXPECT_EQ(b.used(), bytes_for(64));
 }
 
@@ -207,20 +208,20 @@ TEST(GcBitsTest, UsedTracksTheFullerHalf) {
     auto b = gc_bits {};
     EXPECT_EQ(b.used(), 0u);
 
-    ASSERT_NE(b.alloc_bits(512), nullptr);
+    ASSERT_FALSE(b.alloc_bits(512).empty());
     EXPECT_EQ(b.used(), 64u);
 
-    ASSERT_NE(b.mark_bits(4096), nullptr);
+    ASSERT_FALSE(b.mark_bits(4096).empty());
     EXPECT_EQ(b.used(), 512u);
 
     // A partial word still costs a whole one.
-    ASSERT_NE(b.alloc_bits(1), nullptr);
+    ASSERT_FALSE(b.alloc_bits(1).empty());
     EXPECT_EQ(b.used(), 512u);
 
-    auto p1 = b.alloc_bits(1);
-    auto p2 = b.alloc_bits(1);
+    auto p1 = b.alloc_bits(1).data();
+    auto p2 = b.alloc_bits(1).data();
     ASSERT_NE(p1, nullptr);
-    EXPECT_EQ(p2, p1 + sizeof(uint64_t));
+    EXPECT_EQ(p2, p1 + 1) << "one word per slot, even for a single bit";
 }
 
 // ---------------------------------------------------------------------------

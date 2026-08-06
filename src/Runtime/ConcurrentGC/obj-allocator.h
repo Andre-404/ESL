@@ -1,6 +1,7 @@
 #pragma once
 #include <assert.h>
 
+#include "gc-config.h"
 #include "pg-meta.h"
 
 namespace gc::detail {
@@ -11,7 +12,6 @@ namespace gc::detail {
         // Cached so we don't need to access pg on the hot path, kind of breaks whole encapsulation thing
         // must never be mutated, not marked const since it deletes the move assignment operator
         uint16_t _pg_cnt;
-        uint16_t _pg_off;
         uint16_t _pg_blk_sz;
         static constexpr uint64_t FULL = ~0ull;
 
@@ -41,12 +41,15 @@ namespace gc::detail {
         }
         void cache_mark(uint64_t pos) { _cache |= 1ull << pos; }
         managed* calc_obj(uint64_t cache_pos) {
-            return (managed*)((uint8_t*)_pg + _pg_off + (_pos + cache_pos)*_pg_blk_sz);
+            return (managed*)(_pg->get_data() + (_pos + cache_pos)*_pg_blk_sz);
         }
     public:
-        obj_allocator() : _pg(nullptr), _cache(0), _pos(0), _pg_cnt(0), _pg_off(0), _pg_blk_sz(0) {}
+        obj_allocator() : _pg(nullptr), _cache(0), _pos(0), _pg_cnt(0), _pg_blk_sz(0) {}
         explicit obj_allocator(pg_meta& pg) : _pg(&pg), _cache(_pg->load_alloc_word(0)), _pos(0), _pg_cnt(_pg->block_cnt()),
-            _pg_off(_pg->start_off()), _pg_blk_sz(_pg->block_sz()) {}
+             _pg_blk_sz(config::sz_classes[pg.szclass()]) {
+            // sz_classes has no entry for large_class; those pages never reach an obj_allocator
+            assert(pg.szclass() != config::large_class);
+        }
 
         [[gnu::hot, gnu::always_inline]] managed* allocate() {
             assert(_pg);

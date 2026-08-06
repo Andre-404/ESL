@@ -11,34 +11,13 @@
 #include "../page-allocator.h"
 #include "../platform-specific.h"
 #include "customization-helper.h"
+#include "pg-fixture.h"
 
 using namespace gc;
 using namespace gc::detail;
+using gc::test::test_page;
 
 namespace {
-    class real_page {
-    public:
-        explicit real_page(size_t block_sz)
-                : _block_sz(block_sz) { _pg = _a.alloc_pg(block_sz, 1); }
-        ~real_page() { _pg->unlink(); _a.free_pgs(_pg); }
-        real_page(const real_page&) = delete;
-        real_page& operator=(const real_page&) = delete;
-
-        pg_meta* pg() const { return _pg; }
-        managed* construct(uint16_t i, uint8_t type_id, move_state st = move_state::none) {
-            return new (slot_addr(i)) managed(type_id, st);
-        }
-        managed* slot(uint16_t i) const { return reinterpret_cast<managed*>(slot_addr(i)); }
-        uint8_t* slot_addr(uint16_t i) const {
-            return reinterpret_cast<uint8_t*>(_pg) + _pg->start_off() + i * _block_sz;
-        }
-
-    private:
-        pg_allocator _a;
-        pg_meta*     _pg = nullptr;
-        size_t       _block_sz;
-    };
-
     class fake_stack {
     public:
         fake_stack(thd_mark_info& info, std::span<size_t> words)
@@ -64,19 +43,18 @@ namespace {
 
 
 TEST_F(MarkerTest, ScanGlobalsSkipsUnmanagedObjects) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1, move_state::unmanaged);
 
     marker m;
     size_t addr = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &addr };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
-    EXPECT_EQ(rp.pg()->live_count(), 0u);
+    EXPECT_EQ(rp.pg()->compute_live(), 0u);
 }
 
 TEST_F(MarkerTest, ScanGlobalsSkipsWhenToAccuratePtrRejects) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1);
     test_custom::hooks.to_accurate_ptr = [](size_t) -> managed* { return nullptr; };
 
@@ -84,12 +62,11 @@ TEST_F(MarkerTest, ScanGlobalsSkipsWhenToAccuratePtrRejects) {
     size_t addr = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &addr };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
-    EXPECT_EQ(rp.pg()->live_count(), 0u);
+    EXPECT_EQ(rp.pg()->compute_live(), 0u);
 }
 
 TEST_F(MarkerTest, ScanGlobalsMarksReachableObjects) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0,  1);
     rp.construct(5,  1);
     rp.construct(10, 1);
@@ -100,16 +77,15 @@ TEST_F(MarkerTest, ScanGlobalsMarksReachableObjects) {
     size_t c = reinterpret_cast<size_t>(rp.slot(10));
     std::vector<size_t*> roots = { &a, &b, &c };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 3u);
+    EXPECT_EQ(rp.pg()->compute_live(), 3u);
     EXPECT_FALSE(rp.pg()->has_pinned());
 }
 
 TEST_F(MarkerTest, UntraceableObjectStillIncrementsLiveCount) {
     // push_obj records the mark BEFORE checking obj_traceable. An
     // untraceable object therefore still bumps live_count
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1);
     test_custom::hooks.obj_traceable = [](managed*) { return false; };
 
@@ -117,13 +93,12 @@ TEST_F(MarkerTest, UntraceableObjectStillIncrementsLiveCount) {
     size_t a = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &a };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
 }
 
 TEST_F(MarkerTest, AliasedRootsAreDeduplicatedByRecordMark) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1);
 
     marker m;
@@ -131,29 +106,27 @@ TEST_F(MarkerTest, AliasedRootsAreDeduplicatedByRecordMark) {
     size_t b = a, c = a, d = a;
     std::vector<size_t*> roots = { &a, &b, &c, &d };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
 }
 
 TEST_F(MarkerTest, PinnedStateObjectSetsPagePinned) {
     // push_obj passes (state != none) as is_pinned to record_mark.
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1, move_state::pinned);
 
     marker m;
     size_t a = reinterpret_cast<size_t>(rp.slot(0));
     std::vector<size_t*> roots = { &a };
     m.scan_globals(roots);
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
 }
 
 TEST_F(MarkerTest, ScanGlobalsAcrossManyBuffersStillMarksAll) {
     constexpr int N = 80;
-    real_page rp{32};
+    test_page rp{32};
     for (uint16_t i = 0; i < N; ++i) rp.construct(i, 1);
 
     std::vector<size_t> root_storage(N);
@@ -165,12 +138,11 @@ TEST_F(MarkerTest, ScanGlobalsAcrossManyBuffersStillMarksAll) {
 
     marker m;
     m.scan_globals(roots);
-    rp.pg()->compute_live();
-    EXPECT_EQ(rp.pg()->live_count(), N);
+    EXPECT_EQ(rp.pg()->compute_live(), N);
 }
 
 TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
-    real_page rp{64};
+    test_page rp{64};
     rp.construct(0, 1);
 
     thd_mark_info info;   // no track_stack -> get_ctx returns empty spans
@@ -178,12 +150,11 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
     m.scan_stack(info, false, [](uint8_t* p) {
         return reinterpret_cast<managed*>(p);
     });
-    rp.pg()->compute_live();
-    EXPECT_EQ(rp.pg()->live_count(), 0u);
+    EXPECT_EQ(rp.pg()->compute_live(), 0u);
 }
 
 TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(0, 1, move_state::none);
 
     // Fake stack: one word containing the object's address.
@@ -195,15 +166,14 @@ TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
     m.scan_stack(info, true, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
     EXPECT_EQ(obj->state(), move_state::temp_pinned);
 }
 
 TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(0, 1, move_state::none);
 
     std::vector<size_t> stack_words = { reinterpret_cast<size_t>(obj) };
@@ -214,15 +184,14 @@ TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
-    rp.pg()->compute_live();
 
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_FALSE(rp.pg()->has_pinned());
     EXPECT_EQ(obj->state(), move_state::none);
 }
 
 TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(0, 1, move_state::none);
 
     std::vector<size_t> stack_words = { reinterpret_cast<size_t>(obj) };
@@ -232,9 +201,8 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
-    rp.pg()->compute_live();
 
-    ASSERT_EQ(rp.pg()->live_count(), 1u);
+    ASSERT_EQ(rp.pg()->compute_live(), 1u);
     ASSERT_FALSE(rp.pg()->has_pinned());
 
     m.scan_stack(info, true, [&](uint8_t* p) -> managed* {
@@ -246,7 +214,7 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
 }
 
 TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
-    real_page rp{64};
+    test_page rp{64};
     managed* obj = rp.construct(7, 1);
     std::vector<size_t> stack_words(8, 0xDEADBEEF);
     stack_words[3] = reinterpret_cast<size_t>(obj);
@@ -258,8 +226,7 @@ TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
     m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
-    rp.pg()->compute_live();
-    EXPECT_EQ(rp.pg()->live_count(), 1u);
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
 }
 
 TEST_F(MarkerTest, TraceNReturnsZeroWhenNoWorkAvailable) {
@@ -268,7 +235,7 @@ TEST_F(MarkerTest, TraceNReturnsZeroWhenNoWorkAvailable) {
 }
 
 TEST_F(MarkerTest, TraceNVisitsRootsAndChildren) {
-    real_page rp{64};
+    test_page rp{64};
     managed* root = rp.construct(0, 1);
     managed* c1   = rp.construct(1, 2);
     managed* c2   = rp.construct(2, 3);
@@ -296,7 +263,7 @@ TEST_F(MarkerTest, TraceNVisitsRootsAndChildren) {
 }
 
 TEST_F(MarkerTest, TraceNStopsCloseToByteBudget) {
-    real_page rp{32};
+    test_page rp{32};
     for (uint16_t i = 0; i < 10; ++i) rp.construct(i, 1);
 
     test_custom::hooks.obj_size = [](managed*) { return size_t{100}; };
@@ -316,7 +283,7 @@ TEST_F(MarkerTest, TraceNStopsCloseToByteBudget) {
 }
 
 TEST_F(MarkerTest, TraceNHandlesCyclesViaRecordMarkDedupe) {
-    real_page rp{64};
+    test_page rp{64};
     managed* a = rp.construct(0, 1);
     managed* b = rp.construct(1, 1);
 
@@ -340,7 +307,7 @@ TEST_F(MarkerTest, TraceNHandlesCyclesViaRecordMarkDedupe) {
 
 TEST_F(MarkerTest, TraceNAcrossBufferBoundary) {
     constexpr int N = 150;
-    real_page rp{32};
+    test_page rp{32};
     std::vector<managed*> chain;
     chain.reserve(N);
     for (int i = 0; i < N; ++i) chain.push_back(rp.construct((uint16_t)i, 1));
@@ -365,7 +332,7 @@ TEST_F(MarkerTest, TraceNAcrossBufferBoundary) {
 
 TEST_F(MarkerTest, TraceNCanBeCalledRepeatedlyToDrainTheWorklist) {
     constexpr int N = 200;
-    real_page rp{32};
+    test_page rp{32};
     std::vector<managed*> objs;
     objs.reserve(N);
     for (int i = 0; i < N; ++i) objs.push_back(rp.construct((uint16_t)i, 1));

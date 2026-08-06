@@ -14,7 +14,7 @@ namespace gc::detail {
             auto state = obj->state();
             if (state == move_state::unmanaged) [[unlikely]] return false;
 
-            auto pg = pg_from_obj(obj);
+            auto pg = pg_meta::head_from_ptr(obj);
             auto won = pg->record_mark(obj, state != move_state::none);
             if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
 

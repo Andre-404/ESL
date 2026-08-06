@@ -47,32 +47,39 @@ namespace gc::detail {
         pg_manager _pg_manager;
         std::thread _worker;
 
-        // Page mutators, shared by mutator and worker stw functions
+        enum class stw_role : uint8_t { mutator, collector };
+
+        // Page mutators, shared by mutator and worker stw functions. All three tolerate a null
+        // list, which is what an arena with no pages of a given size class hands them.
         auto copy_objs_fn() const {
-            return [this](pg_meta* start) { if (start) _copier.copy_objects(start); return start; };
+            return [this](pg_meta* start) { _copier.copy_objects(start); return start; };
         }
         auto update_ptrs_fn() const {
-            return [this](pg_meta* start) { if (start) _copier.update_ptrs(start); return start; };
+            return [this](pg_meta* start) { _copier.update_ptrs(start); return start; };
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {
                 auto b = _pg_manager.start_batch();
-                auto fn = [&](pg_meta* pg) { b.add(pg); };
-                return _pruner.prune(start, fn);
+                return _pruner.prune(start, _pg_manager.bits(), [&](pg_meta* pg) { b.add(pg); });
             };
+        }
+        // Every stw phase runs its mutator over the pages this thread owns, and the collector
+        // additionally over the ones handed back to the manager by dead threads
+        template<typename F>
+        void mutate_all(std::span<tcb*> owned, stw_role role, F fn) {
+            for (auto t : owned) t->get_arena().mutate_owned(fn);
+            if (role == stw_role::collector) _pg_manager.mutate_owned(fn);
         }
         auto get_obj_base() {
-            return [&](uint8_t* ptr) -> managed* {
-                auto pg = _pg_manager.pg_from_ptr((uintptr_t)ptr);
-                if (!pg) return nullptr;
-                return pg->from_interior((uint8_t*)ptr);
+            return [&](uint8_t* ptr) {
+                if (auto pg = _pg_manager.pg_from_ptr(ptr))
+                    return pg->from_interior(ptr);
+                return (managed*)nullptr;
             };
         }
 
-        enum class stw_role : uint8_t { mutator, collector };
-
         std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
-        void stw_enter(std::span<tcb*> owned);
+        void stw_enter(std::span<tcb*> owned, stw_role role);
         size_t stw_mark(std::span<tcb*> owned, stw_role role, bool copying);
         void stw_copy(std::span<tcb*> owned, stw_role role);
         void stw_prune(std::span<tcb*> owned, stw_role role);
@@ -82,7 +89,7 @@ namespace gc::detail {
         size_t worker_stw();
         void mutator_stw(tcb* handle);
         void collect_metrics();
-        void end_cycle(size_t alloc_snapshot);
+        uint64_t* end_cycle(size_t alloc_snapshot);
 
         void concurrent_loop();
         void handle_pending(tcb* handle);
