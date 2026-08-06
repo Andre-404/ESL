@@ -97,6 +97,15 @@
             "configurePreset": "debug"
         },
         {
+            "name": "debug-tests",
+            "configurePreset": "debug",
+            "displayName": "Debug GC tests",
+            "description": "The GC suite is excluded from the default target, so it has to be named explicitly.",
+            "targets": [
+                "run_tests"
+            ]
+        },
+        {
             "name": "release",
             "configurePreset": "release"
         },
@@ -185,6 +194,10 @@
                 {
                     "type": "build",
                     "name": "debug"
+                },
+                {
+                    "type": "build",
+                    "name": "debug-tests"
                 },
                 {
                     "type": "test",

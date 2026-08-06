@@ -4,7 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(gc_tests C CXX)
     list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake")
     include(ESLBuildOptions)
-    esl_use_lld()
+    esl_use_mold()
     # Must run before googletest is fetched so it gets instrumented too.
     esl_apply_sanitizer()
 endif()

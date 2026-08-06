@@ -41,28 +41,28 @@ function(esl_apply_sanitizer)
 endfunction()
 
 # GCC only accepts the bare names bfd/gold/lld/mold for -fuse-ld, and it looks
-# them up through the compiler's -B search path. Distributions often ship only a
-# versioned ld.lld-N on PATH, so locate a directory that actually holds an
-# unversioned ld.lld and point -B at it. Falls back to the default linker.
-function(esl_use_lld)
+# them up through the compiler's -B search path rather than PATH. /usr/bin is
+# already on that path, but a mold installed from source lands somewhere the
+# driver will not look, so point -B at whichever directory actually holds the
+# ld.mold we found. Falls back to the default linker when mold is absent.
+function(esl_use_mold)
     if(WIN32)
         return()
     endif()
 
-    find_program(ESL_LLD_EXECUTABLE
-        NAMES ld.lld
-        HINTS ${LLVM_TOOLS_BINARY_DIR} /usr/lib/llvm-23/bin /usr/lib/llvm-22/bin
-        DOC "ld.lld used to link ESL")
+    find_program(ESL_MOLD_EXECUTABLE
+        NAMES ld.mold
+        HINTS /usr/local/bin /usr/bin /opt/mold/bin
+        DOC "ld.mold used to link ESL")
 
-    if(NOT ESL_LLD_EXECUTABLE)
-        message(STATUS "Linker: system default (no unversioned ld.lld found)")
+    if(NOT ESL_MOLD_EXECUTABLE)
+        message(STATUS "Linker: system default (no ld.mold found)")
         return()
     endif()
 
-    cmake_path(GET ESL_LLD_EXECUTABLE PARENT_PATH _lld_dir)
-    add_compile_options(-B${_lld_dir})
-    add_link_options(-B${_lld_dir} -fuse-ld=lld)
-    message(STATUS "Linker: ${ESL_LLD_EXECUTABLE}")
+    cmake_path(GET ESL_MOLD_EXECUTABLE PARENT_PATH _mold_dir)
+    add_link_options(-B${_mold_dir} -fuse-ld=mold)
+    message(STATUS "Linker: ${ESL_MOLD_EXECUTABLE}")
 endfunction()
 
 # Runs a sanitized test binary with ASLR disabled.

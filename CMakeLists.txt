@@ -7,7 +7,7 @@ include(ESLBuildOptions)
 option(ESL_LLVM_STATIC  "Link LLVM's static component libraries instead of libLLVM.so" OFF)
 option(ESL_LTO          "Build the compiler with link time optimization" OFF)
 option(ESL_BUILD_COMPILER "Build the ESL compiler executable" ON)
-option(ESL_BUILD_TESTS  "Build the concurrent GC test suite" ON)
+option(ESL_BUILD_TESTS  "Configure the concurrent GC test suite (built on demand, see below)" ON)
 
 # Hardcoded llvm paths
 if(WIN32)
@@ -28,7 +28,7 @@ if(NOT WIN32)
     add_link_options(-Wl,-no-as-needed -rdynamic)
 endif()
 
-esl_use_lld()
+esl_use_mold()
 # Must run before any target (including googletest) is created.
 esl_apply_sanitizer()
 
@@ -106,5 +106,9 @@ if(ESL_BUILD_TESTS)
     # Needed here, not just in the subdirectory, or ctest run from the top level
     # build directory finds no tests to descend into.
     enable_testing()
-    add_subdirectory(src/Runtime/ConcurrentGC/tests)
+    # EXCLUDE_FROM_ALL so a plain build only produces the compiler. The property
+    # is inherited by the directories FetchContent adds, so googletest is skipped
+    # too. Build the suite explicitly when it is wanted:
+    #   cmake --build <dir> --target run_tests
+    add_subdirectory(src/Runtime/ConcurrentGC/tests EXCLUDE_FROM_ALL)
 endif()
