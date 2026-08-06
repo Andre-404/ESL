@@ -68,6 +68,10 @@ namespace gc::detail {
         // Headers sit above the heap's 2^heap_bits boundary
         pg_meta* hdr_base() const { return (pg_meta*)((size_t)this & region_mask); }
 
+        // Not correct for large objects but it doesn't matter
+        // for the purposes of from_interior, record_mark and pg_slots_iter::is_marked
+        size_t block_sz_fast() const { return config::sz_classes[_szclass]; }
+
         // For pages following the header
         explicit pg_meta(int32_t offset, size_t num_pages)  : _next(-offset), _szclass(0),
             _flags(0), _has_pinned(false), _active(true), _run_pages(num_pages) {}
@@ -105,7 +109,7 @@ namespace gc::detail {
             bool at_end() const { return _i == _pg->block_cnt(); }
 
             managed* get() const {
-                return at_end() ? nullptr : (managed*)(_pg->get_data() + _i * _pg->block_sz());
+                return at_end() ? nullptr : (managed*)(_pg->get_data() + _i * _pg->block_sz_fast());
             }
 
             bool is_marked() const {
@@ -146,13 +150,14 @@ namespace gc::detail {
             // Pin regardless of the fact that the mark bit is set or not
             if (is_pinned) _has_pinned.store(true, std::memory_order_relaxed);
 
-            auto [word, in_word] = mark_at((size_t)((uint8_t*)ptr - get_data()) / block_sz());
+            auto [word, in_word] = mark_at((size_t)((uint8_t*)ptr - get_data()) / block_sz_fast());
             return (word.fetch_or(in_word, std::memory_order_relaxed) & in_word) == 0;
         }
         // Precondition: interior is in the page
         managed* from_interior(uint8_t* interior) const {
             auto data = get_data();
-            auto idx = _szclass == config::large_class ? 0 : (size_t)(interior - data) / block_sz();
+            // large class branch needed here because block_sz_fast returns 1 for large objects
+            auto idx = _szclass == config::large_class ? 0 : (size_t)(interior - data) / block_sz_fast();
             if (idx >= block_cnt() || !(_bits.load_alloc(idx) & (1ull << idx % 64))) return nullptr;
             return (managed*)(data + idx * block_sz());
         }

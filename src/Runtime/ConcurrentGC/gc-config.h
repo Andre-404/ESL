@@ -13,14 +13,15 @@ namespace gc {
         constexpr uint8_t large_class = szclass_cnt;
 
         constexpr auto sz_classes = []() constexpr {
-            auto arr = std::array<uint16_t, szclass_cnt> {};
+            auto arr = std::array<uint16_t, szclass_cnt+1> {};
             for(std::size_t i = 0; i < small_sz_classes; i++){
                 arr[i] = (i+1)*small_granularity;
             }
             for(std::size_t i = 0; i < med_sz_classes; i++){
                 arr[small_sz_classes+i] = (i+1)*med_granularity + small_sz_classes*small_granularity;
             }
-
+            // Small optimizations for branchless code in pg_meta, is it safe?
+            arr[szclass_cnt] = 1;
             return arr;
         }();
 
