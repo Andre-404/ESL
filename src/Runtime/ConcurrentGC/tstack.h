@@ -1,44 +1,51 @@
 #pragma once
 #include <atomic>
+#include <concepts>
 #include <utility>
 #include <cassert>
-// Treiber stack implementation that offers non thread safe methods to modify and iterate over the stack
 // Handles ABA through pointer tagging
 namespace gc::detail {
     template<typename T>
+    concept tstack_node = requires(T* node, T* next) {
+        node->link(next);
+        node->unlink();
+        { node->next() } -> std::convertible_to<T*>;
+    };
+    
+    template<typename T>
     class tnode {
-        std::atomic<tnode*> _next;
+        std::atomic<T*> _next;
     public:
         tnode() : _next(nullptr) {}
 
-        void link(tnode* next) { _next.store(next, std::memory_order_relaxed); }
+        void link(T* next) { _next.store(next, std::memory_order_relaxed); }
         void unlink() { _next.store(nullptr, std::memory_order_relaxed); }
-        T* next() const { return (T*)_next.load(std::memory_order_relaxed); }
+        T* next() const { return _next.load(std::memory_order_relaxed); }
     };
 
-    template<typename T>
+    template<tstack_node T>
     class tstack {
-        tnode<T>* _head;
+        T* _head;
         constexpr static size_t ptr_bits = 48;
         constexpr static size_t cnt_bits = 16;
 
-        static tnode<T>* pack_node(tnode<T>* node, size_t cnt) {
+        static T* pack_node(T* node, size_t cnt) {
             assert((uintptr_t(node) >> ptr_bits) == 0);
-            return (tnode<T>*)((size_t)node | (cnt << ptr_bits));
+            return (T*)((size_t)node | (cnt << ptr_bits));
         }
 
-        static std::pair<tnode<T>*, size_t> unpack_node(tnode<T>* node) {
+        static std::pair<T*, size_t> unpack_node(T* node) {
             auto ptr = (size_t)node & ((1ull << ptr_bits) - 1);
             auto cnt = (size_t)node >> ptr_bits & ((1ull << cnt_bits) - 1);
-            return { (tnode<T>*)ptr, cnt };
+            return { (T*)ptr, cnt };
         }
     public:
         tstack() : _head(nullptr) {}
 
-        void lfpush(tnode<T>* node) {
+        void lfpush(T* node) {
             auto ref = std::atomic_ref { _head };
             auto old_head = ref.load(std::memory_order_relaxed);
-            tnode<T>* new_head;
+            T* new_head;
 
             do {
                 auto [ptr, cnt] = unpack_node(old_head);
@@ -49,7 +56,7 @@ namespace gc::detail {
         T* lfpop() {
             auto ref = std::atomic_ref { _head };
             auto old_head = ref.load(std::memory_order_acquire);
-            tnode<T>* new_head;
+            T* new_head;
 
             do {
                 auto [ptr, cnt] = unpack_node(old_head);
@@ -62,12 +69,12 @@ namespace gc::detail {
 
             auto [node, _] = unpack_node(old_head);
             node->unlink();
-            return (T*)node;
+            return node;
         }
-        void lfpush_range(tnode<T>* first, tnode<T>* last) {
+        void lfpush_range(T* first, T* last) {
             auto ref = std::atomic_ref { _head };
             auto old_head = ref.load(std::memory_order_relaxed);
-            tnode<T>* new_head;
+            T* new_head;
 
             do {
                 auto [ptr, cnt] = unpack_node(old_head);
@@ -76,10 +83,10 @@ namespace gc::detail {
             } while (!ref.compare_exchange_weak(old_head, new_head, std::memory_order_release,std::memory_order_relaxed));
         }
 
-        T* lf_reset_head(tnode<T>* new_head) {
+        T* lf_reset_head(T* new_head) {
             auto ref = std::atomic_ref { _head };
             auto old_head = ref.load(std::memory_order_acquire);
-            tnode<T>* nh;
+            T* nh;
 
             do {
                 auto [ptr, cnt] = unpack_node(old_head);
@@ -91,7 +98,7 @@ namespace gc::detail {
                 std::memory_order_acquire));
 
             auto [node, _] = unpack_node(old_head);
-            return (T*)node;
+            return node;
         }
     };
 }
