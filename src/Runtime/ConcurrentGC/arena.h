@@ -19,7 +19,8 @@ namespace gc::detail {
             }
             res->link(_big_objs);
             _big_objs = res;
-            return pg_meta::pg_slots_iter { res, 0 }.get();
+            // Big obj is always put at the start of the buffer
+            return (managed*)res->get_data();
         }
 
         [[gnu::cold]] managed* alloc_slow(size_t szclass, pg_manager& manager) {

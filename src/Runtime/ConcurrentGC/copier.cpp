@@ -31,7 +31,7 @@ public:
     pg_list_slot_iter& begin() { return *this; }
     std::default_sentinel_t end() const { return {}; }
 
-    pg_meta* get_pg() const { return _pages[_cnt]; }
+    void set_marked() { _cur_iter.set_marked(); }
 };
 
 
@@ -54,7 +54,7 @@ void copier::copy_objects(pg_meta *pg_list) const {
         obj_copy(src, dest);
         set_moved(src, dest);
         // Need to update the mark bitmap with the new object
-        target_iter.get_pg()->record_mark(dest, false);
+        target_iter.set_marked();
     }
     // Drained: the pruner retires an inactive page without bothering to count it
     for (auto pg : source) pg->mark_inactive();

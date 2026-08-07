@@ -109,20 +109,29 @@ namespace gc::detail {
 
         class pg_slots_iter {
             const pg_meta* _pg;
+            size_t _block_cnt;
+            size_t _block_sz;
+            size_t _cache;
             uint16_t _i;
         public:
-            pg_slots_iter(pg_meta* pg, uint16_t i) : _pg(pg), _i(i) {}
+            pg_slots_iter(pg_meta* pg, uint16_t i)
+                : _pg(pg), _block_cnt(_pg->block_cnt()), _block_sz(_pg->block_sz_fast()),
+                  _cache(_pg->_bits.mark_bits(_block_cnt)[i / 64]), _i(i) {}
 
-            void next() { _i++; }
-            bool at_end() const { return _i == _pg->block_cnt(); }
+            void next() {
+                if (++_i % 64 == 0)
+                    _cache = _pg->_bits.mark_bits(_block_cnt)[_i / 64];
+            }
+            bool at_end() const { return _i == _block_cnt; }
 
             managed* get() const {
-                return at_end() ? nullptr : (managed*)(_pg->get_data() + _i * _pg->block_sz_fast());
+                return at_end() ? nullptr : (managed*)(_pg->get_data() + _i * _block_sz);
             }
 
-            bool is_marked() const {
-                auto [word, in_word] = _pg->mark_at(_i);
-                return word.load(std::memory_order_acquire) & in_word;
+            bool is_marked() const { return _cache & (1ull << (_i % 64)); }
+            void set_marked() { 
+                _cache |= (1ull << (_i % 64));
+                _pg->_bits.mark_bits(_block_cnt)[_i / 64] = _cache;
             }
         };
 

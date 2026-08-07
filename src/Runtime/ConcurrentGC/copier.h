@@ -4,6 +4,7 @@
 #include <span>
 
 #include "managed.h"
+#include "pg-meta.h"
 
 namespace gc::detail {
     class pg_meta;
@@ -22,6 +23,7 @@ namespace gc::detail {
         void update_globals(std::span<size_t*> roots);
     };
 
+    // Relies on little endian
     inline void set_moved(managed* src, managed* dest) {
         // Save the bottom 16 bits so that we can read the move correctly
         src->set_state(move_state::moved);
@@ -30,7 +32,8 @@ namespace gc::detail {
     }
 
     inline managed* get_moved(managed* obj) {
-        if (obj->state() != move_state::moved) return obj;
+        if (pg_meta::pg_from_ptr(obj)->is_active() || obj->state() != move_state::moved)
+            return obj;
         auto w = *(size_t*)obj;
         w = w >> 16;
         return (managed*)w;
