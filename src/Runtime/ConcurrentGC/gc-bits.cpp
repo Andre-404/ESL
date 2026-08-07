@@ -1,6 +1,6 @@
 #include <algorithm>
 #include <cstring>
-#include <new>
+#include <cassert>
 
 #include "gc-bits.h"
 #include "os-memory.h"
@@ -14,17 +14,11 @@ namespace {
     }
 }
 
-gc_bits::gc_bits() : _base(nullptr), _live(0) {
-    _base = (uint8_t*)os::reserve(config::bits_region_sz, config::bits_commit_sz);
-    if (!_base) throw std::bad_alloc{};
-
+gc_bits::gc_bits(uint8_t* base) : _base(base), _live(0) {
     static_assert(
-        config::bits_arena_sz % config::bits_commit_sz == 0, "a half must be a whole number of commit granules"
+        config::bits_arena_sz % config::commit_syscall_sz == 0, "a half must be a whole number of commit granules"
     );
-}
-
-gc_bits::~gc_bits() {
-    os::release(_base, config::bits_region_sz);
+    assert((size_t)base % config::commit_syscall_sz == 0 && "base must be divisible by commit sz");
 }
 
 bool gc_bits::ensure_committed(half& h, uint8_t* base, std::size_t end) {
@@ -33,7 +27,7 @@ bool gc_bits::ensure_committed(half& h, uint8_t* base, std::size_t end) {
     auto from = h.committed.load(std::memory_order_relaxed);
     if (end <= from) return true;
 
-    auto to = round_up(end, config::bits_commit_sz);
+    auto to = round_up(end, config::commit_syscall_sz);
     if (!os::commit(base + from, to - from)) return false;
 
     // Release, paired with the acquire in bump(): a thread that skips the lock because it

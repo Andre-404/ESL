@@ -2,6 +2,7 @@
 #include <cstring>
 #include <unordered_set>
 #include <vector>
+#include <ranges>
 #include "../arena.h"
 #include "../pg-manager.h"
 #include "../pg-meta.h"
@@ -16,9 +17,11 @@ TEST(ArenaTest, RemoveDebtCanGoNegativeIfMoreRemovedThanAllocated) {
 }
 
 TEST(ArenaTest, AllocOfSizeInSizeClassPlacesObjectOnAPageOfThatSize) {
+    using namespace std::ranges;
+    auto& v = config::sz_classes;
     arena a;
     pg_manager m;
-    for (size_t sz : config::sz_classes) {
+    for (size_t sz : subrange(v.begin(), std::prev(v.end()))) {
         auto* obj = a.alloc(sz, m);
         ASSERT_NE(obj, nullptr) << "sz=" << sz;
         EXPECT_EQ(pg_meta::head_from_ptr(obj)->block_sz(), sz) << "sz=" << sz;

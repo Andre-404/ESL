@@ -15,10 +15,11 @@ using namespace gc;
 using namespace gc::detail;
 
 namespace {
-    constexpr std::size_t hdr_commit_sz = 64ull << 10;
-    constexpr std::size_t hdrs_per_chunk = hdr_commit_sz / sizeof(pg_meta);
+    constexpr std::size_t hdrs_per_chunk = config::commit_syscall_sz / sizeof(pg_meta);
     constexpr std::size_t hdr_chunks = (heap_geometry::total_pages + hdrs_per_chunk - 1) / hdrs_per_chunk;
-    constexpr std::size_t reserve_bytes = config::heap_max_sz + (hdr_chunks * hdr_commit_sz);
+    constexpr std::size_t reserve_bytes = config::heap_max_sz 
+                                        + (hdr_chunks * config::commit_syscall_sz)
+                                        + config::bits_region_sz;
 
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;

@@ -58,16 +58,23 @@ namespace gc {
         constexpr std::size_t chunk_words = chunk_pages / 64;
         // Pages committed in one syscall, so the commit rate stays decoupled from page_sz.
         constexpr std::size_t commit_granule = 8;
+        constexpr std::size_t commit_syscall_sz = 64ull << 10;
 
         static_assert(total_pages % chunk_pages == 0);
         static_assert(total_pages % (chunk_pages * commit_granule) == 0);
+
+        // size of pg_meta, used by dual_bitmap since it has no access to pg_meta
+        constexpr std::size_t hdr_entry_sz = 16;
 
         // Worst case is one bit per 16 byte block, i.e. heap/128 of live bitmaps per half;
         // doubled because a run created and freed inside one cycle keeps its slot until the flip
         constexpr std::size_t bits_arena_bits = heap_bits - 6;
         constexpr std::size_t bits_arena_sz = 1ull << bits_arena_bits;
         constexpr std::size_t bits_region_sz = 2 * bits_arena_sz;
-        constexpr std::size_t bits_commit_sz = 64ull << 10;
+
+        // Bitmaps in pg_meta are stored as an offset(in words) into the bitmap array
+        // -1 since offsets are in range [0, 2^32)
+        static_assert((config::bits_region_sz / sizeof(uint64_t))-1 <= UINT32_MAX);
 
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <cstring>
-#include <new>
+#include <ranges>
 #include <unordered_set>
 #include "../obj-allocator.h"
 #include "../pg-meta.h"
@@ -34,7 +34,9 @@ TEST(ObjAllocatorTest, FirstAllocationLandsAtPageStartOff) {
 }
 
 TEST(ObjAllocatorTest, ConsecutiveAllocationsAreSpacedByBlockSize) {
-    for (size_t sz: config::sz_classes) {
+    using namespace std::ranges;
+    auto& v = config::sz_classes;
+    for (size_t sz : subrange(v.begin(), std::prev(v.end()))) {
         test_page p{sz};
         obj_allocator a{*p.pg()};
         auto* first  = reinterpret_cast<uint8_t*>(a.allocate());

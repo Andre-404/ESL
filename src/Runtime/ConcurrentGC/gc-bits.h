@@ -51,8 +51,7 @@ namespace gc::detail {
         std::span<uint64_t> bump(half& h, uint8_t* base, std::size_t bits, bool should_zero);
 
     public:
-        gc_bits();
-        ~gc_bits();
+        gc_bits(uint8_t* base);
         gc_bits(const gc_bits&) = delete;
         gc_bits& operator=(const gc_bits&) = delete;
 

@@ -9,28 +9,36 @@
 
 namespace gc::detail {
     class dual_bitmap {
-        uint64_t* _alloc;
-        uint64_t* _mark;
+        uint32_t _alloc;
+        uint32_t _mark;
+
+        uint64_t* base() const {
+            auto meta_base = (size_t)this & ~((1ull << config::heap_bits) - 1);
+            return (uint64_t*)(meta_base + config::total_pages*config::hdr_entry_sz);
+        }
+        uint32_t compute_offset(uint64_t* bitmap) const { return bitmap - base(); }
+        uint64_t* compute_ptr(uint32_t offset) const { return base() + offset; }
     public:
-        dual_bitmap(uint64_t* alloc, uint64_t* mark) : _alloc(alloc), _mark(mark) {}
+        dual_bitmap(uint64_t* alloc, uint64_t* mark)
+            : _alloc(compute_offset(alloc)), _mark(compute_offset(mark)) {}
 
         void flip(uint64_t* new_mark) {
             _alloc = _mark;
-            _mark = new_mark;
+            _mark = compute_offset(new_mark);
         }
         // Bitmap aligned to 8 bytes to make atomic ops and popcnt easier
         std::span<size_t> mark_bits(size_t block_cnt) const {
-            return { _mark, (block_cnt + 63) / 64 };
+            return { compute_ptr(_mark), (block_cnt + 63) / 64 };
         }
 
         // Alloc bits are written by the owning thread (obj_allocator's cache flush) and read
         // concurrently by the collector's conservative stack scan, so they are only reachable
         // through these two
         size_t load_alloc(size_t bit) const {
-            return std::atomic_ref { _alloc[bit / 64] }.load(std::memory_order_acquire);
+            return std::atomic_ref { compute_ptr(_alloc)[bit / 64] }.load(std::memory_order_acquire);
         }
         void store_alloc(size_t bit, size_t val) const {
-            std::atomic_ref { _alloc[bit / 64] }.store(val, std::memory_order_release);
+            std::atomic_ref { compute_ptr(_alloc)[bit / 64] }.store(val, std::memory_order_release);
         }
     };
 
@@ -179,4 +187,5 @@ namespace gc::detail {
         }
         void unlink() { link(nullptr); }
     };
+    static_assert(sizeof(pg_meta) == config::hdr_entry_sz);
 }

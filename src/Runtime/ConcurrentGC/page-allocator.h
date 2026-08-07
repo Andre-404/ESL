@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "gc-bits.h"
+#include "gc-config.h"
 #include "pg-meta.h"
 #include "radix-tree.h"
 
@@ -105,7 +106,7 @@ namespace gc::detail {
         gc_bits _bits;
 
     public:
-        pg_allocator() = default;
+        pg_allocator() : _pages(), _bits((uint8_t*)(_pages.pgs_base() + config::total_pages)) {};
 
         uint8_t* heap_base() const { return _pages.base(); }
         pg_meta* meta_base() const { return _pages.pgs_base(); }

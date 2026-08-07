@@ -7,11 +7,30 @@
 #include <algorithm>
 
 #include "../gc-bits.h"
+#include "../os-memory.h"
 
 using namespace gc;
 using namespace gc::detail;
 
 namespace {
+    // gc_bits does not own its storage any more: the page allocator carves a base out of the
+    // heap reservation and hands it over, so the tests have to provide one. The reservation is
+    // a private base rather than a member so that it - and therefore the address - is
+    // constructed before the gc_bits subobject it is passed to, and torn down after it.
+    struct reservation {
+        uint8_t* base;
+        reservation() : base((uint8_t*)os::reserve(config::bits_region_sz, config::commit_syscall_sz)) {}
+        ~reservation() { os::release(base, config::bits_region_sz); }
+        reservation(const reservation&) = delete;
+        reservation& operator=(const reservation&) = delete;
+    };
+
+    // A gc_bits with a reservation of its own, so a test can keep saying `gc_bits {}` in spirit
+    // and still get an arena that dies with it.
+    struct owned_bits : private reservation, public gc_bits {
+        owned_bits() : gc_bits(base) {}
+    };
+
     // The contract callers rely on: a bitmap of `bits` bits is read and written a word at a
     // time through atomic_ref<uint64_t>, so a slot must be
     //   - big enough for words_for(bits) whole 64 bit words,
@@ -74,7 +93,7 @@ namespace {
 
 TEST(GcBitsTest, ConsecutiveSlotsAreAtLeastAsFarApartAsTheyAreLarge) {
     for (auto bits : bit_counts) {
-        auto b = gc_bits {};
+        auto b = owned_bits {};
         auto a = b.alloc_bits(bits);
         auto c = b.alloc_bits(bits);
         ASSERT_FALSE(a.empty());
@@ -87,7 +106,7 @@ TEST(GcBitsTest, ConsecutiveSlotsAreAtLeastAsFarApartAsTheyAreLarge) {
 }
 
 TEST(GcBitsTest, SlotsAreEightAligned) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     for (auto bits : bit_counts) {
         auto p = b.alloc_bits(bits);
         ASSERT_FALSE(p.empty());
@@ -96,7 +115,7 @@ TEST(GcBitsTest, SlotsAreEightAligned) {
 }
 
 TEST(GcBitsTest, WritingOneSlotDoesNotDisturbTheNext) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     constexpr std::size_t bits = 4096;
 
     auto first = claim(b, bits, 0xAAAAAAAAAAAAAAAAull, false);
@@ -110,7 +129,7 @@ TEST(GcBitsTest, WritingOneSlotDoesNotDisturbTheNext) {
 }
 
 TEST(GcBitsTest, ZeroSizedRequestIsRejected) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     EXPECT_TRUE(b.alloc_bits(0).empty());
     EXPECT_TRUE(b.mark_bits(0).empty());
 }
@@ -122,7 +141,7 @@ TEST(GcBitsTest, ZeroSizedRequestIsRejected) {
 // The two roles must never share storage: the mark bitmap being filled this cycle is what
 // becomes the alloc bitmap at the flip, so an overlap would corrupt live allocation state.
 TEST(GcBitsTest, AllocAndMarkComeFromDifferentHalves) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto a = (uint8_t*)b.alloc_bits(4096).data();
     auto m = (uint8_t*)b.mark_bits(4096).data();
     ASSERT_NE(a, nullptr);
@@ -133,7 +152,7 @@ TEST(GcBitsTest, AllocAndMarkComeFromDifferentHalves) {
 }
 
 TEST(GcBitsTest, FlipResetsTheOutgoingHalfAndSwapsRoles) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     constexpr std::size_t bits = 512;   // 64 bytes
 
     auto a0 = b.alloc_bits(bits).data();   // live half, offset 0
@@ -152,7 +171,7 @@ TEST(GcBitsTest, FlipResetsTheOutgoingHalfAndSwapsRoles) {
 }
 
 TEST(GcBitsTest, TwoFlipsReturnToTheOriginalHalf) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto a0 = b.alloc_bits(512).data();
     ASSERT_NE(a0, nullptr);
 
@@ -166,7 +185,7 @@ TEST(GcBitsTest, TwoFlipsReturnToTheOriginalHalf) {
 // would leave a previous cycle's mark bits looking like live objects.
 TEST(GcBitsTest, RecycledStorageComesBackFullyZeroed) {
     for (auto bits : bit_counts) {
-        auto b = gc_bits {};
+        auto b = owned_bits {};
 
         auto first = claim(b, bits, ~uint64_t(0), false);
         ASSERT_NE(first.p, nullptr) << "bits=" << bits;
@@ -186,7 +205,7 @@ TEST(GcBitsTest, RecycledStorageComesBackFullyZeroed) {
 // ---------------------------------------------------------------------------
 
 TEST(GcBitsTest, ExhaustionReturnsNullUntilTheNextFlip) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     // capacity() is bytes, so this is one word more than a half can hold.
     constexpr std::size_t too_many = gc_bits::capacity() * 8 + 64;
 
@@ -205,7 +224,7 @@ TEST(GcBitsTest, ExhaustionReturnsNullUntilTheNextFlip) {
 }
 
 TEST(GcBitsTest, UsedTracksTheFullerHalf) {
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     EXPECT_EQ(b.used(), 0u);
 
     ASSERT_FALSE(b.alloc_bits(512).empty());
@@ -236,7 +255,7 @@ TEST(GcBitsTest, ConcurrentClaimsDoNotOverlap) {
     constexpr int threads = 8;
     constexpr int per_thread = 300;
 
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto out = std::vector<std::vector<slot>>(threads);
     auto sync = std::barrier { threads };
     auto failures = std::atomic<int> { 0 };
@@ -273,7 +292,7 @@ TEST(GcBitsTest, SlotsAreZeroedWhileOtherThreadsClaim) {
     constexpr int threads = 8;
     constexpr int per_thread = 300;
 
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto sync = std::barrier { threads };
     auto dirty = std::atomic<int> { 0 };
 
@@ -305,7 +324,7 @@ TEST(GcBitsTest, RepeatedFlipsRecycleCleanStorageUnderLoad) {
     constexpr int per_thread = 200;
     constexpr int cycles = 6;
 
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto problems = std::atomic<int> { 0 };
 
     for (int c = 0; c < cycles; ++c) {
@@ -346,7 +365,7 @@ TEST(GcBitsTest, UsedNeverExceedsCapacityUnderLoad) {
     constexpr int threads = 8;
     constexpr int per_thread = 400;
 
-    auto b = gc_bits {};
+    auto b = owned_bits {};
     auto bad = std::atomic<int> { 0 };
     auto sync = std::barrier { threads };
 

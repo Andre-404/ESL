@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <cstring>
-#include <new>
 #include "../pg-meta.h"
 #include "../obj-allocator.h"
 #include "pg-fixture.h"
@@ -16,7 +15,7 @@ TEST(PgMetaTest, ConstructorRecordsBlockSize) {
 }
 
 TEST(PgMetaTest, UnknownSizeProducesLargePage) {
-    test_page p{config::sz_classes.back() + 1};
+    test_page p{ config::sz_classes[config::szclass_cnt-1] + 1 };
     EXPECT_EQ(p->block_cnt(), 1);
     EXPECT_EQ(p->szclass(), config::large_class);
 }
