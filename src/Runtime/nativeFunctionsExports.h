@@ -3,6 +3,7 @@
 #include "Objects/objects.h"
 #include "Values/valueHelpers.h"
 #include "Values/valueHelpersInline.h"
+#include "esl-gc-helpers.h"
 #include <iostream>
 
 using namespace object;
@@ -26,7 +27,9 @@ EXPORT Value arr_push(void*, Value arr, Value top){
 
 EXPORT Value input(void*){
     string in;
-    std::getline(std::cin, in);
+    gc::run_blocking([&]() {
+        std::getline(std::cin, in);
+    });
     return encodeObj(rt_string::create((char*)in.c_str()));
 }
 

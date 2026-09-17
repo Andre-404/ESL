@@ -87,7 +87,7 @@ TEST_F(CollectorTest, AllocReturnsNonNullForEachSizeClass) {
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         for (size_t sz : config::sz_classes) {
-            auto* obj = gc->alloc(sz, t);
+            auto* obj = gc->alloc(sz, false, t);
             EXPECT_NE(obj, nullptr) << "alloc(sz=" << sz << ") failed";
         }
         gc->delete_tcb(t);
@@ -99,9 +99,9 @@ TEST_F(CollectorTest, AllocOfDifferentSizesUsesDifferentPages) {
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
-        auto* o32  = gc->alloc(32, t);
-        auto* o64  = gc->alloc(64, t);
-        auto* o128 = gc->alloc(128, t);
+        auto* o32  = gc->alloc(32, false, t);
+        auto* o64  = gc->alloc(64, false, t);
+        auto* o128 = gc->alloc(128, false, t);
         ASSERT_NE(o32,  nullptr);
         ASSERT_NE(o64,  nullptr);
         ASSERT_NE(o128, nullptr);
@@ -117,7 +117,7 @@ TEST_F(CollectorTest, AllocLargeSizeRoutesToBigPage) {
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
-        auto* obj = gc->alloc(4000, t);
+        auto* obj = gc->alloc(4000, false, t);
         ASSERT_NE(obj, nullptr);
         EXPECT_TRUE(pg_meta::head_from_ptr(obj)->szclass() == config::large_class);
         gc->delete_tcb(t);
@@ -132,7 +132,7 @@ TEST_F(CollectorTest, ManyAllocsExerciseNewPageFetches) {
         std::vector<managed*> objs;
         // One past two full pages, so a third fetch is forced
         for (size_t i = 0; i < config::blocks_in_pg(config::sz_to_class(64)) * 2 + 1; ++i) {
-            auto* o = gc->alloc(64, t);
+            auto* o = gc->alloc(64, false, t);
             ASSERT_NE(o, nullptr) << "alloc #" << i;
             objs.push_back(o);
         }
@@ -150,7 +150,7 @@ TEST_F(CollectorTest, AllocReturnsObjectsAtPageSlots) {
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         for (int i = 0; i < 50; ++i) {
-            auto* o = gc->alloc(64, t);
+            auto* o = gc->alloc(64, false, t);
             ASSERT_NE(o, nullptr);
             auto* pg = pg_meta::head_from_ptr(o);
             auto offset = reinterpret_cast<uint8_t*>(o) - pg->get_data();
@@ -169,14 +169,14 @@ TEST_F(CollectorTest, TCBDeathReusePages) {
     managed* o2 = nullptr;
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
-        o = gc->alloc(64, t);
+        o = gc->alloc(64, false, t);
         gc->delete_tcb(t);
     }};
     thd.join();
     t = make_tcb();
     thd = std::thread { [&]() {
         gc->thd_prologue(t);
-        o2 = gc->alloc(64, t);
+        o2 = gc->alloc(64, false, t);
         gc->delete_tcb(t);
     }};
     thd.join();
@@ -188,10 +188,10 @@ TEST_F(CollectorTest, SetPausedAndResumed) {
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
-        gc->alloc(64, t);
+        gc->alloc(64, false, t);
         gc->set_paused(t);
         gc->set_resumed(t);
-        auto* obj_after_resume = gc->alloc(64, t);
+        auto* obj_after_resume = gc->alloc(64, false, t);
         EXPECT_NE(obj_after_resume, nullptr);
         gc->delete_tcb(t);
     }};
@@ -203,7 +203,7 @@ TEST_F(CollectorTest, RepeatedPauseResumeCycles) {
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         for (int i = 0; i < 20; ++i) {
-            gc->alloc(64, t);
+            gc->alloc(64, false, t);
             gc->set_paused(t);
             gc->set_resumed(t);
         }
@@ -224,7 +224,7 @@ TEST_F(CollectorTest, ConcurrentLightAllocsManyThreads) {
         threads.emplace_back([&, tcb]{
             gc->thd_prologue(tcb);
             for (int i = 0; i < kAllocs; ++i) {
-                if (gc->alloc(64, tcb)) success.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(64, false, tcb)) success.fetch_add(1, std::memory_order_relaxed);
             }
             gc->delete_tcb(tcb);
         });
@@ -246,7 +246,7 @@ TEST_F(CollectorTest, ConcurrentLightAllocsProduceDistinctPointers) {
             gc->thd_prologue(tcb);
             per_thread[t].reserve(kAllocs);
             for (int i = 0; i < kAllocs; ++i) {
-                auto* o = gc->alloc(64, tcb);
+                auto* o = gc->alloc(64, false, tcb);
                 ASSERT_NE(o, nullptr);
                 per_thread[t].push_back(o);
             }
@@ -275,7 +275,7 @@ TEST_F(CollectorTest, ConcurrentTcbCreationAndDeletion) {
                 auto* tcb = make_tcb();
                 new_thds.emplace_back([&, tcb]() {
                     gc->thd_prologue(tcb);
-                    gc->alloc(64, tcb);
+                    gc->alloc(64, false, tcb);
                     gc->delete_tcb(tcb);
                 });
             }
@@ -300,7 +300,7 @@ TEST_F(CollectorTest, ConcurrentMixedSizeClassesLightLoad) {
             gc->thd_prologue(tcb);
             size_t sz = config::sz_classes[t % config::szclass_cnt];
             for (int i = 0; i < kAllocs; ++i) {
-                if (gc->alloc(sz, tcb)) success.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(sz, false, tcb)) success.fetch_add(1, std::memory_order_relaxed);
             }
             gc->delete_tcb(tcb);
         });
@@ -319,9 +319,9 @@ TEST_F(CollectorTest, ManyShortLivedThreadsInWavesLightLoad) {
             auto* tcb = make_tcb();
             threads.emplace_back([&, tcb]{
                 gc->thd_prologue(tcb);
-                pg_meta::head_from_ptr(gc->alloc(64, tcb));
-                pg_meta::head_from_ptr(gc->alloc(32, tcb));
-                pg_meta::head_from_ptr(gc->alloc(128, tcb));
+                pg_meta::head_from_ptr(gc->alloc(64, false, tcb));
+                pg_meta::head_from_ptr(gc->alloc(32, false, tcb));
+                pg_meta::head_from_ptr(gc->alloc(128, false, tcb));
                 gc->delete_tcb(tcb);
             });
         }
@@ -341,7 +341,7 @@ TEST_F(CollectorTest, ConcurrentBigAllocsAreImmuneToRecycledFullPageBug) {
         threads.emplace_back([&, tcb]{
             gc->thd_prologue(tcb);
             for (int i = 0; i < kPer; ++i) {
-                if (gc->alloc(4000, tcb)) success.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(4000, false, tcb)) success.fetch_add(1, std::memory_order_relaxed);
             }
             gc->delete_tcb(tcb);
         });
@@ -367,7 +367,7 @@ TEST_F(CollectorTest, MixedAllocAndBlockingPatternLightLoad) {
                     gc->set_paused(tcb);
                     gc->set_resumed(tcb);
                 }
-                if (gc->alloc(64, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(64, false, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
             }
             gc->delete_tcb(tcb);
         });
@@ -384,7 +384,7 @@ TEST_F(CollectorTest, ManyAllocsSinglePersistentThread) {
         int ok = 0;
         for (int i = 0; i < kAllocs; ++i) {
             size_t sz = config::sz_classes[i % config::szclass_cnt];
-            if (gc->alloc(sz, t)) ++ok;
+            if (gc->alloc(sz, false, t)) ++ok;
         }
         EXPECT_EQ(ok, kAllocs);
         gc->delete_tcb(t);
@@ -403,7 +403,7 @@ TEST_F(CollectorTest, ConcurrentAllocsFromMultipleThreads) {
         threads.emplace_back([&, tcb]{
             gc->thd_prologue(tcb);
             for (int i = 0; i < kAllocsPerThread; ++i)
-                if (gc->alloc(64, tcb)) success.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(64, false, tcb)) success.fetch_add(1, std::memory_order_relaxed);
             gc->delete_tcb(tcb);
         });
     }
@@ -424,7 +424,7 @@ TEST_F(CollectorTest, HighChurnTcbLifecycleNoCrashesNoHangs) {
                 auto* tcb = make_tcb();
                 auto thd = std::thread { [&, tcb]() {
                     gc->thd_prologue(tcb);
-                    for (int i = 0; i < kPerCycle; ++i) gc->alloc(32 + 32 * (i % 3), tcb);
+                    for (int i = 0; i < kPerCycle; ++i) gc->alloc(32 + 32 * (i % 3), false, tcb);
                     gc->delete_tcb(tcb);
                 } };
                 thd.join();
@@ -446,7 +446,7 @@ TEST_F(CollectorTest, ConcurrentAllocsAndPauseResumeUnderPressure) {
         threads.emplace_back([&, tcb]{
             gc->thd_prologue(tcb);
             for (int i = 0; i < kIters; ++i) {
-                if (gc->alloc(64, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
+                if (gc->alloc(64, false, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
                 gc->set_paused(tcb);
                 gc->set_resumed(tcb);
             }
@@ -502,7 +502,7 @@ namespace {
         // byte is whatever the previous occupant of the slot left behind - which the marker
         // reads, and which after a copying cycle can be a stale forwarding word.
         managed* fresh(size_t sz, tcb* t) {
-            auto* mem = gc->alloc(sz, t);
+            auto* mem = gc->alloc(sz, false, t);
             return mem ? new (mem) managed(1, move_state::none) : nullptr;
         }
 

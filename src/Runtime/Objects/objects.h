@@ -25,6 +25,7 @@ namespace object {
 
     class rt_obj : public gc::managed {
     public:
+        static constexpr bool pinned = false;
         rt_obj(rt_type type, bool is_pinned) : gc::managed(+type, is_pinned ? gc::move_state::pinned : gc::move_state::none) {}
 
         rt_type type() { return static_cast<rt_type>(get_type_id()); }

@@ -10,8 +10,16 @@ namespace gc::detail {
         std::array<szclass_allocator, config::szclass_cnt> _allocators;
         int64_t _debt;
         pg_meta* _big_objs;
+        pg_meta* _pending_big;
+
+        void publish_big() {
+            if (!_pending_big) return;
+            _pending_big->store_alloc_word(0, 1);
+            _pending_big = nullptr;
+        }
 
         [[gnu::cold]] managed* alloc_big(size_t sz, pg_manager& manager) {
+            publish_big();
             auto res = manager.new_pg(sz);
             if (!res) [[unlikely]] {
                 _debt -= sz;
@@ -19,6 +27,7 @@ namespace gc::detail {
             }
             res->link(_big_objs);
             _big_objs = res;
+            _pending_big = res;
             // Big obj is always put at the start of the buffer
             return (managed*)res->get_data();
         }
@@ -36,7 +45,7 @@ namespace gc::detail {
             return res;
         }
     public:
-        arena() : _debt(0), _big_objs(nullptr) {}
+        arena() : _debt(0), _big_objs(nullptr), _pending_big(nullptr) {}
         [[gnu::hot, gnu::always_inline]] managed* alloc(size_t sz, pg_manager& manager) {
             // TODO: account for fragmentation here
             _debt += sz;
@@ -53,9 +62,11 @@ namespace gc::detail {
 
         void flush_alloc_caches() {
             for (auto& alloc : _allocators) alloc.flush_alloc_cache();
+            publish_big();
         }
         template<typename F>
         void mutate_owned(F mutator) {
+            assert(!_pending_big);
             for (auto& alloc : _allocators) alloc.mutate(mutator);
             _big_objs = mutator(_big_objs);
         }

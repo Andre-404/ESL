@@ -152,10 +152,7 @@ uint64_t* collector::end_cycle(size_t alloc_snapshot) {
     _cycle.evac_gain_bytes = evac.gain_bytes;
     _cycle.evac_move_bytes = evac.move_bytes;
     _heuristic.end_cycle(gc_clock::now(), _cycle);
-    auto res = _pruner.end_cycle();
-    // If some thread paused because it was out of memory wake it up AFTER all the calculations have been done
-    _collection_req.clear();
-    return res;
+    return _pruner.end_cycle();
 }
 
 
@@ -184,6 +181,10 @@ void collector::concurrent_loop() {
             assert(_gc_flag.load(std::memory_order_acquire) == 0);
             _marker.remove_empty();
         });
+
+        // If threads are waiting because they request an express collection,
+        // wake them after pages have been freed
+        _collection_req.clear();
     }
     rpmalloc_thread_finalize(1);
 }
@@ -276,15 +277,15 @@ void collector::register_root(size_t *root) {
     _roots.push_back(root);
 }
 
-managed *collector::alloc(size_t sz, tcb * t) {
+managed *collector::alloc(size_t sz, bool pinned, tcb * t) {
     auto& arena = t->get_arena();
     auto res = arena.alloc(sz, _pg_manager);
     if (!res) [[unlikely]] {
         force_collection(sz, t);
-        return alloc(sz, t);
+        return alloc(sz, pinned, t);
     }
     if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none)
-        pg_meta::head_from_ptr(res)->record_mark(res, false);
+        pg_meta::head_from_ptr(res)->record_mark(res, pinned);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
     if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);

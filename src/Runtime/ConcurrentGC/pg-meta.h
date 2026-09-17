@@ -87,11 +87,12 @@ namespace gc::detail {
     public:
         explicit pg_meta(size_t block_sz, uint64_t* alloc, uint64_t* mark) : _next(sll_null),
             _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)),
-            _has_pinned(false), _active(true), _bits(alloc, mark)
+            _has_pinned(false), _active(false), _bits(alloc, mark)
         {
-            // Pages for large objects are created when an object of that size is needed,
-            // thus creating a large obj page == allocating large obj
-            if (_szclass == config::large_class) _bits.store_alloc(0, 1);
+            // Init bits before publishing this page as active
+            _active.store(true, std::memory_order_release);
+            // Large obj pages are handed out with their alloc bit clear on purpose, the object
+            // isn't constructed yet. arena publishes it once it is (see arena::publish_big)
         }
 
         static void emplace_continuation(pg_meta* at, int32_t off, size_t num_pages) {

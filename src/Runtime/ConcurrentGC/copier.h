@@ -32,7 +32,7 @@ namespace gc::detail {
     }
 
     inline managed* get_moved(managed* obj) {
-        if (pg_meta::pg_from_ptr(obj)->is_active() || obj->state() != move_state::moved)
+        if (obj->state() != move_state::moved)
             return obj;
         auto w = *(size_t*)obj;
         w = w >> 16;

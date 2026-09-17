@@ -30,8 +30,8 @@ namespace gc {
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
 
-    [[nodiscard]] managed* detail::alloc(size_t sz, tcb_handle* handle) {
-        return GC->alloc(sz, t(handle));
+    [[nodiscard]] managed* detail::alloc(size_t sz, bool pinned, tcb_handle* handle) {
+        return GC->alloc(sz, pinned, t(handle));
     }
 
     void write_barrier(tcb_handle* handle, managed* obj) {

@@ -89,6 +89,7 @@ TEST(ArenaTest, BigAllocsAccumulateOnTheBigChain) {
     ASSERT_NE(o3, nullptr);
 
     std::unordered_set<pg_meta*> seen;
+    a.flush_alloc_caches();
     a.mutate_owned([&](pg_meta* head) {
         if (head && head->szclass() == config::large_class) {
             for (auto* p = head; p; p = p->next()) seen.insert(p);
@@ -109,6 +110,7 @@ TEST(ArenaTest, BigAllocChainPrependsNewestFirst) {
     auto* o3 = a.alloc(4000, m);
 
     pg_meta* head = nullptr;
+    a.flush_alloc_caches();
     a.mutate_owned([&](pg_meta* h) {
         if (h && h->szclass() == config::large_class) head = h;
         return h;
@@ -146,6 +148,28 @@ TEST(ArenaTest, FlushAllocCachesPropagatesBitsToTheActivePage) {
 
     a.flush_alloc_caches();
     EXPECT_EQ(pg_meta::head_from_ptr(o)->load_alloc_word(0) & 0b111ull, 0b111ull);
+}
+
+// A big obj is constructed after its page exists, so its alloc bit must stay clear until the
+// next big allocation or cache flush, exactly like a small obj sitting in the alloc cache
+TEST(ArenaTest, BigAllocBitIsWithheldUntilPublished) {
+    arena a;
+    pg_manager m;
+    auto* first = a.alloc(4000, m);
+    ASSERT_NE(first, nullptr);
+    auto* first_pg = pg_meta::head_from_ptr(first);
+    EXPECT_EQ(first_pg->load_alloc_word(0), 0u);
+    EXPECT_EQ(first_pg->from_interior(reinterpret_cast<uint8_t*>(first)), nullptr);
+
+    auto* second = a.alloc(4000, m);
+    ASSERT_NE(second, nullptr);
+    auto* second_pg = pg_meta::head_from_ptr(second);
+    EXPECT_EQ(first_pg->load_alloc_word(0), 1u) << "next big alloc publishes the previous one";
+    EXPECT_EQ(first_pg->from_interior(reinterpret_cast<uint8_t*>(first)), first);
+    EXPECT_EQ(second_pg->load_alloc_word(0), 0u);
+
+    a.flush_alloc_caches();
+    EXPECT_EQ(second_pg->load_alloc_word(0), 1u) << "flush publishes the pending one";
 }
 
 TEST(ArenaTest, AllocBigReturnsPointerInsideTheAllocatedPage) {

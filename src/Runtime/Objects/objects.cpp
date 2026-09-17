@@ -9,12 +9,18 @@ using namespace valueHelpers;
 #pragma region Obj
 size_t rt_obj::get_sz(){
     switch(type()){
-        case rt_type::STRING: return sizeof(rt_string) + ((rt_string*)this)->sz();
-        case rt_type::ARRAY: return sizeof(rt_arr);
-        case rt_type::ARRAY_STORAGE_HEADER: return sizeof(rt_arr_store) + ((rt_arr_store*)this)->get_data().size() * sizeof(Value);
-        case rt_type::CLOSURE: return sizeof(rt_closure) + ((rt_closure*)this)->get_env().size()*sizeof(Value);
-        case rt_type::INSTANCE: return sizeof(rt_inst) + ((rt_inst*)this)->get_fields().size()*sizeof(Value);
-        case rt_type::HASH_MAP: return sizeof(rt_hashmap);
+        case rt_type::STRING:
+            return sizeof(rt_string) + ((rt_string*)this)->sz() + 1; // +1 for null terminator
+        case rt_type::ARRAY:
+            return sizeof(rt_arr);
+        case rt_type::ARRAY_STORAGE_HEADER:
+            return sizeof(rt_arr_store) + ((rt_arr_store*)this)->get_data().size() * sizeof(Value);
+        case rt_type::CLOSURE:
+            return sizeof(rt_closure) + ((rt_closure*)this)->get_env().size()*sizeof(Value);
+        case rt_type::INSTANCE:
+            return sizeof(rt_inst) + ((rt_inst*)this)->get_fields().size()*sizeof(Value);
+        case rt_type::HASH_MAP:
+            return sizeof(rt_hashmap);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
     __builtin_unreachable();

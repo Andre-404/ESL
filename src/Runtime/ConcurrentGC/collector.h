@@ -116,7 +116,7 @@ namespace gc::detail {
         void flush_wbbuf(tcb* handle);
         void register_root(size_t* root);
 
-        managed* alloc(size_t sz, tcb* handle);
+        managed* alloc(size_t sz, bool pinned, tcb* handle);
 
         void process_pending(tcb* handle);
 

@@ -15,7 +15,7 @@ namespace gc {
     void enter_blocked(tcb_handle* handle);
     void exit_blocked(tcb_handle* handle);
     namespace detail {
-        [[nodiscard]] managed* alloc(size_t sz, tcb_handle* handle);
+        [[nodiscard]] managed* alloc(size_t sz, bool pinned, tcb_handle* handle);
     }
 
     // TODO: are these fences overkill?
@@ -23,12 +23,11 @@ namespace gc {
     // but can call write barrier, can allocate/poll safepoint inside gc_init
     // object is safe from tracing while inside constructor, after that every field must be in a known state
     template<typename T, typename... Args>
-    [[nodiscard]] T* make_gc(tcb_handle* handle, size_t extra_bytes, Args&&... args) {
+    [[nodiscard]] T* make_gc(tcb_handle* handle, bool pinned, size_t extra_bytes, Args&&... args) {
         static_assert(std::is_base_of_v<managed, T>);
-        auto* obj = new (detail::alloc(sizeof(T) + extra_bytes, handle)) T(std::forward<Args>(args)...);
+        auto* obj = new (detail::alloc(sizeof(T) + extra_bytes, pinned, handle)) T(std::forward<Args>(args)...);
         std::atomic_thread_fence(std::memory_order_release); 
         if constexpr (requires (T* t) { t->gc_init(); }) obj->gc_init();
-        std::atomic_thread_fence(std::memory_order_release); 
         return obj;
     }
 

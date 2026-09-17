@@ -16,8 +16,6 @@ namespace gc::detail {
     public:
         // ---- mutator side ----
 
-        // Raise a normal, heuristic-triggered collection. No-op if a request is
-        // already outstanding. Returns true iff this call started the request.
         bool request_normal() {
             auto expected = type::none;
             if (_req.compare_exchange_strong(expected, type::normal, std::memory_order_acq_rel)) {
