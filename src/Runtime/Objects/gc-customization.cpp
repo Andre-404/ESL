@@ -43,10 +43,8 @@ namespace gc {
         switch (obj->type()) {
             case rt_type::ARRAY: {
                 auto arr = (rt_arr *)obj;
-                if (arr->get_store())
-                    arr->upd_storage([](rt_arr_store* store) {
-                        return (rt_arr_store*)gc::to_moved_ptr(store);
-                    });
+                if (auto store = arr->get_store())
+                    arr->set_store((rt_arr_store*)gc::to_moved_ptr(store));
                 break;
             }
             case rt_type::ARRAY_STORAGE_HEADER: {

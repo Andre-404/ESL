@@ -14,7 +14,7 @@ namespace object {
         ARRAY,
         ARRAY_STORAGE_HEADER,
         HASH_MAP,
-        HASHMAP_STORAGE_HEADER,
+        BUFFER,
         FILE,
         MUTEX,
         CHANNEL,
@@ -96,8 +96,7 @@ namespace object {
 
         std::span<Value> get_data() { return { _storage->get_data().data(), _size }; }
         // Used by gc customization
-        template<typename F>
-        void upd_storage(F get_new) { _storage = get_new(_storage); }
+        void set_store(rt_arr_store* new_store) { _storage = new_store; }
         rt_arr_store* get_store() { return _storage; }
 
         uint32_t size() const { return _size; }
