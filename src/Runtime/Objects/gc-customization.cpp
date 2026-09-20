@@ -22,8 +22,8 @@ namespace gc {
             case rt_type::CLOSURE:
             case rt_type::INSTANCE:
             case rt_type::STRING:
-                // TODO: map needs to become pod
             case rt_type::HASH_MAP:
+            case rt_type::BUFFER:
             case rt_type::ARRAY_STORAGE_HEADER: {
                 // POD gets memcpy
                 memcpy(d, s, obj->get_sz());
@@ -70,9 +70,13 @@ namespace gc {
                 }
                 break;
             }
-            // TODO: i think we're gonna need to completely rehash map on every move? right now it can't be allocated so its fine
+            // Keys hash by content so no rehash is needed, the slot store updates its own values
             case rt_type::HASH_MAP: {
                 auto map = (rt_hashmap *)obj;
+                if (auto ctrl = map->get_ctrl())
+                    map->set_ctrl((rt_buffer*)gc::to_moved_ptr(ctrl));
+                if (auto slots = map->get_slots())
+                    map->set_slots((rt_arr_store*)gc::to_moved_ptr(slots));
                 break;
             }
             default: break; // Not traceable
@@ -121,9 +125,10 @@ namespace gc {
                 }
                 break;
             }
-            // TODO: handle this
             case rt_type::HASH_MAP: {
                 auto map = (rt_hashmap *)obj;
+                if (map->get_ctrl()) cb(map->get_ctrl());
+                if (map->get_slots()) cb(map->get_slots());
                 break;
             }
             default: assert(false && "nontraceable objects should never get to here");

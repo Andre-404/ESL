@@ -2,7 +2,9 @@
 #include "../../Includes/unorderedDense.h"
 #include "../../common.h"
 #include <atomic>
+#include <bit>
 #include <cstring>
+#include <span>
 #include "../esl-gc-helpers.h"
 
 namespace object {
@@ -115,6 +117,22 @@ namespace object {
         void clear();
     };
 
+
+    // Raw bytes owned by the gc. Movable like every other rt_obj, but never scanned,
+    // so it must not hold references to other managed objects
+    class rt_buffer : public rt_obj {
+        uint32_t _size;
+    public:
+        rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER, false), _size(size) {
+            memset(get_data().data(), fill, size);
+        }
+
+        std::span<byte> get_data() { return { (byte*)(this + 1), _size }; }
+        uint32_t size() const { return _size; }
+
+        static rt_buffer* alloc(uint32_t size, byte fill = 0);
+    };
+
     using compiled_fn = void*;
     using name_field_map = int (*)(rt_string*);
 
@@ -161,10 +179,91 @@ namespace object {
         comp_class* get_class() { return _klass; }
     };
 
+    // Swiss table(see abseil's flat_hash_map / go's swisstable)
+    // Every helper returns a bitset with the high bit of each matching byte set.
+    // Control byte: 0b0hhhhhhh full(low 7 bits of the hash), 0b10000000 empty, 0b11111110 deleted
+    namespace swiss {
+        constexpr uint32_t group_sz = 8;
+        constexpr byte ctrl_empty = 0x80;
+        constexpr byte ctrl_deleted = 0xFE;
+        constexpr uint64_t lsb = 0x0101010101010101ull;
+        constexpr uint64_t msb = 0x8080808080808080ull;
+
+        inline uint64_t load_group(const byte* ctrl, uint32_t group) {
+            uint64_t v;
+            memcpy(&v, ctrl + group * group_sz, sizeof(v));
+            return v;
+        }
+        inline void set_group(byte* ctrl, uint32_t group, uint64_t g) {
+            memcpy(ctrl + group * group_sz, &g, sizeof(g));
+        }
+        // Can report false positives in bytes above a real match(borrow propagation),
+        // callers always confirm with a key comparison. Never matches an empty or deleted byte
+        inline uint64_t match_h2(uint64_t group, byte h2) {
+            uint64_t x = group ^ (lsb * h2);
+            return (x - lsb) & ~x & msb;
+        }
+        inline uint64_t match_empty(uint64_t group) { return group & ~(group << 6) & msb; }
+        inline uint64_t match_empty_or_deleted(uint64_t group) { return group & ~(group << 7) & msb; }
+        inline uint64_t match_full(uint64_t group) { return ~group & msb; }
+        // Slot(within the group) of the lowest set bit of a match bitset
+        inline uint32_t first_slot(uint64_t bits) { return std::countr_zero(bits) >> 3; }
+        inline uint64_t reset_group(uint64_t group) {
+            auto x = group & msb;
+            return (~x + (x >> 7)) & ~lsb;
+        }
+    }
+    
+    // Control bytes live in an unscanned rt_buffer, slots live in a traced rt_arr_store laid out as
+    // [key0, val0, key1, val1, ...]
+    // Empty slots are always zeroed since the whole slot store gets traced.
     class rt_hashmap : public rt_obj {
-        ankerl::unordered_dense::map<object::rt_string*, Value> fields;
+        uint32_t _count;
+        uint32_t _growth_left;  // Empty slots not counting tombstones
+        uint32_t _capacity;     // Must be power of 2 multiple of swiss::group_sz
+        rt_buffer* _ctrl;
+        rt_arr_store* _slots;
+
+        byte* ctrl() { return _ctrl->get_data().data(); }
+        Value* slots() { return _slots->get_data().data(); }
+
+        // Slot holding key, or -1
+        int64_t find_slot(rt_string* key, uint64_t hash);
+        void rehash(uint32_t new_cap);
+        void in_place_rehash();
     public:
-        rt_hashmap();
+        // Capacity is sized so that expected entries fit without a rehash
+        rt_hashmap(uint32_t expected = 0);
+
+        void gc_init();
+
+        uint32_t size() const { return _count; }
+        uint32_t capacity() const { return _capacity; }
+
+        // Pointer to the value slot, invalidated by any later mutation of the map or gc cycle
+        Value* find(rt_string* key);
+        bool contains(rt_string* key) { return find(key) != nullptr; }
+        void insert_or_assign(rt_string* key, Value val);
+        bool erase(rt_string* key);
+        void clear();
+
+        // fn(Value key, Value val), key is always an encoded rt_string
+        template<typename F>
+        void for_each(F fn) {
+            auto c = ctrl();
+            auto s = slots();
+            for (uint32_t g = 0; g < _capacity / swiss::group_sz; g++) {
+                for (auto m = swiss::match_full(swiss::load_group(c, g)); m; m &= m - 1) {
+                    auto i = g * swiss::group_sz + swiss::first_slot(m);
+                    fn(s[2 * i], s[2 * i + 1]);
+                }
+            }
+        }
+
+        rt_buffer* get_ctrl() { return _ctrl; }
+        rt_arr_store* get_slots() { return _slots; }
+        void set_ctrl(rt_buffer* c) { _ctrl = c; }
+        void set_slots(rt_arr_store* s) { _slots = s; }
     };
 
 

@@ -100,8 +100,8 @@ EXPORT Value create_hashmap(int nFields, ...){
     va_list ap;
     va_start(ap, nFields);
     for(int i=0; i<nFields; i++){
-        //object::ObjString* str = asString(va_arg(ap, Value));
-        //map->fields.insert_or_assign(str, va_arg(ap, Value));
+        auto k = asString(va_arg(ap, Value));
+        map->insert_or_assign(k, va_arg(ap, Value));
     }
     va_end(ap);
     return encodeObj(map);
@@ -123,19 +123,14 @@ EXPORT void gc_add_root(Value* ptr){
     gc::register_root(ptr);
 }
 
-EXPORT Value hashmap_get(rt_hashmap* map, rt_string* str){
-    /*auto it = map->fields.find(str);
-    if(it == map->fields.end()) {
-        // TODO: error
-    }*/
+EXPORT Value hashmap_get(rt_hashmap* map, rt_string* key){
+    if (auto v = map->find(key); v) return *v;
     return encodeNil();
 }
 
 // Can't error since if str isn't in map it's inserted as a new value
-EXPORT void hashmap_set(rt_hashmap* map, rt_string* str, Value v){
-    /*auto it = map->fields.find(str);
-    if(it == map->fields.end()) map->fields.insert_or_assign(str, v);
-    else it->second = v;*/
+EXPORT void hashmap_set(rt_hashmap* map, rt_string* key, Value v){
+    map->insert_or_assign(key, v);
 }
 
 EXPORT rt_inst* create_inst(comp_class* klass, Value* fields) {
