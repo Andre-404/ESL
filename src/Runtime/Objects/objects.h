@@ -58,7 +58,7 @@ namespace object {
 
         bool compare(rt_string* other);
 
-        bool compare(const string other);
+        bool compare(const string& other);
 
         rt_string* concat(rt_string* other);
 

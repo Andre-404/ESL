@@ -59,11 +59,11 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
 
 #pragma region ObjString
 bool rt_string::compare(rt_string* other) {
-	return _size == other->_size && std::strcmp(get_str(), other->get_str()) == 0;
+	return _size == other->_size && std::memcmp(get_str(), other->get_str(), _size) == 0;
 }
 
-bool rt_string::compare(const string other) {
-	return std::strcmp(get_str(), other.c_str()) == 0;
+bool rt_string::compare(const string& other) {
+	return _size == other.size() && std::memcmp(get_str(), other.c_str(), _size) == 0;
 }
 
 rt_string* rt_string::concat(rt_string* other) {
