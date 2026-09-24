@@ -65,6 +65,7 @@ namespace gc {
 
         // size of pg_meta, used by dual_bitmap since it has no access to pg_meta
         constexpr std::size_t hdr_entry_sz = 16;
+        constexpr std::size_t hdr_region_sz = total_pages * hdr_entry_sz;
 
         // Worst case is one bit per 16 byte block, i.e. heap/128 of live bitmaps per half;
         // doubled because a run created and freed inside one cycle keeps its slot until the flip
@@ -76,12 +77,34 @@ namespace gc {
         // -1 since offsets are in range [0, 2^32)
         static_assert((config::bits_region_sz / sizeof(uint64_t))-1 <= UINT32_MAX);
 
+        // Sized to mark region, objects that need their pointers updated are mark & card
+        constexpr std::size_t card_region_sz = bits_arena_sz;
+
+        // live:13 | age:3 = 16 bits
+        constexpr std::size_t history_entry_sz = 2;
+        constexpr std::size_t history_region_sz = total_pages * history_entry_sz;
+
+        constexpr std::size_t pg_live_bits = 13;
+        constexpr std::size_t pg_age_cnt = 8;
+        // This will need to be revised if we ever switch to a page size other than 8kb,
+        // but that seems highly unlikely so for now just guard with assert
+        static_assert(blocks_in_pg(0) <= (1u << pg_live_bits) - 1);
+        static_assert(pg_age_cnt == (1u << (16 - pg_live_bits)));
+
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 
         constexpr std::size_t empty_mark_bufs_limit = 256;
         constexpr std::size_t trace_batch = 16 * (1 << 20);
         constexpr double copy_evac_threshold = 0.85;
+        // Nomination is a prediction and only has to be a superset of what split_pages picks
+        // with copy_evac_threshold and exact counts, so it sits deliberately above it
+        constexpr double nominate_threshold = 0.9;
+        static_assert(nominate_threshold >= copy_evac_threshold);
+        // Seeded pessimistically enough that a cold table neither 
+        // hoards nor evacuates the whole heap on the first copying cycle
+        constexpr double survival_alpha = 0.3;
+        constexpr double survival_seed  = 0.5;
         constexpr std::size_t free_batch_sz = 128 * 1024 * 1024;
     }
 

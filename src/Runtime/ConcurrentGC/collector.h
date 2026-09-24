@@ -27,6 +27,10 @@ namespace gc::detail {
         std::atomic<size_t> _alloc_sz;
         post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
+        // Whether the cycle in flight nominates source pages, published before the marking
+        // handshake so every mutator scores its own pages under the same answer.
+        // TODO(step 6): becomes a gc_flag bit and drives stw's copy decision as well
+        std::atomic<bool> _nominating;
         collection_request _collection_req;
 
         sync_point _gate;
@@ -63,6 +67,28 @@ namespace gc::detail {
                 return _pruner.prune(start, _pg_manager.bits(), [&](pg_meta* pg) { b.add(pg); });
             };
         }
+        // Don't nominate pages if we're not in a copying cycle
+        auto observe_pgs_fn() const {
+            auto nominate = _nominating.load(std::memory_order_acquire);
+            auto should_nominate = [this, nominate](pg_meta* pg, uint16_t occ, uint8_t age) {
+                // Large objects are never evacuated, and occ == 0 is either an empty page the sweep
+                // will retire or one the allocator is filling right now - a target either way
+                if (pg->szclass() == config::large_class || occ == 0) return false;
+                auto pred_survivors = occ * _pruner.survival().survival(age);
+                return nominate && pred_survivors < config::nominate_threshold * pg->block_cnt();
+            };
+            
+            return [this, predicate = std::move(should_nominate)](pg_meta* start) {
+                for (auto pg = start; pg; pg = pg->next()) {
+                    if (!pg->is_active()) continue;
+                    auto occ = uint16_t(pg->compute_alloc());
+                    auto age = pg->history().age();
+                    pg->set_history({ occ, age });
+                    if (predicate(pg, occ, age)) pg->nominate();
+                }
+                return start;
+            };
+        }
         // Every stw phase runs its mutator over the pages this thread owns, and the collector
         // additionally over the ones handed back to the manager by dead threads
         template<typename F>
@@ -70,6 +96,8 @@ namespace gc::detail {
             for (auto t : owned) t->get_arena().mutate_owned(fn);
             if (role == stw_role::collector) _pg_manager.mutate_owned(fn);
         }
+        void observe_thread_pages(tcb* t) { t->get_arena().observe_owned(observe_pgs_fn()); }
+
         auto get_obj_base() {
             return [&](uint8_t* ptr) {
                 if (auto pg = _pg_manager.pg_from_ptr(ptr))
@@ -99,7 +127,8 @@ namespace gc::detail {
 
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
-            : _gc_flag(flag), _copier(config::copy_evac_threshold), _heuristic(tuning) {
+            : _gc_flag(flag), _nominating(false),
+              _copier(config::copy_evac_threshold), _heuristic(tuning) {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {
@@ -123,5 +152,7 @@ namespace gc::detail {
         bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
 
         const gc_metrics& metrics() const { return _metrics; }
+
+        const survival_model& survival() const { return _pruner.survival(); }
     };
 }

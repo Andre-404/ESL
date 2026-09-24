@@ -7,6 +7,7 @@
 #include "gc-config.h"
 #include "pg-meta.h"
 #include "gc-bits.h"
+#include "survival-model.h"
 
 
 namespace gc::detail {
@@ -19,6 +20,7 @@ namespace gc::detail {
         std::atomic<size_t> _live_bytes;
         std::atomic<uint64_t*> _bitmap_watermark;
         std::array<szclass_stats, config::szclass_cnt> _szclass_stats;
+        survival_model _survival;
 
         void record_page(pg_meta* pg, size_t live) {
             // TODO: is this inefficient?
@@ -28,6 +30,18 @@ namespace gc::detail {
                 stats.pg_cnt.fetch_add(1, std::memory_order_relaxed);
             }
             _live_bytes.fetch_add(live * pg->block_sz(), std::memory_order_relaxed);
+        }
+
+        void record_history(pg_meta* pg, size_t live_now, survival_model::batch& samples) const {
+            auto prev = pg->history();
+            if (!prev.known()) return;   // nothing predicted this page yet, so nothing to score
+
+            samples.add_retained(prev.age(), prev.occ(), live_now);
+
+            auto age = uint8_t(
+                live_now * 2 >= prev.occ() ? std::min<uint8_t>(prev.age() + 1, pg_history::age_max)
+                                           : 0);
+            pg->set_history({ uint16_t(live_now), age });
         }
 
         void record_watermark(uint64_t* end) {
@@ -44,10 +58,12 @@ namespace gc::detail {
                 stats.pg_cnt.store(0, std::memory_order_relaxed);
             }
             _live_bytes = 0;
+            _survival.end_cycle();
             return _bitmap_watermark.exchange(nullptr, std::memory_order_relaxed);
         }
 
         size_t live_bytes() const { return _live_bytes; }
+        const survival_model& survival() const { return _survival; }
 
         template<typename F>
         pg_meta* prune(pg_meta* list, gc_bits& bits, F retire) {
@@ -56,6 +72,7 @@ namespace gc::detail {
             auto head = (pg_meta*)nullptr;
             auto tail = (pg_meta*)nullptr;
             uint64_t* watermark = nullptr;
+            auto samples = _survival.start_batch();
             for (auto next = list; next;) {
                 auto pg = next;
                 next = next->next();
@@ -68,6 +85,7 @@ namespace gc::detail {
                     continue;
                 }
                 record_page(pg, live_blks);
+                record_history(pg, live_blks, samples);
                 // TODO: fail loudly when span is empty
                 auto bitmap = bits.mark_bits(pg->block_cnt(), false);
                 watermark = std::max(watermark, bitmap.data() + bitmap.size());

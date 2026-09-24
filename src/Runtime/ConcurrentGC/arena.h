@@ -64,8 +64,17 @@ namespace gc::detail {
             for (auto& alloc : _allocators) alloc.flush_alloc_cache();
             publish_big();
         }
+        // Observing doesn't need caches to be flushed
         template<typename F>
-        void mutate_owned(F mutator) {
+        void observe_owned(F&& observer) {
+            auto read_only = [obs = std::forward<F>(observer)](pg_meta* start) {
+                obs(start); return start;
+            };
+            for (auto& alloc : _allocators) alloc.mutate(read_only);
+            observer(_big_objs);
+        }
+        template<typename F>
+        void mutate_owned(F&& mutator) {
             assert(!_pending_big);
             for (auto& alloc : _allocators) alloc.mutate(mutator);
             _big_objs = mutator(_big_objs);

@@ -55,7 +55,7 @@ namespace gc::detail {
         }
 
         template<typename F>
-        void mutate(F mutator) {
+        void mutate(F&& mutator) {
             auto new_start = mutator(_start);
             _start = new_start;
             if (_start) _allocator = obj_allocator { *_start };

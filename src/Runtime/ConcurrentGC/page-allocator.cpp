@@ -17,9 +17,22 @@ using namespace gc::detail;
 namespace {
     constexpr std::size_t hdrs_per_chunk = config::commit_syscall_sz / sizeof(pg_meta);
     constexpr std::size_t hdr_chunks = (heap_geometry::total_pages + hdrs_per_chunk - 1) / hdrs_per_chunk;
-    constexpr std::size_t reserve_bytes = config::heap_max_sz 
-                                        + (hdr_chunks * config::commit_syscall_sz)
-                                        + config::bits_region_sz;
+    constexpr std::size_t hdr_bytes = hdr_chunks * config::commit_syscall_sz;
+    static_assert(hdr_bytes == config::hdr_region_sz,
+        "dual_bitmap and pg_meta::history_slot place the regions behind the headers at "
+        "config::hdr_region_sz, so the reservation has to spend exactly that on headers");
+    
+    // heap | headers | bits | cards | history
+    // all at fixed offsets so pg_meta and dual_bitmap can reach the last three by arithmetic
+    constexpr std::size_t reserve_bytes = config::heap_max_sz
+                                        + hdr_bytes
+                                        + config::bits_region_sz
+                                        + config::card_region_sz
+                                        + config::history_region_sz;
+    constexpr std::size_t history_off = config::heap_max_sz + hdr_bytes
+                                      + config::bits_region_sz + config::card_region_sz;
+
+    constexpr std::size_t hist_per_chunk = config::commit_syscall_sz / config::history_entry_sz;
 
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;
@@ -114,7 +127,7 @@ namespace {
 }
 
 page_allocator::page_allocator(scavenge_policy policy) :
-    _base(nullptr), _meta(nullptr), _pg_headers(nullptr), _hdrs_committed(0),
+    _base(nullptr), _meta(nullptr), _pg_headers(nullptr), _hdrs_committed(0), _hist_committed(0),
     _scavenge_idx(0), _in_use(0), _resident(0), _policy(policy) {
     // Heap and headers are one reservation, aligned so the low heap_bits of any heap address
     // are its offset within it - the masking pg_meta does to get from a pointer to a header
@@ -149,6 +162,8 @@ page_allocator::~page_allocator() {
 
 bool page_allocator::commit_headers(std::size_t start, std::size_t n) {
     auto need = std::min(start + n + 1, config::total_pages);
+    if (!commit_history(need)) return false;
+
     auto from = _hdrs_committed.load(std::memory_order_acquire);
     if (need <= from) return true;
 
@@ -158,6 +173,19 @@ bool page_allocator::commit_headers(std::size_t start, std::size_t n) {
     if (!os::commit(_pg_headers + from, (to - from) * sizeof(pg_meta))) return false;
 
     _hdrs_committed.store(to, std::memory_order_release);
+    return true;
+}
+
+bool page_allocator::commit_history(std::size_t need_pages) {
+    auto from = _hist_committed.load(std::memory_order_acquire);
+    if (need_pages <= from) return true;
+
+    auto to = (need_pages + hist_per_chunk - 1) / hist_per_chunk * hist_per_chunk;
+    auto hist = _base + history_off;
+    if (!os::commit(hist + from * config::history_entry_sz,
+                    (to - from) * config::history_entry_sz)) return false;
+
+    _hist_committed.store(to, std::memory_order_release);
     return true;
 }
 

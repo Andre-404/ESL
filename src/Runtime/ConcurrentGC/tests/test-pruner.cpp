@@ -327,3 +327,309 @@ TEST(PrunerTest, MixedLargeAndSmallPagesAreSeparatedCorrectly) {
 
     EXPECT_EQ(p.live_bytes(), config::page_sz);
 }
+// ---------------------------------------------------------------------------------------------
+// Liveness history and the survival rates that will feed role nomination.
+//
+// The pair being measured is deliberately the two numbers the collector uses itself: what a page
+// held when the cycle started (recorded by observe_pages, outside the pause) against what the
+// sweep finds live at the end of it.
+// ---------------------------------------------------------------------------------------------
+
+TEST(PrunerHistoryTest, ObserveOccupancyRecordsWhatThePageHolds) {
+    pruner p;
+    test_page tp{64};
+    for (uint16_t i = 0; i < 12; i++) tp.allocate(i);
+
+    p.observe_pages(tp.pg(), false);
+    EXPECT_EQ(tp->history().occ(), 12u);
+    EXPECT_EQ(tp->history().age(), 0u);
+}
+
+TEST(PrunerHistoryTest, ObserveOccupancyKeepsTheAge) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 4, 5 });
+    for (uint16_t i = 0; i < 12; i++) tp.allocate(i);
+
+    p.observe_pages(tp.pg(), false);
+    EXPECT_EQ(tp->history().occ(), 12u);
+    EXPECT_EQ(tp->history().age(), 5u) << "only the sweep advances the age";
+}
+
+TEST(PrunerHistoryTest, ObserveOccupancySkipsRetiredPages) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 7, 2 });
+    tp->mark_inactive();
+
+    p.observe_pages(tp.pg(), false);
+    EXPECT_EQ(tp->history().occ(), 7u) << "an inactive page has been evacuated or freed";
+}
+
+TEST(PrunerHistoryTest, TheSweepRecordsTheExactLiveCount) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 20, 0 });
+    tp.mark_n(5);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().occ(), 5u) << "what the sweep found becomes the next cycle's base";
+}
+
+TEST(PrunerHistoryTest, KeepingMostOfWhatItHeldAgesThePage) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 2 });
+    tp.mark_n(6);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().age(), 3u);
+}
+
+TEST(PrunerHistoryTest, LosingMostOfWhatItHeldStartsTheAgeOver) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 6 });
+    tp.mark_n(3);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().age(), 0u) << "its population is about a cycle old, whatever the "
+                                          "page's own history";
+}
+
+// The allocator fills holes in pages worth keeping, and those pages must not be read as
+// nurseries. What protects them is the retention test itself, not a special case for having been
+// allocated into: a page that kept most of what it held ages whoever put the objects there.
+TEST(PrunerHistoryTest, ARefilledPageThatKeptItsBlocksStillAges) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 4 });
+    for (uint16_t i = 0; i < 20; i++) tp.allocate(i);
+    tp.mark_n(8);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().age(), 5u);
+}
+
+TEST(PrunerHistoryTest, ARefilledPageThatLostMostOfItStartsOver) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 4 });
+    for (uint16_t i = 0; i < 20; i++) tp.allocate(i);
+    tp.mark_n(3);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().age(), 0u);
+    EXPECT_EQ(tp->history().occ(), 3u) << "the count itself is still exact and worth recording";
+}
+
+TEST(PrunerHistoryTest, AgeSaturatesAtTheTop) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 5, pg_history::age_max });
+    tp.mark_n(5);
+
+    prune(p, tp.pg());
+    EXPECT_EQ(tp->history().age(), pg_history::age_max);
+}
+
+TEST(PrunerHistoryTest, AFirstCyclePageIsRecordedButNotScored) {
+    pruner p;
+    test_page tp{64};
+    tp.mark_n(2);                  // no observe_pages ran, so nothing predicted this page
+
+    prune(p, tp.pg());
+    p.end_cycle();
+
+    EXPECT_EQ(tp->history().occ(), 0u) << "the sweep has nothing to score against, and the next "
+                                          "cycle's occupancy pass gives it a base";
+    for (uint8_t age = 0; age < config::pg_age_cnt; age++)
+        EXPECT_EQ(p.survival().survival(age), config::survival_seed) << "age " << int(age);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Nomination: pred_live = occ * survival(age), nominate when pred_live < threshold * cap.
+// The pass is a superset generator, so what matters is that it separates pages whose age says
+// their contents stick from pages whose age says they do not, at identical occupancy.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+    // Drives one age bucket's rate to `rate` by handing the sweep pages that kept exactly that
+    // fraction of what they held. The EWMA closes (1 - alpha)^n of the gap to the 0.5 seed, so
+    // 24 cycles lands within 2e-4 of the target
+    void train_rate(pruner& p, uint8_t age, double rate, int cycles = 24) {
+        test_page tp{64};
+        auto cap  = tp->block_cnt();
+        auto live = int(cap * rate);
+        for (int c = 0; c < cycles; c++) {
+            tp->set_history({ cap, age });
+            tp.mark_n(live);
+            prune(p, tp.pg());
+            p.end_cycle();
+        }
+        tp->unlink();
+    }
+}
+
+TEST(PrunerNominationTest, ANonCopyingCycleNominatesNothing) {
+    pruner p;
+    test_page tp{64};
+    for (uint16_t i = 0; i < 4; i++) tp.allocate(i);
+
+    p.observe_pages(tp.pg(), false);
+    EXPECT_FALSE(tp->is_source()) << "role bits are only meaningful on a copying cycle";
+    EXPECT_EQ(tp->history().occ(), 4u) << "the occupancy record is unconditional";
+}
+
+TEST(PrunerNominationTest, ASparsePageIsNominated) {
+    pruner p;
+    test_page tp{64};
+    for (uint16_t i = 0; i < 4; i++) tp.allocate(i);
+
+    p.observe_pages(tp.pg(), true);
+    EXPECT_TRUE(tp->is_source());
+}
+
+// The case the whole predictor exists for: two pages with every block allocated, told apart by
+// the rate their age bucket has measured. Occupancy alone cannot distinguish them
+TEST(PrunerNominationTest, AgeDecidesBetweenTwoEquallyFullPages) {
+    pruner p;
+    train_rate(p, 0, 0.25);
+    train_rate(p, 5, 1.0);
+
+    test_page young{64}, old{64};
+    auto cap = young->block_cnt();
+    for (uint16_t i = 0; i < cap; i++) { young.allocate(i); old.allocate(i); }
+    young->set_history({ cap, 0 });
+    old->set_history({ cap, 5 });
+
+    p.observe_pages(young.pg(), true);
+    p.observe_pages(old.pg(), true);
+
+    EXPECT_TRUE(young->is_source()) << "occ * 0.25 is far under the threshold";
+    EXPECT_FALSE(old->is_source()) << "occ * 1.0 is over it, so the page keeps its contents";
+}
+
+// With every rate at 1.0 the expression collapses to occ < threshold * cap, i.e. today's
+// occupancy test. Measurement can only improve on that, never do worse than it
+TEST(PrunerNominationTest, RatesAtOneDegenerateToTheOccupancyTest) {
+    pruner p;
+    train_rate(p, 3, 1.0);
+
+    test_page full{64}, partial{64};
+    auto cap = full->block_cnt();
+    for (uint16_t i = 0; i < cap; i++) full.allocate(i);
+    for (uint16_t i = 0; i < cap / 2; i++) partial.allocate(i);
+    full->set_history({ cap, 3 });
+    partial->set_history({ uint16_t(cap / 2), 3 });
+
+    p.observe_pages(full.pg(), true);
+    p.observe_pages(partial.pg(), true);
+
+    EXPECT_FALSE(full->is_source());
+    EXPECT_TRUE(partial->is_source());
+}
+
+// A page with no alloc bits is either empty, and about to be retired, or the one the allocator
+// is filling right now. Nominating it would cost the allocator a page and buy nothing
+TEST(PrunerNominationTest, AnEmptyPageIsNotNominated) {
+    pruner p;
+    test_page tp{64};
+
+    p.observe_pages(tp.pg(), true);
+    EXPECT_FALSE(tp->is_source());
+}
+
+TEST(PrunerNominationTest, ALargeObjectPageIsNotNominated) {
+    pruner p;
+    test_page big{ config::page_sz * 2 };
+    big.allocate(0);
+
+    p.observe_pages(big.pg(), true);
+    EXPECT_FALSE(big->is_source()) << "the copier never evacuates large objects";
+}
+
+// Marking runs concurrently with this pass, so the page may already be pinned when it is
+// scored. Roles only relax source -> target, never back
+TEST(PrunerNominationTest, APinnedPageIsNotNominated) {
+    pruner p;
+    test_page tp{64};
+    for (uint16_t i = 0; i < 4; i++) tp.allocate(i);
+    tp.mark(0, true);
+    ASSERT_TRUE(tp->has_pinned());
+
+    p.observe_pages(tp.pg(), true);
+    EXPECT_FALSE(tp->is_source());
+}
+
+TEST(PrunerNominationTest, AnInactivePageIsSkippedEntirely) {
+    pruner p;
+    test_page tp{64};
+    tp.allocate(0);
+    tp->mark_inactive();
+
+    p.observe_pages(tp.pg(), true);
+    EXPECT_FALSE(tp->is_source());
+}
+
+TEST(PrunerSurvivalTest, TheSampleIsWhatTheCycleKeptOfWhatItStartedWith) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 3 });
+    tp.mark_n(2);                  // a quarter of what it held is still live
+
+    prune(p, tp.pg());
+    p.end_cycle();
+
+    auto expected = (1.0 - config::survival_alpha) * config::survival_seed
+                  + config::survival_alpha * 0.25;
+    EXPECT_NEAR(p.survival().survival(3), expected, 1e-12);
+    EXPECT_EQ(p.survival().survival(2), config::survival_seed);
+}
+
+// A refilled page is still sampled: what the copier will find in it is exactly what the rate has
+// to predict, and refill is part of that. Only the age comparison is held back.
+TEST(PrunerSurvivalTest, ARefilledPageStillContributesItsSample) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 8, 3 });
+    tp.mark_n(8);
+
+    prune(p, tp.pg());
+    p.end_cycle();
+
+    auto expected = (1.0 - config::survival_alpha) * config::survival_seed
+                  + config::survival_alpha * 1.0;
+    EXPECT_NEAR(p.survival().survival(3), expected, 1e-12);
+}
+
+// One rate per age over all the blocks of that age, not an average of per-page ratios: a page
+// holding four survivors has to count for four times one holding one.
+TEST(PrunerSurvivalTest, SamplesAccumulateOverBlocksAcrossPagesAndBatches) {
+    pruner p;
+    test_page a{64}, b{64};
+    a->set_history({ 4, 1 });
+    b->set_history({ 4, 1 });
+    a.mark_n(4);
+    b.mark_n(2);
+
+    prune(p, a.pg());        // separate calls, so separate batches
+    prune(p, b.pg());
+    p.end_cycle();
+
+    auto expected = (1.0 - config::survival_alpha) * config::survival_seed
+                  + config::survival_alpha * (6.0 / 8.0);
+    EXPECT_NEAR(p.survival().survival(1), expected, 1e-12);
+}
+
+// An empty page is retired before any of this: it has no record to update and nothing to sample,
+// and the blocks it lost are accounted for by the page leaving the heap.
+TEST(PrunerSurvivalTest, RetiredPagesContributeNoSample) {
+    pruner p;
+    test_page tp{64};
+    tp->set_history({ 4, 1 });
+
+    prune(p, tp.pg());
+    p.end_cycle();
+    EXPECT_EQ(p.survival().survival(1), config::survival_seed);
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include "gc-config.h"
 #include "managed.h"
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <limits>
@@ -14,7 +15,7 @@ namespace gc::detail {
 
         uint64_t* base() const {
             auto meta_base = (size_t)this & ~((1ull << config::heap_bits) - 1);
-            return (uint64_t*)(meta_base + config::total_pages*config::hdr_entry_sz);
+            return (uint64_t*)(meta_base + config::hdr_region_sz);
         }
         uint32_t compute_offset(uint64_t* bitmap) const { return bitmap - base(); }
         uint64_t* compute_ptr(uint32_t offset) const { return base() + offset; }
@@ -42,18 +43,45 @@ namespace gc::detail {
         }
     };
 
+    class pg_history {
+        uint16_t _word;
+    public:
+        static constexpr uint16_t live_max = (1u << config::pg_live_bits) - 1;
+        static constexpr uint8_t  age_max  = uint8_t(config::pg_age_cnt - 1);
+
+        pg_history() : _word(0) {}
+        pg_history(uint16_t occ, uint8_t age)
+            : _word(uint16_t(std::min(occ, live_max) | (std::min(age, age_max) << config::pg_live_bits)))
+            {}
+
+        uint16_t occ() const { return _word & live_max; }
+        uint8_t age() const { return uint8_t(_word >> config::pg_live_bits); }
+        // Zero count can only mean no cycle has recorded this page yet
+        bool known() const { return occ() != 0; }
+    };
+    static_assert(sizeof(pg_history) == config::history_entry_sz);
+
     class pg_meta {
+    public:
+        enum pg_flag : uint8_t {
+            // Shape of the page, written once by the constructor and never again
+            f_first_in_run = 1,
+            f_has_cont     = 1 << 1,
+            // Role and state for the cycle in flight, reset by next_cycle
+            f_pinned       = 1 << 2, // holds an object that must not move
+            f_source       = 1 << 3, // nominated for evacuation; clear means the page is a target
+            f_any_dirty    = 1 << 4, // at least one card bit is set, so the update pass must look
+
+            cycle_flags = f_pinned | f_source | f_any_dirty,
+        };
+
+    private:
         static constexpr size_t region_mask = ~((1ull << config::heap_bits) - 1);
         static constexpr int32_t sll_null = std::numeric_limits<int32_t>::max();
-        enum flags : uint8_t {
-            first_in_run = 1,
-            has_cont = 1 << 1,
-        };
 
         std::atomic<int32_t> _next;
         const uint8_t _szclass;
-        const uint8_t _flags;
-        std::atomic<bool> _has_pinned;
+        std::atomic<uint8_t> _flags;
         std::atomic<bool> _active;
         // Dirty, but allows us to save on size since continuations don't use the bitmap
         union {
@@ -61,10 +89,14 @@ namespace gc::detail {
             size_t _run_pages;
         };
 
-        bool has_flag(flags flag) const { return (_flags & flag) != 0; }
         static constexpr uint8_t hdr_flags(size_t block_sz) {
-            return flags::first_in_run | (block_sz > config::page_sz ? flags::has_cont : 0);
+            return f_first_in_run | (block_sz > config::page_sz ? f_has_cont : 0);
         }
+
+        bool test_flag(pg_flag f) const { return (_flags.load(std::memory_order_relaxed) & f) != 0; }
+        void set_flag(pg_flag f) { _flags.fetch_or(f, std::memory_order_relaxed); }
+        void clear_flag(pg_flag f) { _flags.fetch_and(uint8_t(~f), std::memory_order_relaxed); }
+        void pin() { _flags.fetch_or(f_pinned, std::memory_order_relaxed); }
 
         std::pair<std::atomic_ref<size_t>, uint64_t> mark_at(size_t i) const {
             return {
@@ -76,19 +108,26 @@ namespace gc::detail {
         // Headers sit above the heap's 2^heap_bits boundary
         pg_meta* hdr_base() const { return (pg_meta*)((size_t)this & region_mask); }
 
+        pg_history* history_slot() const {
+            auto base = (size_t)hdr_base() + config::hdr_region_sz
+                      + config::bits_region_sz + config::card_region_sz;
+            return (pg_history*)base + (this - hdr_base());
+        }
+
         // Not correct for large objects but it doesn't matter
         // for the purposes of from_interior, record_mark and pg_slots_iter::is_marked
         size_t block_sz_fast() const { return config::sz_classes[_szclass]; }
 
         // For pages following the header
         explicit pg_meta(int32_t offset, size_t num_pages)  : _next(-offset), _szclass(0),
-            _flags(0), _has_pinned(false), _active(true), _run_pages(num_pages) {}
+            _flags(0), _active(true), _run_pages(num_pages) {}
 
     public:
         explicit pg_meta(size_t block_sz, uint64_t* alloc, uint64_t* mark) : _next(sll_null),
             _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)),
-            _has_pinned(false), _active(false), _bits(alloc, mark)
+            _active(false), _bits(alloc, mark)
         {
+            *history_slot() = pg_history {};
             // Init bits before publishing this page as active
             _active.store(true, std::memory_order_release);
             // Large obj pages are handed out with their alloc bit clear on purpose, the object
@@ -105,7 +144,7 @@ namespace gc::detail {
         }
         static pg_meta* head_from_ptr(void* ptr) {
             auto pg = pg_from_ptr(ptr);
-            return pg->has_flag(flags::first_in_run) ? pg : pg->next();
+            return pg->test_flag(f_first_in_run) ? pg : pg->next();
         }
 
         class pg_slots_iter {
@@ -149,24 +188,38 @@ namespace gc::detail {
         }
         uint8_t szclass() const { return _szclass; }
         size_t num_pages() const {
-            if (!has_flag(flags::has_cont)) return 1;
-            // has_cont is set only for runs of > 1 page, so this deref is safe
+            if (!test_flag(f_has_cont)) return 1;
+            // f_has_cont is set only for runs of > 1 page, so this deref is safe
             return (this + 1)->_run_pages;
         }
         uint8_t* get_data() const {
             return (uint8_t*)hdr_base() - config::heap_max_sz + (this - hdr_base()) * config::page_sz;
         }
-        bool has_pinned() const { return _has_pinned.load(std::memory_order_relaxed); }
+        bool has_pinned() const { return test_flag(f_pinned); }
+        // Instead of doing the "pin clears source" dance which slows down the hot path
+        // we say that pinned dominates source
+        bool is_source() const {
+            auto f = _flags.load(std::memory_order_relaxed);
+            return (f & f_source) && ((f & f_pinned) == 0);
+        }
+        bool any_dirty() const { return test_flag(f_any_dirty); }
+
+        bool nominate() {
+            auto prev = _flags.fetch_or(f_source, std::memory_order_relaxed);
+            return (prev & f_source) == 0 && (prev & f_pinned) == 0;
+        }
+        void demote() { clear_flag(f_source); }
+        void set_dirty() { set_flag(f_any_dirty); }
 
         void next_cycle(uint64_t* new_mark) {
-            _has_pinned.store(false, std::memory_order_relaxed);
+            clear_flag(cycle_flags);
             _bits.flip(new_mark);
         }
 
         // Marking stuff
         [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
             // Pin regardless of the fact that the mark bit is set or not
-            if (is_pinned) _has_pinned.store(true, std::memory_order_relaxed);
+            if (is_pinned) pin();
 
             auto [word, in_word] = mark_at((size_t)((uint8_t*)ptr - get_data()) / block_sz_fast());
             return (word.fetch_or(in_word, std::memory_order_relaxed) & in_word) == 0;
@@ -184,6 +237,14 @@ namespace gc::detail {
             for (auto w : _bits.mark_bits(block_cnt())) n += std::popcount(w);
             return n;
         }
+        size_t compute_alloc() const {
+            auto n = 0ull;
+            for (size_t bit = 0; bit < block_cnt(); bit += 64) n += std::popcount(_bits.load_alloc(bit));
+            return n;
+        }
+
+        pg_history history() const { return *history_slot(); }
+        void set_history(pg_history h) { *history_slot() = h; }
         uint64_t load_alloc_word(uint16_t bit) const  { return _bits.load_alloc(bit); }
         void     store_alloc_word(uint16_t bit, uint64_t w) const { _bits.store_alloc(bit, w); }
 

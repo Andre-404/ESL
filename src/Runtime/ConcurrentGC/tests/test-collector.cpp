@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <atomic>
+#include <cmath>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -689,6 +690,35 @@ TEST_F(CollectorCopyingTest, CompactingCyclesRunAndReclaim) {
     EXPECT_GT(gc->metrics().cycles(), 5u);
     EXPECT_GT(gc->metrics().copy_pause_ms(), 0.0)
         << "sparse surviving pages with the copy cost zeroed must have driven a compaction";
+}
+
+// The rates are pure observation until role nomination reads them, so what needs checking end to
+// end is the feedback path: real cycles over a real workload have to reach the model and leave it
+// holding rates that could be multiplied by a live count.
+TEST_F(CollectorCopyingTest, SweepFeedsTheSurvivalRates) {
+    constexpr int kRoots = 800;
+    std::vector<size_t> roots(kRoots, 0);
+    for (auto& r : roots) gc->register_root(&r);
+
+    scatter_survivors(roots);
+    ASSERT_GT(gc->metrics().cycles(), 5u);
+
+    auto& survival = gc->survival();
+    auto moved = false;
+    for (uint8_t age = 0; age < config::pg_age_cnt; age++) {
+        auto rate = survival.survival(age);
+        EXPECT_TRUE(std::isfinite(rate)) << "age " << int(age);
+        EXPECT_GE(rate, 0.0) << "age " << int(age);
+        EXPECT_LE(rate, 1.0) << "age " << int(age) << ": a rate above one predicts a page filling "
+                                "itself back up between cycles";
+        moved = moved || std::abs(rate - config::survival_seed) > 1e-9;
+    }
+
+    // Which age classes get sampled depends on how the workload happens to lay out, but a
+    // churning heap has to produce pages that lost objects without being refilled, so some rate
+    // must have moved. All of them still sitting exactly on the seed means no sample ever
+    // reached the model.
+    EXPECT_TRUE(moved) << "the sweep fed the survival model nothing at all";
 }
 
 TEST_F(CollectorCopyingTest, RootsSurviveCompactingCycles) {

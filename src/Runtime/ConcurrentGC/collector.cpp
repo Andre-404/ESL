@@ -106,9 +106,15 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
 }
 
 void collector::concurrent_mark() {
+    _nominating.store(
+        _collection_req.is_express() || _heuristic.should_copy(), std::memory_order_release
+    );
     auto blocked = post_with_state(gc_state::marking, op_mark_stack);
-    for (auto t : blocked)
+    for (auto t : blocked) {
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
+        observe_thread_pages(t);
+    }
+    _pg_manager.mutate_owned(observe_pgs_fn());
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
     // Must be under lock because we can be adding global variables dynamically
@@ -194,6 +200,7 @@ void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
          _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
+        observe_thread_pages(t);
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();

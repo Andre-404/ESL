@@ -54,6 +54,152 @@ TEST(PgMetaTest, NextCycleAdoptsTheMarkBitmapAsAlloc) {
     EXPECT_FALSE(p->has_pinned());
 }
 
+// The four per-cycle bits share one byte with each other and with nothing else, which is what
+// keeps the header at 16 bytes. They are independent and all start clear.
+TEST(PgFlagsTest, FlagsAreIndependentAndStartClear) {
+    test_page p{64};
+    EXPECT_FALSE(p->has_pinned());
+    EXPECT_FALSE(p->is_source());
+    EXPECT_FALSE(p->any_dirty());
+    EXPECT_FALSE(p->has_pinned()) << "flags sharing a byte must not bleed into each other";
+    EXPECT_FALSE(p->is_source());
+    EXPECT_FALSE(p->any_dirty());
+
+    p->set_dirty();
+    p->nominate();
+    p.mark(0, true);
+    EXPECT_TRUE(p->any_dirty());
+    EXPECT_TRUE(p->has_pinned());
+}
+
+// The shape bits (first-in-run, has-continuation) now live in the same byte as the cycle bits,
+// so the sweep's reset has to leave them alone. Losing first-in-run would make head_from_ptr
+// walk off a live page; losing has-continuation would make a multi-page run report one page.
+TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
+    test_page p{ config::page_sz * 3 };
+    ASSERT_EQ(p->num_pages(), 3u);
+    ASSERT_EQ(pg_meta::head_from_ptr(p->get_data() + config::page_sz * 2 + 8), p.pg());
+
+    p->nominate();
+    p.mark(0, true);
+    p.next_cycle();
+
+    EXPECT_EQ(p->num_pages(), 3u);
+    EXPECT_EQ(pg_meta::head_from_ptr(p->get_data() + config::page_sz * 2 + 8), p.pg());
+    EXPECT_EQ(p->block_sz(), config::page_sz * 3);
+    EXPECT_FALSE(p->has_pinned());
+    EXPECT_FALSE(p->is_source());
+}
+
+// A single page has no continuation bit set, and the cycle bits must not fabricate one
+TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
+    test_page p{64};
+    p->nominate();
+    p->set_dirty();
+    p.mark(0, true);
+    EXPECT_EQ(p->num_pages(), 1u);
+    EXPECT_EQ(p->block_sz(), 64u);
+}
+
+TEST(PgFlagsTest, SetSourceRoundTrips) {
+    test_page p{64};
+    p->nominate();
+    EXPECT_TRUE(p->is_source());
+    p->demote();
+    EXPECT_FALSE(p->is_source());
+    p->nominate();
+    EXPECT_TRUE(p->is_source());
+}
+
+// Every one of these is a statement about this cycle only, so the sweep has to wipe all of them
+// along with the mark bitmap. A bit that survived would silently describe the wrong cycle.
+TEST(PgFlagsTest, NextCycleClearsEveryPerCycleFlag) {
+    test_page p{64};
+    p->set_dirty();
+    p->nominate();
+    p.mark(0, true);
+    ASSERT_TRUE(p->has_pinned());
+
+    p.next_cycle();
+    EXPECT_FALSE(p->has_pinned());
+    EXPECT_FALSE(p->is_source());
+    EXPECT_FALSE(p->any_dirty());
+}
+
+// The history entry lives in a side array, not in the header, so these check both the packing
+// and that a page can find its own entry.
+TEST(PgHistoryTest, PacksLiveAndAgeIntoTwoBytes) {
+    auto h = pg_history { 4096, 5 };
+    EXPECT_EQ(h.occ(), 4096u);
+    EXPECT_EQ(h.age(), 5u);
+    EXPECT_TRUE(h.known());
+}
+
+TEST(PgHistoryTest, DefaultMeansNothingRecordedYet) {
+    pg_history h;
+    EXPECT_EQ(h.occ(), 0u);
+    EXPECT_EQ(h.age(), 0u);
+    EXPECT_FALSE(h.known()) << "an empty page is freed rather than recorded, so zero can only "
+                               "mean no cycle has seen this page";
+}
+
+TEST(PgHistoryTest, SaturatesInsteadOfWrapping) {
+    auto live = pg_history { pg_history::live_max + 1, 0 };
+    EXPECT_EQ(live.occ(), pg_history::live_max) << "a wrapped count would read as unknown";
+    auto age = pg_history { 1, pg_history::age_max + 1 };
+    EXPECT_EQ(age.age(), pg_history::age_max);
+    EXPECT_EQ(age.occ(), 1u) << "age must not spill into the live count";
+}
+
+TEST(PgHistoryTest, EveryCountAndAgeRoundTrips) {
+    for (uint16_t live = 0; live <= pg_history::live_max; live++) {
+        for (uint8_t age = 0; age <= pg_history::age_max; age++) {
+            auto h = pg_history { live, age };
+            ASSERT_EQ(h.occ(), live) << "live=" << live << " age=" << int(age);
+            ASSERT_EQ(h.age(), age) << "live=" << live << " age=" << int(age);
+        }
+    }
+}
+
+TEST(PgHistoryTest, AFreshPageHasNoHistory) {
+    test_page p{64};
+    EXPECT_FALSE(p->history().known());
+}
+
+TEST(PgHistoryTest, PageHistoryRoundTripsThroughTheSideArray) {
+    test_page p{64};
+    p->set_history({ 17, 3 });
+    EXPECT_EQ(p->history().occ(), 17u);
+    EXPECT_EQ(p->history().age(), 3u);
+
+    // Neighbouring pages are neighbouring entries, so an off-by-one in the addressing shows up
+    // as one page reading another's record
+    test_page q{64};
+    EXPECT_FALSE(q->history().known());
+    q->set_history({ 5, 1 });
+    EXPECT_EQ(p->history().occ(), 17u);
+    EXPECT_EQ(q->history().occ(), 5u);
+}
+
+TEST(PgHistoryTest, HistorySurvivesTheSweepThatWritesIt) {
+    test_page p{64};
+    p->set_history({ 9, 2 });
+    p.next_cycle();
+    EXPECT_EQ(p->history().occ(), 9u) << "next_cycle clears the per-cycle flags, not the record "
+                                         "the sweep just wrote";
+    EXPECT_EQ(p->history().age(), 2u);
+}
+
+TEST(ComputeAllocTest, CountsEveryPublishedAllocBit) {
+    test_page p{64};
+    EXPECT_EQ(p->compute_alloc(), 0u);
+    p.allocate(0);
+    p.allocate(63);
+    p.allocate(64);
+    p.allocate(p->block_cnt() - 1);
+    EXPECT_EQ(p->compute_alloc(), 4u);
+}
+
 TEST(PgSlotsIterTest, IteratesExactlyBlockCntSlots) {
     test_page p{64};
     pg_meta::pg_slots_iter it{p.pg(), 0};
@@ -138,6 +284,50 @@ TEST(RecordMarkTest, IsPinnedTrueSetsHasPinned) {
     test_page p{64};
     p.mark(0, true);
     EXPECT_TRUE(p->has_pinned());
+}
+
+// An object that cannot move vetoes the page's evacuation, whatever nominated it
+TEST(RecordMarkTest, PinningOverridesTheSourceRole) {
+    test_page p{64};
+    p->nominate();
+    ASSERT_TRUE(p->is_source());
+
+    p.mark(0, true);
+    EXPECT_TRUE(p->has_pinned());
+    EXPECT_FALSE(p->is_source()) << "a pinned page cannot be evacuated";
+}
+
+// Nomination races marking, so it has to lose against a pin either way round
+TEST(RecordMarkTest, NominationLosesToAnAlreadyPinnedPage) {
+    test_page p{64};
+    p.mark(0, true);
+    ASSERT_TRUE(p->has_pinned());
+
+    EXPECT_FALSE(p->nominate());
+    EXPECT_FALSE(p->is_source()) << "a pinned page must not be nominated back into a source";
+}
+
+// f_pinned masks f_source rather than clearing it, so the masked bit must not survive the
+// sweep - a page that comes back with it set and no pin would be a source nobody nominated
+TEST(RecordMarkTest, NextCycleDropsTheMaskedSourceBit) {
+    test_page p{64};
+    p.mark(0, true);
+    p->nominate();
+    ASSERT_FALSE(p->is_source());
+
+    p.next_cycle();
+    EXPECT_FALSE(p->has_pinned());
+    EXPECT_FALSE(p->is_source());
+    EXPECT_TRUE(p->nominate()) << "and the page is a candidate again";
+    EXPECT_TRUE(p->is_source());
+}
+
+TEST(RecordMarkTest, UnpinnedMarkLeavesTheSourceRoleAlone) {
+    test_page p{64};
+    p->nominate();
+    p.mark(0, false);
+    EXPECT_TRUE(p->is_source());
+    EXPECT_FALSE(p->has_pinned());
 }
 
 TEST(RecordMarkTest, IsPinnedFalseDoesNotClearPreviouslySetPinned) {

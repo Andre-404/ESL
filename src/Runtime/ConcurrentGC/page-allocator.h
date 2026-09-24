@@ -36,6 +36,7 @@ namespace gc::detail {
         radix_tree _tree;
         bitmap _committed; // one bit per commit granule, not per page
         std::atomic<std::size_t> _hdrs_committed; // pg headers are never decommited, is that okay?
+        std::atomic<std::size_t> _hist_committed; // in pages, like _hdrs_committed
         std::atomic<std::size_t> _in_use;         // granules currently allocated
         std::atomic<std::size_t> _resident;       // granules physically backed
         int64_t _scavenge_idx; // Idx in granules
@@ -45,6 +46,7 @@ namespace gc::detail {
 
         bool ensure_committed(std::size_t start, std::size_t n);
         bool commit_headers(std::size_t start, std::size_t n);
+        bool commit_history(std::size_t need_pages);
         void* claim_span(std::size_t start, std::size_t n);
         void free(void* addr, std::size_t npages);
 
