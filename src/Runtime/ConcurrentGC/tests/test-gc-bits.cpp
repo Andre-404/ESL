@@ -17,10 +17,13 @@ namespace {
     // heap reservation and hands it over, so the tests have to provide one. The reservation is
     // a private base rather than a member so that it - and therefore the address - is
     // constructed before the gc_bits subobject it is passed to, and torn down after it.
+    // The card arena sits directly behind the two bitmap halves, and gc_bits reaches it by
+    // arithmetic off the same base, so a test reservation has to cover it too
+    constexpr std::size_t region_sz = config::bits_region_sz + config::card_region_sz;
     struct reservation {
         uint8_t* base;
-        reservation() : base((uint8_t*)os::reserve(config::bits_region_sz, config::commit_syscall_sz)) {}
-        ~reservation() { os::release(base, config::bits_region_sz); }
+        reservation() : base((uint8_t*)os::reserve(region_sz, config::commit_syscall_sz)) {}
+        ~reservation() { os::release(base, region_sz); }
         reservation(const reservation&) = delete;
         reservation& operator=(const reservation&) = delete;
     };
@@ -29,6 +32,7 @@ namespace {
     // and still get an arena that dies with it.
     struct owned_bits : private reservation, public gc_bits {
         owned_bits() : gc_bits(base) {}
+        uint8_t* region_base() const { return base; }
     };
 
     // The contract callers rely on: a bitmap of `bits` bits is read and written a word at a
@@ -198,6 +202,107 @@ TEST(GcBitsTest, RecycledStorageComesBackFullyZeroed) {
                                         " the same bytes back";
         EXPECT_TRUE(zeroed(reused)) << "bits=" << bits;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cards. One arena behind both halves, indexed by the offset inside a half, so a mark slot
+// and the slot at the same offset in the other half share a card image. That is sound only
+// because the two are never in use in the same cycle.
+// ---------------------------------------------------------------------------
+
+namespace {
+    // The contract, stated here rather than borrowed from gc_bits: the card arena sits behind
+    // the two halves, and a mark slot's cards sit at the offset the slot has inside its half -
+    // so a slot and the one at the same offset in the other half share an image on purpose
+    uint64_t* cards_of(const owned_bits& b, const uint64_t* slot) {
+        auto off = ((const uint8_t*)slot - b.region_base()) & (config::bits_arena_sz - 1);
+        return (uint64_t*)(b.region_base() + config::bits_region_sz + off);
+    }
+    void stamp_cards(const owned_bits& b, const slot& s, uint64_t tag) {
+        auto c = cards_of(b, s.p);
+        for (std::size_t i = 0; i < s.words; ++i) c[i] = tag;
+    }
+    ::testing::AssertionResult cards_zeroed(const owned_bits& b, const slot& s) {
+        auto c = cards_of(b, s.p);
+        for (std::size_t i = 0; i < s.words; ++i)
+            if (c[i] != 0)
+                return ::testing::AssertionFailure()
+                    << "card word " << i << " of " << s.words << " for slot " << (void*)s.p
+                    << " was not zero: 0x" << std::hex << c[i];
+        return ::testing::AssertionSuccess();
+    }
+}
+
+// Within a half the mapping is the identity on offsets, so distinct slots cannot collide
+TEST(GcBitsTest, CardImagesOfDistinctMarkSlotsAreDisjoint) {
+    auto b = owned_bits {};
+    constexpr std::size_t bits = 4096;
+
+    auto first = claim(b, bits, 0, true);
+    auto second = claim(b, bits, 0, true);
+    ASSERT_NE(first.p, nullptr);
+    ASSERT_NE(second.p, nullptr);
+
+    EXPECT_EQ((uint8_t*)cards_of(b, second.p) - (uint8_t*)cards_of(b, first.p),
+              (uint8_t*)second.p - (uint8_t*)first.p) << "cards follow slots offset for offset";
+
+    stamp_cards(b, first, ~uint64_t(0));
+    EXPECT_TRUE(cards_zeroed(b, second)) << "the first slot's cards ran into the second's";
+}
+
+// The intended sharing: cards pair with mark bits, so the alloc half's slots have no card
+// image of their own and claiming one must not disturb the mark half's
+TEST(GcBitsTest, TheAllocPathLeavesCardsAlone) {
+    auto b = owned_bits {};
+    constexpr std::size_t bits = 4096;
+
+    auto mark = claim(b, bits, 0, true);
+    ASSERT_NE(mark.p, nullptr);
+    stamp_cards(b, mark, ~uint64_t(0));
+
+    auto alloc = claim(b, bits, 0, false);
+    ASSERT_NE(alloc.p, nullptr);
+    ASSERT_EQ(cards_of(b, alloc.p), cards_of(b, mark.p)) << "same offset, so the same card words";
+
+    auto c = cards_of(b, mark.p);
+    for (std::size_t i = 0; i < mark.words; ++i)
+        EXPECT_EQ(c[i], ~uint64_t(0)) << "word " << i << ": the alloc path zeroed a live card";
+}
+
+// Storage recycled by a flip comes back with its cards clean, which is what lets a cycle start
+// dirty-free with no clearing pass of its own
+TEST(GcBitsTest, RecycledStorageComesBackWithCardsZeroed) {
+    for (auto bits : bit_counts) {
+        auto b = owned_bits {};
+
+        auto first = claim(b, bits, 0, true);
+        ASSERT_NE(first.p, nullptr) << "bits=" << bits;
+        stamp_cards(b, first, ~uint64_t(0));
+
+        b.flip();
+
+        auto reused = claim(b, bits, 0, true);
+        ASSERT_EQ(cards_of(b, reused.p), cards_of(b, first.p))
+            << "bits=" << bits << ": the halves are supposed to share this card image";
+        EXPECT_TRUE(cards_zeroed(b, reused)) << "bits=" << bits;
+    }
+}
+
+// The pruner takes its slots unzeroed and clear_mark cleans them afterwards, so that path has
+// to clean the cards with them
+TEST(GcBitsTest, ClearMarkClearsTheCardsItCovers) {
+    auto b = owned_bits {};
+    constexpr std::size_t bits = 4096;
+
+    auto s = claim(b, bits, ~uint64_t(0), true);
+    ASSERT_NE(s.p, nullptr);
+    stamp(s);
+    stamp_cards(b, s, ~uint64_t(0));
+
+    b.clear_mark(s.p + s.words);
+
+    EXPECT_TRUE(zeroed(s));
+    EXPECT_TRUE(cards_zeroed(b, s));
 }
 
 // ---------------------------------------------------------------------------

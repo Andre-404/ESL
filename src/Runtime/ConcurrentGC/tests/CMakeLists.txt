@@ -75,6 +75,7 @@ add_executable(run_tests
         test-gc-bits.cpp
         test-gc-heuristic.cpp
         test-survival-model.cpp
+        test-nomination.cpp
         test-collector.cpp
 )
 target_link_libraries(run_tests

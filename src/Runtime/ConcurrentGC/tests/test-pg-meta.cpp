@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include "../pg-meta.h"
 #include "../obj-allocator.h"
 #include "pg-fixture.h"
@@ -65,7 +66,7 @@ TEST(PgFlagsTest, FlagsAreIndependentAndStartClear) {
     EXPECT_FALSE(p->is_source());
     EXPECT_FALSE(p->any_dirty());
 
-    p->set_dirty();
+    p->set_any_dirty();
     p->nominate();
     p.mark(0, true);
     EXPECT_TRUE(p->any_dirty());
@@ -95,7 +96,7 @@ TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
 TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
     test_page p{64};
     p->nominate();
-    p->set_dirty();
+    p->set_any_dirty();
     p.mark(0, true);
     EXPECT_EQ(p->num_pages(), 1u);
     EXPECT_EQ(p->block_sz(), 64u);
@@ -115,7 +116,7 @@ TEST(PgFlagsTest, SetSourceRoundTrips) {
 // along with the mark bitmap. A bit that survived would silently describe the wrong cycle.
 TEST(PgFlagsTest, NextCycleClearsEveryPerCycleFlag) {
     test_page p{64};
-    p->set_dirty();
+    p->set_any_dirty();
     p->nominate();
     p.mark(0, true);
     ASSERT_TRUE(p->has_pinned());
@@ -198,6 +199,86 @@ TEST(ComputeAllocTest, CountsEveryPublishedAllocBit) {
     p.allocate(64);
     p.allocate(p->block_cnt() - 1);
     EXPECT_EQ(p->compute_alloc(), 4u);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cards. A card bit is the mark bit's shadow at the same block index, so everything here is
+// stated against the slot the bit is supposed to be about.
+// ---------------------------------------------------------------------------------------------
+
+TEST(PgCardTest, DirtyingOneSlotDirtiesOnlyThatSlot) {
+    test_page p{64};
+    ASSERT_FALSE(p->any_dirty());
+
+    p->dirty_card(p.slot(70));
+    EXPECT_TRUE(p->card_dirty(p.slot(70)));
+    EXPECT_TRUE(p->any_dirty()) << "the page flag is what lets the update pass skip the page";
+    EXPECT_FALSE(p->card_dirty(p.slot(69)));
+    EXPECT_FALSE(p->card_dirty(p.slot(71)));
+    EXPECT_FALSE(p->card_dirty(p.slot(70 + 64))) << "same bit, next word";
+}
+
+TEST(PgCardTest, DirtyingIsIdempotent) {
+    test_page p{64};
+    p->dirty_card(p.slot(3));
+    p->dirty_card(p.slot(3));
+    EXPECT_TRUE(p->card_dirty(p.slot(3)));
+    EXPECT_FALSE(p->card_dirty(p.slot(4)));
+}
+
+// The index the iterator walks and the index dirty_card computes have to be the same one, or
+// the update pass would visit the wrong object
+TEST(PgCardTest, TheIteratorSeesTheSlotsDirtyCardMarked) {
+    test_page p{64};
+    const uint16_t dirtied[] = { 0, 1, 63, 64, 65, 127, 200 };
+    for (auto i : dirtied) p->dirty_card(p.slot(i));
+
+    auto seen = std::vector<uint16_t> {};
+    for (auto it = pg_meta::pg_slots_iter { p.pg(), 0 }; !it.at_end(); it.next())
+        if (it.is_dirty()) seen.push_back(uint16_t(((uint8_t*)it.get() - p->get_data()) / 64));
+
+    EXPECT_EQ(seen, std::vector<uint16_t>(std::begin(dirtied), std::end(dirtied)));
+}
+
+// The copier's side of it: inside the pause it writes cards through the iterator it is already
+// holding, which caches a word at a time
+TEST(PgCardTest, TheIteratorCanDirtyWhatItVisits) {
+    test_page p{64};
+    auto it = pg_meta::pg_slots_iter { p.pg(), 0 };
+    for (int i = 0; i < 65; ++i) it.next();
+    it.set_dirty();
+
+    EXPECT_TRUE(p->card_dirty(p.slot(65)));
+    EXPECT_TRUE(p->any_dirty());
+    EXPECT_FALSE(p->card_dirty(p.slot(64)));
+    EXPECT_FALSE(p->card_dirty(p.slot(66)));
+}
+
+// Cards are addressed off the page's mark bitmap, so a fresh mark slot brings a clean card
+// image with it - that is the whole reason there is no card clearing pass. It is also what
+// ties pg_meta's way of finding an image to gc_bits': the arena zeroes through one of them
+// and card_dirty reads through the other
+TEST(PgCardTest, NextCycleHandsBackACleanCardImage) {
+    test_page p{64};
+    for (uint16_t i = 0; i < p->block_cnt(); ++i) p->dirty_card(p.slot(i));
+    ASSERT_TRUE(p->card_dirty(p.slot(0)));
+
+    p.next_cycle();
+
+    EXPECT_FALSE(p->any_dirty());
+    for (uint16_t i = 0; i < p->block_cnt(); ++i)
+        ASSERT_FALSE(p->card_dirty(p.slot(i))) << "slot " << i;
+}
+
+// Every size class, because the card span is sized from block_cnt like the mark span is
+TEST(PgCardTest, TheLastSlotOfEveryClassHasACardOfItsOwn) {
+    for (size_t sz : config::sz_classes) {
+        test_page p{sz};
+        auto last = uint16_t(p->block_cnt() - 1);
+        p->dirty_card(p.slot(last));
+        EXPECT_TRUE(p->card_dirty(p.slot(last))) << "sz=" << sz;
+        if (last > 0) EXPECT_FALSE(p->card_dirty(p.slot(last - 1))) << "sz=" << sz;
+    }
 }
 
 TEST(PgSlotsIterTest, IteratesExactlyBlockCntSlots) {

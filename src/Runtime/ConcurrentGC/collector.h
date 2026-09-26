@@ -7,6 +7,7 @@
 #include "copier.h"
 #include "marker.h"
 #include "pruner.h"
+#include "nomination.h"
 #include "TCB-registry.h"
 #include "sync-point.h"
 #include "transition-manager.h"
@@ -70,22 +71,8 @@ namespace gc::detail {
         // Don't nominate pages if we're not in a copying cycle
         auto observe_pgs_fn() const {
             auto nominate = _nominating.load(std::memory_order_acquire);
-            auto should_nominate = [this, nominate](pg_meta* pg, uint16_t occ, uint8_t age) {
-                // Large objects are never evacuated, and occ == 0 is either an empty page the sweep
-                // will retire or one the allocator is filling right now - a target either way
-                if (pg->szclass() == config::large_class || occ == 0) return false;
-                auto pred_survivors = occ * _pruner.survival().survival(age);
-                return nominate && pred_survivors < config::nominate_threshold * pg->block_cnt();
-            };
-            
-            return [this, predicate = std::move(should_nominate)](pg_meta* start) {
-                for (auto pg = start; pg; pg = pg->next()) {
-                    if (!pg->is_active()) continue;
-                    auto occ = uint16_t(pg->compute_alloc());
-                    auto age = pg->history().age();
-                    pg->set_history({ occ, age });
-                    if (predicate(pg, occ, age)) pg->nominate();
-                }
+            return [this, nominate](pg_meta* start) {
+                observe_pages(start, _pruner.survival(), nominate);
                 return start;
             };
         }
