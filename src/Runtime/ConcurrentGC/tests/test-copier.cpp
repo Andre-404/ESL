@@ -33,6 +33,13 @@ namespace {
             }
             return head;
         }
+        // split_pages only looks at pages the cycle-start pass nominated, so a test that wants
+        // anything evacuated has to nominate first. Nominating the whole list is what a generous
+        // pass does; split_pages demotes the pinned and the mispredicted-dense ones itself
+        static pg_meta* chain_nominated(std::initializer_list<test_page*> pages) {
+            for (auto* rp : pages) rp->pg()->nominate();
+            return chain(pages);
+        }
     };
 
 }
@@ -148,7 +155,7 @@ TEST_F(CopierTest, CopyObjectsWithOnlySourcesConvertsOneToTarget) {
     test_page sa{64}, sb{64};
     sa.construct(0, 1); sa.construct(1, 1); sa.mark(0); sa.mark(1);
     sb.construct(0, 1); sb.construct(1, 1); sb.mark(0); sb.mark(1);
-    pg_meta* head = chain({ &sa, &sb });
+    pg_meta* head = chain_nominated({ &sa, &sb });
 
     int copy_count = 0;
     test_custom::hooks.obj_copy = [&](managed* /*src*/, managed* /*dest*/) { ++copy_count; };
@@ -167,7 +174,7 @@ TEST_F(CopierTest, FullyFullPageIsNeitherSourceNorTarget) {
     test_page sparse{64};
     sparse.construct(0, 1); sparse.mark(0);
 
-    pg_meta* head = chain({ &full, &sparse });
+    pg_meta* head = chain_nominated({ &full, &sparse });
 
     int copy_count = 0;
     test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copy_count; };
@@ -187,7 +194,7 @@ TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
     sparse.construct(0, 1); sparse.construct(1, 1);
     sparse.mark(0); sparse.mark(1);
 
-    pg_meta* head = chain({ &pinned, &sparse });
+    pg_meta* head = chain_nominated({ &pinned, &sparse });
 
     std::vector<std::pair<managed*, managed*>> copies;
     test_custom::hooks.obj_copy = [&](managed* s, managed* d) {
@@ -205,6 +212,90 @@ TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
     }
 }
 
+// Roles are decided before marking and may only relax source -> target, so a page nomination
+// passed over cannot be evacuated this cycle however sparse it turns out to be - the cards
+// pointing into it were never dirtied
+TEST_F(CopierTest, APageNominationSkippedIsNeverASource) {
+    test_page a{64}, b{64};
+    a.construct(0, 1); a.mark(0);
+    b.construct(0, 1); b.mark(0);
+    pg_meta* head = chain({ &a, &b });
+
+    int copy_count = 0;
+    test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copy_count; };
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    EXPECT_EQ(copy_count, 0);
+    EXPECT_FALSE(a->is_source());
+    EXPECT_FALSE(b->is_source());
+}
+
+// Nomination predicts from a stale occupancy; split_pages is the first exact count, and a page
+// that turns out dense becomes a target and gives up the role
+TEST_F(CopierTest, AMispredictedDensePageIsDemotedToTarget) {
+    test_page dense{64}, sparse{64};
+    auto cap = dense->block_cnt();
+    for (uint16_t i = 0; i < cap - 1; ++i) { dense.construct(i, 1); dense.mark(i); }
+    sparse.construct(0, 1); sparse.mark(0);
+
+    pg_meta* head = chain_nominated({ &dense, &sparse });
+
+    std::vector<std::pair<managed*, managed*>> copies;
+    test_custom::hooks.obj_copy = [&](managed* s, managed* d) { copies.emplace_back(s, d); };
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    EXPECT_FALSE(dense->is_source()) << "the exact count overrides the prediction";
+    ASSERT_EQ(copies.size(), 1u);
+    EXPECT_EQ(pg_meta::head_from_ptr(copies[0].second), dense.pg())
+        << "and it is the page the survivor moves into";
+}
+
+// When the nominated set needs more room than the targets have, the pages handed back are the
+// densest ones: giving up a sparse page forfeits the most space per block moved
+TEST_F(CopierTest, TheDensestNominatedPageIsTheOneHandedBack) {
+    test_page a{64}, b{64}, densest{64};
+    a.mark_n(1);
+    b.mark_n(2);
+    densest.mark_n(3);
+
+    pg_meta* head = chain_nominated({ &a, &b, &densest });
+
+    std::vector<std::pair<managed*, managed*>> copies;
+    test_custom::hooks.obj_copy = [&](managed* s, managed* d) { copies.emplace_back(s, d); };
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    EXPECT_FALSE(densest->is_source());
+    EXPECT_TRUE(a->is_source());
+    EXPECT_TRUE(b->is_source());
+    ASSERT_EQ(copies.size(), 3u) << "the other two pages' objects move";
+    for (auto [src, dst] : copies)
+        EXPECT_EQ(pg_meta::head_from_ptr(dst), densest.pg());
+}
+
+// An empty page is about to go back to the allocator, so filling it would keep a page alive
+// that the sweep would otherwise hand back
+TEST_F(CopierTest, AnEmptyPageIsNotUsedAsATarget) {
+    test_page empty{64}, sparse{64};
+    sparse.mark_n(2);
+
+    pg_meta* head = chain_nominated({ &empty, &sparse });
+
+    int copy_count = 0;
+    test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copy_count; };
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    EXPECT_EQ(copy_count, 0) << "with no target the source is handed back instead";
+    EXPECT_EQ(empty->compute_live(), 0u);
+}
+
 TEST_F(CopierTest, CopiedObjectsAreMarkedMovedWithForwardingPtr) {
     test_page src{64}, dst{64};
     managed* src_obj = src.construct(0, 7);
@@ -212,7 +303,7 @@ TEST_F(CopierTest, CopiedObjectsAreMarkedMovedWithForwardingPtr) {
     dst.construct(0, 9);
     dst.mark(0, true);
 
-    pg_meta* head = chain({ &dst, &src });
+    pg_meta* head = chain_nominated({ &dst, &src });
 
     copier c{0.5};
     c.copy_objects(head);
@@ -229,7 +320,7 @@ TEST_F(CopierTest, CopyObjectsUpdatesTargetMarkBitmap) {
 
     dst.construct(0, 9); dst.mark(0, true);
 
-    pg_meta* head = chain({ &dst, &src });
+    pg_meta* head = chain_nominated({ &dst, &src });
 
     copier c{0.5};
     c.copy_objects(head);
@@ -249,7 +340,7 @@ TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
         src.mark(i);
     }
 
-    pg_meta* head = chain({ &pinned, &src });
+    pg_meta* head = chain_nominated({ &pinned, &src });
 
     int copies = 0;
     test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copies; };
@@ -267,7 +358,7 @@ TEST_F(CopierTest, AfterCopySourcePagesAreRetired) {
     src.mark(0); src.mark(1);
     pinned.construct(0, 1); pinned.mark(0, true);
 
-    pg_meta* head = chain({ &pinned, &src });
+    pg_meta* head = chain_nominated({ &pinned, &src });
     ASSERT_EQ(src.pg()->compute_live(), 2);
 
     copier c{0.5};
@@ -283,7 +374,7 @@ TEST_F(CopierTest, ThresholdZeroPromotesEverythingToTarget) {
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
 
-    pg_meta* head = chain({ &a, &b });
+    pg_meta* head = chain_nominated({ &a, &b });
 
     int copies = 0;
     test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copies; };
@@ -298,7 +389,7 @@ TEST_F(CopierTest, ThresholdHighMakesEverySparsePageASourceUntilOneConverts) {
     a.construct(0, 1); a.mark(0);
     b.construct(0, 1); b.mark(0);
 
-    pg_meta* head = chain({ &a, &b });
+    pg_meta* head = chain_nominated({ &a, &b });
 
     int copies = 0;
     test_custom::hooks.obj_copy = [&](managed*, managed*) { ++copies; };
@@ -334,7 +425,12 @@ namespace {
             dst.allocate(0);
             dst.mark(0, true);
         }
-        pg_meta* list() { dst.pg()->link(src.pg()); return dst.pg(); }
+        pg_meta* list() {
+            src.pg()->nominate();
+            dst.pg()->nominate();   // pinned, so it stays a target
+            dst.pg()->link(src.pg());
+            return dst.pg();
+        }
     };
 }
 

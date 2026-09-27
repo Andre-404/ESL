@@ -81,33 +81,45 @@ void copier::update_globals(std::span<size_t*> roots) {
     }
 }
 
-// TODO: might be better to have a linked list aware sort to reduce memory usage
-// its 1mb of pointers per 1gb of heap so memory allocation might be slower then cache misses on sorting
-// with new dense side array for pg_meta linked list sorting might actually be rather fast
 std::pair<std::vector<pg_meta *>, std::vector<pg_meta *> > copier::split_pages(pg_meta *pg_list) const {
+    struct candidate { pg_meta* pg; uint16_t live; };
+
     auto target = std::vector<pg_meta*> {};
-    auto source = std::vector<pg_meta*> {};
+    auto source = std::vector<candidate> {};
     int64_t needed_space = 0;
-    // Pages that have pinned objects and that are above threshold(but not completely full) become targets
     for (auto pg = pg_list; pg; pg = pg->next()) {
         const auto live = pg->compute_live();
         const auto cap  = pg->block_cnt();
-        if (pg->has_pinned() || live >= _evac_threshold*cap) {
+        assert(live <= cap);
+        // Dont fill already empty pages, we want to hand those back
+        if (live == 0) continue;
+        // Nomination ran before we had exact numbers, a predicted sparse page that turned out
+        // to be dense gets demoted (no point in compacting already compact things)
+        if (!pg->is_source() || live >= _evac_threshold * cap) {
+            pg->demote();
             if (live < cap) target.push_back(pg);
             needed_space -= cap - live;
-            assert(live <= cap);
-        } else {
-            needed_space += live;
-            if (live > 0) source.push_back(pg);
+            continue;
         }
+        needed_space += live;
+        source.push_back({ pg, (uint16_t)live });
     }
+    // Give up the densest pages first (we get the least benefit from copying them)
+    if (needed_space > 0)
+        std::ranges::sort(source, {}, &candidate::live);
     while (needed_space > 0) {
-        auto pg = source.back();
+        auto [pg, live] = source.back();
         source.pop_back();
+        pg->demote();
         needed_space -= pg->block_cnt();
         target.push_back(pg);
     }
+
+    auto sources = std::vector<pg_meta*> {};
+    sources.reserve(source.size());
+    for (auto [pg, live] : source) sources.push_back(pg);
+
     std::ranges::sort(target);
-    std::ranges::sort(source);
-    return { std::move(target), std::move(source) };
+    std::ranges::sort(sources);
+    return { std::move(target), std::move(sources) };
 }
