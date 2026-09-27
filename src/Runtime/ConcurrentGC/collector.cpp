@@ -17,23 +17,25 @@ enum gc_operation {
     op_stw = 2
 };
 
-std::vector<tcb *> collector::post_with_state(gc_state s, uint8_t op)  {
+std::vector<tcb *> collector::post_with_state(uint8_t flags, uint8_t op)  {
     std::vector<tcb*> blocked;
     _tcb_registry.with_snapshot([&](auto& thds) {
-        _gc_flag.store((uint8_t)s, std::memory_order_release);
+        _gc_flag.store(flags, std::memory_order_release);
         blocked = _thd_state_mngr.post(std::views::all(thds), op);
     });
     return blocked;
 }
 
 [[gnu::cold, clang::noinline]] void collector::force_collection(int64_t sz, tcb* t) {
-    _collection_req.request_express();
+    for (int attempt = 0; attempt < 2; attempt++) {
+        _collection_req.request_express();
 
-    int64_t snapshot = _heuristic.live_size() + _alloc_sz;
-    set_paused(t);
-    _collection_req.await_express_served();
-    set_resumed(t);
-    if (snapshot - (int64_t)_heuristic.live_size() > sz) return;
+        int64_t snapshot = _heuristic.live_size() + _alloc_sz;
+        set_paused(t);
+        _collection_req.await_express_served();
+        set_resumed(t);
+        if (snapshot - (int64_t)_heuristic.live_size() > sz) return;
+    }
 
     std::cerr << "Thread " << std::this_thread::get_id()
         << fmt::format(" failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
@@ -96,20 +98,17 @@ void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
 }
 
 size_t collector::stw(std::span<tcb*> owned, stw_role role) {
+    // When every thread enters the stw gc_flag is cleared, get the copy decision before that
+    auto copying = is_copying();
     stw_enter(owned, role);
-    // Decided after stw_enter's wait_on_all_ack
-    auto copying = _collection_req.is_express() || _heuristic.should_copy();
     auto snapshot = stw_mark(owned, role, copying);
     if (copying) [[unlikely]] stw_copy(owned, role);
     stw_prune(owned, role);
     return snapshot;
 }
 
-void collector::concurrent_mark() {
-    _nominating.store(
-        _collection_req.is_express() || _heuristic.should_copy(), std::memory_order_release
-    );
-    auto blocked = post_with_state(gc_state::marking, op_mark_stack);
+void collector::concurrent_mark(uint8_t copying) {
+    auto blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
     for (auto t : blocked) {
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
         observe_thread_pages(t);
@@ -129,7 +128,8 @@ void collector::concurrent_mark() {
 
 size_t collector::worker_stw() {
     auto _ = _metrics.time(gc_metrics::phase::pause);
-    auto blocked = post_with_state(gc_state::stw, op_stw);
+    auto copy_bit = is_copying() ? gc_flag_copying : uint8_t(0);
+    auto blocked = post_with_state(uint8_t(gc_state::stw) | copy_bit, op_stw);
     auto snapshot = stw(blocked, stw_role::collector);
     _tcb_registry.with_snapshot([&](auto& thds){
         _thd_state_mngr.finish_stw(std::views::all(thds));
@@ -167,8 +167,12 @@ void collector::concurrent_loop() {
     while (true) {
         if (_collection_req.await_request()) break;
         _cycle = {};
+        // Decided before marking, because the cards are dirtied during it and a cycle that has
+        // already started cannot be upgraded
+        auto copying = _heuristic.should_copy() || _collection_req.is_express()
+                     ? gc_flag_copying : uint8_t(0);
         _cycle.mark_time = gc_clock::now().time_since_epoch();
-        concurrent_mark();
+        concurrent_mark(copying);
 
         _gate.register_waiter();
         auto snapshot = worker_stw();
@@ -237,7 +241,7 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
     auto t = new (rpmalloc(sizeof(tcb))) tcb { start_args, args_cnt };
     _tcb_registry.add(t, [&]() {
         // Threads created during stw will be paused and needs to be started manually
-        if (_gc_flag.load(std::memory_order_acquire) == (uint8_t)gc_state::stw) {
+        if (state_is(gc_state::stw)) {
             t->transition(thd_state::need_start);
             _temp_roots.insert_or_assign(t, std::span<size_t>{ start_args, args_cnt });
         }
@@ -291,7 +295,7 @@ managed *collector::alloc(size_t sz, bool pinned, tcb * t) {
         force_collection(sz, t);
         return alloc(sz, pinned, t);
     }
-    if (_gc_flag.load(std::memory_order_acquire) != (uint8_t)gc_state::none)
+    if (!state_is(gc_state::none))
         pg_meta::head_from_ptr(res)->record_mark(res, pinned);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();

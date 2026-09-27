@@ -680,6 +680,71 @@ namespace {
     };
 }
 
+// The copy decision is published in the byte generated code already loads for the write
+// barrier, so what matters is that the bit is live exactly while marking is: the barrier reads
+// it to know whether to dirty, and everything that compares the byte to a gc_state masks it off
+namespace {
+    struct flag_watch {
+        std::atomic<bool> saw_copying { false };
+        std::atomic<bool> saw_stateless_bit { false };
+
+        // Sampled from obj_trace, which the collector calls on the marking thread
+        void install(uint8_t* flag) {
+            test_custom::hooks.obj_trace = [this, flag](managed*, std::function<void(managed*)>&) {
+                auto f = std::atomic_ref { *flag }.load(std::memory_order_acquire);
+                if ((f & 0b100) == 0) return;
+                saw_copying.store(true, std::memory_order_relaxed);
+                if ((f & 0b011) == 0) saw_stateless_bit.store(true, std::memory_order_relaxed);
+            };
+        }
+    };
+}
+
+TEST_F(CollectorCopyingTest, TheCopyingBitIsPublishedWhileMarking) {
+    flag_watch watch;
+    watch.install(gc_flag);
+
+    constexpr int kRoots = 800;
+    std::vector<size_t> roots(kRoots, 0);
+    for (auto& r : roots) gc->register_root(&r);
+
+    scatter_survivors(roots);
+    ASSERT_GT(gc->metrics().copy_pause_ms(), 0.0) << "no compaction ran, so there is nothing to see";
+
+    EXPECT_TRUE(watch.saw_copying.load()) << "a copying cycle has to say so while it marks";
+    EXPECT_FALSE(watch.saw_stateless_bit.load())
+        << "the bit rides a state: a byte holding only the copying bit would leave the barrier "
+           "on and hide gc_state::stw from create_tcb";
+}
+
+namespace {
+    // Same as CollectorCycleTest, with a copy cost no gain can pay for
+    class CollectorNonCopyingTest : public CollectorCycleTest {
+    protected:
+        void SetUp() override {
+            test_custom::hooks.reset();
+            gc_flag = new uint8_t(0);
+            gc = new collector(*gc_flag, gc_tuning {
+                .initial_heap = kInitialHeap,
+                .copy_fixed_cost = std::chrono::hours(1),
+            });
+            std::this_thread::sleep_for(20ms);
+            ensure_rpmalloc_thread_ready();
+        }
+    };
+}
+
+TEST_F(CollectorNonCopyingTest, ACycleThatWillNotCopyNeverSetsTheBit) {
+    flag_watch watch;
+    watch.install(gc_flag);
+
+    churn_until_cycles(4);
+
+    ASSERT_GT(gc->metrics().cycles(), 3u);
+    ASSERT_EQ(gc->metrics().copy_pause_ms(), 0.0) << "this tuning is supposed to refuse to copy";
+    EXPECT_FALSE(watch.saw_copying.load());
+}
+
 TEST_F(CollectorCopyingTest, CompactingCyclesRunAndReclaim) {
     constexpr int kRoots = 800;
     std::vector<size_t> roots(kRoots, 0);

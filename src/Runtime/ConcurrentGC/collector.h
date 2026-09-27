@@ -21,6 +21,8 @@ namespace gc::detail {
         marking = 1,
         stw = 2
     };
+    constexpr uint8_t gc_state_mask = 0b011;
+    constexpr uint8_t gc_flag_copying = 0b100;
     class collector {
         // Roughly grouped by cache lines
         tcb_registry _tcb_registry;
@@ -28,10 +30,6 @@ namespace gc::detail {
         std::atomic<size_t> _alloc_sz;
         post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
-        // Whether the cycle in flight nominates source pages, published before the marking
-        // handshake so every mutator scores its own pages under the same answer.
-        // TODO(step 6): becomes a gc_flag bit and drives stw's copy decision as well
-        std::atomic<bool> _nominating;
         collection_request _collection_req;
 
         sync_point _gate;
@@ -54,6 +52,13 @@ namespace gc::detail {
 
         enum class stw_role : uint8_t { mutator, collector };
 
+        bool state_is(gc_state s) const {
+            return (_gc_flag.load(std::memory_order_acquire) & gc_state_mask) == (uint8_t)s;
+        }
+        bool is_copying() const {
+            return (_gc_flag.load(std::memory_order_acquire) & gc_flag_copying) != 0;
+        }
+
         // Page mutators, shared by mutator and worker stw functions. All three tolerate a null
         // list, which is what an arena with no pages of a given size class hands them.
         auto copy_objs_fn() const {
@@ -70,7 +75,7 @@ namespace gc::detail {
         }
         // Don't nominate pages if we're not in a copying cycle
         auto observe_pgs_fn() const {
-            auto nominate = _nominating.load(std::memory_order_acquire);
+            auto nominate = is_copying();
             return [this, nominate](pg_meta* start) {
                 observe_pages(start, _pruner.survival(), nominate);
                 return start;
@@ -93,14 +98,14 @@ namespace gc::detail {
             };
         }
 
-        std::vector<tcb*> post_with_state(gc_state s, uint8_t op);
+        std::vector<tcb*> post_with_state(uint8_t flags, uint8_t op);
         void stw_enter(std::span<tcb*> owned, stw_role role);
         size_t stw_mark(std::span<tcb*> owned, stw_role role, bool copying);
         void stw_copy(std::span<tcb*> owned, stw_role role);
         void stw_prune(std::span<tcb*> owned, stw_role role);
         size_t stw(std::span<tcb*> owned, stw_role role);
 
-        void concurrent_mark();
+        void concurrent_mark(uint8_t copying);
         size_t worker_stw();
         void mutator_stw(tcb* handle);
         void collect_metrics();
@@ -114,8 +119,7 @@ namespace gc::detail {
 
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
-            : _gc_flag(flag), _nominating(false),
-              _copier(config::copy_evac_threshold), _heuristic(tuning) {
+            : _gc_flag(flag), _copier(config::copy_evac_threshold), _heuristic(tuning) {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {
