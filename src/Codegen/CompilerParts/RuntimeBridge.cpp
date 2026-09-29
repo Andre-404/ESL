@@ -44,11 +44,11 @@ static_assert(
     "cpu than the natural alignment of the single byte it actually reads"
 );
 static_assert(
-    markbuf_data_off == 16 && markbuf_capacity > 0,
-    "mark_buf layout moved; gc_write_barrier follows automatically"
+    markbuf_data_off == 16 && markbuf_capacity > 0 && markbuf_capacity % 2 == 0,
+    "mark_buf layout moved; gc_write_barrier follows automatically. The capacity has to stay "
+    "even: the barrier writes (container, value) pairs and only checks for a full buffer once"
 );
 
-// Invariants that live purely in C++ and so can be checked at compile time.
 static_assert(sizeof(object::rt_obj) == 2, "the object header must stay 2 bytes");
 static_assert(
     sizeof(object::comp_class) % 16 == 0,
@@ -549,11 +549,11 @@ void runtime_bridge::build_ir_helpers() {
     // written after the object is built, so `x is Animal` can be hoisted out of a loop
     isInstOf->setMemoryEffects(llvm::MemoryEffects::readOnly());
 
-    auto* writeBarrier = define_fn("gc_write_barrier", ft(voidTy, { val }), priv, [&](llvm::Function* F) {
+    auto* writeBarrier = define_fn("gc_write_barrier", ft(voidTy, { ptr, val }), priv, [&](llvm::Function* F) {
         auto flag = _b.CreateAlignedLoad(i8, _gc_flag, llvm::Align(8));
         flag->setAtomic(llvm::AtomicOrdering::Acquire);
         auto flagSet = _b.CreateICmpNE(flag, _b.getInt8(0));
-        auto isObjV = call("is_obj", F->getArg(0));
+        auto isObjV = call("is_obj", F->getArg(1));
 
         auto inactiveWB = llvm::BasicBlock::Create(c, "inactive", F);
         auto activeWB = llvm::BasicBlock::Create(c, "active", F);
@@ -576,14 +576,16 @@ void runtime_bridge::build_ir_helpers() {
         auto bufSlot = _b.CreateConstInBoundsGEP1_64(i8, tcb, tcb_wbbuf_off, "tcb.wbbuf");
         auto buf = _b.CreateAlignedLoad(ptr, bufSlot, llvm::Align(8), "wbbuf");
 
-        // mark_buf::push is `_data[_cnt++] = obj`, so write at the current count and store back the incremented one
         auto cntPtr = _b.CreateConstInBoundsGEP1_64(i8, buf, markbuf_cnt_off, "wbbuf.cnt");
         auto cnt = _b.CreateAlignedLoad(i64, cntPtr, llvm::Align(8));
         auto dataPtr = _b.CreateConstInBoundsGEP1_64(i8, buf, markbuf_data_off, "wbbuf.data");
         auto slot = _b.CreateInBoundsGEP(ptr, dataPtr, cnt);
 
-        _b.CreateAlignedStore(call("decode_obj", { F->getArg(0) }), slot, llvm::Align(8));
-        auto next = _b.CreateAdd(cnt, _b.getInt64(1));
+        // mark_buf::push_pair is `_data[_cnt++] = container; _data[_cnt++] = value`
+        _b.CreateAlignedStore(F->getArg(0), slot, llvm::Align(8));
+        auto valSlot = _b.CreateConstInBoundsGEP1_64(ptr, slot, 1, "wbbuf.val");
+        _b.CreateAlignedStore(call("decode_obj", { F->getArg(1) }), valSlot, llvm::Align(8));
+        auto next = _b.CreateAdd(cnt, _b.getInt64(2));
         _b.CreateAlignedStore(next, cntPtr, llvm::Align(8));
 
         auto full = _b.CreateICmpEQ(next, _b.getInt64(markbuf_capacity));
@@ -601,6 +603,7 @@ void runtime_bridge::build_ir_helpers() {
         _b.CreateRetVoid();
     });
     writeBarrier->addFnAttr(llvm::Attribute::NoUnwind);
+    writeBarrier->addParamAttr(0, llvm::Attribute::NonNull);
 
     auto* arrBarrier = define_fn("arr_write_barrier", ft(voidTy, { ptr, val }), priv, [&](llvm::Function* F) {
         auto isObjV = call("is_obj", F->getArg(1));
@@ -614,15 +617,12 @@ void runtime_bridge::build_ir_helpers() {
         F->insert(F->end(), isObjBB);
         _b.SetInsertPoint(isObjBB);
 
-        RtArr::from_raw(*this, F->getArg(0)).storage().set_has_obj();
+        auto storage = RtArr::from_raw(*this, F->getArg(0)).storage();
+        storage.set_has_obj();
+        call("gc_write_barrier", { storage.ptr(), F->getArg(1) });
         _b.CreateRetVoid();
     });
-    // No memory effects: the flag it sets lives on the storage object, which it reaches by loading a
-    // pointer out of the array, so it isn't argmem. No nosync either, the store is a release
-    add_attrs(arrBarrier, {
-        llvm::Attribute::NoUnwind, llvm::Attribute::WillReturn, llvm::Attribute::MustProgress,
-        llvm::Attribute::NoRecurse, llvm::Attribute::NoFree, llvm::Attribute::NoCallback
-    });
+    arrBarrier->addFnAttr(llvm::Attribute::NoUnwind);
     arrBarrier->addParamAttr(0, llvm::Attribute::NonNull);
 }
 

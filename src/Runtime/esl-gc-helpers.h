@@ -14,8 +14,8 @@ namespace gc {
         __asm__ volatile("mov %0, %%r15" : : "r" (handle));
     }
 
-    inline void write_b(managed* obj) {
-        write_barrier(read_tcb(), obj);
+    inline void write_b(managed* container, managed* obj) {
+        write_barrier(read_tcb(), container, obj);
     }
 
     template<typename T, typename... Args>

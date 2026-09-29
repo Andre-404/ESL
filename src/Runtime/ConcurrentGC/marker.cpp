@@ -7,8 +7,10 @@ using namespace gc::detail;
 void marker::flush_wbbuf(mark_buf* buf) {
     if (buf->empty()) return;
     auto to_send = _bufs.pop_empty();
-    while (auto obj = buf->pop()) {
-        auto res = push_obj(to_send, obj);
+    while (auto val = buf->pop()) {
+        [[maybe_unused]] auto container = buf->pop();
+        assert(container && "the write buffer holds (container, value) pairs");
+        auto res = push_obj(to_send, val);
         assert(!(res && !buf->empty()));
     }
     push_buf(to_send);

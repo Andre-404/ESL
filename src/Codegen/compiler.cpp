@@ -288,7 +288,7 @@ llvm::Value* Compiler::visitArrayExpr(CFG::ArrayExpr* expr) {
         containsObj = builder.CreateOr(
             containsObj, builder.CreateCall(safeGetFunc("is_obj"), vals[i])
         );
-        _bridge.call("gc_write_barrier", { vals[i] });
+        _bridge.call("gc_write_barrier", { storage.ptr(), vals[i] });
     }
     // Safe to do here since no allocations or safepoints happen between alloc_arr and here
     storage.contains_obj().store(
@@ -372,21 +372,11 @@ llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     bool optMapString = exprIsType(expr->field, types::getBasicType(types::TypeFlag::STRING));
     bool optRhs = exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER));
 
-    if(exprIsComplexType(expr->collection, types::TypeFlag::ARRAY)) {
-        auto el = setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,expr->dbgInfo.op);
-        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { el });
-        }
-        return el;
-    }
+    if(exprIsComplexType(expr->collection, types::TypeFlag::ARRAY))
+        return setArrElement(collection, field, val, optArrIndex, optRhs, expr->operationType,expr->dbgInfo.op);
 
-    if(exprIsComplexType(expr->collection, types::TypeFlag::HASHMAP)) {
-        auto el = setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,expr->dbgInfo.op);
-        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { el });
-        }
-        return el;
-    }
+    if(exprIsComplexType(expr->collection, types::TypeFlag::HASHMAP))
+        return setMapElement(collection, field, val, optMapString, optRhs, expr->operationType,expr->dbgInfo.op);
 
     // Uses switch instead of chained comparisons, this should be faster?
     llvm::Function *F = builder.GetInsertBlock()->getParent();
@@ -422,9 +412,6 @@ llvm::Value* Compiler::visitCollectionSet(CFG::CollectionSet* expr) {
     auto phi = builder.CreatePHI(_tyhelp.getESLValType(), 2, "collection.set");
     phi->addIncoming(arrVal, isArray);
     phi->addIncoming(mapVal, isHashmap);
-    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-        builder.CreateCall(safeGetFunc("gc_write_barrier"), { phi });
-    }
     return phi;
 }
 
@@ -829,11 +816,11 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
         fieldPtr = _inst_builder.getUnoptInstFieldPtr({ inst, expr->field });
     auto val = expr->toStore->codegen(this);
 
+    auto instPtr = builder.CreateCall(safeGetFunc("decode_obj"), inst, "inst.container");
     if(expr->operationType == CFG::SetType::SET){
         builder.CreateStore(val, fieldPtr);
-        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
-        }
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
         return val;
     }
     if(expr->operationType == CFG::SetType::ADD_SET){
@@ -841,9 +828,8 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
         auto storedVal = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
         val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
         builder.CreateStore(val, fieldPtr);
-        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
-        }
+        if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
         return val;
     }
     auto storedField = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
@@ -858,9 +844,8 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
 
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
     builder.CreateStore(val, fieldPtr);
-    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
-        builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
-    }
+    if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
+        builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
     return val;
 }
 

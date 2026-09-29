@@ -67,6 +67,35 @@ TEST(MarkBufTest, PushReturnsFalseUntilFull) {
     EXPECT_FALSE(buf.empty());
 }
 
+// The write barrier logs (container, value). pop is LIFO, so the flush sees the value first
+// and its container second - and the pair must never straddle a full buffer
+TEST(MarkBufTest, PushPairPopsValueThenContainer) {
+    auto buf = mark_buf {};
+    auto container = std::unique_ptr<managed> { make_managed(1) };
+    auto value = std::unique_ptr<managed> { make_managed(2) };
+
+    EXPECT_FALSE(buf.push_pair(container.get(), value.get()));
+    EXPECT_EQ(buf.pop(), value.get());
+    EXPECT_EQ(buf.pop(), container.get());
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST(MarkBufTest, PushPairSignalsFullOnlyOnACompletePair) {
+    auto buf = mark_buf {};
+    auto owned = std::vector<std::unique_ptr<managed>> {};
+    for (int i = 0; i < 63; ++i) {
+        owned.emplace_back(make_managed(1));
+        owned.emplace_back(make_managed(2));
+        EXPECT_FALSE(buf.push_pair(owned[owned.size() - 2].get(), owned.back().get()))
+            << "pair #" << i;
+    }
+    owned.emplace_back(make_managed(1));
+    owned.emplace_back(make_managed(2));
+    EXPECT_TRUE(buf.push_pair(owned[owned.size() - 2].get(), owned.back().get()))
+        << "the 64th pair fills the 128 slot buffer exactly";
+    EXPECT_TRUE(buf.full());
+}
+
 TEST(MarkBufTest, PopFromEmptyReturnsNullptrAndDoesNotUnderflow) {
     auto buf = mark_buf {};
     EXPECT_EQ(buf.pop(), nullptr);

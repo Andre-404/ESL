@@ -15,6 +15,14 @@ namespace gc::detail {
             _data[_cnt++] = obj;
             return _cnt == _data.size();
         }
+        // Only used by write barrier (not by tracing) to keep track of object that is being inserted into
+        // Used for dirtying cards for copying
+        bool push_pair(managed* container, managed* value) {
+            static_assert(std::tuple_size_v<decltype(_data)> % 2 == 0);
+            _data[_cnt++] = container;
+            _data[_cnt++] = value;
+            return _cnt == _data.size();
+        }
         managed* pop() {
             if (_cnt == 0) return nullptr;
             return _data[--_cnt];

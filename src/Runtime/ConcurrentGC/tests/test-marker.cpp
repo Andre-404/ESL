@@ -42,6 +42,44 @@ namespace {
 } // namespace
 
 
+// The write buffer is a pair log. Marking only ever needed the value; the container rides
+// along for the card table, and marking it would keep objects alive that nobody pointed at
+TEST_F(MarkerTest, FlushWbbufMarksTheValueAndNotTheContainer) {
+    test_page holder{64}, held{64};
+    auto container = holder.construct(0, 1);
+    auto value = held.construct(0, 1);
+
+    marker m;
+    auto buf = m.get_buf();
+    ASSERT_FALSE(buf->push_pair(container, value));
+
+    m.flush_wbbuf(buf);
+
+    EXPECT_TRUE(buf->empty());
+    EXPECT_EQ(held.pg()->compute_live(), 1u);
+    EXPECT_EQ(holder.pg()->compute_live(), 0u) << "a container is written into, not pointed at";
+    m.push_buf(buf);
+}
+
+// Pairs are popped two at a time, so a miscounted pop would mark containers and skip values
+TEST_F(MarkerTest, FlushWbbufKeepsPairsAlignedAcrossManyEntries) {
+    test_page holder{64}, held{64};
+    marker m;
+    auto buf = m.get_buf();
+    constexpr int kPairs = 40;
+    for (int i = 0; i < kPairs; ++i) {
+        auto container = holder.construct(uint16_t(i), 1);
+        auto value = held.construct(uint16_t(i), 1);
+        ASSERT_FALSE(buf->push_pair(container, value)) << "pair " << i;
+    }
+
+    m.flush_wbbuf(buf);
+
+    EXPECT_EQ(held.pg()->compute_live(), (size_t)kPairs);
+    EXPECT_EQ(holder.pg()->compute_live(), 0u);
+    m.push_buf(buf);
+}
+
 TEST_F(MarkerTest, ScanGlobalsSkipsUnmanagedObjects) {
     test_page rp{64};
     rp.construct(0, 1, move_state::unmanaged);

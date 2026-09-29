@@ -31,7 +31,7 @@ namespace gc {
         return obj;
     }
 
-    void write_barrier(tcb_handle* handle, managed* obj);
+    void write_barrier(tcb_handle* handle, managed* container, managed* obj);
     void poll_safepoint(tcb_handle* handle);
     // These two functions exist because their check will be inlined into llvm for better perf
     // But the above functions are still needed for some parts of ESL's object handling
