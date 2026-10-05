@@ -101,14 +101,16 @@ TEST_F(CopierTest, UpdateGlobalsRunsPtrToWordOnEveryUpdate) {
     EXPECT_EQ(root & 0xFF00000000000000ull, 0xAB00000000000000ull) << "ptr_to_word tag must have been applied";
 }
 
-TEST_F(CopierTest, UpdatePtrsCallsObjUpdatePtrsOnMarkedObjectsOnly) {
+// The pass is now marked AND dirty: a clean object cannot be holding a pointer into a page that
+// is being evacuated, and a dirty bit on an unmarked slot is a card left behind by a container
+// that died after the barrier logged it
+TEST_F(CopierTest, UpdatePtrsVisitsMarkedAndDirtySlotsOnly) {
     test_page rp{64};
-    rp.construct(0, 1);
-    rp.construct(1, 1);
-    rp.construct(2, 1);
-    rp.mark(0);
-    rp.mark(2);
-    // slot 1 is unmarked.
+    for (uint16_t i = 0; i < 4; ++i) rp.construct(i, 1);
+    rp.mark(0); rp.mark(1); rp.mark(2);     // slot 3 is unmarked
+    rp->dirty_card(rp.slot(0));
+    rp->dirty_card(rp.slot(2));             // slot 1 is marked but clean
+    rp->dirty_card(rp.slot(3));             // dirty but dead
 
     std::unordered_set<managed*> updated;
     test_custom::hooks.obj_update_ptrs = [&](managed* m) { updated.insert(m); };
@@ -116,23 +118,45 @@ TEST_F(CopierTest, UpdatePtrsCallsObjUpdatePtrsOnMarkedObjectsOnly) {
     copier c{0.5};
     c.update_ptrs(rp.pg());
 
-    EXPECT_EQ(updated.size(), 2);
+    EXPECT_EQ(updated.size(), 2u);
     EXPECT_TRUE(updated.count(rp.slot(0)));
     EXPECT_TRUE(updated.count(rp.slot(2)));
-    EXPECT_FALSE(updated.count(rp.slot(1)));
+    EXPECT_FALSE(updated.count(rp.slot(1))) << "marked but clean";
+    EXPECT_FALSE(updated.count(rp.slot(3))) << "dirty but dead";
 }
 
-TEST_F(CopierTest, UpdatePtrsResetsTempPinnedToNone) {
+// f_any_dirty is the cheap half of the filter: a page nothing points out of is skipped whole,
+// without touching its mark bitmap or walking its slots
+TEST_F(CopierTest, UpdatePtrsSkipsAPageWithNoDirtyCards) {
     test_page rp{64};
-    managed* a = rp.construct(0, 1, move_state::temp_pinned);
-    managed* b = rp.construct(1, 1, move_state::pinned);
-    rp.mark(0); rp.mark(1);
+    rp.mark_n(3);
+    ASSERT_FALSE(rp->any_dirty());
+
+    auto any_update = false;
+    test_custom::hooks.obj_update_ptrs = [&](managed*) { any_update = true; };
 
     copier c{0.5};
     c.update_ptrs(rp.pg());
 
-    EXPECT_EQ(a->state(), move_state::none)    << "temp_pinned -> none";
-    EXPECT_EQ(b->state(), move_state::pinned)  << "pinned must NOT be reset";
+    EXPECT_FALSE(any_update);
+}
+
+// temp_pinned is gone: a stack-reachable object pins its page through record_mark instead of
+// mutating its own state byte, which is what frees the update pass from having to visit every
+// marked object just to reset it
+TEST_F(CopierTest, UpdatePtrsLeavesObjectStateAlone) {
+    test_page rp{64};
+    managed* a = rp.construct(0, 1, move_state::none);
+    managed* b = rp.construct(1, 1, move_state::pinned);
+    rp.mark(0); rp.mark(1);
+    rp->dirty_card(rp.slot(0));
+    rp->dirty_card(rp.slot(1));
+
+    copier c{0.5};
+    c.update_ptrs(rp.pg());
+
+    EXPECT_EQ(a->state(), move_state::none);
+    EXPECT_EQ(b->state(), move_state::pinned);
 }
 
 TEST_F(CopierTest, UpdatePtrsOnEmptyPageDoesNothing) {

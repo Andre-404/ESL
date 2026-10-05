@@ -3,7 +3,7 @@
 #include <atomic>
 
 namespace gc {
-    enum class move_state : uint8_t { none = 0, moved = 1, pinned = 2, temp_pinned = 3, unmanaged = 4 };
+    enum class move_state : uint8_t { none = 0, moved = 1, pinned = 2, unmanaged = 4 };
     constexpr uint8_t operator+ (move_state const val) { return static_cast<uint8_t>(val); }
 
     // Using atomic ref on move_state so that objects can still be moveable

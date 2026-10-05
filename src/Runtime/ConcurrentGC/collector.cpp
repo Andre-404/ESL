@@ -116,8 +116,8 @@ void collector::concurrent_mark(uint8_t copying) {
     auto op = nominate ? op_nominate_pages : op_record_page_age;
     auto blocked = post_with_state(0, op);
     for (auto t : blocked)
-        observe_thread_pages(t, nominate);
-    _pg_manager.mutate_owned(observe_pgs_fn(nominate));
+        update_thread_pages(t, nominate);
+    _pg_manager.mutate_owned(update_pgs_fn(nominate));
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
     // After we have nominated pages (or recorded their age if this isn't copying), move to marking
@@ -216,7 +216,7 @@ void collector::handle_pending(tcb* t) {
          _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
         _thd_state_mngr.ack();
     } else if (op == op_nominate_pages || op == op_record_page_age) {
-        observe_thread_pages(t, op == op_nominate_pages);
+        update_thread_pages(t, op == op_nominate_pages);
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();

@@ -207,7 +207,7 @@ TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
 
     EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
-    EXPECT_EQ(obj->state(), move_state::temp_pinned);
+    EXPECT_EQ(obj->state(), move_state::none) << "the pin lives on the page, not in the object";
 }
 
 TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
@@ -247,7 +247,7 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
-    EXPECT_EQ(obj->state(), move_state::temp_pinned) << "mark callback runs before push_obj's record_mark check";
+    EXPECT_EQ(obj->state(), move_state::none) << "the pin lives on the page, not in the object";
     EXPECT_TRUE(rp.pg()->has_pinned()) << "page pinned bit updates even on marked objects";
 }
 

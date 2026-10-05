@@ -66,12 +66,10 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
 void copier::update_ptrs(pg_meta *pg) const  {
     for (; pg; pg = pg->next()) {
-        if (!pg->is_active()) continue;
+        if (!pg->is_active() || !pg->any_dirty()) continue;
         for (auto it = pg_meta::pg_slots_iter { pg, 0 }; !it.at_end(); it.next()) {
-            if (!it.is_marked()) continue;
-            auto obj = it.get();
-            if (obj->state() == move_state::temp_pinned) obj->set_state(move_state::none);
-            obj_update_ptrs(obj);
+            if (!it.is_marked() || !it.is_dirty()) continue;
+            obj_update_ptrs(it.get());
         }
     }
 }

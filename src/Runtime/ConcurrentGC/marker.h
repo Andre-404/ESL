@@ -13,12 +13,12 @@ namespace gc::detail {
             bool movable_obj = false;
         };
 
-        [[gnu::always_inline, gnu::hot, nodiscard]] mark_result push_obj(mark_buf* buf, managed* obj) {
+        [[gnu::always_inline, gnu::hot, nodiscard]] mark_result push_obj(mark_buf* buf, managed* obj, bool force_pin = false) {
             auto state = obj->state();
             if (state == move_state::unmanaged) [[unlikely]] return {};
 
             auto pg = pg_meta::head_from_ptr(obj);
-            auto won = pg->record_mark(obj, state != move_state::none);
+            auto won = pg->record_mark(obj, force_pin || state != move_state::none);
             // Query source status after potentially pinning, we want to reduce the amount of cards dirtied
             auto in_source = pg->is_source();
             if (__builtin_unpredictable(!won || !obj_traceable(obj))) return { false, in_source };
@@ -51,9 +51,9 @@ namespace gc::detail {
         void scan_temp(std::span<size_t> tmp, F get_base, bool is_copying) {
             auto buf = _bufs.pop_empty();
             auto mark = [&](managed* obj) {
-                // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
-                if (obj->state() == move_state::none && is_copying) obj->set_state(move_state::temp_pinned);
-                if (push_obj(buf, obj).buf_full) buf = replace_buf(buf);
+                // Regardless of whether this object was already marked or not,
+                // if it's on the stack or in registers in needs to be pinned
+                if (push_obj(buf, obj, is_copying).buf_full) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : tmp)
@@ -67,9 +67,9 @@ namespace gc::detail {
             auto [stack, regs] = info.get_ctx();
             auto buf = _bufs.pop_empty();
             auto mark = [&](managed* obj) {
-                // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
-                if (pin && obj->state() == move_state::none) obj->set_state(move_state::temp_pinned);
-                if (push_obj(buf, obj).buf_full) buf = replace_buf(buf);
+                // Regardless of whether this object was already marked or not,
+                // if it's on the stack or in registers in needs to be pinned
+                if (push_obj(buf, obj, pin).buf_full) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : stack)
