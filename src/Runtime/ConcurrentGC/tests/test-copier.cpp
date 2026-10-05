@@ -351,6 +351,30 @@ TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
     EXPECT_EQ(copies, 5) << "one obj_copy per marked source slot";
 }
 
+// obj_copy duplicates the object's pointers, so an object that pointed into a source page still
+// does after the move. Its card has to travel with it, or the update pass skips the copy
+TEST_F(CopierTest, CardsTravelWithTheObject) {
+    test_page src{64}, dst{64};
+    src.mark_n(2);
+    src->dirty_card(src.slot(1));   // only the second object holds a source pointer
+    dst.construct(0, 9);
+    dst.mark(0, true);              // pinned, so dst stays a target
+
+    pg_meta* head = chain_nominated({ &dst, &src });
+
+    copier c{0.5};
+    c.copy_objects(head);
+
+    auto* moved_clean = get_moved(src.slot(0));
+    auto* moved_dirty = get_moved(src.slot(1));
+    ASSERT_NE(moved_clean, src.slot(0)) << "both objects were supposed to move";
+    ASSERT_NE(moved_dirty, src.slot(1));
+
+    EXPECT_TRUE(dst->card_dirty(moved_dirty));
+    EXPECT_TRUE(dst->any_dirty()) << "the page flag has to follow, or the page is skipped whole";
+    EXPECT_FALSE(dst->card_dirty(moved_clean)) << "forwarding is per object, not per page";
+}
+
 TEST_F(CopierTest, AfterCopySourcePagesAreRetired) {
     test_page src{64};
     test_page pinned{64};

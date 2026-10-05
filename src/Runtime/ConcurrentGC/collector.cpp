@@ -12,9 +12,11 @@
 using namespace gc;
 using namespace detail;
 
-enum gc_operation {
+enum gc_operation : uint8_t {
     op_mark_stack = 1,
-    op_stw = 2
+    op_nominate_pages = 2,
+    op_record_page_age = 4,
+    op_stw = 8,
 };
 
 std::vector<tcb *> collector::post_with_state(uint8_t flags, uint8_t op)  {
@@ -110,16 +112,20 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
 void collector::concurrent_mark(uint8_t copying) {
     // Post op with flags 0 so that write barriers dont become active, we want to nominate each page first
     // (if this is a copying collection)
-    auto blocked = post_with_state(0, op_mark_stack);
-    for (auto t : blocked) {
-        _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
-        observe_thread_pages(t);
-    }
-    _pg_manager.mutate_owned(observe_pgs_fn());
+    auto nominate = copying != 0;
+    auto op = nominate ? op_nominate_pages : op_record_page_age;
+    auto blocked = post_with_state(0, op);
+    for (auto t : blocked)
+        observe_thread_pages(t, nominate);
+    _pg_manager.mutate_owned(observe_pgs_fn(nominate));
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
-    // TODO: can this cause a problem with thread safety and having unscanned objects?
-    _gc_flag.store(uint8_t(gc_state::marking) | copying, std::memory_order_release);
+    // After we have nominated pages (or recorded their age if this isn't copying), move to marking
+    blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
+    for (auto t : blocked)
+        _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
+    _thd_state_mngr.complete_handshake(blocked);
+    _thd_state_mngr.wait_on_all_ack();
     // Must be under lock because we can be adding global variables dynamically
     // (need to fix this honestly and add every global as root on start of program)
     {
@@ -208,7 +214,9 @@ void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
          _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
-        observe_thread_pages(t);
+        _thd_state_mngr.ack();
+    } else if (op == op_nominate_pages || op == op_record_page_age) {
+        observe_thread_pages(t, op == op_nominate_pages);
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();

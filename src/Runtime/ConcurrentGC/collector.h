@@ -73,9 +73,7 @@ namespace gc::detail {
                 return _pruner.prune(start, _pg_manager.bits(), [&](pg_meta* pg) { b.add(pg); });
             };
         }
-        // Don't nominate pages if we're not in a copying cycle
-        auto observe_pgs_fn() const {
-            auto nominate = is_copying();
+        auto observe_pgs_fn(bool nominate) const {
             return [this, nominate](pg_meta* start) {
                 observe_pages(start, _pruner.survival(), nominate);
                 return start;
@@ -88,7 +86,9 @@ namespace gc::detail {
             for (auto t : owned) t->get_arena().mutate_owned(fn);
             if (role == stw_role::collector) _pg_manager.mutate_owned(fn);
         }
-        void observe_thread_pages(tcb* t) { t->get_arena().observe_owned(observe_pgs_fn()); }
+        void observe_thread_pages(tcb* t, bool nominate) {
+            t->get_arena().observe_owned(observe_pgs_fn(nominate));
+        }
 
         auto get_obj_base() {
             return [&](uint8_t* ptr) {

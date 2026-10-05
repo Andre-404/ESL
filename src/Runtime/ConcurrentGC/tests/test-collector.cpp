@@ -760,6 +760,33 @@ TEST_F(CollectorCopyingTest, CompactingCyclesRunAndReclaim) {
 // The rates are pure observation until role nomination reads them, so what needs checking end to
 // end is the feedback path: real cycles over a real workload have to reach the model and leave it
 // holding rates that could be multiplied by a live count.
+// copy_pause_ms only says the phase ran; stw_copy is timed whether or not split_pages found
+// anything to evacuate. What proves compaction is alive is a survivor changing address
+TEST_F(CollectorCopyingTest, ACompactingCycleMovesSurvivors) {
+    constexpr int kRoots = 800;
+    std::vector<size_t> roots(kRoots, 0);
+    for (auto& r : roots) gc->register_root(&r);
+
+    std::vector<size_t> before;
+    auto* t = make_tcb();
+    auto thd = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        seed_roots(roots, 3, t);
+        before = roots;
+        for (int i = 0; i < 400'000 && gc->metrics().cycles() < 6; ++i) {
+            ASSERT_NE(fresh(64, t), nullptr);
+            poll(t);
+        }
+        gc->delete_tcb(t);
+    } };
+    thd.join();
+
+    ASSERT_GT(gc->metrics().cycles(), 5u);
+    auto moved = 0;
+    for (int i = 0; i < kRoots; ++i) if (roots[i] != before[i]) ++moved;
+    EXPECT_GT(moved, 0) << "no survivor changed address, so nothing was evacuated";
+}
+
 TEST_F(CollectorCopyingTest, SweepFeedsTheSurvivalRates) {
     constexpr int kRoots = 800;
     std::vector<size_t> roots(kRoots, 0);

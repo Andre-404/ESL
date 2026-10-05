@@ -8,7 +8,7 @@
 
 using namespace gc::detail;
 
-struct pg_slot { gc::managed* obj; bool marked; };
+struct pg_slot { gc::managed* obj; bool marked; bool dirty; };
 
 class pg_list_slot_iter {
     std::span<pg_meta*> _pages;
@@ -25,13 +25,14 @@ public:
         return *this;
     }
 
-    pg_slot operator*() const { return { _cur_iter.get(), _cur_iter.is_marked() }; }
+    pg_slot operator*() const { return { _cur_iter.get(), _cur_iter.is_marked(), _cur_iter.is_dirty() }; }
     bool operator==(std::default_sentinel_t) const { return _cnt == _pages.size(); }
 
     pg_list_slot_iter& begin() { return *this; }
     std::default_sentinel_t end() const { return {}; }
 
     void set_marked() { _cur_iter.set_marked(); }
+    void set_dirty() { _cur_iter.set_dirty(); }
 };
 
 
@@ -41,7 +42,7 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
     auto target_iter = pg_list_slot_iter { target };
 
-    for (auto [src, marked] : pg_list_slot_iter { source }) {
+    for (auto [src, marked, dirty] : pg_list_slot_iter { source }) {
         if (!marked) continue;
 
         while ((*target_iter).marked) {
@@ -50,13 +51,16 @@ void copier::copy_objects(pg_meta *pg_list) const {
             ++target_iter;
         }
 
-        auto [dest, _] = *target_iter;
+        auto dest = (*target_iter).obj;
         obj_copy(src, dest);
         set_moved(src, dest);
-        // Need to update the mark bitmap with the new object
+        // Need to update the mark and copy bitmap with the new object
         target_iter.set_marked();
+        // While marking is unconditional (only a live object gets copied, copy card dirtying isnt)
+        if (dirty)
+            target_iter.set_dirty();
     }
-    // Drained: the pruner retires an inactive page without bothering to count it
+    // Source pages are now full of dead objects
     for (auto pg : source) pg->mark_inactive();
 }
 
