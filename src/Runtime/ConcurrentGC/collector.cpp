@@ -74,7 +74,7 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
         _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
     }
 
-    while (_marker.trace_n(config::trace_batch * 1024)) {}
+    while (_marker.trace_n(config::trace_batch * 1024, copying)) {}
     _gate.arrive_and_wait();
     if (role == stw_role::collector)
         _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
@@ -108,7 +108,9 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
 }
 
 void collector::concurrent_mark(uint8_t copying) {
-    auto blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
+    // Post op with flags 0 so that write barriers dont become active, we want to nominate each page first
+    // (if this is a copying collection)
+    auto blocked = post_with_state(0, op_mark_stack);
     for (auto t : blocked) {
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
         observe_thread_pages(t);
@@ -116,6 +118,8 @@ void collector::concurrent_mark(uint8_t copying) {
     _pg_manager.mutate_owned(observe_pgs_fn());
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
+    // TODO: can this cause a problem with thread safety and having unscanned objects?
+    _gc_flag.store(uint8_t(gc_state::marking) | copying, std::memory_order_release);
     // Must be under lock because we can be adding global variables dynamically
     // (need to fix this honestly and add every global as root on start of program)
     {
@@ -123,7 +127,7 @@ void collector::concurrent_mark(uint8_t copying) {
         _marker.scan_globals(_roots);
     }
     
-    while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
+    while (_marker.trace_n(config::trace_batch, copying) && !_collection_req.is_express()) {}
 }
 
 size_t collector::worker_stw() {
@@ -280,7 +284,7 @@ void collector::delete_tcb(tcb *t) {
 
 void collector::flush_wbbuf(tcb *t) {
     auto& info = t->get_mark_info();
-    _marker.flush_wbbuf(info.get_wbbuf());
+    _marker.flush_wbbuf(info.get_wbbuf(), is_copying());
 }
 
 void collector::register_root(size_t *root) {

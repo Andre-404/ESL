@@ -8,17 +8,22 @@ namespace gc::detail {
     class marker {
         mark_buf_manager _bufs;
 
-        // Must stay in the header: scan_stack is a template instantiated in other TUs and
-        // always_inline needs the body available at every call site.
-        [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj) {
+        struct mark_result {
+            bool buf_full = false;
+            bool movable_obj = false;
+        };
+
+        [[gnu::always_inline, gnu::hot, nodiscard]] mark_result push_obj(mark_buf* buf, managed* obj) {
             auto state = obj->state();
-            if (state == move_state::unmanaged) [[unlikely]] return false;
+            if (state == move_state::unmanaged) [[unlikely]] return {};
 
             auto pg = pg_meta::head_from_ptr(obj);
             auto won = pg->record_mark(obj, state != move_state::none);
-            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
+            // Query source status after potentially pinning, we want to reduce the amount of cards dirtied
+            auto in_source = pg->is_source();
+            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return { false, in_source };
 
-            return buf->push(obj);
+            return { buf->push(obj), in_source };
         }
         [[nodiscard]] mark_buf* replace_buf(mark_buf* buf) {
             if (!buf->empty()) _bufs.push_full(buf);
@@ -38,7 +43,7 @@ namespace gc::detail {
         }
         void remove_empty() { _bufs.remove_empty(); }
 
-        void flush_wbbuf(mark_buf* buf);
+        void flush_wbbuf(mark_buf* buf, bool copying);
 
         void scan_globals(std::span<size_t*> globals);
 
@@ -48,7 +53,7 @@ namespace gc::detail {
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
                 if (obj->state() == move_state::none && is_copying) obj->set_state(move_state::temp_pinned);
-                if (push_obj(buf, obj)) buf = replace_buf(buf);
+                if (push_obj(buf, obj).buf_full) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : tmp)
@@ -64,7 +69,7 @@ namespace gc::detail {
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not, if it's on the stack or in registers in needs to be pinned
                 if (pin && obj->state() == move_state::none) obj->set_state(move_state::temp_pinned);
-                if (push_obj(buf, obj)) buf = replace_buf(buf);
+                if (push_obj(buf, obj).buf_full) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : stack)
@@ -76,6 +81,6 @@ namespace gc::detail {
             push_buf(buf);
         }
 
-        [[gnu::hot]] size_t trace_n(size_t bytes);
+        [[gnu::hot]] size_t trace_n(size_t bytes, bool copying);
     };
 }

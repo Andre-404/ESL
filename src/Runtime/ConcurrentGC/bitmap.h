@@ -47,7 +47,7 @@ namespace gc::detail {
             uint64_t head_mask, tail_mask;
         };
         static split split_range(std::size_t start, std::size_t n) {
-             auto end = start + n;
+            auto end = start + n;
             auto fw = word_idx(start), lw = word_idx(end - 1);
             auto tail_hi = end - lw * word_bits;
             if (fw == lw) return { fw, lw, range_mask(bit_idx(start), tail_hi), 0 };

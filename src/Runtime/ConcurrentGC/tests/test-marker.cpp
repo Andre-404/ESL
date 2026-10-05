@@ -53,7 +53,7 @@ TEST_F(MarkerTest, FlushWbbufMarksTheValueAndNotTheContainer) {
     auto buf = m.get_buf();
     ASSERT_FALSE(buf->push_pair(container, value));
 
-    m.flush_wbbuf(buf);
+    m.flush_wbbuf(buf, false);
 
     EXPECT_TRUE(buf->empty());
     EXPECT_EQ(held.pg()->compute_live(), 1u);
@@ -73,7 +73,7 @@ TEST_F(MarkerTest, FlushWbbufKeepsPairsAlignedAcrossManyEntries) {
         ASSERT_FALSE(buf->push_pair(container, value)) << "pair " << i;
     }
 
-    m.flush_wbbuf(buf);
+    m.flush_wbbuf(buf, false);
 
     EXPECT_EQ(held.pg()->compute_live(), (size_t)kPairs);
     EXPECT_EQ(holder.pg()->compute_live(), 0u);
@@ -269,7 +269,7 @@ TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
 
 TEST_F(MarkerTest, TraceNReturnsZeroWhenNoWorkAvailable) {
     marker m;
-    EXPECT_EQ(m.trace_n(1024), 0u);
+    EXPECT_EQ(m.trace_n(1024, false), 0u);
 }
 
 TEST_F(MarkerTest, TraceNVisitsRootsAndChildren) {
@@ -291,13 +291,184 @@ TEST_F(MarkerTest, TraceNVisitsRootsAndChildren) {
     std::vector<size_t*> roots = { &r };
     m.scan_globals(roots);
 
-    size_t traced = m.trace_n(40);
+    size_t traced = m.trace_n(40, false);
     EXPECT_GE(traced, 30u);   // three objects, 10 bytes each
     EXPECT_EQ(visited.size(), 3u);
     std::unordered_set<managed*> seen(visited.begin(), visited.end());
     EXPECT_TRUE(seen.count(root));
     EXPECT_TRUE(seen.count(c1));
     EXPECT_TRUE(seen.count(c2));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dirtying. A card says "this object holds a pointer into a page that is about to be evacuated",
+// so it is set on the referrer, keyed by the referent's page role.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+    // One referrer on its own page pointing at referents on another, with a mark already
+    // seeded so trace_n has something to pop
+    struct edge_fixture {
+        test_page from { 64 };
+        test_page to { 64 };
+        managed* referrer;
+        size_t root;
+        std::vector<size_t*> roots;
+
+        edge_fixture() : referrer(from.construct(0, 1)), root((size_t)referrer), roots({ &root }) {
+            test_custom::hooks.obj_size = [](managed*) { return size_t{ 10 }; };
+        }
+        // Every referent lives on `to`, so nominating that page is what makes the edges count
+        void edges_to(std::initializer_list<uint16_t> slots) {
+            auto targets = std::vector<managed*> {};
+            for (auto i : slots) targets.push_back(to.construct(i, 1));
+            auto* r = referrer;
+            test_custom::hooks.obj_trace =
+                [r, targets](managed* m, std::function<void(managed*)>& mark) {
+                    if (m != r) return;
+                    for (auto* t : targets) mark(t);
+                };
+        }
+        void trace(marker& m, bool copying) {
+            m.scan_globals(roots);
+            (void)m.trace_n(10000, copying);
+        }
+    };
+}
+
+TEST_F(MarkerTest, AnEdgeIntoASourcePageDirtiesTheReferrer) {
+    edge_fixture f;
+    f.edges_to({ 0 });
+    f.to->nominate();
+    ASSERT_TRUE(f.to->is_source());
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_TRUE(f.from->card_dirty(f.referrer));
+    EXPECT_TRUE(f.from->any_dirty());
+    EXPECT_FALSE(f.to->any_dirty()) << "the referent is what moves; nothing points into it from there";
+}
+
+// The card is per referrer, so several source-pointing edges out of one object still set one bit
+// and nothing else on the page is touched
+TEST_F(MarkerTest, DirtyingIsPerReferrerNotPerPointer) {
+    edge_fixture f;
+    f.edges_to({ 0, 1, 2 });
+    f.to->nominate();
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_TRUE(f.from->card_dirty(f.referrer));
+    EXPECT_FALSE(f.from->card_dirty(f.from.slot(1)));
+    EXPECT_FALSE(f.from->card_dirty(f.from.slot(2)));
+}
+
+TEST_F(MarkerTest, AnEdgeIntoATargetPageDirtiesNothing) {
+    edge_fixture f;
+    f.edges_to({ 0 });
+    ASSERT_FALSE(f.to->is_source());
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_FALSE(f.from->card_dirty(f.referrer));
+    EXPECT_FALSE(f.from->any_dirty());
+}
+
+// A pinned page is a target however it was nominated, and pinning can happen concurrently with
+// this very trace - so the role has to be read through is_source, not the raw bit
+TEST_F(MarkerTest, AnEdgeIntoAPinnedPageDirtiesNothing) {
+    edge_fixture f;
+    f.edges_to({ 0 });
+    f.to->nominate();
+    f.to.mark(3, true);
+    ASSERT_TRUE(f.to->has_pinned());
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_FALSE(f.from->card_dirty(f.referrer));
+}
+
+// The referent being black already is exactly the case the naive early-out gets wrong: push_obj
+// bails out, but the referrer still holds a pointer that is about to move
+TEST_F(MarkerTest, AnAlreadyMarkedReferentStillDirtiesTheReferrer) {
+    edge_fixture f;
+    f.edges_to({ 0 });
+    f.to->nominate();
+    f.to.mark(0);                       // marked before the trace ever sees it
+    ASSERT_EQ(f.to->compute_live(), 1u);
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_TRUE(f.from->card_dirty(f.referrer));
+}
+
+TEST_F(MarkerTest, AnUnmanagedReferentDirtiesNothing) {
+    edge_fixture f;
+    f.to->nominate();
+    auto* unmanaged = f.to.construct(0, 1, move_state::unmanaged);
+    auto* r = f.referrer;
+    test_custom::hooks.obj_trace =
+        [r, unmanaged](managed* m, std::function<void(managed*)>& mark) {
+            if (m == r) mark(unmanaged);
+        };
+
+    marker m;
+    f.trace(m, true);
+
+    EXPECT_FALSE(f.from->card_dirty(f.referrer));
+    EXPECT_EQ(f.to->compute_live(), 0u) << "an unmanaged object has no page metadata to touch";
+}
+
+TEST_F(MarkerTest, ANonCopyingCycleTouchesNoCards) {
+    edge_fixture f;
+    f.edges_to({ 0 });
+    f.to->nominate();
+
+    marker m;
+    f.trace(m, false);
+
+    EXPECT_FALSE(f.from->card_dirty(f.referrer));
+    EXPECT_FALSE(f.from->any_dirty());
+}
+
+// The barrier's half of it: a store the marker has already walked past is invisible to tracing,
+// so the flush is what dirties the container
+TEST_F(MarkerTest, FlushWbbufDirtiesTheContainerForASourceValue) {
+    test_page holder{64}, held{64};
+    auto container = holder.construct(0, 1);
+    auto value = held.construct(0, 1);
+    held->nominate();
+
+    marker m;
+    auto buf = m.get_buf();
+    ASSERT_FALSE(buf->push_pair(container, value));
+
+    m.flush_wbbuf(buf, true);
+
+    EXPECT_TRUE(holder->card_dirty(container));
+    EXPECT_EQ(held.pg()->compute_live(), 1u) << "and the value is still marked";
+    m.push_buf(buf);
+}
+
+TEST_F(MarkerTest, FlushWbbufLeavesCardsAloneForATargetValue) {
+    test_page holder{64}, held{64};
+    auto container = holder.construct(0, 1);
+    auto value = held.construct(0, 1);
+
+    marker m;
+    auto buf = m.get_buf();
+    ASSERT_FALSE(buf->push_pair(container, value));
+
+    m.flush_wbbuf(buf, true);
+
+    EXPECT_FALSE(holder->card_dirty(container));
+    EXPECT_FALSE(holder->any_dirty());
+    m.push_buf(buf);
 }
 
 TEST_F(MarkerTest, TraceNStopsCloseToByteBudget) {
@@ -315,7 +486,7 @@ TEST_F(MarkerTest, TraceNStopsCloseToByteBudget) {
     }
     m.scan_globals(roots);
 
-    size_t traced = m.trace_n(250);
+    size_t traced = m.trace_n(250, false);
     EXPECT_GE(traced, 250);
     EXPECT_LT(traced, 250 + 100 + 100) << "expected at most one obj_size of overshoot, got " << traced;
 }
@@ -337,7 +508,7 @@ TEST_F(MarkerTest, TraceNHandlesCyclesViaRecordMarkDedupe) {
     size_t r = reinterpret_cast<size_t>(a);
     std::vector<size_t*> roots = { &r };
     m.scan_globals(roots);
-    (void)m.trace_n(10000);
+    (void)m.trace_n(10000, false);
 
     EXPECT_EQ(a_visits, 1);
     EXPECT_EQ(b_visits, 1);
@@ -363,7 +534,7 @@ TEST_F(MarkerTest, TraceNAcrossBufferBoundary) {
     size_t r = reinterpret_cast<size_t>(chain.front());
     std::vector<size_t*> roots = { &r };
     m.scan_globals(roots);
-    (void)m.trace_n(10000);
+    (void)m.trace_n(10000, false);
 
     EXPECT_EQ(total_visited, N);
 }
@@ -391,7 +562,7 @@ TEST_F(MarkerTest, TraceNCanBeCalledRepeatedlyToDrainTheWorklist) {
 
     size_t total = 0;
     while (true) {
-        size_t got = m.trace_n(20);
+        size_t got = m.trace_n(20, false);
         if (got == 0) break;
         total += got;
     }
