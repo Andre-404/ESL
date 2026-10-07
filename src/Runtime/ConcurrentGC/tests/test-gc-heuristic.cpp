@@ -140,6 +140,42 @@ TEST(GcHeuristicsTest, TriggerFlooredAtInitialHeap) {
     EXPECT_GE(h.heap_trigger(), 20ull << 20) << "a tiny live set still gets the initial heap of room";
 }
 
+// ---------------------------------------------------------------- black allocation
+//
+// live_bytes is every mark the sweep found, which includes whatever the cycle allocated after the
+// marking flag went live: black, so marked, so counted live whether or not it is reachable. That
+// part is this cycle's garbage and the next sweep frees it, so granting headroom on top of it
+// charges the heap twice for one allocation - and lets anything that lengthens a cycle, a longer
+// pause above all, widen the heap on its own.
+
+TEST(GcHeuristicsTest, BlackAllocationGetsNoHeadroom) {
+    constexpr size_t live = 100 * MB, black = 60 * MB;
+    fake_clock clk;
+    gc_heuristics h { {}, clk.now() };
+    auto s = plain_cycle(1024, live + black, 1ms);   // a trickle, so full headroom
+    s.black_bytes = black;
+    settle(h, clk, s, 1s);
+
+    EXPECT_NEAR((double)h.heap_trigger(), live * 1.75 + black, live * 0.02)
+        << "headroom on the live set, black bytes at face value";
+    EXPECT_LT(h.heap_trigger(), (live + black) * 1.75)
+        << "which is strictly less than granting headroom on the occupancy";
+}
+
+TEST(GcHeuristicsTest, LiveSizeStaysTheOccupancy) {
+    constexpr size_t live = 40 * MB, black = 25 * MB;
+    fake_clock clk;
+    gc_heuristics h { {}, clk.now() };
+    auto s = plain_cycle(1024, live + black, 1ms);
+    s.black_bytes = black;
+    h.end_cycle(clk.advance(20ms), s);
+
+    EXPECT_EQ(h.live_size(), live + black)
+        << "mutators add their own allocation to this and compare against the trigger, so it has "
+           "to be what the heap holds, garbage and all";
+    EXPECT_GE(h.heap_trigger(), live + black) << "and the trigger has to cover it";
+}
+
 TEST(GcHeuristicsTest, TriggerCappedAtHalfMaxHeap) {
     fake_clock clk;
     gc_heuristics h { {}, clk.now() };

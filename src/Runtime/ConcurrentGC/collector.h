@@ -28,6 +28,7 @@ namespace gc::detail {
         tcb_registry _tcb_registry;
 
         std::atomic<size_t> _alloc_sz;
+        size_t _mark_alloc_start;
         post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
         collection_request _collection_req;
@@ -119,7 +120,9 @@ namespace gc::detail {
 
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
-            : _gc_flag(flag), _copier(config::copy_evac_threshold), _heuristic(tuning) {
+            : _gc_flag(flag), _mark_alloc_start(0),_copier(config::copy_evac_threshold),
+            _heuristic(tuning)
+        {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
         ~collector() {

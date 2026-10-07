@@ -16,6 +16,8 @@ namespace gc::detail {
         size_t live_bytes      = 0;
         size_t evac_gain_bytes = 0;   // whole pages compaction would hand back
         size_t evac_move_bytes = 0;   // live bytes compaction would have to move
+        // Tracked so we don't give more headroom than there are actual live objects
+        size_t black_bytes = 0;
     };
 
     struct gc_tuning {
@@ -58,12 +60,16 @@ namespace gc::detail {
                           + _cfg.copy_bias * double(s.evac_move_bytes) / std::max(_copy_rate, 1.0);
             return bought > cost;
         }
-        size_t next_trigger(size_t live) const {
+        // According to the generational hypothesis most of the recently allocated objects will die
+        // because of that we don't count black allocate objects into the headroom for the next trigger
+        // (since they are most likely already dead or will be by the start of the next cycle)
+        size_t next_trigger(size_t live, size_t occupancy, size_t black) const {
             double pressure = std::clamp(_alloc_rate / std::max(_mark_rate, 1.0), 0.0, 1.0);
             double headroom = std::lerp(_cfg.max_headroom, _cfg.min_headroom, pressure);
-            double floor    = double(std::max<size_t>(_cfg.initial_heap, live));
+            double floor    = double(std::max<size_t>(_cfg.initial_heap, occupancy));
             double basis    = std::max(double(live), _peak_live);
-            return size_t(std::clamp(basis * (1.0 + headroom), floor, _cfg.max_heap / 2.0));
+            return size_t(std::clamp(basis * (1.0 + headroom) + double(black),
+                                     floor, _cfg.max_heap / 2.0));
         }
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
@@ -82,14 +88,16 @@ namespace gc::detail {
             blend(_mark_rate,  sample(s.live_bytes,      s.mark_time, _mark_rate));
             blend(_copy_rate,  sample(s.evac_move_bytes, s.copy_time, _copy_rate));
 
+            auto live_set = s.live_bytes - std::min(s.black_bytes, s.live_bytes);
             _peak_live = std::max(
-                double(s.live_bytes),
+                double(live_set),
                 _peak_live * std::exp2(-std::max(0.0, secs(wall)) / _cfg.live_peak_halflife)
             );
 
             _should_copy.store(decide_copy(s), std::memory_order_relaxed);
             _live_size.store(s.live_bytes, std::memory_order_relaxed);
-            _trigger.store(next_trigger(s.live_bytes), std::memory_order_release);
+            _trigger.store(next_trigger(live_set, s.live_bytes, s.black_bytes),
+                           std::memory_order_release);
             ++_cycles;
         }
     };

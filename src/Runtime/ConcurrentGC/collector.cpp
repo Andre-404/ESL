@@ -122,6 +122,7 @@ void collector::concurrent_mark(uint8_t copying) {
     _thd_state_mngr.wait_on_all_ack();
     // After we have nominated pages (or recorded their age if this isn't copying), move to marking
     blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
+    _mark_alloc_start = _alloc_sz.load(std::memory_order_relaxed);
     for (auto t : blocked)
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
     _thd_state_mngr.complete_handshake(blocked);
@@ -164,6 +165,7 @@ uint64_t* collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
     _cycle.allocated_bytes = alloc_snapshot;
     _cycle.live_bytes      = _pruner.live_bytes();
+    _cycle.black_bytes     = alloc_snapshot > _mark_alloc_start ? alloc_snapshot - _mark_alloc_start : 0;
     auto evac = _pruner.estimate_evacuation();
     _cycle.evac_gain_bytes = evac.gain_bytes;
     _cycle.evac_move_bytes = evac.move_bytes;
