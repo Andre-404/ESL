@@ -3,6 +3,7 @@
 #include "managed.h"
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cassert>
 #include <limits>
 #include <span>
@@ -79,6 +80,7 @@ namespace gc::detail {
             f_pinned       = 1 << 2, // holds an object that must not move
             f_source       = 1 << 3, // nominated for evacuation; clear means the page is a target
             f_any_dirty    = 1 << 4, // at least one card bit is set, so the update pass must look
+            f_active       = 1 << 5, // This page is active
 
             cycle_flags = f_pinned | f_source | f_any_dirty,
         };
@@ -90,7 +92,9 @@ namespace gc::detail {
         std::atomic<int32_t> _next;
         const uint8_t _szclass;
         std::atomic<uint8_t> _flags;
-        std::atomic<bool> _active;
+        // Approximate cardinality of the remembered set for this page
+        // Remembered set comes from HotSpot G1, and it tracks how many pointers are pointing to this page
+        std::atomic<uint8_t> _r_set;
         // Dirty, but allows us to save on size since continuations don't use the bitmap
         union {
             dual_bitmap _bits;
@@ -101,9 +105,9 @@ namespace gc::detail {
             return f_first_in_run | (block_sz > config::page_sz ? f_has_cont : 0);
         }
 
-        bool test_flag(pg_flag f) const { return (_flags.load(std::memory_order_relaxed) & f) != 0; }
-        void set_flag(pg_flag f) { _flags.fetch_or(f, std::memory_order_relaxed); }
-        void clear_flag(pg_flag f) { _flags.fetch_and(uint8_t(~f), std::memory_order_relaxed); }
+        bool test_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) const { return (_flags.load(mo) & f) != 0; }
+        void set_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) { _flags.fetch_or(f, mo); }
+        void clear_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) { _flags.fetch_and(uint8_t(~f), mo); }
         void pin() { _flags.fetch_or(f_pinned, std::memory_order_relaxed); }
 
         std::pair<std::atomic_ref<size_t>, uint64_t> mark_at(size_t i) const {
@@ -139,16 +143,15 @@ namespace gc::detail {
 
         // For pages following the header
         explicit pg_meta(int32_t offset, size_t num_pages)  : _next(-offset), _szclass(0),
-            _flags(0), _active(true), _run_pages(num_pages) {}
+            _flags(f_active), _run_pages(num_pages) {}
 
     public:
         explicit pg_meta(size_t block_sz, uint64_t* alloc, uint64_t* mark) : _next(sll_null),
-            _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)),
-            _active(false), _bits(alloc, mark)
+            _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)), _bits(alloc, mark)
         {
             *history_slot() = pg_history {};
             // Init bits before publishing this page as active
-            _active.store(true, std::memory_order_release);
+            set_flag(f_active, std::memory_order_release);
             // Large obj pages are handed out with their alloc bit clear on purpose, the object
             // isn't constructed yet. arena publishes it once it is (see arena::publish_big)
         }
@@ -211,9 +214,9 @@ namespace gc::detail {
 
         void mark_inactive() {
             for (size_t i = 0; i < num_pages(); i++)
-                (this + i)->_active.store(false, std::memory_order_release);
+                (this+ i)->clear_flag(f_active, std::memory_order_release);
         }
-        bool is_active() const { return _active.load(std::memory_order_acquire); }
+        bool is_active() const { return test_flag(f_active, std::memory_order_acquire); }
 
         // Getters
         uint16_t block_cnt() const { return config::blocks_in_pg(_szclass); }
@@ -237,13 +240,13 @@ namespace gc::detail {
             return (f & f_source) && ((f & f_pinned) == 0);
         }
         bool any_dirty() const { return test_flag(f_any_dirty); }
+        void set_any_dirty() { set_flag(f_any_dirty); }
 
         bool nominate() {
             auto prev = _flags.fetch_or(f_source, std::memory_order_relaxed);
             return (prev & f_source) == 0 && (prev & f_pinned) == 0;
         }
         void demote() { clear_flag(f_source); }
-        void set_any_dirty() { set_flag(f_any_dirty); }
 
         [[gnu::hot]] void dirty_card(managed* ptr) {
             auto [word, in_word] = card_at(block_idx(ptr));
@@ -259,6 +262,17 @@ namespace gc::detail {
             clear_flag(cycle_flags);
             _bits.flip(new_mark);
         }
+
+        void rem_set_inc(size_t random) {
+            auto z = std::countr_zero(random);
+            if (z < 4) return;
+            // We're fine with double incrementing in some rare cases, it shouldn't matter
+            // since this is an approximation that costs at most 1 page of non compacted data
+            auto k = _r_set.load(std::memory_order_relaxed);
+            if (z >= 4 + (k >> 2))
+                _r_set.store(k+1, std::memory_order_relaxed);
+        }
+        const uint8_t get_rem_set() { return _r_set.load(std::memory_order_relaxed); }
 
         // Marking stuff
         [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {

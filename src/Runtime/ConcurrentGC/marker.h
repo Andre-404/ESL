@@ -19,6 +19,8 @@ namespace gc::detail {
 
             auto pg = pg_meta::head_from_ptr(obj);
             auto won = pg->record_mark(obj, force_pin || state != move_state::none);
+            // Always increment rem_set to get accurate cardinality for each gc cycle
+            pg->rem_set_inc(buf->counter());
             // Query source status after potentially pinning, we want to reduce the amount of cards dirtied
             auto in_source = pg->is_source();
             if (__builtin_unpredictable(!won || !obj_traceable(obj))) return { false, in_source };

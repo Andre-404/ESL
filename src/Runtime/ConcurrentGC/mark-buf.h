@@ -7,9 +7,10 @@
 namespace gc::detail {
     class mark_buf : public tnode<mark_buf> {
         size_t _cnt;
+        size_t _counter; // Used by the morris counters in pages
         std::array<managed*, 128> _data;
     public:
-        mark_buf() : _cnt(0), _data(){};
+        mark_buf() : _cnt(0), _counter(1), _data(){};
 
         bool push(managed* obj) {
             _data[_cnt++] = obj;
@@ -34,6 +35,7 @@ namespace gc::detail {
         bool empty() const {
             return _cnt == 0;
         }
+        size_t counter() { return _counter++; }
     };
 
     class mark_buf_manager {

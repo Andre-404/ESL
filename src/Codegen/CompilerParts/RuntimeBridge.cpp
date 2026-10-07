@@ -28,9 +28,9 @@ constexpr size_t tcb_mark_info_off = align_to(tcb_state_off + sizeof(thd_state_t
 constexpr size_t tcb_wbbuf_off = tcb_mark_info_off;
 
 // gc::detail::mark_buf derives from tnode<mark_buf> which puts the intrusive pointer first
-// and then declares _cnt and _data.
+// and then declares _cnt, _counter and _data.
 constexpr size_t markbuf_cnt_off = align_to(sizeof(gc::detail::tnode<gc::detail::mark_buf>), alignof(size_t));
-constexpr size_t markbuf_data_off = markbuf_cnt_off + sizeof(size_t);
+constexpr size_t markbuf_data_off = markbuf_cnt_off + sizeof(size_t) * 2;
 constexpr size_t markbuf_capacity = (sizeof(gc::detail::mark_buf) - markbuf_data_off) / sizeof(gc::managed*);
 
 static_assert(
@@ -44,7 +44,7 @@ static_assert(
     "cpu than the natural alignment of the single byte it actually reads"
 );
 static_assert(
-    markbuf_data_off == 16 && markbuf_capacity > 0 && markbuf_capacity % 2 == 0,
+    markbuf_data_off == 24 && markbuf_capacity > 0 && markbuf_capacity % 2 == 0,
     "mark_buf layout moved; gc_write_barrier follows automatically. The capacity has to stay "
     "even: the barrier writes (container, value) pairs and only checks for a full buffer once"
 );
