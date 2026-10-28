@@ -27,8 +27,6 @@ namespace gc::detail {
         double min_headroom = 0.2625;
         // Half-life of the live-set peak the trigger is sized against
         double live_peak_halflife = 5.0;
-        double copy_bias    = 3.0;     // >1 biases against compacting
-        std::chrono::nanoseconds copy_fixed_cost = std::chrono::milliseconds(1);
         double rate_alpha        = 0.3;
         double initial_mark_rate = 200e6;   // replaced by the first real measurement
         double initial_copy_rate = 500e6;
@@ -44,7 +42,6 @@ namespace gc::detail {
         // The only members a mutator may touch.
         std::atomic<size_t> _trigger;
         std::atomic<size_t> _live_size;
-        std::atomic<bool>   _should_copy;
 
         static double secs(std::chrono::nanoseconds d) { return std::chrono::duration<double>(d).count(); }
 
@@ -53,13 +50,6 @@ namespace gc::detail {
         }
         void blend(double& est, double s) const { est = (1.0 - _cfg.rate_alpha) * est + _cfg.rate_alpha * s; }
 
-        bool decide_copy(const cycle_stats& s) const {
-            if (s.evac_gain_bytes == 0) return false;
-            double bought = double(s.evac_gain_bytes) / std::max(_alloc_rate, 1.0);
-            double cost   = secs(_cfg.copy_fixed_cost)
-                          + _cfg.copy_bias * double(s.evac_move_bytes) / std::max(_copy_rate, 1.0);
-            return bought > cost;
-        }
         // According to the generational hypothesis most of the recently allocated objects will die
         // because of that we don't count black allocate objects into the headroom for the next trigger
         // (since they are most likely already dead or will be by the start of the next cycle)
@@ -74,12 +64,15 @@ namespace gc::detail {
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
             : _cfg(cfg), _alloc_rate(0), _mark_rate(cfg.initial_mark_rate), _copy_rate(cfg.initial_copy_rate),
-              _peak_live(0), _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0), _should_copy(false) {}
+              _peak_live(0), _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0) {}
 
         size_t heap_trigger() const { return _trigger.load(std::memory_order_relaxed); }
         size_t live_size()    const { return _live_size.load(std::memory_order_relaxed); }
-        bool   should_copy()  const { return _should_copy.load(std::memory_order_relaxed); }
         size_t cycles()       const { return _cycles; }
+        // Bytes a second the stw copy moved, which is the whole cost of relocation now that the
+        // read barrier repairs pointers outside the pause. Read against evac_move_bytes to size
+        // how much of the estimated fragmentation one pause can afford to collapse
+        double copy_rate()    const { return _copy_rate; }
 
         void end_cycle(gc_clock::time_point now, const cycle_stats& s) {
             auto wall = now - _cycle_start;
@@ -94,7 +87,6 @@ namespace gc::detail {
                 _peak_live * std::exp2(-std::max(0.0, secs(wall)) / _cfg.live_peak_halflife)
             );
 
-            _should_copy.store(decide_copy(s), std::memory_order_relaxed);
             _live_size.store(s.live_bytes, std::memory_order_relaxed);
             _trigger.store(next_trigger(live_set, s.live_bytes, s.black_bytes),
                            std::memory_order_release);

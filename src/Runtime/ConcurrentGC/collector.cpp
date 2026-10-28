@@ -14,9 +14,7 @@ using namespace detail;
 
 enum gc_operation : uint8_t {
     op_mark_stack = 1,
-    op_nominate_pages = 2,
-    op_record_page_age = 4,
-    op_stw = 8,
+    op_stw = 2,
 };
 
 std::vector<tcb *> collector::post_with_state(uint8_t flags, uint8_t op)  {
@@ -110,18 +108,7 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
 }
 
 void collector::concurrent_mark(uint8_t copying) {
-    // Post op with flags 0 so that write barriers dont become active, we want to nominate each page first
-    // (if this is a copying collection)
-    auto nominate = copying != 0;
-    auto op = nominate ? op_nominate_pages : op_record_page_age;
-    auto blocked = post_with_state(0, op);
-    for (auto t : blocked)
-        update_thread_pages(t, nominate);
-    _pg_manager.mutate_owned(update_pgs_fn(nominate));
-    _thd_state_mngr.complete_handshake(blocked);
-    _thd_state_mngr.wait_on_all_ack();
-    // After we have nominated pages (or recorded their age if this isn't copying), move to marking
-    blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
+    auto blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
     _mark_alloc_start = _alloc_sz.load(std::memory_order_relaxed);
     for (auto t : blocked)
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
@@ -180,9 +167,9 @@ void collector::concurrent_loop() {
         if (_collection_req.await_request()) break;
         _cycle = {};
         // Decided before marking, because the cards are dirtied during it and a cycle that has
-        // already started cannot be upgraded
-        auto copying = _heuristic.should_copy() || _collection_req.is_express()
-                     ? gc_flag_copying : uint8_t(0);
+        // already started cannot be upgraded. Nothing nominates pages any more, so only an
+        // express request asks for a copy phase - and with no sources it finds nothing to move
+        auto copying = _collection_req.is_express() ? gc_flag_copying : uint8_t(0);
         _cycle.mark_time = gc_clock::now().time_since_epoch();
         concurrent_mark(copying);
 
@@ -216,9 +203,6 @@ void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
          _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
-        _thd_state_mngr.ack();
-    } else if (op == op_nominate_pages || op == op_record_page_age) {
-        update_thread_pages(t, op == op_nominate_pages);
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();

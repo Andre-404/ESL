@@ -7,7 +7,6 @@
 #include "copier.h"
 #include "marker.h"
 #include "pruner.h"
-#include "nomination.h"
 #include "TCB-registry.h"
 #include "sync-point.h"
 #include "transition-manager.h"
@@ -74,12 +73,6 @@ namespace gc::detail {
                 return _pruner.prune(start, _pg_manager.bits(), [&](pg_meta* pg) { b.add(pg); });
             };
         }
-        auto update_pgs_fn(bool nominate) const {
-            return [this, nominate](pg_meta* start) {
-                update_page_age(start, _pruner.survival(), nominate);
-                return start;
-            };
-        }
         // Every stw phase runs its mutator over the pages this thread owns, and the collector
         // additionally over the ones handed back to the manager by dead threads
         template<typename F>
@@ -87,10 +80,6 @@ namespace gc::detail {
             for (auto t : owned) t->get_arena().mutate_owned(fn);
             if (role == stw_role::collector) _pg_manager.mutate_owned(fn);
         }
-        void update_thread_pages(tcb* t, bool nominate) {
-            t->get_arena().observe_owned(update_pgs_fn(nominate));
-        }
-
         auto get_obj_base() {
             return [&](uint8_t* ptr) {
                 if (auto pg = _pg_manager.pg_from_ptr(ptr))
@@ -146,7 +135,5 @@ namespace gc::detail {
         bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
 
         const gc_metrics& metrics() const { return _metrics; }
-
-        const survival_model& survival() const { return _pruner.survival(); }
     };
 }

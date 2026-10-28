@@ -640,200 +640,30 @@ TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
     EXPECT_GT(gc->metrics().cycles(), 10u);
 }
 
-// Whether a cycle compacts is a heuristic call, so an ordinary churn test may never take the
-// copying path at all. Two things force it here: the copy cost model is zeroed, so any
-// reclaimable fragmentation is worth compacting, and the workload deliberately produces that
-// fragmentation by scattering a few long lived objects across pages of garbage. Uniform
-// garbage is not enough - pages that die outright are freed by the pruner and never register
-// as fragmented in the first place.
-namespace {
-    class CollectorCopyingTest : public CollectorCycleTest {
-    protected:
-        void SetUp() override {
-            test_custom::hooks.reset();
-            gc_flag = new uint8_t(0);
-            gc = new collector(*gc_flag, gc_tuning {
-                .initial_heap = kInitialHeap,
-                .copy_bias = 0.0,
-                .copy_fixed_cost = std::chrono::nanoseconds { 0 },
-            });
-            std::this_thread::sleep_for(20ms);
-            ensure_rpmalloc_thread_ready();
-        }
-
-        // Seeds survivors spread thinly over many pages, then churns garbage to drive cycles.
-        // Three dead objects per survivor leaves every seeded page a quarter live, which is
-        // the fragmentation compaction exists to collapse.
-        void scatter_survivors(std::vector<size_t>& roots, size_t want_cycles = 6) {
-            auto* t = make_tcb();
-            auto thd = std::thread { [&, t] {
-                gc->thd_prologue(t);
-                seed_roots(roots, 3, t);
-                for (int i = 0; i < 400'000 && gc->metrics().cycles() < want_cycles; ++i) {
-                    ASSERT_NE(fresh(64, t), nullptr);
-                    poll(t);
-                }
-                gc->delete_tcb(t);
-            } };
-            thd.join();
-        }
-    };
-}
-
-// The copy decision is published in the byte generated code already loads for the write
-// barrier, so what matters is that the bit is live exactly while marking is: the barrier reads
-// it to know whether to dirty, and everything that compares the byte to a gc_state masks it off
 namespace {
     struct flag_watch {
         std::atomic<bool> saw_copying { false };
-        std::atomic<bool> saw_stateless_bit { false };
 
         // Sampled from obj_trace, which the collector calls on the marking thread
         void install(uint8_t* flag) {
             test_custom::hooks.obj_trace = [this, flag](managed*, std::function<void(managed*)>&) {
-                auto f = std::atomic_ref { *flag }.load(std::memory_order_acquire);
-                if ((f & 0b100) == 0) return;
-                saw_copying.store(true, std::memory_order_relaxed);
-                if ((f & 0b011) == 0) saw_stateless_bit.store(true, std::memory_order_relaxed);
+                if (std::atomic_ref { *flag }.load(std::memory_order_acquire) & 0b100)
+                    saw_copying.store(true, std::memory_order_relaxed);
             };
         }
     };
 }
 
-TEST_F(CollectorCopyingTest, TheCopyingBitIsPublishedWhileMarking) {
-    flag_watch watch;
-    watch.install(gc_flag);
-
-    constexpr int kRoots = 800;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    scatter_survivors(roots);
-    ASSERT_GT(gc->metrics().copy_pause_ms(), 0.0) << "no compaction ran, so there is nothing to see";
-
-    EXPECT_TRUE(watch.saw_copying.load()) << "a copying cycle has to say so while it marks";
-    EXPECT_FALSE(watch.saw_stateless_bit.load())
-        << "the bit rides a state: a byte holding only the copying bit would leave the barrier "
-           "on and hide gc_state::stw from create_tcb";
-}
-
-namespace {
-    // Same as CollectorCycleTest, with a copy cost no gain can pay for
-    class CollectorNonCopyingTest : public CollectorCycleTest {
-    protected:
-        void SetUp() override {
-            test_custom::hooks.reset();
-            gc_flag = new uint8_t(0);
-            gc = new collector(*gc_flag, gc_tuning {
-                .initial_heap = kInitialHeap,
-                .copy_fixed_cost = std::chrono::hours(1),
-            });
-            std::this_thread::sleep_for(20ms);
-            ensure_rpmalloc_thread_ready();
-        }
-    };
-}
-
-TEST_F(CollectorNonCopyingTest, ACycleThatWillNotCopyNeverSetsTheBit) {
+// Nothing nominates pages any more, so no cycle can reach the copy path. The end to end
+// compaction tests went with it; copier.cpp keeps its coverage in test-copier.cpp, which
+// nominates pages directly rather than going through a cycle.
+TEST_F(CollectorCycleTest, ACycleThatWillNotCopyNeverSetsTheBit) {
     flag_watch watch;
     watch.install(gc_flag);
 
     churn_until_cycles(4);
 
     ASSERT_GT(gc->metrics().cycles(), 3u);
-    ASSERT_EQ(gc->metrics().copy_pause_ms(), 0.0) << "this tuning is supposed to refuse to copy";
+    ASSERT_EQ(gc->metrics().copy_pause_ms(), 0.0);
     EXPECT_FALSE(watch.saw_copying.load());
-}
-
-TEST_F(CollectorCopyingTest, CompactingCyclesRunAndReclaim) {
-    constexpr int kRoots = 800;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    scatter_survivors(roots);
-
-    EXPECT_GT(gc->metrics().cycles(), 5u);
-    EXPECT_GT(gc->metrics().copy_pause_ms(), 0.0)
-        << "sparse surviving pages with the copy cost zeroed must have driven a compaction";
-}
-
-// The rates are pure observation until role nomination reads them, so what needs checking end to
-// end is the feedback path: real cycles over a real workload have to reach the model and leave it
-// holding rates that could be multiplied by a live count.
-// copy_pause_ms only says the phase ran; stw_copy is timed whether or not split_pages found
-// anything to evacuate. What proves compaction is alive is a survivor changing address
-TEST_F(CollectorCopyingTest, ACompactingCycleMovesSurvivors) {
-    constexpr int kRoots = 800;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    std::vector<size_t> before;
-    auto* t = make_tcb();
-    auto thd = std::thread { [&, t] {
-        gc->thd_prologue(t);
-        seed_roots(roots, 3, t);
-        before = roots;
-        for (int i = 0; i < 400'000 && gc->metrics().cycles() < 6; ++i) {
-            ASSERT_NE(fresh(64, t), nullptr);
-            poll(t);
-        }
-        gc->delete_tcb(t);
-    } };
-    thd.join();
-
-    ASSERT_GT(gc->metrics().cycles(), 5u);
-    auto moved = 0;
-    for (int i = 0; i < kRoots; ++i) if (roots[i] != before[i]) ++moved;
-    EXPECT_GT(moved, 0) << "no survivor changed address, so nothing was evacuated";
-}
-
-TEST_F(CollectorCopyingTest, SweepFeedsTheSurvivalRates) {
-    constexpr int kRoots = 800;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    scatter_survivors(roots);
-    ASSERT_GT(gc->metrics().cycles(), 5u);
-
-    auto& survival = gc->survival();
-    auto moved = false;
-    for (uint8_t age = 0; age < config::pg_age_cnt; age++) {
-        auto rate = survival.survival(age);
-        EXPECT_TRUE(std::isfinite(rate)) << "age " << int(age);
-        EXPECT_GE(rate, 0.0) << "age " << int(age);
-        EXPECT_LE(rate, 1.0) << "age " << int(age) << ": a rate above one predicts a page filling "
-                                "itself back up between cycles";
-        moved = moved || std::abs(rate - config::survival_seed) > 1e-9;
-    }
-
-    // Which age classes get sampled depends on how the workload happens to lay out, but a
-    // churning heap has to produce pages that lost objects without being refilled, so some rate
-    // must have moved. All of them still sitting exactly on the seed means no sample ever
-    // reached the model.
-    EXPECT_TRUE(moved) << "the sweep fed the survival model nothing at all";
-}
-
-TEST_F(CollectorCopyingTest, RootsSurviveCompactingCycles) {
-    constexpr int kRoots = 800;
-    // Never resized: the collector holds pointers into this storage for its whole life.
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    scatter_survivors(roots);
-
-    ASSERT_GT(gc->metrics().cycles(), 0u);
-    ASSERT_GT(gc->metrics().copy_pause_ms(), 0.0) << "this test is only meaningful if a copy ran";
-
-    // Roots are rewritten by update_globals when their object moves, so each one must still
-    // land on a slot its page agrees is allocated - and must not be left pointing at the
-    // forwarding stub the copier wrote over the original.
-    for (int i = 0; i < kRoots; ++i) {
-        auto* obj = to_accurate_ptr(roots[i]);
-        ASSERT_NE(obj, nullptr) << "root " << i << " was cleared";
-        EXPECT_EQ(obj->state(), move_state::none)
-            << "root " << i << " still points at a forwarding stub rather than where it moved to";
-        auto* pg = pg_meta::head_from_ptr(obj);
-        EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
-            << "root " << i << " no longer points at an allocated slot";
-    }
 }

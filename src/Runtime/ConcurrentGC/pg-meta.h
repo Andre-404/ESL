@@ -52,24 +52,6 @@ namespace gc::detail {
         }
     };
 
-    class pg_history {
-        uint16_t _word;
-    public:
-        static constexpr uint16_t live_max = (1u << config::pg_live_bits) - 1;
-        static constexpr uint8_t  age_max  = uint8_t(config::pg_age_cnt - 1);
-
-        pg_history() : _word(0) {}
-        pg_history(uint16_t occ, uint8_t age)
-            : _word(uint16_t(std::min(occ, live_max) | (std::min(age, age_max) << config::pg_live_bits)))
-            {}
-
-        uint16_t occ() const { return _word & live_max; }
-        uint8_t age() const { return uint8_t(_word >> config::pg_live_bits); }
-        // Zero count can only mean no cycle has recorded this page yet
-        bool known() const { return occ() != 0; }
-    };
-    static_assert(sizeof(pg_history) == config::history_entry_sz);
-
     class pg_meta {
     public:
         enum pg_flag : uint8_t {
@@ -92,9 +74,6 @@ namespace gc::detail {
         std::atomic<int32_t> _next;
         const uint8_t _szclass;
         std::atomic<uint8_t> _flags;
-        // Approximate cardinality of the remembered set for this page
-        // Remembered set comes from HotSpot G1, and it tracks how many pointers are pointing to this page
-        std::atomic<uint8_t> _r_set;
         // Dirty, but allows us to save on size since continuations don't use the bitmap
         union {
             dual_bitmap _bits;
@@ -131,12 +110,6 @@ namespace gc::detail {
         // Headers sit above the heap's 2^heap_bits boundary
         pg_meta* hdr_base() const { return (pg_meta*)((size_t)this & region_mask); }
 
-        pg_history* history_slot() const {
-            auto base = (size_t)hdr_base() + config::hdr_region_sz
-                      + config::bits_region_sz + config::card_region_sz;
-            return (pg_history*)base + (this - hdr_base());
-        }
-
         // Not correct for large objects but it doesn't matter
         // for the purposes of from_interior, record_mark and pg_slots_iter::is_marked
         size_t block_sz_fast() const { return config::sz_classes[_szclass]; }
@@ -149,7 +122,6 @@ namespace gc::detail {
         explicit pg_meta(size_t block_sz, uint64_t* alloc, uint64_t* mark) : _next(sll_null),
             _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)), _bits(alloc, mark)
         {
-            *history_slot() = pg_history {};
             // Init bits before publishing this page as active
             set_flag(f_active, std::memory_order_release);
             // Large obj pages are handed out with their alloc bit clear on purpose, the object
@@ -263,17 +235,6 @@ namespace gc::detail {
             _bits.flip(new_mark);
         }
 
-        void rem_set_inc(size_t random) {
-            auto z = std::countr_zero(random);
-            if (z < 4) return;
-            // We're fine with double incrementing in some rare cases, it shouldn't matter
-            // since this is an approximation that costs at most 1 page of non compacted data
-            auto k = _r_set.load(std::memory_order_relaxed);
-            if (z >= 4 + (k >> 2))
-                _r_set.store(k+1, std::memory_order_relaxed);
-        }
-        const uint8_t get_rem_set() { return _r_set.load(std::memory_order_relaxed); }
-
         // Marking stuff
         [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
             // Pin regardless of the fact that the mark bit is set or not
@@ -301,8 +262,6 @@ namespace gc::detail {
             return n;
         }
 
-        pg_history history() const { return *history_slot(); }
-        void set_history(pg_history h) { *history_slot() = h; }
         uint64_t load_alloc_word(uint16_t bit) const  { return _bits.load_alloc(bit); }
         void     store_alloc_word(uint16_t bit, uint64_t w) const { _bits.store_alloc(bit, w); }
 
