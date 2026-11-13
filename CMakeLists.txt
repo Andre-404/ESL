@@ -33,7 +33,7 @@ esl_use_mold()
 esl_apply_sanitizer()
 
 set(LLVM_ENABLE_ASSERTIONS OFF)
-find_package(LLVM 23.0.0 REQUIRED CONFIG)
+find_package(LLVM 23.1.6 REQUIRED CONFIG)
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")

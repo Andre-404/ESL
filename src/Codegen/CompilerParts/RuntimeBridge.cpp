@@ -523,7 +523,7 @@ void runtime_bridge::build_ir_helpers() {
             auto subclassIdxStart = F->getArg(1);
             auto subclassIdxEnd = F->getArg(2);
 
-            auto cond1 = call(
+            llvm::Value* cond1 = call(
                 "is_rt_type", { instVal, _b.getInt8(+object::rt_type::INSTANCE) }
             );
 

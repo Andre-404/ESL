@@ -154,7 +154,7 @@ void RuntimeTypecheck::createInstNoField(const string& err, const string& field,
 void RuntimeTypecheck::createInstClassCheck(
     const string& err, llvm::Value* inst, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd
 ) const {
-    auto cond = _bridge.call("is_inst_of_class", {inst, subClassIdxStart, subClassIdxEnd});
+    llvm::Value* cond = _bridge.call("is_inst_of_class", {inst, subClassIdxStart, subClassIdxEnd});
     cond = _b.CreateIntrinsic(_b.getInt1Ty(), llvm::Intrinsic::expect, {cond, _b.getInt1(true)});
     create_if(_b, _b.CreateNot(cond),
        [&]() {
