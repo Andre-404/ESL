@@ -116,14 +116,12 @@ namespace gc::detail {
 
         // For pages following the header
         explicit pg_meta(int32_t offset, size_t num_pages)  : _next(-offset), _szclass(0),
-            _flags(f_active), _run_pages(num_pages) {}
+            _flags(0), _run_pages(num_pages) {}
 
     public:
         explicit pg_meta(size_t block_sz, uint64_t* alloc, uint64_t* mark) : _next(sll_null),
             _szclass(config::sz_to_class(block_sz)), _flags(hdr_flags(block_sz)), _bits(alloc, mark)
         {
-            // Init bits before publishing this page as active
-            set_flag(f_active, std::memory_order_release);
             // Large obj pages are handed out with their alloc bit clear on purpose, the object
             // isn't constructed yet. arena publishes it once it is (see arena::publish_big)
         }
@@ -184,6 +182,10 @@ namespace gc::detail {
             }
         };
 
+        void mark_active() {
+            for (size_t i = 0; i < num_pages(); i++)
+                (this+ i)->set_flag(f_active, std::memory_order_release);
+        }
         void mark_inactive() {
             for (size_t i = 0; i < num_pages(); i++)
                 (this+ i)->clear_flag(f_active, std::memory_order_release);
@@ -197,7 +199,7 @@ namespace gc::detail {
         }
         uint8_t szclass() const { return _szclass; }
         size_t num_pages() const {
-            if (!test_flag(f_has_cont)) return 1;
+            if (!test_flag(f_has_cont)) return gc::config::small_obj_pgs;
             // f_has_cont is set only for runs of > 1 page, so this deref is safe
             return (this + 1)->_run_pages;
         }
