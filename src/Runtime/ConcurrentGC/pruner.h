@@ -20,14 +20,13 @@ namespace gc::detail {
         std::atomic<uint64_t*> _bitmap_watermark;
         std::array<szclass_stats, config::szclass_cnt> _szclass_stats;
 
-        void record_page(pg_meta* pg, size_t live) {
-            // TODO: is this inefficient?
-            if (pg->szclass() != config::large_class) {
-                auto& stats = _szclass_stats[pg->szclass()];
-                stats.frag_sum.fetch_add(1.0 - live / (double)pg->block_cnt(), std::memory_order_relaxed);
-                stats.pg_cnt.fetch_add(1, std::memory_order_relaxed);
+        void record_list(uint8_t szclass, double frag, size_t pgs, size_t live_bytes) {
+            if (szclass != config::large_class) {
+                auto& stats = _szclass_stats[szclass];
+                stats.frag_sum.fetch_add(frag, std::memory_order_relaxed);
+                stats.pg_cnt.fetch_add(pgs, std::memory_order_relaxed);
             }
-            _live_bytes.fetch_add(live * pg->block_sz(), std::memory_order_relaxed);
+            _live_bytes.fetch_add(live_bytes, std::memory_order_relaxed);
         }
 
         void record_watermark(uint64_t* end) {
@@ -55,7 +54,8 @@ namespace gc::detail {
             // TODO: might be better to sort them by address?
             auto head = (pg_meta*)nullptr;
             auto tail = (pg_meta*)nullptr;
-            uint64_t* watermark = nullptr;
+            double frag = 0;
+            size_t pgs = 0, live_bytes = 0;
             for (auto next = list; next;) {
                 auto pg = next;
                 next = next->next();
@@ -67,15 +67,22 @@ namespace gc::detail {
                     retire(pg);
                     continue;
                 }
-                record_page(pg, live_blks);
-                // TODO: fail loudly when span is empty
-                auto bitmap = bits.mark_bits(pg->block_cnt(), false);
-                watermark = std::max(watermark, bitmap.data() + bitmap.size());
-                pg->next_cycle(bitmap.data());
+                frag += 1.0 - live_blks / (double)pg->block_cnt();
+                ++pgs;
+                live_bytes += live_blks * pg->block_sz();
                 if (tail) tail->link(pg); else head = pg;
                 tail = pg;
             }
-            if (watermark) record_watermark(watermark);
+            if (!head) return nullptr;
+            record_list(head->szclass(), frag, pgs, live_bytes);
+
+            auto words = (head->block_cnt() + 63) / 64;
+            // TODO: fail loudly when span is empty
+            auto bitmap = bits.mark_bits(pgs * words * 64, false);
+            auto slot = bitmap.data();
+            for (auto pg = head; pg; pg = pg->next(), slot += words)
+                pg->next_cycle(slot);
+            record_watermark(bitmap.data() + bitmap.size());
             return head;
         }
 
