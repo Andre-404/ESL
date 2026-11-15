@@ -34,8 +34,8 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
         case rt_type::ARRAY:{
             auto arr = reinterpret_cast<rt_arr*>(this);
             string str = "[";
-            for (auto val : arr->get_data())
-                str.append(" " + valueHelpers::toString(val, stack)).append(",");
+            for (auto& slot : arr->get_data())
+                str.append(" " + valueHelpers::toString(gc::read_ref(slot), stack)).append(",");
             str.erase(str.size() - 1).append(" ]");
             return str;
         }
@@ -91,10 +91,11 @@ rt_arr_store::rt_arr_store(uint32_t cap, std::span<Value> init)
     auto s = get_data();
     bool found = false;
     for (size_t i = 0; i < init.size(); i++) {
-        s[i] = init[i];
-        if (isObj(init[i])) {
+        auto val = gc::read_ref(init[i]);
+        s[i] = val;
+        if (isObj(val)) {
             found = true;
-            gc::write_b(this, decodeObj(init[i]));
+            gc::write_b(this, decodeObj(val));
         }
     }
     memset(&s[init.size()], 0, (cap - init.size())*sizeof(Value));
@@ -116,86 +117,100 @@ rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY, false) {
 }
 
 void rt_arr::gc_init() {
-    _storage = rt_arr_store::alloc(_size, {});
-    gc::write_b(this, _storage);
+    auto store = rt_arr_store::alloc(_size, {});
+    gc::store_ref(_storage, store);
+    gc::write_b(this, store);
 }
 
-static void barrier_range(rt_arr_store* store, std::span<Value> data, uint32_t from, uint32_t to) {
-    for (uint32_t i = from; i < to; i++) {
-        if (isObj(data[i])) gc::write_b(store, decodeObj(data[i]));
+static void shift_slots(rt_arr_store* store, uint32_t to, uint32_t from, uint32_t cnt) {
+    auto data = store->get_data();
+    if (!store->has_obj()) {
+        memmove(&data[to], &data[from], cnt * sizeof(Value));
+        return;
     }
+    auto move = [&](uint32_t i) {
+        auto val = gc::read_ref(data[from + i]);
+        gc::store_ref(data[to + i], val);
+        if (isObj(val)) gc::write_b(store, decodeObj(val));
+    };
+    if (to < from) for (uint32_t i = 0; i < cnt; i++) move(i);
+    else for (uint32_t i = cnt; i-- > 0;) move(i);
+}
+static void zero_slots(rt_arr_store* store, uint32_t from, uint32_t cnt) {
+    auto data = store->get_data();
+    if (!store->has_obj()) {
+        memset(&data[from], 0, cnt * sizeof(Value));
+        return;
+    }
+    for (uint32_t i = from; i < from + cnt; i++) gc::store_ref(data[i], 0);
 }
 
-void rt_arr::reserve(uint32_t min_cap) {
-    if (min_cap <= _storage->get_data().size()) return;
-    auto _new = rt_arr_store::alloc(min_cap, get_data());
-    _storage = _new;
-    gc::write_b(this, _storage);
+rt_arr_store* rt_arr::reserve(uint32_t min_cap) {
+    auto store = get_store();
+    if (min_cap <= store->get_data().size()) return store;
+    auto _new = rt_arr_store::alloc(min_cap, store->get_data().first(_size));
+    gc::store_ref(_storage, _new);
+    gc::write_b(this, _new);
+    return _new;
 }
 
 void rt_arr::push(Value item){
-    reserve(_size + 1);
-    _storage->get_data()[_size++] = item;
+    auto store = reserve(_size + 1);
+    gc::store_ref(store->get_data()[_size++], item);
     if (isObj(item)) {
-        _storage->set_has_obj();
-        gc::write_b(_storage, decodeObj(item));
+        store->set_has_obj();
+        gc::write_b(store, decodeObj(item));
     }
 }
 
 Value rt_arr::pop(){
     if (_size == 0) return encodeNil();
-    auto data = _storage->get_data();
-    Value item = data[--_size];
+    auto data = get_store()->get_data();
+    Value item = gc::read_ref(data[--_size]);
     // The whole storage is traced, not just the live part, so dead slots must be cleared
-    data[_size] = 0;
+    gc::store_ref(data[_size], 0);
     return item;
 }
 
 void rt_arr::resize(uint32_t new_size, Value fill){
     if (new_size == _size) return;
     if (new_size < _size) {
-        auto data = _storage->get_data();
-        memset(&data[new_size], 0, (_size - new_size) * sizeof(Value));
+        zero_slots(get_store(), new_size, _size - new_size);
         _size = new_size;
         return;
     }
-    reserve(new_size);
-    auto data = _storage->get_data();
-    for (uint32_t i = _size; i < new_size; i++) data[i] = fill;
+    auto store = reserve(new_size);
+    auto data = store->get_data();
+    for (uint32_t i = _size; i < new_size; i++) gc::store_ref(data[i], fill);
     if (isObj(fill)) {
-        _storage->set_has_obj();
-        gc::write_b(_storage, decodeObj(fill));
+        store->set_has_obj();
+        gc::write_b(store, decodeObj(fill));
     }
     _size = new_size;
 }
 
 void rt_arr::insert(uint32_t index, Value item){
     if (index >= _size) { push(item); return; }
-    reserve(_size + 1);
-    auto data = _storage->get_data();
-    memmove(&data[index + 1], &data[index], (_size - index) * sizeof(Value));
-    // Barrier after the shift, since every element moved is treated as being inserted again
-    if (_storage->has_obj()) barrier_range(_storage, data, index + 1, _size + 1);
-    data[index] = item;
+    auto store = reserve(_size + 1);
+    shift_slots(store, index + 1, index, _size - index);
+    gc::store_ref(store->get_data()[index], item);
     _size++;
     if (isObj(item)) {
-        _storage->set_has_obj();
-        gc::write_b(_storage, decodeObj(item));
+        store->set_has_obj();
+        gc::write_b(store, decodeObj(item));
     }
 }
 
 void rt_arr::erase(uint32_t index){
     if (index >= _size) return;
-    auto data = _storage->get_data();
-    memmove(&data[index], &data[index + 1], (_size - index - 1) * sizeof(Value));
-    // This effectivly inserts all of the elements above index so we need a barrier after insertion
-    if (_storage->has_obj()) barrier_range(_storage, data, index, _size - 1);
-    data[--_size] = 0;
+    auto store = get_store();
+    shift_slots(store, index, index + 1, _size - index - 1);
+    gc::store_ref(store->get_data()[--_size], 0);
 }
 
 void rt_arr::clear(){
-    auto data = _storage->get_data();
-    memset(data.data(), 0, data.size() * sizeof(Value));
+    auto store = get_store();
+    zero_slots(store, 0, store->get_data().size());
     _size = 0;
 }
 #pragma endregion
@@ -219,9 +234,9 @@ static uint32_t cap_for(uint32_t entries) {
     return std::bit_ceil(std::max<uint64_t>(min, group_sz));
 }
 static uint64_t hash_key(rt_string* key) { return rt_string::hash{}(key); }
-static void barrier_item(rt_arr_store* store, Value* slots, uint32_t i) {
-    gc::write_b(store, decodeObj(slots[2 * i])); // key
-    if (auto val = slots[2 * i + 1]; isObj(val)) gc::write_b(store, decodeObj(val));
+static void barrier_item(rt_arr_store* store, Value key, Value val) {
+    gc::write_b(store, decodeObj(key));
+    if (isObj(val)) gc::write_b(store, decodeObj(val));
 }
 
 // Groups are probed triangularly (0, 1, 3, 6, ...) which visits every group of a power of 2 sized table
@@ -236,10 +251,11 @@ static uint32_t find_insert_slot(const byte* ctrl, uint32_t cap, uint64_t hash) 
 
 static void fill_slot(byte* ctrl, rt_arr_store* store, uint32_t i, uint64_t hash, rt_string* key, Value val) {
     auto slots = store->get_data().data();
+    auto k = encodeObj(key);
     ctrl[i] = h2(hash);
-    slots[2 * i] = encodeObj(key);
-    slots[2 * i + 1] = val;
-    barrier_item(store, slots, i);
+    gc::store_ref(slots[2 * i], k);
+    gc::store_ref(slots[2 * i + 1], val);
+    barrier_item(store, k, val);
 }
 
 rt_hashmap::rt_hashmap(uint32_t expected)
@@ -247,18 +263,17 @@ rt_hashmap::rt_hashmap(uint32_t expected)
       _ctrl(nullptr), _slots(nullptr) {}
 
 void rt_hashmap::gc_init() {
-    _ctrl = rt_buffer::alloc(_capacity, ctrl_empty);
-    gc::write_b(this, _ctrl);
+    auto ctrl_buf = rt_buffer::alloc(_capacity, ctrl_empty);
+    gc::store_ref(_ctrl, ctrl_buf);
+    gc::write_b(this, ctrl_buf);
     auto slots = rt_arr_store::alloc(_capacity * 2, {});
     slots->set_has_obj();
-    _slots = slots;
-    gc::write_b(this, _slots);
+    gc::store_ref(_slots, slots);
+    gc::write_b(this, slots);
     _growth_left = usable(_capacity);
 }
 
-int64_t rt_hashmap::find_slot(rt_string* key, uint64_t hash) {
-    auto c = ctrl();
-    auto s = slots();
+int64_t rt_hashmap::find_slot(const byte* c, Value* s, rt_string* key, uint64_t hash) {
     auto mask = group_mask(_capacity);
     auto tag = h2(hash);
     uint32_t g = h1(hash) & mask;
@@ -266,7 +281,7 @@ int64_t rt_hashmap::find_slot(rt_string* key, uint64_t hash) {
         auto group = load_group(c, g);
         for (auto m = match_h2(group, tag); m; m &= m - 1) {
             auto i = g * group_sz + first_slot(m);
-            auto k = asString(s[2 * i]);
+            auto k = asString(gc::read_ref(s[2 * i]));
             if (k == key || k->compare(key)) return i;
         }
         // An empty slot ends every probe sequence that could have placed key here
@@ -275,37 +290,44 @@ int64_t rt_hashmap::find_slot(rt_string* key, uint64_t hash) {
 }
 
 Value* rt_hashmap::find(rt_string* key) {
-    auto i = find_slot(key, hash_key(key));
-    return i < 0 ? nullptr : &slots()[2 * i + 1];
+    auto s = slots();
+    auto i = find_slot(ctrl(), s, key, hash_key(key));
+    return i < 0 ? nullptr : &s[2 * i + 1];
 }
 
 void rt_hashmap::insert_or_assign(rt_string* key, Value val) {
     auto hash = hash_key(key);
-    if (auto i = find_slot(key, hash); i >= 0) {
-        slots()[2 * i + 1] = val;
-        if (isObj(val)) gc::write_b(_slots, decodeObj(val));
+    auto c = ctrl();
+    auto store = get_slots();
+    auto s = store->get_data().data();
+    if (auto i = find_slot(c, s, key, hash); i >= 0) {
+        gc::store_ref(s[2 * i + 1], val);
+        if (isObj(val)) gc::write_b(store, decodeObj(val));
         return;
     }
-    auto i = find_insert_slot(ctrl(), _capacity, hash);
+    auto i = find_insert_slot(c, _capacity, hash);
     // Tombstone reuse doesn't affect load factor, only rehash when using new empty slot that goes over the limit
     // If we need to rehash but most of the slots are tombstones don't increase capacity
-    if (_growth_left == 0 && ctrl()[i] == ctrl_empty) {
+    if (_growth_left == 0 && c[i] == ctrl_empty) {
         rehash(_count >= usable(_capacity) / 2 ? _capacity * 2 : _capacity);
-        i = find_insert_slot(ctrl(), _capacity, hash);
+        // A rehash to a different capacity replaces both
+        c = ctrl();
+        store = get_slots();
+        i = find_insert_slot(c, _capacity, hash);
     }
-    if (ctrl()[i] == ctrl_empty) _growth_left--;
-    fill_slot(ctrl(), _slots, i, hash, key, val);
+    if (c[i] == ctrl_empty) _growth_left--;
+    fill_slot(c, store, i, hash, key, val);
     _count++;
 }
 
 bool rt_hashmap::erase(rt_string* key) {
-    auto i = find_slot(key, hash_key(key));
-    if (i < 0) return false;
     auto c = ctrl();
     auto s = slots();
+    auto i = find_slot(c, s, key, hash_key(key));
+    if (i < 0) return false;
     // The whole store is traced so dead slots must be cleared
-    s[2 * i] = 0;
-    s[2 * i + 1] = 0;
+    gc::store_ref(s[2 * i], 0);
+    gc::store_ref(s[2 * i + 1], 0);
     // If group was empty before this erase then setting the control to empty won't break any probe sequence
     // since such a sequence would have had to terminate in this group
     if (match_empty(load_group(c, i / group_sz))) {
@@ -318,7 +340,7 @@ bool rt_hashmap::erase(rt_string* key) {
 
 void rt_hashmap::clear() {
     memset(ctrl(), ctrl_empty, _capacity);
-    memset(slots(), 0, _capacity * 2 * sizeof(Value));
+    zero_slots(get_slots(), 0, _capacity * 2);
     _count = 0;
     _growth_left = usable(_capacity);
 }
@@ -337,8 +359,8 @@ void rt_hashmap::rehash(uint32_t new_cap) {
         auto hash = hash_key(k);
         fill_slot(nc, new_slots, find_insert_slot(nc, new_cap, hash), hash, k, val);
     });
-    _ctrl = new_ctrl;
-    _slots = new_slots;
+    gc::store_ref(_ctrl, new_ctrl);
+    gc::store_ref(_slots, new_slots);
     _capacity = new_cap;
     gc::write_b(this, new_ctrl);
     gc::write_b(this, new_slots);
@@ -346,33 +368,44 @@ void rt_hashmap::rehash(uint32_t new_cap) {
 }
 
 void rt_hashmap::in_place_rehash() {
+    auto c = ctrl();
+    auto store = get_slots();
+    auto s = store->get_data().data();
+
     for (uint32_t g = 0; g < _capacity / group_sz; g++)
-        set_group(ctrl(), g, reset_group(load_group(ctrl(), g)));
+        set_group(c, g, reset_group(load_group(c, g)));
 
     for (uint32_t i = 0; i < _capacity; i++) {
-        if (ctrl()[i] != ctrl_deleted) continue;
+        if (c[i] != ctrl_deleted) continue;
 
-        auto hash = hash_key(asString(slots()[2 * i]));
-        auto new_i = find_insert_slot(ctrl(), _capacity, hash);
+        auto key = gc::read_ref(s[2 * i]);
+        auto hash = hash_key(asString(key));
+        auto new_i = find_insert_slot(c, _capacity, hash);
 
         if (new_i / group_sz == i / group_sz) {
-            ctrl()[i] = h2(hash);
+            c[i] = h2(hash);
             continue;
         }
 
-        auto is_empty = ctrl()[new_i] == ctrl_empty;
-        std::swap(slots()[2 * i], slots()[2 * new_i]);
-        std::swap(slots()[2 * i + 1], slots()[2 * new_i + 1]);
+        auto is_empty = c[new_i] == ctrl_empty;
+        // Swap the item at i with whatever is at new_i
+        auto val = gc::read_ref(s[2 * i + 1]);
+        auto other_key = gc::read_ref(s[2 * new_i]);
+        auto other_val = gc::read_ref(s[2 * new_i + 1]);
+        gc::store_ref(s[2 * new_i], key);
+        gc::store_ref(s[2 * new_i + 1], val);
+        gc::store_ref(s[2 * i], other_key);
+        gc::store_ref(s[2 * i + 1], other_val);
 
-        barrier_item(_slots, slots(), new_i);
+        barrier_item(store, key, val);
 
-        ctrl()[new_i] = h2(hash);
+        c[new_i] = h2(hash);
         // An empty item already has zeroed slot memory
-        if (is_empty) 
-            ctrl()[i] = ctrl_empty;
+        if (is_empty)
+            c[i] = ctrl_empty;
         else {
             // Since the swap is considered as inserting both items again we have to berrier on both paths
-            barrier_item(_slots, slots(), i);
+            barrier_item(store, other_key, other_val);
             i--;
         }
     }

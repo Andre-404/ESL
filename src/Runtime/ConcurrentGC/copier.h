@@ -5,6 +5,7 @@
 
 #include "managed.h"
 #include "pg-meta.h"
+#include "ref-slot.h"
 
 namespace gc::detail {
     class pg_meta;
@@ -28,13 +29,13 @@ namespace gc::detail {
         // Save the bottom 16 bits so that we can read the move correctly
         src->set_state(move_state::moved);
         auto& w = *(size_t*)src;
-        w = (w & 0x000000000000ffffull) | ((size_t)dest << 16);
+        store_raw(w, (load_raw(w) & 0x000000000000ffffull) | ((size_t)dest << 16));
     }
 
     inline managed* get_moved(managed* obj) {
         if (obj->state() != move_state::moved)
             return obj;
-        auto w = *(size_t*)obj;
+        auto w = load_raw(*(size_t*)obj);
         w = w >> 16;
         return (managed*)w;
     }

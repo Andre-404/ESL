@@ -5,6 +5,7 @@
 #include "copier.h"
 #include "pg-meta.h"
 #include "customization.h"
+#include "ref-slot.h"
 
 using namespace gc::detail;
 
@@ -75,11 +76,12 @@ void copier::update_ptrs(pg_meta *pg) const  {
 }
 
 void copier::update_globals(std::span<size_t*> roots) {
+    // Stw, so nothing else touches the roots and relaxed in load_raw is enough
     for (auto root : roots) {
-        auto ptr = to_accurate_ptr(*root);
+        auto ptr = to_accurate_ptr(load_raw(*root));
         if (!ptr) continue;
         ptr = get_moved(ptr);
-        *root = ptr_to_word(ptr);
+        store_raw(*root, ptr_to_word(ptr));
     }
 }
 

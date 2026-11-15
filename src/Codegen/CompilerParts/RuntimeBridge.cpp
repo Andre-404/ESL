@@ -57,6 +57,15 @@ static_assert(
 );
 
 // ---------------------------------------------------------------------------------------------
+// Ordering of every load and store of a reference slot in jitted code (the gc_read_* and
+// gc_store_* helpers)
+// Other threads store to the slot and the collector reads and rewrites it, and a plain load that
+// races returns undef: the optimizer may load the slot twice and hand out two different values
+// (one gets type checked, the other dereferenced) or load it in pieces. 
+// ---------------------------------------------------------------------------------------------
+constexpr auto ref_slot_ordering = llvm::AtomicOrdering::Unordered;
+
+// ---------------------------------------------------------------------------------------------
 // Attribute bundles
 // Runtime functions have no body in this module, so their attributes are the only thing the
 // optimizer knows about them
@@ -479,6 +488,44 @@ void runtime_bridge::build_ir_helpers() {
         helper->addFnAttr(llvm::Attribute::AlwaysInline);
         helper->setMemoryEffects(llvm::MemoryEffects::none());
     }
+
+    // Accesses to reference slots (see Runtime/ConcurrentGC/ref-slot.h). Every load and store
+    // jitted code does of memory that can hold a reference to a managed object is a call to one
+    // of these
+    //   gc_read_val(slot)          slot holds a Value: instance field, array element, captured
+    //   gc_store_val(slot, value)  variable, global
+    //   gc_read_ptr(slot)          slot holds a raw pointer to a managed object: an array's
+    //   gc_store_ptr(slot, value)  storage
+    auto define_access = [&](const char* name, llvm::Type* slotTy, bool is_store) {
+        std::vector<llvm::Type*> params { ptr };
+        if (is_store) params.push_back(slotTy);
+        auto fnTy = llvm::FunctionType::get(is_store ? voidTy : slotTy, params, false);
+        auto* access = define_fn(name, fnTy, priv, [&](llvm::Function* F) {
+            auto slot = F->getArg(0);
+            if (is_store) {
+                auto stored = _b.CreateAlignedStore(F->getArg(1), slot, ref_slot_align);
+                stored->setAtomic(ref_slot_ordering);
+                _b.CreateRetVoid();
+                return;
+            }
+            auto loaded = _b.CreateAlignedLoad(slotTy, slot, ref_slot_align, "ref");
+            loaded->setAtomic(ref_slot_ordering);
+            _b.CreateRet(loaded);
+        });
+        add_attrs(access, total_fn);
+        access->addFnAttr(llvm::Attribute::AlwaysInline);
+        access->setMemoryEffects(llvm::MemoryEffects::argMemOnly(
+            is_store ? llvm::ModRefInfo::Mod : llvm::ModRefInfo::Ref
+        ));
+        // Only the slot: storing the value is what captures it
+        access->addParamAttr(0, llvm::Attribute::NonNull);
+        access->addParamAttr(0, no_capture(c));
+        access->addParamAttr(0, is_store ? llvm::Attribute::WriteOnly : llvm::Attribute::ReadOnly);
+    };
+    define_access("gc_read_val", val, false);
+    define_access("gc_read_ptr", ptr, false);
+    define_access("gc_store_val", val, true);
+    define_access("gc_store_ptr", ptr, true);
 
     // Memory effects stay unknown on purpose: a safepoint is where the collector gets to move
     // objects and rewrite the heap slots pointing at them, so no heap load survives across one

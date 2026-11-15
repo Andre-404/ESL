@@ -21,25 +21,37 @@ enum class bridge_ty : uint8_t {
 };
 constexpr size_t operator+ (bridge_ty const t) { return static_cast<size_t>(t); }
 
+// What a field holds as far as the collector is concerned. Anything but plain is a reference slot
+// (see Runtime/ConcurrentGC/ref-slot.h), which jitted code only ever accesses through the
+// gc_read_* and gc_store_* helpers runtime_bridge builds
+enum class slot_kind : uint8_t {
+    plain,  // Never a reference to a managed object
+    val,    // An ESL Value, which can be a NaN-boxed reference
+    ptr,    // A raw pointer to a managed object
+};
+
 // Carries its own alignment because LLVM rejects atomic accesses that don't have one
 class field_ref {
-    llvm::IRBuilder<>* _b = nullptr;
+    runtime_bridge* _br = nullptr;
     llvm::Type* _ty = nullptr;
     llvm::Value* _ptr = nullptr;
     llvm::Align _align;
     const char* _name = "";
+    slot_kind _kind = slot_kind::plain;
 public:
     field_ref() = default;
-    field_ref(llvm::IRBuilder<>& b, llvm::Type* ty, llvm::Value* ptr, llvm::Align align, const char* name)
-        : _b(&b), _ty(ty), _ptr(ptr), _align(align), _name(name) {}
+    field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm::Align align, const char* name,
+              slot_kind kind = slot_kind::plain);
 
     llvm::Type* type() const { return _ty; }
     llvm::Value* ptr() const { return _ptr; }
     llvm::Align align() const { return _align; }
+    slot_kind kind() const { return _kind; }
     explicit operator bool() const { return _ptr != nullptr; }
 
-    llvm::LoadInst* load() const;
-    llvm::StoreInst* store(llvm::Value* val) const;
+    // A reference slot goes through its gc_read_*/gc_store_* helper, anything else is a plain access
+    llvm::Value* load() const;
+    llvm::Instruction* store(llvm::Value* val) const;
     llvm::LoadInst* load(llvm::AtomicOrdering ordering) const;
     llvm::StoreInst* store(llvm::Value* val, llvm::AtomicOrdering ordering) const;
 
@@ -64,10 +76,11 @@ protected:
     rt_ref(runtime_bridge& br, llvm::Value* raw) : _br(&br), _ptr(raw) {}
 
     // Field `idx` of layout `ty`. Type and alignment come from the DataLayout, never from a literal
-    field_ref at(bridge_ty ty, unsigned idx, const char* name) const;
+    field_ref at(bridge_ty ty, unsigned idx, const char* name, slot_kind kind = slot_kind::plain) const;
     // Element `idx` of the flexible array member that starts right behind layout `ty`
     // Very common in ESL object layouts (instances, arr storage headers, strings, in the future hashmaps)
-    field_ref trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, const char* name) const;
+    field_ref trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, const char* name,
+                       slot_kind kind = slot_kind::plain) const;
 public:
     rt_ref() = default;
 

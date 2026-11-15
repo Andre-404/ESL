@@ -1,4 +1,5 @@
 #include "marker.h"
+#include "ref-slot.h"
 
 
 using namespace gc::detail;
@@ -24,8 +25,11 @@ void marker::scan_globals(std::span<size_t*> roots)  {
     auto mark = [&](managed* obj) {
         if (push_obj(buf, obj).buf_full) [[unlikely]] buf = replace_buf(buf);
     };
+    // Runs alongside the mutators, which keep storing to their globals, and push_obj reads the
+    // object behind the root, hence acquire (see load_raw)
     for (auto root : roots) {
-        if (auto ptr = (managed*)to_accurate_ptr(*root)) mark(ptr);
+        auto word = load_raw(*root, std::memory_order_acquire);
+        if (auto ptr = (managed*)to_accurate_ptr(word)) mark(ptr);
     }
 
     push_buf(buf);

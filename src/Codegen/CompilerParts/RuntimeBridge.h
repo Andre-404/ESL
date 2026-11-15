@@ -19,6 +19,9 @@ public:
     llvm::LLVMContext& ctx() const { return _b.getContext(); }
     const llvm::DataLayout& DL() const { return _DL; }
 
+    // Needed for atomic access to pointers in objects/globals
+    static constexpr llvm::Align ref_slot_align = llvm::Align::Constant<8>();
+
     // An ESL Value: an opaque pointer in addrspace 1
     static llvm::Type* eslValType(llvm::LLVMContext& ctx);
     llvm::Type* eslValType() const { return eslValType(_b.getContext()); }

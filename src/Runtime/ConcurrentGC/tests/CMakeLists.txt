@@ -75,6 +75,7 @@ add_executable(run_tests
         test-gc-bits.cpp
         test-gc-heuristic.cpp
         test-collector.cpp
+        test-ref-slot.cpp
 )
 target_link_libraries(run_tests
         PRIVATE

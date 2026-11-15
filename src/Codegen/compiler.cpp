@@ -818,21 +818,21 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
 
     auto instPtr = builder.CreateCall(safeGetFunc("decode_obj"), inst, "inst.container");
     if(expr->operationType == CFG::SetType::SET){
-        builder.CreateStore(val, fieldPtr);
+        _bridge.call("gc_store_val", { fieldPtr, val });
         if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
             builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
         return val;
     }
     if(expr->operationType == CFG::SetType::ADD_SET){
         // Special case because of strings
-        auto storedVal = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
+        auto storedVal = _bridge.call("gc_read_val", { fieldPtr });
         val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
-        builder.CreateStore(val, fieldPtr);
+        _bridge.call("gc_store_val", { fieldPtr, val });
         if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
             builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
         return val;
     }
-    auto storedField = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
+    auto storedField = _bridge.call("gc_read_val", { fieldPtr });
     if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER))) {
         string err = fmt::format("Operator '{}' expects numbers, field '{}' is '{}', rhs is '{}'.",
                                  expr->dbgInfo.op.getLexeme(), expr->field, "{}", "{}");
@@ -843,7 +843,7 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
     }
 
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
-    builder.CreateStore(val, fieldPtr);
+    _bridge.call("gc_store_val", { fieldPtr, val });
     if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
         builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
     return val;
@@ -1143,7 +1143,7 @@ llvm::Value * Compiler::codegenInstIncrement(const CFG::UnaryOp op, const std::s
     }else{
         fieldPtr = _inst_builder.getUnoptInstFieldPtr({ inst, expr->field });
     }
-    llvm::Value* storedField = builder.CreateLoad(_tyhelp.getESLValType(), fieldPtr);
+    llvm::Value* storedField = _bridge.call("gc_read_val", { fieldPtr });
     // Set debug to operator after getting field for more correct error messages
     debugEmitter.emitNewLocation(builder, dbg);
     string err = fmt::format("Operator '{}' expects a number, field '{}' is '{}'.", dbg.getLexeme(), expr->field, "{}");
@@ -1154,7 +1154,7 @@ llvm::Value * Compiler::codegenInstIncrement(const CFG::UnaryOp op, const std::s
     else res = builder.CreateFSub(res, llvm::ConstantFP::get(builder.getDoubleTy(), 1.));
 
     res = _tyhelp.CastToESLVal(res);
-    builder.CreateStore(res, fieldPtr);
+    _bridge.call("gc_store_val", { fieldPtr, res });
     return storedField;
 }
 
@@ -1439,7 +1439,10 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr){
         case CFG::VarType::FREEVAR: {
             return builder.CreateLoad(_tyhelp.getESLValType(), variables.at(varPtr->uuid), "load.local");
         }
+        // A root: the collector reads and rewrites it and other threads store to it
         case CFG::VarType::GLOBAL:
+            return _bridge.call("gc_read_val", { variables.at(varPtr->uuid) }, "load.gvar");
+        // Never stored to and never registered as a root, it only holds its constant closure
         case CFG::VarType::GLOBAL_FUNC:{
             return builder.CreateLoad(_tyhelp.getESLValType(), variables.at(varPtr->uuid), "load.gvar");
         }
@@ -1449,7 +1452,10 @@ llvm::Value* Compiler::codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr){
 }
 
 llvm::Value* Compiler::codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore){
-    builder.CreateStore(toStore, variables.at(varPtr->uuid));
+    if(varPtr->varType == CFG::VarType::GLOBAL)
+        _bridge.call("gc_store_val", { variables.at(varPtr->uuid), toStore });
+    else
+        builder.CreateStore(toStore, variables.at(varPtr->uuid));
     return toStore;
 }
 

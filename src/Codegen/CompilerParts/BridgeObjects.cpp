@@ -6,19 +6,38 @@
 // field_ref
 // ---------------------------------------------------------------------------------------------
 
-llvm::LoadInst* field_ref::load() const {
-    return _b->CreateAlignedLoad(_ty, _ptr, _align, _name);
+field_ref::field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm::Align align,
+                     const char* name, slot_kind kind)
+    : _br(&br), _ty(ty), _ptr(ptr), _align(align), _name(name), _kind(kind) {
+    assert((kind == slot_kind::plain || align >= runtime_bridge::ref_slot_align)
+           && "a reference slot is pointer aligned");
 }
-llvm::StoreInst* field_ref::store(llvm::Value* val) const {
-    return _b->CreateAlignedStore(val, _ptr, _align);
+
+llvm::Value* field_ref::load() const {
+    switch (_kind) {
+        case slot_kind::plain: return _br->b().CreateAlignedLoad(_ty, _ptr, _align, _name);
+        case slot_kind::val:   return _br->call("gc_read_val", { _ptr }, _name);
+        case slot_kind::ptr:   return _br->call("gc_read_ptr", { _ptr }, _name);
+    }
+    __builtin_unreachable();
+}
+llvm::Instruction* field_ref::store(llvm::Value* val) const {
+    switch (_kind) {
+        case slot_kind::plain: return _br->b().CreateAlignedStore(val, _ptr, _align);
+        case slot_kind::val:   return _br->call("gc_store_val", { _ptr, val });
+        case slot_kind::ptr:   return _br->call("gc_store_ptr", { _ptr, val });
+    }
+    __builtin_unreachable();
 }
 llvm::LoadInst* field_ref::load(llvm::AtomicOrdering ordering) const {
-    auto ld = _b->CreateAlignedLoad(_ty, _ptr, _align, _name);
+    assert(_kind == slot_kind::plain && "the ordering of a reference slot access is its helper's call");
+    auto ld = _br->b().CreateAlignedLoad(_ty, _ptr, _align, _name);
     ld->setAtomic(ordering);
     return ld;
 }
 llvm::StoreInst* field_ref::store(llvm::Value* val, llvm::AtomicOrdering ordering) const {
-    auto st = _b->CreateAlignedStore(val, _ptr, _align);
+    assert(_kind == slot_kind::plain && "the ordering of a reference slot access is its helper's call");
+    auto st = _br->b().CreateAlignedStore(val, _ptr, _align);
     st->setAtomic(ordering);
     return st;
 }
@@ -29,20 +48,21 @@ llvm::StoreInst* field_ref::store(llvm::Value* val, llvm::AtomicOrdering orderin
 
 llvm::IRBuilder<>& rt_ref::b() const { return _br->b(); }
 
-field_ref rt_ref::at(bridge_ty ty, unsigned idx, const char* name) const {
+field_ref rt_ref::at(bridge_ty ty, unsigned idx, const char* name, slot_kind kind) const {
     auto st = _br->sty(ty);
     auto fieldTy = st->getElementType(idx);
     auto ptr = b().CreateStructGEP(st, _ptr, idx, name);
-    return { b(), fieldTy, ptr, _br->field_align(ty, idx), name };
+    return { *_br, fieldTy, ptr, _br->field_align(ty, idx), name, kind };
 }
 
-field_ref rt_ref::trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, const char* name) const {
+field_ref rt_ref::trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, const char* name,
+                           slot_kind kind) const {
     // The flexible array member starts at the end of the struct proper. Getting there with a byte
     // offset rather than `GEP <ty>, p, 1` keeps it correct even if the struct grows tail padding.
     auto base = b().CreateConstInBoundsGEP1_64(b().getInt8Ty(), _ptr, _br->trailing_off(ty));
     auto ptr = b().CreateInBoundsGEP(elem, base, idx, name);
     auto align = _br->DL().getABITypeAlign(elem);
-    return { b(), elem, ptr, align, name };
+    return { *_br, elem, ptr, align, name, kind };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -88,7 +108,7 @@ llvm::Constant* RtString::const_build(runtime_bridge& br, const std::string& str
 // ---------------------------------------------------------------------------------------------
 
 field_ref RtArr::size() const { return at(layout, 1, "arr.size"); }
-field_ref RtArr::storage_ref() const { return at(layout, 2, "arr.storage"); }
+field_ref RtArr::storage_ref() const { return at(layout, 2, "arr.storage", slot_kind::ptr); }
 
 RtArrStore RtArr::storage() const {
     return RtArrStore::from_raw(br(), storage_ref().load());
@@ -103,7 +123,7 @@ llvm::Value* RtArrStore::data_ptr() const {
     );
 }
 field_ref RtArrStore::data(llvm::Value* idx) const {
-    return trailing(layout, br().eslValType(), idx, "arr.elem");
+    return trailing(layout, br().eslValType(), idx, "arr.elem", slot_kind::val);
 }
 field_ref RtArrStore::data(unsigned idx) const {
     return data(b().getInt32(idx));
@@ -125,7 +145,7 @@ field_ref RtClosure::func() const { return at(layout, 3, "closure.fn"); }
 field_ref RtClosure::name() const { return at(layout, 4, "closure.name"); }
 
 field_ref RtClosure::env(llvm::Value* idx) const {
-    return trailing(layout, br().eslValType(), idx, "closure.capvar");
+    return trailing(layout, br().eslValType(), idx, "closure.capvar", slot_kind::val);
 }
 field_ref RtClosure::env(unsigned idx) const { return env(b().getInt32(idx)); }
 
@@ -160,7 +180,7 @@ CompClass RtInst::klass() const {
 }
 
 field_ref RtInst::fields(llvm::Value* idx) const {
-    return trailing(layout, br().eslValType(), idx, "inst.field");
+    return trailing(layout, br().eslValType(), idx, "inst.field", slot_kind::val);
 }
 field_ref RtInst::fields(unsigned idx) const { return fields(b().getInt32(idx)); }
 

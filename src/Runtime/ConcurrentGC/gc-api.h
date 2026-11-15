@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "TCB.h"
+#include "ref-slot.h"
 
 namespace gc {
     void init_gc(uint8_t& flag);

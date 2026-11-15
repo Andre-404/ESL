@@ -2,6 +2,50 @@
 #include "objects.h"
 #include "../Values/valueHelpersInline.h"
 
+namespace {
+    // Tracing runs alongside the mutators: every slot is loaded exactly once, with acquire because
+    // the marker goes on to read the object behind it (see load_raw)
+    template<typename T>
+    void trace_ptr(T*& slot, trace_fn cb) {
+        if (auto ptr = gc::load_raw(slot, std::memory_order_acquire)) cb(ptr);
+    }
+    void trace_vals(std::span<Value> slots, trace_fn cb) {
+        for (auto& slot : slots) {
+            auto val = gc::load_raw(slot, std::memory_order_acquire);
+            if (isObj(val)) cb(decodeObj(val));
+        }
+    }
+    // Updating is done during STW, no need to worry about syncronization, will soon be done with a read barrier
+    template<typename T>
+    void update_ptr(T*& slot) {
+        if (auto ptr = gc::load_raw(slot)) gc::store_raw(slot, (T*)gc::to_moved_ptr(ptr));
+    }
+    void update_vals(std::span<Value> slots) {
+        for (auto& slot : slots) {
+            auto val = gc::load_raw(slot);
+            if (isObj(val)) gc::store_raw(slot, encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(val))));
+        }
+    }
+}
+
+namespace object {
+    void rt_arr::gc_trace(trace_fn cb) { trace_ptr(_storage, cb); }
+    void rt_arr::gc_update_ptrs() { update_ptr(_storage); }
+
+    void rt_arr_store::gc_trace(trace_fn cb) { if (has_obj()) trace_vals(get_data(), cb); }
+    void rt_arr_store::gc_update_ptrs() { if (has_obj()) update_vals(get_data()); }
+
+    void rt_closure::gc_trace(trace_fn cb) { trace_vals(get_env(), cb); }
+    void rt_closure::gc_update_ptrs() { update_vals(get_env()); }
+
+    void rt_inst::gc_trace(trace_fn cb) { trace_vals(get_fields(), cb); }
+    void rt_inst::gc_update_ptrs() { update_vals(get_fields()); }
+
+    // Keys hash by content so no rehash is needed, the slot store updates its own values
+    void rt_hashmap::gc_trace(trace_fn cb) { trace_ptr(_ctrl, cb); trace_ptr(_slots, cb); }
+    void rt_hashmap::gc_update_ptrs() { update_ptr(_ctrl); update_ptr(_slots); }
+}
+
 namespace gc {
     bool obj_traceable(managed* m) {
         auto type = m->get_type_id();
@@ -33,52 +77,19 @@ namespace gc {
             case rt_type::MUTEX:
             case rt_type::CHANNEL:
             case rt_type::WAIT_GROUP:
+            case rt_type::SOCKET:
                 assert(false && "obj_copy called on pinned obj?");
                 break;
         }
     }
-    // Done during STW, no need to worry about syncronization
     void obj_update_ptrs(managed* m) {
         auto obj = reinterpret_cast<object::rt_obj*>(m);
         switch (obj->type()) {
-            case rt_type::ARRAY: {
-                auto arr = (rt_arr *)obj;
-                if (auto store = arr->get_store())
-                    arr->set_store((rt_arr_store*)gc::to_moved_ptr(store));
-                break;
-            }
-            case rt_type::ARRAY_STORAGE_HEADER: {
-                auto arr = (rt_arr_store *)obj;
-                if(!arr->has_obj()) break;
-                auto s = arr->get_data();
-                for (auto& v : arr->get_data()) {
-                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
-                }
-                break;
-            }
-            case rt_type::CLOSURE: {
-                auto cl = (rt_closure *)obj;
-                for (auto& v : cl->get_env()) {
-                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
-                }
-                break;
-            }
-            case rt_type::INSTANCE: {
-                auto inst = (rt_inst *)obj;
-                for (auto& v : inst->get_fields()) {
-                    if (isObj(v)) v = encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(v)));
-                }
-                break;
-            }
-            // Keys hash by content so no rehash is needed, the slot store updates its own values
-            case rt_type::HASH_MAP: {
-                auto map = (rt_hashmap *)obj;
-                if (auto ctrl = map->get_ctrl())
-                    map->set_ctrl((rt_buffer*)gc::to_moved_ptr(ctrl));
-                if (auto slots = map->get_slots())
-                    map->set_slots((rt_arr_store*)gc::to_moved_ptr(slots));
-                break;
-            }
+            case rt_type::ARRAY: ((rt_arr *)obj)->gc_update_ptrs(); break;
+            case rt_type::ARRAY_STORAGE_HEADER: ((rt_arr_store *)obj)->gc_update_ptrs(); break;
+            case rt_type::CLOSURE: ((rt_closure *)obj)->gc_update_ptrs(); break;
+            case rt_type::INSTANCE: ((rt_inst *)obj)->gc_update_ptrs(); break;
+            case rt_type::HASH_MAP: ((rt_hashmap *)obj)->gc_update_ptrs(); break;
             default: break; // Not traceable
         }
     }
@@ -98,39 +109,11 @@ namespace gc {
     void obj_trace(managed* m, function_ref<void(managed*)> cb) {
         auto obj = reinterpret_cast<object::rt_obj*>(m);
         switch (obj->type()) {
-            case rt_type::ARRAY: {
-                auto arr = (rt_arr *)obj;
-                if (arr->get_store()) cb(arr->get_store());
-                break;
-            }
-            case rt_type::ARRAY_STORAGE_HEADER: {
-                auto store = (rt_arr_store *)obj;
-                if(!store->has_obj()) break;
-                for (auto val : store->get_data()) {
-                    if (isObj(val)) cb(decodeObj(val));
-                }
-                break;
-            }
-            case rt_type::CLOSURE: {
-                auto cl = (rt_closure *)obj;
-                for (auto val : cl->get_env()) {
-                    if (isObj(val)) cb(decodeObj(val));
-                }
-                break;
-            }
-            case rt_type::INSTANCE: {
-                auto inst = (rt_inst *)obj;
-                for (auto val : inst->get_fields()) {
-                    if (isObj(val)) cb(decodeObj(val));
-                }
-                break;
-            }
-            case rt_type::HASH_MAP: {
-                auto map = (rt_hashmap *)obj;
-                if (map->get_ctrl()) cb(map->get_ctrl());
-                if (map->get_slots()) cb(map->get_slots());
-                break;
-            }
+            case rt_type::ARRAY: ((rt_arr *)obj)->gc_trace(cb); break;
+            case rt_type::ARRAY_STORAGE_HEADER: ((rt_arr_store *)obj)->gc_trace(cb); break;
+            case rt_type::CLOSURE: ((rt_closure *)obj)->gc_trace(cb); break;
+            case rt_type::INSTANCE: ((rt_inst *)obj)->gc_trace(cb); break;
+            case rt_type::HASH_MAP: ((rt_hashmap *)obj)->gc_trace(cb); break;
             default: assert(false && "nontraceable objects should never get to here");
         }
     }

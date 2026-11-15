@@ -111,8 +111,9 @@ EXPORT Value create_closure(void* fn, uint8_t arity, char* name, int upvalCount,
     auto ptr = gc::esl_make_gc<rt_closure>(upvalCount*sizeof(Value), arity, upvalCount, fn, name);
     va_list ap;
     va_start(ap, upvalCount);
-    for (auto& v : ptr->get_env()) {
-        v = va_arg(ap, Value);
+    for (auto& slot : ptr->get_env()) {
+        auto v = va_arg(ap, Value);
+        gc::store_ref(slot, v);
         if (isObj(v)) gc::write_b(ptr, decodeObj(v));
     }
     va_end(ap);
@@ -124,7 +125,7 @@ EXPORT void gc_add_root(Value* ptr){
 }
 
 EXPORT Value hashmap_get(rt_hashmap* map, rt_string* key){
-    if (auto v = map->find(key); v) return *v;
+    if (auto v = map->find(key); v) return gc::read_ref(*v);
     return encodeNil();
 }
 

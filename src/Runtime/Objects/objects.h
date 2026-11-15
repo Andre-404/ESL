@@ -6,8 +6,10 @@
 #include <cstring>
 #include <span>
 #include "../esl-gc-helpers.h"
+#include "../ConcurrentGC/support.h"
 
 namespace object {
+    using trace_fn = function_ref<void(gc::managed*)>;
 
     enum class rt_type : uint8_t {
         STRING,
@@ -84,25 +86,28 @@ namespace object {
         }
 
         static rt_arr_store* alloc(uint32_t capacity, std::span<Value> init);
+
+        // For the collector, see gc-customization.cpp
+        void gc_trace(trace_fn cb);
+        void gc_update_ptrs();
     };
 
     class rt_arr : public rt_obj {
         uint32_t _size;
         rt_arr_store* _storage;
 
-        void reserve(uint32_t min_cap);
+        // Returns the storage, which is a new one if it had to grow
+        rt_arr_store* reserve(uint32_t min_cap);
     public:
         rt_arr(size_t size);
 
         void gc_init();
 
-        std::span<Value> get_data() { return { _storage->get_data().data(), _size }; }
-        // Used by gc customization
-        void set_store(rt_arr_store* new_store) { _storage = new_store; }
-        rt_arr_store* get_store() { return _storage; }
+        std::span<Value> get_data() { return { get_store()->get_data().data(), _size }; }
+        rt_arr_store* get_store() { return gc::read_ref(_storage); }
 
         uint32_t size() const { return _size; }
-        uint32_t capacity() { return _storage->get_data().size(); }
+        uint32_t capacity() { return get_store()->get_data().size(); }
 
         void push(Value item);
         // Returns the removed element, nil if the array is empty
@@ -115,6 +120,9 @@ namespace object {
         void erase(uint32_t index);
         // Zeroes the entire storage(not just the live part) and sets size to 0
         void clear();
+
+        void gc_trace(trace_fn cb);
+        void gc_update_ptrs();
     };
 
 
@@ -151,6 +159,9 @@ namespace object {
         
         char* name() { return _name; }
         byte arity() { return _arity; }
+
+        void gc_trace(trace_fn cb);
+        void gc_update_ptrs();
     };
 
     // Never created at runtime, only emitted by the compiler.
@@ -177,6 +188,9 @@ namespace object {
 
         std::span<Value> get_fields() { return { (Value*)(this+1), _klass->fieldsArrLen }; }
         comp_class* get_class() { return _klass; }
+
+        void gc_trace(trace_fn cb);
+        void gc_update_ptrs();
     };
 
     // Swiss table(see abseil's flat_hash_map / go's swisstable)
@@ -224,11 +238,14 @@ namespace object {
         rt_buffer* _ctrl;
         rt_arr_store* _slots;
 
-        byte* ctrl() { return _ctrl->get_data().data(); }
-        Value* slots() { return _slots->get_data().data(); }
+        rt_buffer* get_ctrl() { return gc::read_ref(_ctrl); }
+        rt_arr_store* get_slots() { return gc::read_ref(_slots); }
 
-        // Slot holding key, or -1
-        int64_t find_slot(rt_string* key, uint64_t hash);
+        byte* ctrl() { return get_ctrl()->get_data().data(); }
+        Value* slots() { return get_slots()->get_data().data(); }
+
+        // Slot holding key, or -1. c and s are the current ctrl() and slots()
+        int64_t find_slot(const byte* c, Value* s, rt_string* key, uint64_t hash);
         void rehash(uint32_t new_cap);
         void in_place_rehash();
     public:
@@ -255,15 +272,13 @@ namespace object {
             for (uint32_t g = 0; g < _capacity / swiss::group_sz; g++) {
                 for (auto m = swiss::match_full(swiss::load_group(c, g)); m; m &= m - 1) {
                     auto i = g * swiss::group_sz + swiss::first_slot(m);
-                    fn(s[2 * i], s[2 * i + 1]);
+                    fn(gc::read_ref(s[2 * i]), gc::read_ref(s[2 * i + 1]));
                 }
             }
         }
 
-        rt_buffer* get_ctrl() { return _ctrl; }
-        rt_arr_store* get_slots() { return _slots; }
-        void set_ctrl(rt_buffer* c) { _ctrl = c; }
-        void set_slots(rt_arr_store* s) { _slots = s; }
+        void gc_trace(trace_fn cb);
+        void gc_update_ptrs();
     };
 
 
