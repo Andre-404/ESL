@@ -199,7 +199,7 @@ namespace gc::detail {
         }
         uint8_t szclass() const { return _szclass; }
         size_t num_pages() const {
-            if (!test_flag(f_has_cont)) return gc::config::small_obj_pgs;
+            if (!test_flag(f_has_cont)) return _szclass == config::large_class ? 1 : config::small_obj_pgs;
             // f_has_cont is set only for runs of > 1 page, so this deref is safe
             return (this + 1)->_run_pages;
         }
@@ -243,6 +243,7 @@ namespace gc::detail {
             if (is_pinned) pin();
 
             auto [word, in_word] = mark_at(block_idx(ptr));
+            if (word.load(std::memory_order_relaxed) & in_word) return false;
             return (word.fetch_or(in_word, std::memory_order_relaxed) & in_word) == 0;
         }
         // Precondition: interior is in the page
