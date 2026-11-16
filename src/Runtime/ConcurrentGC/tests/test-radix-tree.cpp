@@ -3,7 +3,7 @@
 #include <random>
 #include <vector>
 
-#include "../radix-tree.h"
+#include "../allocator/radix-tree.h"
 
 using namespace gc;
 using namespace gc::detail;

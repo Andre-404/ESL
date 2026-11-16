@@ -5,12 +5,18 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../page-allocator.h"
+#include "../allocator/pg-allocator.h"
 
 using namespace gc;
 using namespace gc::detail;
 
 namespace {
+    // A span_allocator over a reservation of its own. heap_layout is a base rather than a
+    // member so it is constructed before the allocator and torn down after it
+    struct owned_spans : private heap_layout, public span_allocator {
+        owned_spans() : span_allocator(heap()) {}
+    };
+
     // Touches the first and last byte of every page in the run. Catches a commit that
     // covered only part of what was handed out.
     void touch_all(void* p, std::size_t npages) {
@@ -21,27 +27,27 @@ namespace {
         }
     }
 
-    std::size_t page_idx(page_allocator& a, const void* p) {
+    std::size_t page_idx(span_allocator& a, const void* p) {
         return std::size_t((const uint8_t*)p - a.base()) / config::page_sz;
     }
 
     // free() is private now; a free goes through a batch that resummarizes the radix tree and
     // advances the scavenge cursor when it is destroyed. Scoping the batch inside these helpers
     // keeps every call site a one liner and drops the lock before the next alloc.
-    void free_run(page_allocator& pa, void* p, std::size_t npages) {
+    void free_run(span_allocator& pa, void* p, std::size_t npages) {
         auto b = pa.begin_free();
         b.add(p, npages);
     }
 
     template<class Runs>
-    void free_runs(page_allocator& pa, const Runs& runs) {
+    void free_runs(span_allocator& pa, const Runs& runs) {
         auto b = pa.begin_free();
         for (auto& [p, n] : runs) b.add(p, n);
     }
 }
 
-TEST(PageAllocatorTest, AllocReturnsPageAlignedMemory) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, AllocReturnsPageAlignedMemory) {
+    owned_spans pa;
     for (std::size_t n : { 1u, 2u, 7u, 64u }) {
         auto* p = pa.alloc(n);
         ASSERT_NE(p, nullptr) << "n=" << n;
@@ -51,8 +57,8 @@ TEST(PageAllocatorTest, AllocReturnsPageAlignedMemory) {
     }
 }
 
-TEST(PageAllocatorTest, AllocatedRunIsWritableEndToEnd) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, AllocatedRunIsWritableEndToEnd) {
+    owned_spans pa;
     // 200 pages crosses several 8 page commit granules, so this also covers the rounding
     constexpr std::size_t n = 200;
     auto* p = pa.alloc(n);
@@ -62,8 +68,8 @@ TEST(PageAllocatorTest, AllocatedRunIsWritableEndToEnd) {
     free_run(pa, p, n);
 }
 
-TEST(PageAllocatorTest, AllocAlignedRunIsAlignedAndWritable) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, AllocAlignedRunIsAlignedAndWritable) {
+    owned_spans pa;
     std::unordered_set<std::size_t> seen;
     std::vector<std::pair<void*, std::size_t>> runs;
 
@@ -87,8 +93,8 @@ TEST(PageAllocatorTest, AllocAlignedRunIsAlignedAndWritable) {
     EXPECT_EQ(pa.alloc_aligned(3, 6), nullptr);   // align not a power of two
 }
 
-TEST(PageAllocatorTest, MultiPageAllocationIsContiguous) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, MultiPageAllocationIsContiguous) {
+    owned_spans pa;
     constexpr std::size_t n = 17;
     auto* p = (uint8_t*)pa.alloc(n);
     ASSERT_NE(p, nullptr);
@@ -97,8 +103,8 @@ TEST(PageAllocatorTest, MultiPageAllocationIsContiguous) {
     free_run(pa, p, n);
 }
 
-TEST(PageAllocatorTest, ConcurrentAllocationsDoNotOverlap) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, ConcurrentAllocationsDoNotOverlap) {
+    owned_spans pa;
     std::vector<std::pair<uint8_t*, std::size_t>> runs;
     std::unordered_set<std::size_t> seen;
 
@@ -112,8 +118,8 @@ TEST(PageAllocatorTest, ConcurrentAllocationsDoNotOverlap) {
     free_runs(pa, runs);
 }
 
-TEST(PageAllocatorTest, FreeThenReallocReusesTheRun) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, FreeThenReallocReusesTheRun) {
+    owned_spans pa;
     auto* first = (uint8_t*)pa.alloc(4);
     ASSERT_NE(first, nullptr);
     memset(first, 0xFF, 4 * config::page_sz);
@@ -126,8 +132,8 @@ TEST(PageAllocatorTest, FreeThenReallocReusesTheRun) {
     free_run(pa, again, 4);
 }
 
-TEST(PageAllocatorTest, NeverHandedOutRunIsOsZeroed) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, NeverHandedOutRunIsOsZeroed) {
+    owned_spans pa;
     auto* p = (uint8_t*)pa.alloc(32);
     ASSERT_NE(p, nullptr);
     // A run the OS has never handed out is fresh anonymous memory, so it reads as zero even
@@ -140,12 +146,13 @@ TEST(PageAllocatorTest, NeverHandedOutRunIsOsZeroed) {
 // same address and is writable end to end. RSS is not asserted - MADV_FREE is lazy and the
 // kernel reclaims on its own schedule.
 //
-// scavenge() has no public trigger - the background thread is its only caller - so instead of
-// driving it directly this hands the allocator a policy that makes it scavenge eagerly:
+// Runs a real scavenger thread rather than calling scavenge() directly, with a policy that makes
+// it scavenge eagerly:
 // min_retain 0 so nothing is held back, no headroom over the demand peak, and a decay fast
 // enough that the peak collapses to the (now zero) demand within a wake or two.
-TEST(PageAllocatorTest, ScavengedRunIsReusable) {
-    page_allocator pa{ scavenge_policy{
+TEST(SpanAllocatorTest, ScavengedRunIsReusable) {
+    owned_spans pa;
+    scavenger s { pa, scavenge_policy{
         .headroom      = 0.0,
         .thrash_gain   = 0.0,
         .decay_per_sec = 1000.0,
@@ -174,7 +181,7 @@ TEST(PageAllocatorTest, ScavengedRunIsReusable) {
 
 // A reused page is handed a freshly constructed header and a fresh pair of bitmaps, so nothing
 // the previous occupant left behind can read back as live or allocated.
-TEST(PageAllocatorTest, RecycledPageGetsACleanPgMetaHeader) {
+TEST(PgAllocatorTest, RecycledPageGetsACleanPgMetaHeader) {
     pg_allocator pa;
     auto* pg = pa.alloc_pg(64, config::small_obj_pgs, true);
     ASSERT_NE(pg, nullptr);
@@ -192,14 +199,53 @@ TEST(PageAllocatorTest, RecycledPageGetsACleanPgMetaHeader) {
         ASSERT_EQ(again->load_alloc_word(i) & (1ull << (i % 64)), 0ull) << "slot " << i;
 }
 
-TEST(PageAllocatorTest, ImpossibleRequestsFail) {
-    page_allocator pa;
+TEST(PgAllocatorTest, RelocHdrsOutliveTheirPages) {
+    pg_allocator pa;
+    auto* pg = pa.alloc_pg(64, config::small_obj_pgs, true);
+    ASSERT_NE(pg, nullptr);
+    auto idx = std::size_t(pg - pa.meta_base());
+    EXPECT_EQ(pa.relocs().get(idx), 0u);
+    pa.relocs().set(idx, 0x10);
+
+    pa.free_pgs(pg);
+    auto* again = pa.alloc_pg(32, config::small_obj_pgs, true);
+    ASSERT_EQ(again, pg) << "expected the same page back";
+    EXPECT_EQ(pa.relocs().get(idx), 0x10u) << "freeing and reusing a page leaves its entry alone";
+
+    pa.relocs().clear();
+    EXPECT_EQ(pa.relocs().get(idx), 0u);
+    pa.free_pgs(again);
+}
+
+TEST(PgTablesTest, RelocHdrsAreCommittedWithHeadersAndClearedTogether) {
+    heap_layout layout;
+    reloc_hdrs r { layout.relocs() };
+    pg_tables t { layout.hdrs(), r };
+    // far is under a different summary word than the run at 0
+    constexpr std::size_t n = 200, far = (1u << 20) - 1;
+    ASSERT_TRUE(t.ensure(0, n));
+    ASSERT_TRUE(t.ensure(far, 1));
+    for (auto pg : { std::size_t(0), n - 1, far }) ASSERT_EQ(r.get(pg), 0u) << "page " << pg;
+
+    r.set(0, 0x10);
+    r.set(1, 0x11); // same run as 0
+    r.set(n - 1, 0x20);
+    r.set(far, 0x30);
+    EXPECT_EQ(r.get(1), 0x11u);
+
+    r.clear();
+    for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) EXPECT_EQ(r.get(pg), 0u) << "page " << pg;
+    r.clear();
+}
+
+TEST(SpanAllocatorTest, ImpossibleRequestsFail) {
+    owned_spans pa;
     EXPECT_EQ(pa.alloc(0), nullptr);
     EXPECT_EQ(pa.alloc(config::total_pages + 1), nullptr);
 }
 
-TEST(PageAllocatorTest, FreeingEverythingReturnsTheHeapToTheStart) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, FreeingEverythingReturnsTheHeapToTheStart) {
+    owned_spans pa;
     std::vector<std::pair<void*, std::size_t>> runs;
     for (int i = 0; i < 50; ++i) {
         auto n = std::size_t(1 + i % 7);
@@ -215,8 +261,8 @@ TEST(PageAllocatorTest, FreeingEverythingReturnsTheHeapToTheStart) {
     free_run(pa, p, 1);
 }
 
-TEST(PageAllocatorTest, ConcurrentAllocFreeIsSafe) {
-    page_allocator pa;
+TEST(SpanAllocatorTest, ConcurrentAllocFreeIsSafe) {
+    owned_spans pa;
     constexpr int threads = 8, iters = 400;
     std::atomic<int> failures{ 0 };
 
@@ -256,26 +302,19 @@ TEST(PageAllocatorTest, ConcurrentAllocFreeIsSafe) {
 // still walked the cursor one granule further up the heap, every time, forever.
 // ---------------------------------------------------------------------------------------
 namespace gc::detail {
-    struct page_allocator_test_peer {
-        static std::size_t scavenge(page_allocator& pa, std::size_t n) { return pa.scavenge(n); }
-        static int64_t idx(const page_allocator& pa) { return pa._scavenge_idx; }
-        static void set_idx(page_allocator& pa, int64_t v) { pa._scavenge_idx = v; }
+    struct span_allocator_test_peer {
+        static std::size_t scavenge(span_allocator& pa, std::size_t n) { return pa.scavenge(n); }
+        static int64_t idx(const span_allocator& pa) { return pa._scavenge_idx; }
+        static void set_idx(span_allocator& pa, int64_t v) { pa._scavenge_idx = v; }
     };
 }
 
 namespace {
-    using peer = gc::detail::page_allocator_test_peer;
-
-    // A policy the background scavenger can never act on, so tests own the cursor outright:
-    // min_retain above any resident count keeps plan() returning zero on every wake.
-    scavenge_policy inert() {
-        return scavenge_policy{ .min_retain = std::size_t(1) << 40,
-                                .idle_sleep = std::chrono::seconds(1) };
-    }
+    using peer = gc::detail::span_allocator_test_peer;
 }
 
-TEST(PageAllocatorScavengeTest, WalkingDownToGranuleZeroStaysInBounds) {
-    page_allocator pa{ inert() };
+TEST(SpanAllocatorScavengeTest, WalkingDownToGranuleZeroStaysInBounds) {
+    owned_spans pa;
     // Hold page 0 so granule 0 is not freeable: the walk has to step past it and reach the
     // bottom, which is exactly where the off-by-one read used to happen.
     auto* held = pa.alloc(1);
@@ -288,8 +327,8 @@ TEST(PageAllocatorScavengeTest, WalkingDownToGranuleZeroStaysInBounds) {
     free_run(pa, held, 1);
 }
 
-TEST(PageAllocatorScavengeTest, WalkFromAboveDownThroughZeroStaysInBounds) {
-    page_allocator pa{ inert() };
+TEST(SpanAllocatorScavengeTest, WalkFromAboveDownThroughZeroStaysInBounds) {
+    owned_spans pa;
     // Commit a stretch, hand it all back, then sweep from the top with a budget larger than
     // the number of freeable granules so the walk runs off the bottom of the heap.
     constexpr std::size_t n = 256;
@@ -304,8 +343,8 @@ TEST(PageAllocatorScavengeTest, WalkFromAboveDownThroughZeroStaysInBounds) {
     EXPECT_GE(peer::idx(pa), 0);
 }
 
-TEST(PageAllocatorScavengeTest, PlanningNothingDoesNotDriftTheCursor) {
-    page_allocator pa{ inert() };
+TEST(SpanAllocatorScavengeTest, PlanningNothingDoesNotDriftTheCursor) {
+    owned_spans pa;
     auto* p = pa.alloc(64);
     ASSERT_NE(p, nullptr);
     free_run(pa, p, 64);
@@ -316,8 +355,8 @@ TEST(PageAllocatorScavengeTest, PlanningNothingDoesNotDriftTheCursor) {
         << "a wake with no budget must leave the cursor where it was, not walk it up the heap";
 }
 
-TEST(PageAllocatorScavengeTest, CursorNeverClimbsAboveTheHighestFreedGranule) {
-    page_allocator pa{ inert() };
+TEST(SpanAllocatorScavengeTest, CursorNeverClimbsAboveTheHighestFreedGranule) {
+    owned_spans pa;
     auto* p = pa.alloc(32);
     ASSERT_NE(p, nullptr);
     touch_all(p, 32);
@@ -331,8 +370,8 @@ TEST(PageAllocatorScavengeTest, CursorNeverClimbsAboveTheHighestFreedGranule) {
     }
 }
 
-TEST(PageAllocatorScavengeTest, ScavengeRespectsItsBudget) {
-    page_allocator pa{ inert() };
+TEST(SpanAllocatorScavengeTest, ScavengeRespectsItsBudget) {
+    owned_spans pa;
     constexpr std::size_t n = 256;   // 32 granules at 8 pages each
     auto* p = pa.alloc(n);
     ASSERT_NE(p, nullptr);

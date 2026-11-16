@@ -4,7 +4,7 @@
 #include <span>
 #include <bit>
 
-#include "gc-config.h"
+#include "../gc-config.h"
 
 namespace gc::detail {
     // General bit twiddling helpers

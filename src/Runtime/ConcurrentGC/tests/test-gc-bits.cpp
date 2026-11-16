@@ -6,14 +6,14 @@
 #include <vector>
 #include <algorithm>
 
-#include "../gc-bits.h"
-#include "../os-memory.h"
+#include "../allocator/gc-bits.h"
+#include "../allocator/os-memory.h"
 
 using namespace gc;
 using namespace gc::detail;
 
 namespace {
-    // gc_bits does not own its storage any more: the page allocator carves a base out of the
+    // gc_bits does not own its storage any more: pg_allocator carves a base out of the
     // heap reservation and hands it over, so the tests have to provide one. The reservation is
     // a private base rather than a member so that it - and therefore the address - is
     // constructed before the gc_bits subobject it is passed to, and torn down after it.

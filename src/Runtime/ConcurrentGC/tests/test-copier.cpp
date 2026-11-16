@@ -7,7 +7,7 @@
 #include <unordered_set>
 #include "../copier.h"
 #include "../pg-meta.h"
-#include "../page-allocator.h"
+#include "../allocator/pg-allocator.h"
 #include "../pruner.h"
 #include "customization-helper.h"
 #include "pg-fixture.h"

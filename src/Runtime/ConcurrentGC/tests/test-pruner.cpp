@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include <vector>
 #include "../pruner.h"
-#include "../page-allocator.h"
+#include "../allocator/pg-allocator.h"
 #include "../pg-meta.h"
 #include "pg-fixture.h"
 

@@ -32,9 +32,11 @@ add_library(gc_under_test STATIC
         ../mark-buf.cpp
         ../marker.cpp
         ../copier.cpp
-        ../os-memory.cpp
-        ../gc-bits.cpp
-        ../page-allocator.cpp
+        ../allocator/os-memory.cpp
+        ../allocator/gc-bits.cpp
+        ../allocator/span-allocator.cpp
+        ../allocator/pg-allocator.cpp
+        ../allocator/scavenger.cpp
         ../pg-manager.cpp
         ../collector.cpp
         ../../../Includes/format.cc
@@ -71,7 +73,7 @@ add_executable(run_tests
         test-pruner.cpp
         test-radix-tree.cpp
         test-bitmap.cpp
-        test-page-allocator.cpp
+        test-span-allocator.cpp
         test-gc-bits.cpp
         test-gc-heuristic.cpp
         test-collector.cpp

@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "gc-config.h"
-#include "page-allocator.h"
+#include "allocator/pg-allocator.h"
 #include "tstack.h"
 
 

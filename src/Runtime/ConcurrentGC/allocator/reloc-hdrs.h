@@ -4,9 +4,10 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <utility>
 
-#include "gc-config.h"
+#include "../gc-config.h"
 #include "os-memory.h"
 
 namespace gc::detail {
@@ -14,24 +15,28 @@ namespace gc::detail {
     // the address range, not the page: committed with the pg headers, never decommitted, and
     // zeroed once the marking after the copy has healed every pointer into the old pages
     class reloc_hdrs {
-        // Sources are small object runs, so writes are tracked one bit per run (a cache line of
-        // entries), plus one summary bit per word of those so clear skips untouched ranges
+        // Writes are tracked one bit per run (a cache line of entries),
+        // plus one summary bit per word of those so clear skips untouched ranges
         static constexpr std::size_t run_pgs = config::small_obj_pgs;
         static constexpr std::size_t run_words = config::total_pages / run_pgs / 64;
         static constexpr std::size_t sum_words = run_words / 64;
         static_assert(run_pgs * config::reloc_hdr_sz == 64);
         static_assert(config::total_pages % (run_pgs * 64 * 64) == 0);
 
-        uint64_t* _entries = nullptr;
-        uint64_t* _runs = nullptr;
-        uint64_t* _sums = nullptr;
+        static constexpr std::size_t track_bytes = (run_words + sum_words) * sizeof(uint64_t);
+
+        uint64_t* _entries;
+        uint64_t* _runs;
+        uint64_t* _sums;
 
     public:
-        static constexpr std::size_t track_words = run_words + sum_words;
-
-        reloc_hdrs() = default;
-        reloc_hdrs(uint8_t* base, uint64_t* track)
-            : _entries((uint64_t*)base), _runs(track), _sums(track + run_words) {}
+        explicit reloc_hdrs(uint8_t* base)
+            : _entries((uint64_t*)base), _runs((uint64_t*)os::map_rw(track_bytes)), _sums(_runs + run_words) {
+            if (!_runs) throw std::bad_alloc{};
+        }
+        ~reloc_hdrs() { os::release(_runs, track_bytes); }
+        reloc_hdrs(const reloc_hdrs&) = delete;
+        reloc_hdrs& operator=(const reloc_hdrs&) = delete;
 
         bool commit(std::size_t from, std::size_t to) {
             return os::commit(_entries + from, (to - from) * config::reloc_hdr_sz);

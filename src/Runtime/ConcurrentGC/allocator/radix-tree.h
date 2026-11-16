@@ -6,7 +6,7 @@
 #include <optional>
 
 #include "bitmap.h"
-#include "gc-config.h"
+#include "../gc-config.h"
 
 namespace gc::detail {
     // A packed summary of a contiguous region of pages:

@@ -8,7 +8,7 @@
 #include <vector>
 #include "../marker.h"
 #include "../pg-meta.h"
-#include "../page-allocator.h"
+#include "../allocator/pg-allocator.h"
 #include "../platform-specific.h"
 #include "customization-helper.h"
 #include "pg-fixture.h"

@@ -5,7 +5,7 @@
 
 #include "gc-config.h"
 #include "pg-meta.h"
-#include "gc-bits.h"
+#include "allocator/gc-bits.h"
 
 
 namespace gc::detail {

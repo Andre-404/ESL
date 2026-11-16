@@ -3,7 +3,7 @@
 #include <random>
 #include <vector>
 
-#include "../bitmap.h"
+#include "../allocator/bitmap.h"
 
 using namespace gc;
 using namespace gc::detail;

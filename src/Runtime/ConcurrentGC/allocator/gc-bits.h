@@ -4,7 +4,7 @@
 #include <mutex>
 #include <span>
 
-#include "gc-config.h"
+#include "../gc-config.h"
 
 namespace gc::detail {
     //   live half    the alloc bitmaps the mutators are writing. A run created mid-cycle

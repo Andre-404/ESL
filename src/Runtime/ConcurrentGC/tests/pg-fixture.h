@@ -3,7 +3,7 @@
 #include <new>
 
 #include "../managed.h"
-#include "../page-allocator.h"
+#include "../allocator/pg-allocator.h"
 #include "../pg-meta.h"
 
 namespace gc::test {
