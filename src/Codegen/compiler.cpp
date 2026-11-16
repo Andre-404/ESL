@@ -288,7 +288,7 @@ llvm::Value* Compiler::visitArrayExpr(CFG::ArrayExpr* expr) {
         containsObj = builder.CreateOr(
             containsObj, builder.CreateCall(safeGetFunc("is_obj"), vals[i])
         );
-        _bridge.call("gc_write_barrier", { storage.ptr(), vals[i] });
+        _bridge.call("gc_write_barrier", { vals[i] });
     }
     // Safe to do here since no allocations or safepoints happen between alloc_arr and here
     storage.contains_obj().store(
@@ -816,11 +816,10 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
         fieldPtr = _inst_builder.getUnoptInstFieldPtr({ inst, expr->field });
     auto val = expr->toStore->codegen(this);
 
-    auto instPtr = builder.CreateCall(safeGetFunc("decode_obj"), inst, "inst.container");
     if(expr->operationType == CFG::SetType::SET){
         _bridge.call("gc_store_val", { fieldPtr, val });
         if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
         return val;
     }
     if(expr->operationType == CFG::SetType::ADD_SET){
@@ -829,7 +828,7 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
         val = codegenBinaryAdd(storedVal, val, expr->dbgInfo.op);
         _bridge.call("gc_store_val", { fieldPtr, val });
         if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
-            builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
+            builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
         return val;
     }
     auto storedField = _bridge.call("gc_read_val", { fieldPtr });
@@ -845,7 +844,7 @@ llvm::Value* Compiler::visitInstSet(CFG::InstSet* expr) {
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedField, val, expr->operationType, expr->dbgInfo.op));
     _bridge.call("gc_store_val", { fieldPtr, val });
     if(!exprIsType(expr->toStore, types::getBasicType(types::TypeFlag::NUMBER)))
-        builder.CreateCall(safeGetFunc("gc_write_barrier"), { instPtr, val });
+        builder.CreateCall(safeGetFunc("gc_write_barrier"), { val });
     return val;
 }
 

@@ -95,7 +95,7 @@ rt_arr_store::rt_arr_store(uint32_t cap, std::span<Value> init)
         s[i] = val;
         if (isObj(val)) {
             found = true;
-            gc::write_b(this, decodeObj(val));
+            gc::write_b(decodeObj(val));
         }
     }
     memset(&s[init.size()], 0, (cap - init.size())*sizeof(Value));
@@ -119,7 +119,7 @@ rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY, false) {
 void rt_arr::gc_init() {
     auto store = rt_arr_store::alloc(_size, {});
     gc::store_ref(_storage, store);
-    gc::write_b(this, store);
+    gc::write_b(store);
 }
 
 static void shift_slots(rt_arr_store* store, uint32_t to, uint32_t from, uint32_t cnt) {
@@ -131,7 +131,7 @@ static void shift_slots(rt_arr_store* store, uint32_t to, uint32_t from, uint32_
     auto move = [&](uint32_t i) {
         auto val = gc::read_ref(data[from + i]);
         gc::store_ref(data[to + i], val);
-        if (isObj(val)) gc::write_b(store, decodeObj(val));
+        if (isObj(val)) gc::write_b(decodeObj(val));
     };
     if (to < from) for (uint32_t i = 0; i < cnt; i++) move(i);
     else for (uint32_t i = cnt; i-- > 0;) move(i);
@@ -150,7 +150,7 @@ rt_arr_store* rt_arr::reserve(uint32_t min_cap) {
     if (min_cap <= store->get_data().size()) return store;
     auto _new = rt_arr_store::alloc(min_cap, store->get_data().first(_size));
     gc::store_ref(_storage, _new);
-    gc::write_b(this, _new);
+    gc::write_b(_new);
     return _new;
 }
 
@@ -159,7 +159,7 @@ void rt_arr::push(Value item){
     gc::store_ref(store->get_data()[_size++], item);
     if (isObj(item)) {
         store->set_has_obj();
-        gc::write_b(store, decodeObj(item));
+        gc::write_b(decodeObj(item));
     }
 }
 
@@ -184,7 +184,7 @@ void rt_arr::resize(uint32_t new_size, Value fill){
     for (uint32_t i = _size; i < new_size; i++) gc::store_ref(data[i], fill);
     if (isObj(fill)) {
         store->set_has_obj();
-        gc::write_b(store, decodeObj(fill));
+        gc::write_b(decodeObj(fill));
     }
     _size = new_size;
 }
@@ -197,7 +197,7 @@ void rt_arr::insert(uint32_t index, Value item){
     _size++;
     if (isObj(item)) {
         store->set_has_obj();
-        gc::write_b(store, decodeObj(item));
+        gc::write_b(decodeObj(item));
     }
 }
 
@@ -235,8 +235,8 @@ static uint32_t cap_for(uint32_t entries) {
 }
 static uint64_t hash_key(rt_string* key) { return rt_string::hash{}(key); }
 static void barrier_item(rt_arr_store* store, Value key, Value val) {
-    gc::write_b(store, decodeObj(key));
-    if (isObj(val)) gc::write_b(store, decodeObj(val));
+    gc::write_b(decodeObj(key));
+    if (isObj(val)) gc::write_b(decodeObj(val));
 }
 
 // Groups are probed triangularly (0, 1, 3, 6, ...) which visits every group of a power of 2 sized table
@@ -265,11 +265,11 @@ rt_hashmap::rt_hashmap(uint32_t expected)
 void rt_hashmap::gc_init() {
     auto ctrl_buf = rt_buffer::alloc(_capacity, ctrl_empty);
     gc::store_ref(_ctrl, ctrl_buf);
-    gc::write_b(this, ctrl_buf);
+    gc::write_b(ctrl_buf);
     auto slots = rt_arr_store::alloc(_capacity * 2, {});
     slots->set_has_obj();
     gc::store_ref(_slots, slots);
-    gc::write_b(this, slots);
+    gc::write_b(slots);
     _growth_left = usable(_capacity);
 }
 
@@ -302,7 +302,7 @@ void rt_hashmap::insert_or_assign(rt_string* key, Value val) {
     auto s = store->get_data().data();
     if (auto i = find_slot(c, s, key, hash); i >= 0) {
         gc::store_ref(s[2 * i + 1], val);
-        if (isObj(val)) gc::write_b(store, decodeObj(val));
+        if (isObj(val)) gc::write_b(decodeObj(val));
         return;
     }
     auto i = find_insert_slot(c, _capacity, hash);
@@ -362,8 +362,8 @@ void rt_hashmap::rehash(uint32_t new_cap) {
     gc::store_ref(_ctrl, new_ctrl);
     gc::store_ref(_slots, new_slots);
     _capacity = new_cap;
-    gc::write_b(this, new_ctrl);
-    gc::write_b(this, new_slots);
+    gc::write_b(new_ctrl);
+    gc::write_b(new_slots);
     _growth_left = usable(new_cap) - _count;
 }
 

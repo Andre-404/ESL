@@ -114,7 +114,7 @@ EXPORT Value create_closure(void* fn, uint8_t arity, char* name, int upvalCount,
     for (auto& slot : ptr->get_env()) {
         auto v = va_arg(ap, Value);
         gc::store_ref(slot, v);
-        if (isObj(v)) gc::write_b(ptr, decodeObj(v));
+        if (isObj(v)) gc::write_b(decodeObj(v));
     }
     va_end(ap);
     return encodeObj(ptr);
