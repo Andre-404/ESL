@@ -1,10 +1,10 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <span>
 
 #include "../gc-config.h"
+#include "bump-allocator.h"
 
 namespace gc::detail {
     //   live half    the alloc bitmaps the mutators are writing. A run created mid-cycle
@@ -17,21 +17,12 @@ namespace gc::detail {
     // cycle re-packs the survivors densely and in the order the sweep hands them out - which
     // is the order the next sweep will read them back in.
     class gc_bits {
-        // When allocating a new page we request both alloc and mark bitmaps at the same time
-        // For that reason i think its fine for both halves to share a cacheline
-        struct half {
-            std::atomic<std::size_t> cursor { 0 };
-            std::atomic<std::size_t> committed { 0 };
-        };
-
-        uint8_t* _base;
-        half _halves[2];
+        bump_allocator _halves[2];
         std::atomic<uint8_t> _live;
-        std::mutex _mtx;
 
-        uint8_t* half_base(uint8_t h) const { return _base + std::size_t(h) * config::bits_arena_sz; }
-        bool ensure_committed(std::atomic<std::size_t>& committed, uint8_t* base, std::size_t end);
-        std::span<uint64_t> bump(half& h, uint8_t* base, std::size_t bits, bool should_zero);
+        // Bitmaps are read and written a word at a time through atomic_ref<uint64_t>, so they are
+        // handed out in whole words. The span's length is in words too
+        static std::size_t words(std::size_t bits) { return (bits + 63) / 64; }
 
     public:
         gc_bits(uint8_t* base);
@@ -40,12 +31,12 @@ namespace gc::detail {
 
         std::span<uint64_t> alloc_bits(std::size_t bits) {
             auto h = _live.load(std::memory_order_acquire);
-            return bump(_halves[h], half_base(h), bits, true);
+            return _halves[h].bump(words(bits), true);
         }
 
         std::span<uint64_t> mark_bits(std::size_t bits, bool should_zero = true) {
             auto h = _live.load(std::memory_order_acquire) ^ 1;
-            return bump(_halves[h], half_base(h), bits, should_zero);
+            return _halves[h].bump(words(bits), should_zero);
         }
 
         // Must run at a safepoint: it invalidates every pointer handed out of the alloc half
