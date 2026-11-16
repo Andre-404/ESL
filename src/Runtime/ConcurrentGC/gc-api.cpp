@@ -34,7 +34,7 @@ namespace gc {
         return GC->alloc(sz, pinned, t(handle));
     }
 
-    void write_barrier(tcb_handle* handle, managed* container, managed* obj) {
+    void write_barrier(tcb_handle* handle, managed* obj) {
         if (!GC->wb_active()) return;
         auto tcb = t(handle);
         if (tcb->get_mark_info().get_wbbuf()->push(obj)) GC->flush_wbbuf(tcb);
