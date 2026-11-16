@@ -32,14 +32,6 @@ namespace gc::detail {
         std::span<size_t> mark_bits(size_t block_cnt) const {
             return { compute_ptr(_mark), (block_cnt + 63) / 64 };
         }
-        // Cards pair with mark bits one for one and they sit above the bits
-        std::span<size_t> card_bits(size_t block_cnt) const {
-            auto cards = (uint64_t*)((uint8_t*)base() + config::bits_region_sz);
-            // _mark is offset in 8-byte words from base of bits and it can be either the top or bottom arena
-            // to get the offset from arena base, mask out the upper bits and leave on arena_sz bits
-            auto off = _mark & (config::bits_arena_sz / sizeof(uint64_t) - 1);
-            return { cards + off, (block_cnt + 63) / 64 };
-        }
 
         // Alloc bits are written by the owning thread (obj_allocator's cache flush) and read
         // concurrently by the collector's conservative stack scan, so they are only reachable
@@ -61,10 +53,9 @@ namespace gc::detail {
             // Role and state for the cycle in flight, reset by next_cycle
             f_pinned       = 1 << 2, // holds an object that must not move
             f_source       = 1 << 3, // nominated for evacuation; clear means the page is a target
-            f_any_dirty    = 1 << 4, // at least one card bit is set, so the update pass must look
-            f_active       = 1 << 5, // This page is active
+            f_active       = 1 << 4, // This page is active
 
-            cycle_flags = f_pinned | f_source | f_any_dirty,
+            cycle_flags = f_pinned | f_source,
         };
 
     private:
@@ -92,12 +83,6 @@ namespace gc::detail {
         std::pair<std::atomic_ref<size_t>, uint64_t> mark_at(size_t i) const {
             return {
                 std::atomic_ref { _bits.mark_bits(block_cnt())[i / 64] },
-                1ull << (i % 64)
-            };
-        }
-        std::pair<std::atomic_ref<size_t>, uint64_t> card_at(size_t i) const {
-            return {
-                std::atomic_ref { _bits.card_bits(block_cnt())[i / 64] },
                 1ull << (i % 64)
             };
         }
@@ -144,21 +129,17 @@ namespace gc::detail {
             size_t _block_cnt;
             size_t _block_sz;
             size_t _cache;
-            size_t _cards;
             uint16_t _i;
         public:
             pg_slots_iter(pg_meta* pg, uint16_t i)
                 : _pg(pg), _block_cnt(_pg->block_cnt()), _block_sz(_pg->block_sz_fast()),
-                  _cache(_pg->_bits.mark_bits(_block_cnt)[i / 64]),
-                  _cards(_pg->_bits.card_bits(_block_cnt)[i / 64]), _i(i) {}
+                  _cache(_pg->_bits.mark_bits(_block_cnt)[i / 64]), _i(i) {}
 
             // The bound keeps the last word of a page whose block_cnt is a multiple of 64
-            // from refreshing past the end of both spans
+            // from refreshing past the end of the span
             void next() {
-                if (++_i % 64 == 0 && _i < _block_cnt) {
+                if (++_i % 64 == 0 && _i < _block_cnt)
                     _cache = _pg->_bits.mark_bits(_block_cnt)[_i / 64];
-                    _cards = _pg->_bits.card_bits(_block_cnt)[_i / 64];
-                }
             }
             bool at_end() const { return _i == _block_cnt; }
 
@@ -170,15 +151,6 @@ namespace gc::detail {
             void set_marked() { 
                 _cache |= (1ull << (_i % 64));
                 _pg->_bits.mark_bits(_block_cnt)[_i / 64] = _cache;
-            }
-
-            // Only correct inside the pause: marking dirties through pg_meta::dirty_card,
-            // which is atomic, while these write a cached word back whole
-            bool is_dirty() const { return _cards & (1ull << (_i % 64)); }
-            void set_dirty() {
-                _cards |= (1ull << (_i % 64));
-                _pg->_bits.card_bits(_block_cnt)[_i / 64] = _cards;
-                _pg->set_any_dirty();
             }
         };
 
@@ -213,24 +185,12 @@ namespace gc::detail {
             auto f = _flags.load(std::memory_order_relaxed);
             return (f & f_source) && ((f & f_pinned) == 0);
         }
-        bool any_dirty() const { return test_flag(f_any_dirty); }
-        void set_any_dirty() { set_flag(f_any_dirty); }
 
         bool nominate() {
             auto prev = _flags.fetch_or(f_source, std::memory_order_relaxed);
             return (prev & f_source) == 0 && (prev & f_pinned) == 0;
         }
         void demote() { clear_flag(f_source); }
-
-        [[gnu::hot]] void dirty_card(managed* ptr) {
-            auto [word, in_word] = card_at(block_idx(ptr));
-            word.fetch_or(in_word, std::memory_order_relaxed);
-            set_flag(f_any_dirty);
-        }
-        bool card_dirty(managed* ptr) const {
-            auto [word, in_word] = card_at(block_idx(ptr));
-            return (word.load(std::memory_order_relaxed) & in_word) != 0;
-        }
 
         void next_cycle(uint64_t* new_mark) {
             clear_flag(cycle_flags);

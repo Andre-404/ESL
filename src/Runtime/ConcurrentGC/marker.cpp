@@ -5,25 +5,18 @@
 using namespace gc::detail;
 
 
-void marker::flush_wbbuf(mark_buf* buf, bool copying) {
+void marker::flush_wbbuf(mark_buf* buf) {
     if (buf->empty()) return;
     auto to_send = _bufs.pop_empty();
-    while (auto val = buf->pop()) {
-        auto container = buf->pop();
-        assert(container && "the write buffer holds (container, value) pairs");
-
-        auto res = push_obj(to_send, val);
-
-        if (copying && res.movable_obj)
-            pg_meta::head_from_ptr(container)->dirty_card(container);
-    }
+    while (auto val = buf->pop())
+        (void)push_obj(to_send, val);
     push_buf(to_send);
 }
 
 void marker::scan_globals(std::span<size_t*> roots)  {
     auto buf = _bufs.pop_empty();
     auto mark = [&](managed* obj) {
-        if (push_obj(buf, obj).buf_full) [[unlikely]] buf = replace_buf(buf);
+        if (push_obj(buf, obj)) [[unlikely]] buf = replace_buf(buf);
     };
     // Runs alongside the mutators, which keep storing to their globals, and push_obj reads the
     // object behind the root, hence acquire (see load_raw)
@@ -35,15 +28,12 @@ void marker::scan_globals(std::span<size_t*> roots)  {
     push_buf(buf);
 }
 
-[[gnu::hot]] size_t marker::trace_n(size_t bytes, bool copying)  {
+[[gnu::hot]] size_t marker::trace_n(size_t bytes)  {
     auto main = _bufs.pop_full();
     if (!main) return 0;
 
-    auto dirtied = false;
     auto mark = [&](managed* obj) {
-        auto res = push_obj(main, obj);
-        if (copying && res.movable_obj) dirtied = true;
-        if (res.buf_full) [[unlikely]] main = replace_buf(main);
+        if (push_obj(main, obj)) [[unlikely]] main = replace_buf(main);
     };
 
     size_t cnt = 0;
@@ -57,10 +47,7 @@ void marker::scan_globals(std::span<size_t*> roots)  {
         }
         assert(obj_traceable(obj));
         cnt += obj_size(obj);
-        dirtied = false;
         obj_trace(obj, mark);
-        if (dirtied)
-            pg_meta::head_from_ptr(obj)->dirty_card(obj);
     }
     push_buf(main);
     

@@ -22,12 +22,11 @@ namespace {
         "dual_bitmap places the regions behind the headers at config::hdr_region_sz, so the "
         "reservation has to spend exactly that on headers");
     
-    // heap | headers | bits | cards
+    // heap | headers | bits
     // all at fixed offsets so pg_meta and dual_bitmap can reach the last two by arithmetic
     constexpr std::size_t reserve_bytes = config::heap_max_sz
                                         + hdr_bytes
-                                        + config::bits_region_sz
-                                        + config::card_region_sz;
+                                        + config::bits_region_sz;
 
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;

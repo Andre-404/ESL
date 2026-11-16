@@ -74,7 +74,7 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
         _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
     }
 
-    while (_marker.trace_n(config::trace_batch * 1024, copying)) {}
+    while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
     if (role == stw_role::collector)
         _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
@@ -121,7 +121,7 @@ void collector::concurrent_mark(uint8_t copying) {
         _marker.scan_globals(_roots);
     }
     
-    while (_marker.trace_n(config::trace_batch, copying) && !_collection_req.is_express()) {}
+    while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 }
 
 size_t collector::worker_stw() {
@@ -166,7 +166,7 @@ void collector::concurrent_loop() {
     while (true) {
         if (_collection_req.await_request()) break;
         _cycle = {};
-        // Decided before marking, because the cards are dirtied during it and a cycle that has
+        // Decided before marking, because pinning happens during it and a cycle that has
         // already started cannot be upgraded. Nothing nominates pages any more, so only an
         // express request asks for a copy phase - and with no sources it finds nothing to move
         auto copying = _collection_req.is_express() ? gc_flag_copying : uint8_t(0);
@@ -278,7 +278,7 @@ void collector::delete_tcb(tcb *t) {
 
 void collector::flush_wbbuf(tcb *t) {
     auto& info = t->get_mark_info();
-    _marker.flush_wbbuf(info.get_wbbuf(), is_copying());
+    _marker.flush_wbbuf(info.get_wbbuf());
 }
 
 void collector::register_root(size_t *root) {

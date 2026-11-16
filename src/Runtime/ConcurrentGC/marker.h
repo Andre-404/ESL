@@ -8,22 +8,16 @@ namespace gc::detail {
     class marker {
         mark_buf_manager _bufs;
 
-        struct mark_result {
-            bool buf_full = false;
-            bool movable_obj = false;
-        };
-
-        [[gnu::always_inline, gnu::hot, nodiscard]] mark_result push_obj(mark_buf* buf, managed* obj, bool force_pin = false) {
+        // Returns true if buf is full
+        [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj, bool force_pin = false) {
             auto state = obj->state();
-            if (state == move_state::unmanaged) [[unlikely]] return {};
+            if (state == move_state::unmanaged) [[unlikely]] return false;
 
             auto pg = pg_meta::head_from_ptr(obj);
             auto won = pg->record_mark(obj, force_pin || state != move_state::none);
-            // Query source status after potentially pinning, we want to reduce the amount of cards dirtied
-            auto in_source = pg->is_source();
-            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return { false, in_source };
+            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
 
-            return { buf->push(obj), in_source };
+            return buf->push(obj);
         }
         [[nodiscard]] mark_buf* replace_buf(mark_buf* buf) {
             if (!buf->empty()) _bufs.push_full(buf);
@@ -43,7 +37,7 @@ namespace gc::detail {
         }
         void remove_empty() { _bufs.remove_empty(); }
 
-        void flush_wbbuf(mark_buf* buf, bool copying);
+        void flush_wbbuf(mark_buf* buf);
 
         void scan_globals(std::span<size_t*> globals);
 
@@ -53,7 +47,7 @@ namespace gc::detail {
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not,
                 // if it's on the stack or in registers in needs to be pinned
-                if (push_obj(buf, obj, is_copying).buf_full) buf = replace_buf(buf);
+                if (push_obj(buf, obj, is_copying)) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : tmp)
@@ -69,7 +63,7 @@ namespace gc::detail {
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not,
                 // if it's on the stack or in registers in needs to be pinned
-                if (push_obj(buf, obj, pin).buf_full) buf = replace_buf(buf);
+                if (push_obj(buf, obj, pin)) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : stack)
@@ -81,6 +75,6 @@ namespace gc::detail {
             push_buf(buf);
         }
 
-        [[gnu::hot]] size_t trace_n(size_t bytes, bool copying);
+        [[gnu::hot]] size_t trace_n(size_t bytes);
     };
 }

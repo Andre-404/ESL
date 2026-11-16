@@ -14,7 +14,7 @@ namespace {
     }
 }
 
-gc_bits::gc_bits(uint8_t* base) : _base(base), _card_committed(0), _live(0) {
+gc_bits::gc_bits(uint8_t* base) : _base(base), _live(0) {
     static_assert(
         config::bits_arena_sz % config::commit_syscall_sz == 0, "a half must be a whole number of commit granules"
     );
@@ -36,7 +36,7 @@ bool gc_bits::ensure_committed(std::atomic<std::size_t>& committed, uint8_t* bas
     return true;
 }
 
-std::span<uint64_t> gc_bits::bump(half& h, uint8_t* base, std::size_t bits, bool should_zero, bool cards) {
+std::span<uint64_t> gc_bits::bump(half& h, uint8_t* base, std::size_t bits, bool should_zero) {
     if (bits == 0) return {};
     // Bitmaps are read and written a word at a time through atomic_ref<uint64_t>,
     // so every slot has to land 8-aligned
@@ -49,15 +49,9 @@ std::span<uint64_t> gc_bits::bump(half& h, uint8_t* base, std::size_t bits, bool
 
     if (off + n > h.committed.load(std::memory_order_acquire)
         && !ensure_committed(h.committed, base, off + n)) [[unlikely]] return {};
-    // Cards are committed on the mark path only
-    if (cards && off + n > _card_committed.load(std::memory_order_acquire)
-        && !ensure_committed(_card_committed, card_base(), off + n)) [[unlikely]] return {};
 
     auto p = base + off;
-    if (should_zero) {
-        memset(p, 0, n);
-        if (cards) memset(card_base() + off, 0, n);
-    }
+    if (should_zero) memset(p, 0, n);
     // Span length is in words, not bytes: callers walk it as the bitmap it is, and the
     // pruner takes data() + size() as the slot's end address.
     return { (uint64_t*)p, words };
@@ -69,7 +63,6 @@ void gc_bits::clear_mark(uint64_t *watermark) {
     auto n = (uint8_t*)watermark - b;
     if (n <= 0) return;
     memset(b, 0, n);
-    memset(card_base(), 0, n);
 }
 
 void gc_bits::flip() {

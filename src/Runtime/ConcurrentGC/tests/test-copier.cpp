@@ -101,16 +101,10 @@ TEST_F(CopierTest, UpdateGlobalsRunsPtrToWordOnEveryUpdate) {
     EXPECT_EQ(root & 0xFF00000000000000ull, 0xAB00000000000000ull) << "ptr_to_word tag must have been applied";
 }
 
-// The pass is now marked AND dirty: a clean object cannot be holding a pointer into a page that
-// is being evacuated, and a dirty bit on an unmarked slot is a card left behind by a container
-// that died after the barrier logged it
-TEST_F(CopierTest, UpdatePtrsVisitsMarkedAndDirtySlotsOnly) {
+TEST_F(CopierTest, UpdatePtrsVisitsMarkedSlotsOnly) {
     test_page rp{64};
     for (uint16_t i = 0; i < 4; ++i) rp.construct(i, 1);
     rp.mark(0); rp.mark(1); rp.mark(2);     // slot 3 is unmarked
-    rp->dirty_card(rp.slot(0));
-    rp->dirty_card(rp.slot(2));             // slot 1 is marked but clean
-    rp->dirty_card(rp.slot(3));             // dirty but dead
 
     std::unordered_set<managed*> updated;
     test_custom::hooks.obj_update_ptrs = [&](managed* m) { updated.insert(m); };
@@ -118,27 +112,11 @@ TEST_F(CopierTest, UpdatePtrsVisitsMarkedAndDirtySlotsOnly) {
     copier c{0.5};
     c.update_ptrs(rp.pg());
 
-    EXPECT_EQ(updated.size(), 2u);
+    EXPECT_EQ(updated.size(), 3u);
     EXPECT_TRUE(updated.count(rp.slot(0)));
+    EXPECT_TRUE(updated.count(rp.slot(1)));
     EXPECT_TRUE(updated.count(rp.slot(2)));
-    EXPECT_FALSE(updated.count(rp.slot(1))) << "marked but clean";
-    EXPECT_FALSE(updated.count(rp.slot(3))) << "dirty but dead";
-}
-
-// f_any_dirty is the cheap half of the filter: a page nothing points out of is skipped whole,
-// without touching its mark bitmap or walking its slots
-TEST_F(CopierTest, UpdatePtrsSkipsAPageWithNoDirtyCards) {
-    test_page rp{64};
-    rp.mark_n(3);
-    ASSERT_FALSE(rp->any_dirty());
-
-    auto any_update = false;
-    test_custom::hooks.obj_update_ptrs = [&](managed*) { any_update = true; };
-
-    copier c{0.5};
-    c.update_ptrs(rp.pg());
-
-    EXPECT_FALSE(any_update);
+    EXPECT_FALSE(updated.count(rp.slot(3))) << "dead";
 }
 
 // temp_pinned is gone: a stack-reachable object pins its page through record_mark instead of
@@ -149,8 +127,6 @@ TEST_F(CopierTest, UpdatePtrsLeavesObjectStateAlone) {
     managed* a = rp.construct(0, 1, move_state::none);
     managed* b = rp.construct(1, 1, move_state::pinned);
     rp.mark(0); rp.mark(1);
-    rp->dirty_card(rp.slot(0));
-    rp->dirty_card(rp.slot(1));
 
     copier c{0.5};
     c.update_ptrs(rp.pg());
@@ -237,8 +213,7 @@ TEST_F(CopierTest, PinnedSparsePageIsTreatedAsTargetNotSource) {
 }
 
 // Roles are decided before marking and may only relax source -> target, so a page nomination
-// passed over cannot be evacuated this cycle however sparse it turns out to be - the cards
-// pointing into it were never dirtied
+// passed over cannot be evacuated this cycle however sparse it turns out to be
 TEST_F(CopierTest, APageNominationSkippedIsNeverASource) {
     test_page a{64}, b{64};
     a.construct(0, 1); a.mark(0);
@@ -373,30 +348,6 @@ TEST_F(CopierTest, ObjCopyIsCalledExactlyOncePerLiveSourceObject) {
     c.copy_objects(head);
 
     EXPECT_EQ(copies, 5) << "one obj_copy per marked source slot";
-}
-
-// obj_copy duplicates the object's pointers, so an object that pointed into a source page still
-// does after the move. Its card has to travel with it, or the update pass skips the copy
-TEST_F(CopierTest, CardsTravelWithTheObject) {
-    test_page src{64}, dst{64};
-    src.mark_n(2);
-    src->dirty_card(src.slot(1));   // only the second object holds a source pointer
-    dst.construct(0, 9);
-    dst.mark(0, true);              // pinned, so dst stays a target
-
-    pg_meta* head = chain_nominated({ &dst, &src });
-
-    copier c{0.5};
-    c.copy_objects(head);
-
-    auto* moved_clean = get_moved(src.slot(0));
-    auto* moved_dirty = get_moved(src.slot(1));
-    ASSERT_NE(moved_clean, src.slot(0)) << "both objects were supposed to move";
-    ASSERT_NE(moved_dirty, src.slot(1));
-
-    EXPECT_TRUE(dst->card_dirty(moved_dirty));
-    EXPECT_TRUE(dst->any_dirty()) << "the page flag has to follow, or the page is skipped whole";
-    EXPECT_FALSE(dst->card_dirty(moved_clean)) << "forwarding is per object, not per page";
 }
 
 TEST_F(CopierTest, AfterCopySourcePagesAreRetired) {

@@ -77,9 +77,6 @@ namespace gc {
         // -1 since offsets are in range [0, 2^32)
         static_assert((config::bits_region_sz / sizeof(uint64_t))-1 <= UINT32_MAX);
 
-        // Sized to mark region, objects that need their pointers updated are mark & card
-        constexpr std::size_t card_region_sz = bits_arena_sz;
-
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 

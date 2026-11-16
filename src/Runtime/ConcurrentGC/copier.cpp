@@ -9,7 +9,7 @@
 
 using namespace gc::detail;
 
-struct pg_slot { gc::managed* obj; bool marked; bool dirty; };
+struct pg_slot { gc::managed* obj; bool marked; };
 
 class pg_list_slot_iter {
     std::span<pg_meta*> _pages;
@@ -26,14 +26,13 @@ public:
         return *this;
     }
 
-    pg_slot operator*() const { return { _cur_iter.get(), _cur_iter.is_marked(), _cur_iter.is_dirty() }; }
+    pg_slot operator*() const { return { _cur_iter.get(), _cur_iter.is_marked() }; }
     bool operator==(std::default_sentinel_t) const { return _cnt == _pages.size(); }
 
     pg_list_slot_iter& begin() { return *this; }
     std::default_sentinel_t end() const { return {}; }
 
     void set_marked() { _cur_iter.set_marked(); }
-    void set_dirty() { _cur_iter.set_dirty(); }
 };
 
 
@@ -43,7 +42,7 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
     auto target_iter = pg_list_slot_iter { target };
 
-    for (auto [src, marked, dirty] : pg_list_slot_iter { source }) {
+    for (auto [src, marked] : pg_list_slot_iter { source }) {
         if (!marked) continue;
 
         while ((*target_iter).marked) {
@@ -57,9 +56,6 @@ void copier::copy_objects(pg_meta *pg_list) const {
         set_moved(src, dest);
         // Need to update the mark and copy bitmap with the new object
         target_iter.set_marked();
-        // While marking is unconditional (only a live object gets copied, copy card dirtying isnt)
-        if (dirty)
-            target_iter.set_dirty();
     }
     // Source pages are now full of dead objects
     for (auto pg : source) pg->mark_inactive();
@@ -67,9 +63,9 @@ void copier::copy_objects(pg_meta *pg_list) const {
 
 void copier::update_ptrs(pg_meta *pg) const  {
     for (; pg; pg = pg->next()) {
-        if (!pg->is_active() || !pg->any_dirty()) continue;
+        if (!pg->is_active()) continue;
         for (auto it = pg_meta::pg_slots_iter { pg, 0 }; !it.at_end(); it.next()) {
-            if (!it.is_marked() || !it.is_dirty()) continue;
+            if (!it.is_marked()) continue;
             obj_update_ptrs(it.get());
         }
     }

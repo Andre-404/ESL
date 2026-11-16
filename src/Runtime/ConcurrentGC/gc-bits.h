@@ -26,15 +26,12 @@ namespace gc::detail {
 
         uint8_t* _base;
         half _halves[2];
-        // Card bitmaps are copies of mark bitmap, so no need to track cursor
-        std::atomic<std::size_t> _card_committed;
         std::atomic<uint8_t> _live;
         std::mutex _mtx;
 
         uint8_t* half_base(uint8_t h) const { return _base + std::size_t(h) * config::bits_arena_sz; }
-        uint8_t* card_base() const { return _base + config::bits_region_sz; }
         bool ensure_committed(std::atomic<std::size_t>& committed, uint8_t* base, std::size_t end);
-        std::span<uint64_t> bump(half& h, uint8_t* base, std::size_t bits, bool should_zero, bool cards);
+        std::span<uint64_t> bump(half& h, uint8_t* base, std::size_t bits, bool should_zero);
 
     public:
         gc_bits(uint8_t* base);
@@ -43,12 +40,12 @@ namespace gc::detail {
 
         std::span<uint64_t> alloc_bits(std::size_t bits) {
             auto h = _live.load(std::memory_order_acquire);
-            return bump(_halves[h], half_base(h), bits, true, false);
+            return bump(_halves[h], half_base(h), bits, true);
         }
 
         std::span<uint64_t> mark_bits(std::size_t bits, bool should_zero = true) {
             auto h = _live.load(std::memory_order_acquire) ^ 1;
-            return bump(_halves[h], half_base(h), bits, should_zero, true);
+            return bump(_halves[h], half_base(h), bits, should_zero);
         }
 
         // Must run at a safepoint: it invalidates every pointer handed out of the alloc half
