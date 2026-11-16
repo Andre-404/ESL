@@ -10,6 +10,7 @@
 #include "gc-config.h"
 #include "pg-meta.h"
 #include "radix-tree.h"
+#include "reloc-hdrs.h"
 
 namespace gc::detail {
     struct scavenge_policy {
@@ -33,6 +34,7 @@ namespace gc::detail {
         uint8_t* _base;
         void* _meta;
         pg_meta* _pg_headers;
+        reloc_hdrs _relocs;
         radix_tree _tree;
         bitmap _committed; // one bit per commit granule, not per page
         std::atomic<std::size_t> _hdrs_committed; // pg headers are never decommited, is that okay?
@@ -91,6 +93,7 @@ namespace gc::detail {
 
         uint8_t* base() const { return _base; }
         pg_meta* pgs_base() const { return _pg_headers; }
+        reloc_hdrs& relocs() { return _relocs; }
         bool pg_active(pg_meta* pg) {
             auto off = pg - _pg_headers;
             if (off < 0 || (std::size_t)off >= _hdrs_committed.load(std::memory_order_acquire)) return false;
@@ -112,6 +115,7 @@ namespace gc::detail {
         pg_meta* meta_base() const { return _pages.pgs_base(); }
         // The alloc/mark bitmap arena the headers point into; the collector drives its flip.
         gc_bits& bits() { return _bits; }
+        reloc_hdrs& relocs() { return _pages.relocs(); }
         bool pg_active(pg_meta* pg) { return _pages.pg_active(pg); }
 
         // An aligned run starts on a multiple of its own length in pages

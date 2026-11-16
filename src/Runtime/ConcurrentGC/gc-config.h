@@ -77,6 +77,9 @@ namespace gc {
         // -1 since offsets are in range [0, 2^32)
         static_assert((config::bits_region_sz / sizeof(uint64_t))-1 <= UINT32_MAX);
 
+        constexpr std::size_t reloc_hdr_sz = 8;
+        constexpr std::size_t reloc_region_sz = total_pages * reloc_hdr_sz;
+
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 

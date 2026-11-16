@@ -99,5 +99,6 @@ namespace gc::detail {
         void free_pgs();
 
         gc_bits& bits() { return _allocator.bits(); }
+        reloc_hdrs& relocs() { return _allocator.relocs(); }
     };
 }

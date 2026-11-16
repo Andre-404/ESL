@@ -22,15 +22,16 @@ namespace {
         "dual_bitmap places the regions behind the headers at config::hdr_region_sz, so the "
         "reservation has to spend exactly that on headers");
     
-    // heap | headers | bits
-    // all at fixed offsets so pg_meta and dual_bitmap can reach the last two by arithmetic
+    // heap | headers | bits | reloc hdrs
+    // all at fixed offsets so they can be reached from a heap address by arithmetic
     constexpr std::size_t reserve_bytes = config::heap_max_sz
                                         + hdr_bytes
-                                        + config::bits_region_sz;
+                                        + config::bits_region_sz
+                                        + config::reloc_region_sz;
 
     constexpr std::size_t alloc_words = heap_geometry::words;
     constexpr std::size_t committed_words = heap_geometry::total_pages / config::commit_granule / 64;
-    constexpr std::size_t meta_bytes = (alloc_words + committed_words) * sizeof(uint64_t)
+    constexpr std::size_t meta_bytes = (alloc_words + committed_words + reloc_hdrs::track_words) * sizeof(uint64_t)
                                      + heap_geometry::total_entries * sizeof(summary);
 
     constexpr auto G = config::commit_granule;
@@ -142,6 +143,10 @@ page_allocator::page_allocator(scavenge_policy policy) :
     _tree = radix_tree { sums, words };
 
     _committed = bitmap { os::carve<uint64_t>(cursor, committed_words) };
+    _relocs = reloc_hdrs {
+        (uint8_t*)_pg_headers + hdr_bytes + config::bits_region_sz,
+        os::carve<uint64_t>(cursor, reloc_hdrs::track_words)
+    };
 
     assert(cursor == (uint8_t*)_meta + meta_bytes && "meta_bytes disagrees with the layout");
     _scavenger = std::jthread { [&](auto st) { scavenge_loop(st); } };
@@ -164,6 +169,7 @@ bool page_allocator::commit_headers(std::size_t start, std::size_t n) {
     // to whole chunks
     auto to = (need + hdrs_per_chunk - 1) / hdrs_per_chunk * hdrs_per_chunk;
     if (!os::commit(_pg_headers + from, (to - from) * sizeof(pg_meta))) return false;
+    if (!_relocs.commit(from, to)) return false;
 
     _hdrs_committed.store(to, std::memory_order_release);
     return true;

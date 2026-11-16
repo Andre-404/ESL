@@ -84,6 +84,9 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
 void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::copy);
 
+    if (role == stw_role::collector) _pg_manager.relocs().clear();
+    _gate.arrive_and_wait();
+
     mutate_all(owned, role, copy_objs_fn());
     _gate.arrive_and_wait();
 
@@ -184,6 +187,9 @@ void collector::concurrent_loop() {
         auto watermark = end_cycle(snapshot);
 
         _pg_manager.bits().clear_mark(watermark);
+        // A copying cycle that comes after another copying cylce needs headers clear
+        // so we clear them in stw_copy
+        if (!copying) _pg_manager.relocs().clear();
         _pg_manager.free_pgs();
 
         _tcb_registry.under_lock([&] {
