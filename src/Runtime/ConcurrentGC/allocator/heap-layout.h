@@ -8,14 +8,15 @@
 namespace gc::detail {
     class pg_meta;
 
-    // heap | headers | bits | reloc hdrs
+    // heap | headers | bits | reloc hdrs | reloc units
     // One reservation aligned to the heap size, so masking a heap or header address with
     // heap_bits gives the start of its region and everything else is a fixed offset from there
     class heap_layout {
         static constexpr std::size_t hdrs_off = config::heap_max_sz;
         static constexpr std::size_t bits_off = hdrs_off + config::hdr_region_sz;
         static constexpr std::size_t relocs_off = bits_off + config::bits_region_sz;
-        static constexpr std::size_t total_sz = relocs_off + config::reloc_region_sz;
+        static constexpr std::size_t units_off = relocs_off + config::reloc_region_sz;
+        static constexpr std::size_t total_sz = units_off + config::reloc_units_sz;
 
         uint8_t* _base;
     public:
@@ -30,5 +31,6 @@ namespace gc::detail {
         pg_meta* hdrs() const { return (pg_meta*)(_base + hdrs_off); }
         uint8_t* bits() const { return _base + bits_off; }
         uint8_t* relocs() const { return _base + relocs_off; }
+        uint8_t* reloc_units() const { return _base + units_off; }
     };
 }

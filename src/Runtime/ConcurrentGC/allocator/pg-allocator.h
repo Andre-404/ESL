@@ -20,7 +20,7 @@ namespace gc::detail {
 
     public:
         explicit pg_allocator(scavenge_policy policy = {})
-            : _relocs(_layout.relocs()), _tables(_layout.hdrs(), _relocs), _spans(_layout.heap()),
+            : _relocs(_layout.relocs(), _layout.reloc_units()), _tables(_layout.hdrs(), _relocs), _spans(_layout.heap()),
             _scavenger(_spans, policy), _bits(_layout.bits()) {}
 
         uint8_t* heap_base() const { return _layout.heap(); }

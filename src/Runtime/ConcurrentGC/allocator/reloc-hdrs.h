@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <span>
 #include <utility>
 
 #include "../gc-config.h"
+#include "bump-allocator.h"
 #include "os-memory.h"
 
 namespace gc::detail {
@@ -28,10 +30,12 @@ namespace gc::detail {
         uint64_t* _entries;
         uint64_t* _runs;
         uint64_t* _sums;
+        bump_allocator _units;
 
     public:
-        explicit reloc_hdrs(uint8_t* base)
-            : _entries((uint64_t*)base), _runs((uint64_t*)os::map_rw(track_bytes)), _sums(_runs + run_words) {
+        reloc_hdrs(uint8_t* base, uint8_t* units)
+            : _entries((uint64_t*)base), _runs((uint64_t*)os::map_rw(track_bytes)), _sums(_runs + run_words),
+            _units(units, config::reloc_units_sz) {
             if (!_runs) throw std::bad_alloc{};
         }
         ~reloc_hdrs() { os::release(_runs, track_bytes); }
@@ -42,7 +46,13 @@ namespace gc::detail {
             return os::commit(_entries + from, (to - from) * config::reloc_hdr_sz);
         }
 
+        // n zeroed units, valid until the next clear
+        std::span<uint64_t> alloc_units(std::size_t n) {
+            return _units.bump(n * config::reloc_unit_sz / sizeof(uint64_t), true);
+        }
+
         uint64_t get(std::size_t pg) const { return _entries[pg]; }
+        uint8_t* get_units_start() const { return _units.base(); }
         void set(std::size_t pg, uint64_t entry) {
             assert(entry && !_entries[pg] && "a page is compacted at most once per cycle");
             _entries[pg] = entry;
@@ -55,7 +65,7 @@ namespace gc::detail {
                 std::atomic_ref { _sums[run / 4096] }.fetch_or(1ull << (run / 64 % 64), std::memory_order_relaxed);
         }
 
-        // A no-op unless the previous cycle copied. Must not race with set
+        // Drops the entries and units of the last copy. Must not race with set or alloc_units
         void clear() {
             for (std::size_t s = 0; s < sum_words; ++s) {
                 for (auto sw = std::exchange(_sums[s], 0); sw; sw &= sw - 1) {
@@ -66,6 +76,7 @@ namespace gc::detail {
                     }
                 }
             }
+            _units.reset();
         }
     };
 }

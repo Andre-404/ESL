@@ -219,7 +219,7 @@ TEST(PgAllocatorTest, RelocHdrsOutliveTheirPages) {
 
 TEST(PgTablesTest, RelocHdrsAreCommittedWithHeadersAndClearedTogether) {
     heap_layout layout;
-    reloc_hdrs r { layout.relocs() };
+    reloc_hdrs r { layout.relocs(), layout.reloc_units() };
     pg_tables t { layout.hdrs(), r };
     // far is under a different summary word than the run at 0
     constexpr std::size_t n = 200, far = (1u << 20) - 1;
@@ -236,6 +236,23 @@ TEST(PgTablesTest, RelocHdrsAreCommittedWithHeadersAndClearedTogether) {
     r.clear();
     for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) EXPECT_EQ(r.get(pg), 0u) << "page " << pg;
     r.clear();
+}
+
+TEST(PgAllocatorTest, RelocUnitsAreZeroedAndReusedAfterClear) {
+    pg_allocator pa;
+    auto a = pa.relocs().alloc_units(3);
+    ASSERT_EQ(a.size(), 6u);
+    EXPECT_EQ(uintptr_t(a.data()) % config::reloc_unit_sz, 0u);
+    for (auto w : a) EXPECT_EQ(w, 0u);
+    std::fill(a.begin(), a.end(), ~0ull);
+
+    auto b = pa.relocs().alloc_units(1);
+    EXPECT_EQ(b.data(), a.data() + a.size()) << "units are bumped back to back";
+
+    pa.relocs().clear();
+    auto again = pa.relocs().alloc_units(3);
+    ASSERT_EQ(again.data(), a.data()) << "clear rewinds the arena";
+    for (auto w : again) EXPECT_EQ(w, 0u) << "reused units come back zeroed";
 }
 
 TEST(SpanAllocatorTest, ImpossibleRequestsFail) {

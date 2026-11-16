@@ -80,6 +80,12 @@ namespace gc {
         constexpr std::size_t reloc_hdr_sz = 8;
         constexpr std::size_t reloc_region_sz = total_pages * reloc_hdr_sz;
 
+        // Worst case is every page compacted at 16 byte blocks, one 16 byte unit per 64 of them
+        constexpr std::size_t reloc_unit_sz = 16;
+        constexpr std::size_t reloc_units_sz = 1ull << (heap_bits - 6);
+        // Reloc hdrs point at their units with a 32 bit offset in unit steps
+        static_assert(reloc_units_sz / reloc_unit_sz - 1 <= UINT32_MAX);
+
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 
