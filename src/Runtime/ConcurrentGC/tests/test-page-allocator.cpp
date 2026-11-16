@@ -176,14 +176,14 @@ TEST(PageAllocatorTest, ScavengedRunIsReusable) {
 // the previous occupant left behind can read back as live or allocated.
 TEST(PageAllocatorTest, RecycledPageGetsACleanPgMetaHeader) {
     pg_allocator pa;
-    auto* pg = pa.alloc_pg(64, 1);
+    auto* pg = pa.alloc_pg(64, config::small_obj_pgs, true);
     ASSERT_NE(pg, nullptr);
     pa.free_pgs(pg);
     // Dirty it only after freeing: while it is live the header holds the list link that
     // free_pgs walks. Freeing leaves the header mapped, so this is a legal write.
     memset((uint8_t*)pg, 0xFF, sizeof(pg_meta));
 
-    auto* again = pa.alloc_pg(64, 1);
+    auto* again = pa.alloc_pg(64, config::small_obj_pgs, true);
     ASSERT_EQ(again, pg) << "expected the same page back";
     EXPECT_EQ(again->block_sz(), 64u);
     EXPECT_EQ(again->compute_live(), 0u);

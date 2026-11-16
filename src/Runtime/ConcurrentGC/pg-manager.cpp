@@ -1,3 +1,4 @@
+#include <bit>
 #include <utility>
 
 #include "pg-manager.h"
@@ -18,7 +19,9 @@ pg_meta* pg_manager::new_pg(size_t obj_sz) {
         if (pg) return pg;
     }
 
-    return _allocator.alloc_pg(config::sz_classes[cl], config::small_obj_pgs);
+    // alloc_aligned takes a power of two of at most 64 pages
+    static_assert(std::has_single_bit(config::small_obj_pgs) && config::small_obj_pgs <= 64);
+    return _allocator.alloc_pg(config::sz_classes[cl], config::small_obj_pgs, true);
 }
 
 static size_t compute_idx(pg_meta* pg, pg_meta* base) {

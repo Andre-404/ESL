@@ -21,11 +21,13 @@ namespace gc::test {
     class test_page {
         detail::pg_meta* _pg;
     public:
-        // npages defaults the way pg_manager::new_pg sizes a run: one page for a size class,
-        // enough pages to hold the object for anything larger
+        // npages defaults the way pg_manager::new_pg sizes a run: an aligned small_obj_pgs for a
+        // size class, enough pages to hold the object for anything larger
         explicit test_page(size_t block_sz, size_t npages = 0)
-            : _pg(heap().alloc_pg(block_sz,
-                  npages ? npages : (block_sz + config::page_sz - 1) / config::page_sz)) {}
+            : _pg(config::sz_to_class(block_sz) != config::large_class && !npages
+                  ? heap().alloc_pg(block_sz, config::small_obj_pgs, true)
+                  : heap().alloc_pg(block_sz,
+                        npages ? npages : (block_sz + config::page_sz - 1) / config::page_sz)) {}
         ~test_page() { if (_pg) { _pg->unlink(); heap().free_pgs(_pg); } }
         test_page(const test_page&) = delete;
         test_page& operator=(const test_page&) = delete;

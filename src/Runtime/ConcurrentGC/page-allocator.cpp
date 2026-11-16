@@ -284,8 +284,8 @@ void page_allocator::free(void* addr, std::size_t npages) {
     _in_use.fetch_sub(granules_unalloced(idx, npages, _tree), std::memory_order_relaxed);
 }
 
-pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs) {
-    auto* page = _pages.alloc(num_pgs);
+pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs, bool aligned) {
+    auto* page = aligned ? _pages.alloc_aligned(num_pgs, num_pgs) : _pages.alloc(num_pgs);
     if (!page) [[unlikely]] return nullptr;
 
     // When allocating new pages both halves come back zeroed

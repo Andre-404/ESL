@@ -42,10 +42,10 @@ namespace gc {
 
         // Allocator stuff
         constexpr std::size_t heap_bits = 40;
-        constexpr std::size_t pg_bits = 16;
+        constexpr std::size_t pg_bits = 13;
 
         constexpr std::size_t page_sz = 1ull << pg_bits;
-        constexpr std::size_t small_obj_pgs = 1;
+        constexpr std::size_t small_obj_pgs = 8;
         constexpr std::size_t heap_max_sz = 1ull << heap_bits;
 
         constexpr uint16_t blocks_in_pg(uint8_t szclass) {

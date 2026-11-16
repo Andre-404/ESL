@@ -114,7 +114,8 @@ namespace gc::detail {
         gc_bits& bits() { return _bits; }
         bool pg_active(pg_meta* pg) { return _pages.pg_active(pg); }
 
-        pg_meta* alloc_pg(size_t block_sz, size_t num_pgs);
+        // An aligned run starts on a multiple of its own length in pages
+        pg_meta* alloc_pg(size_t block_sz, size_t num_pgs, bool aligned = false);
         void free_pgs(pg_meta* start);
     };
 }

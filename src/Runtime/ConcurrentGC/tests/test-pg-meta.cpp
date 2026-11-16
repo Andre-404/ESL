@@ -25,7 +25,7 @@ TEST(PgMetaTest, SlotRangeFitsInsideOnePage) {
     for (size_t sz : config::sz_classes) {
         test_page p{sz};
         size_t used = p->block_cnt() * sz;
-        EXPECT_LE(used, config::page_sz) << "sz=" << sz << " needs " << used << " bytes of page";
+        EXPECT_LE(used, config::page_sz * config::small_obj_pgs) << "sz=" << sz << " needs " << used << " bytes of page";
     }
 }
 
@@ -98,7 +98,7 @@ TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
     p->nominate();
     p->set_any_dirty();
     p.mark(0, true);
-    EXPECT_EQ(p->num_pages(), 1u);
+    EXPECT_EQ(p->num_pages(), config::small_obj_pgs);
     EXPECT_EQ(p->block_sz(), 64u);
 }
 
