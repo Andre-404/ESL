@@ -1,6 +1,7 @@
 #pragma once
 #include "gc-config.h"
 #include "managed.h"
+#include "allocator/heap-layout.h"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -14,10 +15,7 @@ namespace gc::detail {
         uint32_t _alloc;
         uint32_t _mark;
 
-        uint64_t* base() const {
-            auto meta_base = (size_t)this & ~((1ull << config::heap_bits) - 1);
-            return (uint64_t*)(meta_base + config::hdr_region_sz);
-        }
+        uint64_t* base() const { return (uint64_t*)heap_layout::bits(heap_layout::heap_from_hdr(this)); }
         uint32_t compute_offset(uint64_t* bitmap) const { return bitmap - base(); }
         uint64_t* compute_ptr(uint32_t offset) const { return base() + offset; }
     public:
@@ -52,14 +50,10 @@ namespace gc::detail {
             f_has_cont     = 1 << 1,
             // Role and state for the cycle in flight, reset by next_cycle
             f_pinned       = 1 << 2, // holds an object that must not move
-            f_source       = 1 << 3, // nominated for evacuation; clear means the page is a target
-            f_active       = 1 << 4, // This page is active
-
-            cycle_flags = f_pinned | f_source,
+            f_active       = 1 << 3, // This page is active
         };
 
     private:
-        static constexpr size_t region_mask = ~((1ull << config::heap_bits) - 1);
         static constexpr int32_t sll_null = std::numeric_limits<int32_t>::max();
 
         std::atomic<int32_t> _next;
@@ -78,7 +72,6 @@ namespace gc::detail {
         bool test_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) const { return (_flags.load(mo) & f) != 0; }
         void set_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) { _flags.fetch_or(f, mo); }
         void clear_flag(pg_flag f, std::memory_order mo = std::memory_order_relaxed) { _flags.fetch_and(uint8_t(~f), mo); }
-        void pin() { _flags.fetch_or(f_pinned, std::memory_order_relaxed); }
 
         std::pair<std::atomic_ref<size_t>, uint64_t> mark_at(size_t i) const {
             return {
@@ -92,11 +85,8 @@ namespace gc::detail {
             return (size_t)((uint8_t*)ptr - get_data()) / block_sz_fast();
         }
 
-        // Headers sit above the heap's 2^heap_bits boundary
-        pg_meta* hdr_base() const { return (pg_meta*)((size_t)this & region_mask); }
-
         // Not correct for large objects but it doesn't matter
-        // for the purposes of from_interior, record_mark and pg_slots_iter::is_marked
+        // for the purposes of from_interior and record_mark
         size_t block_sz_fast() const { return config::sz_classes[_szclass]; }
 
         // For pages following the header
@@ -115,52 +105,16 @@ namespace gc::detail {
             new(at) pg_meta(off, num_pages);
         }
 
-        static pg_meta* pg_from_ptr(void* ptr) {
-            auto meta_start = (pg_meta*)(((size_t)ptr & region_mask) + config::heap_max_sz);
-            return meta_start + (((size_t)ptr & ~region_mask) / config::page_sz);
-        }
+        static pg_meta* pg_from_ptr(void* ptr) { return heap_layout::hdrs(ptr) + heap_layout::page_idx(ptr); }
         static pg_meta* head_from_ptr(void* ptr) {
             auto pg = pg_from_ptr(ptr);
             return pg->test_flag(f_first_in_run) ? pg : pg->next();
         }
 
-        class pg_slots_iter {
-            pg_meta* _pg;
-            size_t _block_cnt;
-            size_t _block_sz;
-            size_t _cache;
-            uint16_t _i;
-        public:
-            pg_slots_iter(pg_meta* pg, uint16_t i)
-                : _pg(pg), _block_cnt(_pg->block_cnt()), _block_sz(_pg->block_sz_fast()),
-                  _cache(_pg->_bits.mark_bits(_block_cnt)[i / 64]), _i(i) {}
-
-            // The bound keeps the last word of a page whose block_cnt is a multiple of 64
-            // from refreshing past the end of the span
-            void next() {
-                if (++_i % 64 == 0 && _i < _block_cnt)
-                    _cache = _pg->_bits.mark_bits(_block_cnt)[_i / 64];
-            }
-            bool at_end() const { return _i == _block_cnt; }
-
-            managed* get() const {
-                return at_end() ? nullptr : (managed*)(_pg->get_data() + _i * _block_sz);
-            }
-
-            bool is_marked() const { return _cache & (1ull << (_i % 64)); }
-            void set_marked() { 
-                _cache |= (1ull << (_i % 64));
-                _pg->_bits.mark_bits(_block_cnt)[_i / 64] = _cache;
-            }
-        };
-
-        void mark_active() {
+        void set_active(bool active) {
             for (size_t i = 0; i < num_pages(); i++)
-                (this+ i)->set_flag(f_active, std::memory_order_release);
-        }
-        void mark_inactive() {
-            for (size_t i = 0; i < num_pages(); i++)
-                (this+ i)->clear_flag(f_active, std::memory_order_release);
+                active ? (this + i)->set_flag(f_active, std::memory_order_release)
+                       : (this + i)->clear_flag(f_active, std::memory_order_release);
         }
         bool is_active() const { return test_flag(f_active, std::memory_order_acquire); }
 
@@ -176,31 +130,20 @@ namespace gc::detail {
             return (this + 1)->_run_pages;
         }
         uint8_t* get_data() const {
-            return (uint8_t*)hdr_base() - config::heap_max_sz + (this - hdr_base()) * config::page_sz;
+            auto heap = heap_layout::heap_from_hdr(this);
+            return heap + (this - heap_layout::hdrs(heap)) * config::page_sz;
         }
         bool has_pinned() const { return test_flag(f_pinned); }
-        // Instead of doing the "pin clears source" dance which slows down the hot path
-        // we say that pinned dominates source
-        bool is_source() const {
-            auto f = _flags.load(std::memory_order_relaxed);
-            return (f & f_source) && ((f & f_pinned) == 0);
-        }
-
-        bool nominate() {
-            auto prev = _flags.fetch_or(f_source, std::memory_order_relaxed);
-            return (prev & f_source) == 0 && (prev & f_pinned) == 0;
-        }
-        void demote() { clear_flag(f_source); }
 
         void next_cycle(uint64_t* new_mark) {
-            clear_flag(cycle_flags);
+            clear_flag(f_pinned);
             _bits.flip(new_mark);
         }
 
         // Marking stuff
         [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
             // Pin regardless of the fact that the mark bit is set or not
-            if (is_pinned) pin();
+            if (is_pinned) set_flag(f_pinned);
 
             auto [word, in_word] = mark_at(block_idx(ptr));
             if (word.load(std::memory_order_relaxed) & in_word) return false;
@@ -219,12 +162,20 @@ namespace gc::detail {
             for (auto w : _bits.mark_bits(block_cnt())) n += std::popcount(w);
             return n;
         }
-        size_t compute_alloc() const {
-            auto n = 0ull;
-            for (size_t bit = 0; bit < block_cnt(); bit += 64) n += std::popcount(_bits.load_alloc(bit));
-            return n;
+        // Calls fn with the index of every marked block, in ascending order, a word at a time
+        template<typename F>
+        void for_each_marked(F&& fn) const {
+            auto words = _bits.mark_bits(block_cnt());
+            for (size_t w = 0; w < words.size(); ++w)
+                for (auto m = words[w]; m; m &= m - 1) fn(uint16_t(w * 64 + std::countr_zero(m)));
         }
-
+        // Leaves exactly the first n blocks marked
+        void mark_prefix(size_t n) {
+            for (auto& w : _bits.mark_bits(block_cnt())) {
+                w = n >= 64 ? ~0ull : (1ull << n) - 1;
+                n -= std::min<size_t>(n, 64);
+            }
+        }
         uint64_t load_alloc_word(uint16_t bit) const  { return _bits.load_alloc(bit); }
         void     store_alloc_word(uint16_t bit, uint64_t w) const { _bits.store_alloc(bit, w); }
 

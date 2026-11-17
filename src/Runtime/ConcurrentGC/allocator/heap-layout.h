@@ -28,9 +28,22 @@ namespace gc::detail {
         heap_layout& operator=(const heap_layout&) = delete;
 
         uint8_t* heap() const { return _base; }
-        pg_meta* hdrs() const { return (pg_meta*)(_base + hdrs_off); }
-        uint8_t* bits() const { return _base + bits_off; }
-        uint8_t* relocs() const { return _base + relocs_off; }
-        uint8_t* reloc_units() const { return _base + units_off; }
+        pg_meta* hdrs() const { return hdrs(_base); }
+        uint8_t* bits() const { return bits(_base); }
+        uint8_t* relocs() const { return relocs(_base); }
+        uint8_t* reloc_units() const { return reloc_units(_base); }
+
+        // The same regions found from any address inside the heap
+        static uint8_t* heap(const void* in_heap) { return (uint8_t*)((uintptr_t)in_heap & ~(config::heap_max_sz - 1)); }
+        static pg_meta* hdrs(const void* in_heap) { return (pg_meta*)(heap(in_heap) + hdrs_off); }
+        static uint8_t* bits(const void* in_heap) { return heap(in_heap) + bits_off; }
+        static uint8_t* relocs(const void* in_heap) { return heap(in_heap) + relocs_off; }
+        static uint8_t* reloc_units(const void* in_heap) { return heap(in_heap) + units_off; }
+        // Masking a header lands on the start of the header region, the heap sits right below it
+        static uint8_t* heap_from_hdr(const void* hdr) { return heap(hdr) - hdrs_off; }
+
+        static size_t page_idx(const void* page) {
+            return ((uint8_t*)page - heap(page)) / config::page_sz;
+        }
     };
 }

@@ -21,7 +21,6 @@ namespace gc::detail {
         stw = 2
     };
     constexpr uint8_t gc_state_mask = 0b011;
-    constexpr uint8_t gc_flag_copying = 0b100;
     class collector {
         // Roughly grouped by cache lines
         tcb_registry _tcb_registry;
@@ -55,14 +54,11 @@ namespace gc::detail {
         bool state_is(gc_state s) const {
             return (_gc_flag.load(std::memory_order_acquire) & gc_state_mask) == (uint8_t)s;
         }
-        bool is_copying() const {
-            return (_gc_flag.load(std::memory_order_acquire) & gc_flag_copying) != 0;
-        }
 
         // Page mutators, shared by mutator and worker stw functions. All three tolerate a null
         // list, which is what an arena with no pages of a given size class hands them.
-        auto copy_objs_fn() const {
-            return [this](pg_meta* start) { _copier.copy_objects(start); return start; };
+        auto gather_fn() {
+            return [this](pg_meta* start) { _copier.gather(start); return start; };
         }
         auto update_ptrs_fn() const {
             return [this](pg_meta* start) { _copier.update_ptrs(start); return start; };
@@ -90,12 +86,12 @@ namespace gc::detail {
 
         std::vector<tcb*> post_with_state(uint8_t flags, uint8_t op);
         void stw_enter(std::span<tcb*> owned, stw_role role);
-        size_t stw_mark(std::span<tcb*> owned, stw_role role, bool copying);
+        size_t stw_mark(std::span<tcb*> owned, stw_role role);
         void stw_copy(std::span<tcb*> owned, stw_role role);
         void stw_prune(std::span<tcb*> owned, stw_role role);
         size_t stw(std::span<tcb*> owned, stw_role role);
 
-        void concurrent_mark(uint8_t copying);
+        void concurrent_mark();
         size_t worker_stw();
         void mutator_stw(tcb* handle);
         void collect_metrics();

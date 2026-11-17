@@ -42,12 +42,12 @@ namespace gc::detail {
         void scan_globals(std::span<size_t*> globals);
 
         template<typename F>
-        void scan_temp(std::span<size_t> tmp, F get_base, bool is_copying) {
+        void scan_temp(std::span<size_t> tmp, F get_base) {
             auto buf = _bufs.pop_empty();
             auto mark = [&](managed* obj) {
                 // Regardless of whether this object was already marked or not,
                 // if it's on the stack or in registers in needs to be pinned
-                if (push_obj(buf, obj, is_copying)) buf = replace_buf(buf);
+                if (push_obj(buf, obj, true)) buf = replace_buf(buf);
             };
             // Assumes stack grows downwards, also assumes every value on the stack is 8byte aligned
             for (auto word : tmp)

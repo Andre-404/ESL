@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cassert>
@@ -10,9 +11,50 @@
 
 #include "../gc-config.h"
 #include "bump-allocator.h"
+#include "heap-layout.h"
 #include "os-memory.h"
 
 namespace gc::detail {
+    // Covers 64 positions of an old page: which of them survived, and where the first one went.
+    // The rest follow it in order, one block apart
+    struct reloc_unit {
+        uint64_t live;
+        uint8_t* dest;
+    };
+    static_assert(sizeof(reloc_unit) == config::reloc_unit_sz);
+
+    namespace reloc {
+        constexpr std::size_t split_none = config::page_sz / 16;
+        constexpr std::size_t pg_units = split_none / 64;
+        constexpr std::size_t max_table_units = pg_units + 1;
+
+        // A page's reloc hdr. table is its units' offset into the arena
+        struct entry {
+            uint32_t block_sz, split, table;
+        };
+        // Never zero, a block is at least 16 bytes
+        constexpr uint64_t pack(entry e) { return e.block_sz | e.split << 12 | uint64_t(e.table) << 32; }
+        constexpr entry unpack(uint64_t w) { return { uint32_t(w & 0xFFF), uint32_t(w >> 12 & 0x3FF), uint32_t(w >> 32) }; }
+        static_assert(split_none <= 0x3FF && config::sz_classes[config::szclass_cnt - 1] <= 0xFFF);
+
+        constexpr std::size_t unit_of(std::size_t pos, std::size_t split) { return pos / 64 + (pos >= split); }
+
+        // p must be an object that survived
+        constexpr uint8_t* forward(uint8_t* p) {
+            auto off = uintptr_t(p - heap_layout::heap(p));
+            auto e = ((const uint64_t*)heap_layout::relocs(p))[off >> config::pg_bits];
+            if (!e) return p;
+
+            auto [size, split, table] = unpack(e);
+            auto units = (const reloc_unit*)heap_layout::reloc_units(p) + table;
+            auto pos = uint32_t(off & (config::page_sz - 1)) / size;
+            auto bit = pos & 63;
+            auto u = units[unit_of(pos, split)];
+            assert((u.live >> bit & 1) && "forwarding a pointer to an object that did not survive");
+            return u.dest + std::popcount(u.live & ((1ull << bit) - 1)) * size;
+        }
+    }
+
     // One entry per heap page saying where the survivors of a compacted page went. Belongs to
     // the address range, not the page: committed with the pg headers, never decommitted, and
     // zeroed once the marking after the copy has healed every pointer into the old pages
@@ -32,11 +74,31 @@ namespace gc::detail {
         uint64_t* _sums;
         bump_allocator _units;
 
+        // A table is stored reduced by the unit of its page's first survivor, up to 7 below where
+        // it starts, so the arena never hands out its first pg_units
+        void reset_units() {
+            _units.reset();
+            _units.bump(reloc::pg_units * config::reloc_unit_sz / sizeof(uint64_t), false);
+        }
+        std::span<reloc_unit> alloc_units(std::size_t n) {
+            auto words = _units.bump(n * config::reloc_unit_sz / sizeof(uint64_t), false);
+            return { (reloc_unit*)words.data(), words.size() * sizeof(uint64_t) / config::reloc_unit_sz };
+        }
+        void track(std::size_t pg) {
+            auto run = pg / run_pgs;
+            auto bit = 1ull << (run % 64);
+            auto w = std::atomic_ref { _runs[run / 64] };
+            if (w.load(std::memory_order_relaxed) & bit) return;
+            if (w.fetch_or(bit, std::memory_order_relaxed) == 0)
+                std::atomic_ref { _sums[run / 4096] }.fetch_or(1ull << (run / 64 % 64), std::memory_order_relaxed);
+        }
+
     public:
         reloc_hdrs(uint8_t* base, uint8_t* units)
             : _entries((uint64_t*)base), _runs((uint64_t*)os::map_rw(track_bytes)), _sums(_runs + run_words),
             _units(units, config::reloc_units_sz) {
             if (!_runs) throw std::bad_alloc{};
+            reset_units();
         }
         ~reloc_hdrs() { os::release(_runs, track_bytes); }
         reloc_hdrs(const reloc_hdrs&) = delete;
@@ -46,26 +108,19 @@ namespace gc::detail {
             return os::commit(_entries + from, (to - from) * config::reloc_hdr_sz);
         }
 
-        // n zeroed units, valid until the next clear
-        std::span<uint64_t> alloc_units(std::size_t n) {
-            return _units.bump(n * config::reloc_unit_sz / sizeof(uint64_t), true);
-        }
-
         uint64_t get(std::size_t pg) const { return _entries[pg]; }
-        uint8_t* get_units_start() const { return _units.base(); }
-        void set(std::size_t pg, uint64_t entry) {
-            assert(entry && !_entries[pg] && "a page is compacted at most once per cycle");
-            _entries[pg] = entry;
+        // Stores table[first, end), first being the unit of the page's first survivor
+        void set(std::size_t pg, std::size_t block_sz, std::size_t split, std::span<const reloc_unit> table, std::size_t first) {
+            assert(!_entries[pg] && "a page is compacted at most once per cycle");
+            auto stored = alloc_units(table.size() - first);
+            assert(stored.size() == table.size() - first && "reloc units arena exhausted");
+            std::copy(table.begin() + first, table.end(), stored.begin());
 
-            auto run = pg / run_pgs;
-            auto bit = 1ull << (run % 64);
-            auto w = std::atomic_ref { _runs[run / 64] };
-            if (w.load(std::memory_order_relaxed) & bit) return;
-            if (w.fetch_or(bit, std::memory_order_relaxed) == 0)
-                std::atomic_ref { _sums[run / 4096] }.fetch_or(1ull << (run / 64 % 64), std::memory_order_relaxed);
+            auto idx = stored.data() - (const reloc_unit*)_units.base() - first;
+            _entries[pg] = reloc::pack({ uint32_t(block_sz), uint32_t(split), uint32_t(idx) });
+            track(pg);
         }
-
-        // Drops the entries and units of the last copy. Must not race with set or alloc_units
+        // Must not race with set
         void clear() {
             for (std::size_t s = 0; s < sum_words; ++s) {
                 for (auto sw = std::exchange(_sums[s], 0); sw; sw &= sw - 1) {
@@ -76,7 +131,7 @@ namespace gc::detail {
                     }
                 }
             }
-            _units.reset();
+            reset_units();
         }
     };
 }

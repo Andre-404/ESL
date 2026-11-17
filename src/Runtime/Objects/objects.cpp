@@ -92,7 +92,7 @@ rt_arr_store::rt_arr_store(uint32_t cap, std::span<Value> init)
     bool found = false;
     for (size_t i = 0; i < init.size(); i++) {
         auto val = gc::read_ref(init[i]);
-        s[i] = val;
+        gc::store_ref(s[i], val);
         if (isObj(val)) {
             found = true;
             gc::write_b(decodeObj(val));

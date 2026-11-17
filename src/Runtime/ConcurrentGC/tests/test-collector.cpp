@@ -640,30 +640,14 @@ TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
     EXPECT_GT(gc->metrics().cycles(), 10u);
 }
 
-namespace {
-    struct flag_watch {
-        std::atomic<bool> saw_copying { false };
-
-        // Sampled from obj_trace, which the collector calls on the marking thread
-        void install(uint8_t* flag) {
-            test_custom::hooks.obj_trace = [this, flag](managed*, std::function<void(managed*)>&) {
-                if (std::atomic_ref { *flag }.load(std::memory_order_acquire) & 0b100)
-                    saw_copying.store(true, std::memory_order_relaxed);
-            };
-        }
-    };
-}
-
-// Nothing nominates pages any more, so no cycle can reach the copy path. The end to end
-// compaction tests went with it; copier.cpp keeps its coverage in test-copier.cpp, which
-// nominates pages directly rather than going through a cycle.
-TEST_F(CollectorCycleTest, ACycleThatWillNotCopyNeverSetsTheBit) {
-    flag_watch watch;
-    watch.install(gc_flag);
-
+// Churn of 64-256 byte garbage leaves nothing worth packing. A pause may still gather candidates
+// when the fragmentation estimate looks promising, but the exact count then finds no run to free,
+// so nothing moves. Compaction itself is covered in test-copier.cpp, which builds the runs directly.
+TEST_F(CollectorCycleTest, CyclesWithoutFragmentationNeverCopy) {
+    std::atomic<size_t> copies { 0 };
+    test_custom::hooks.obj_copy = [&](managed*, managed*) { copies.fetch_add(1, std::memory_order_relaxed); };
     churn_until_cycles(4);
 
     ASSERT_GT(gc->metrics().cycles(), 3u);
-    ASSERT_EQ(gc->metrics().copy_pause_ms(), 0.0);
-    EXPECT_FALSE(watch.saw_copying.load());
+    EXPECT_EQ(copies.load(), 0u);
 }

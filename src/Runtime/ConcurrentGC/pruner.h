@@ -94,8 +94,9 @@ namespace gc::detail {
                 if (pgs == 0) continue;
                 // What the same live blocks would occupy once packed, and so what has to move
                 auto live_pgs = pgs * (1.0 - stats.frag_sum.load(std::memory_order_relaxed) / pgs);
-                e.gain_bytes += (pgs - (size_t)std::ceil(live_pgs)) * config::page_sz;
-                e.move_bytes += (size_t)(live_pgs * config::page_sz);
+                constexpr auto run_sz = config::small_obj_pgs * config::page_sz;
+                e.gain_bytes += (pgs - (size_t)std::ceil(live_pgs)) * run_sz;
+                e.move_bytes += (size_t)(live_pgs * run_sz);
             }
             return e;
         }

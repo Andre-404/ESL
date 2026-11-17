@@ -18,10 +18,10 @@ namespace gc::detail {
         pg_meta* _hdrs;
         reloc_hdrs& _relocs;
         std::mutex _mtx;
-        std::atomic<std::size_t> _committed { 0 };
+        std::atomic<std::size_t> _committed;
 
     public:
-        pg_tables(pg_meta* hdrs, reloc_hdrs& relocs) : _hdrs(hdrs), _relocs(relocs) {}
+        pg_tables(pg_meta* hdrs, reloc_hdrs& relocs) : _hdrs(hdrs), _relocs(relocs), _committed(0) {}
 
         bool ensure(std::size_t start, std::size_t n) {
             auto need = std::min(start + n + 1, config::total_pages);

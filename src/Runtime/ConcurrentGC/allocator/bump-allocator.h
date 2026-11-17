@@ -17,8 +17,8 @@ namespace gc::detail {
     // Never decommits
     // Allocation unit is 1 word
     class bump_allocator {
-        std::atomic<std::size_t> _cursor { 0 };
-        std::atomic<std::size_t> _committed { 0 };
+        std::atomic<std::size_t> _cursor;
+        std::atomic<std::size_t> _committed;
         std::mutex _mtx;
         uint8_t* _base;
         std::size_t _max_sz;
@@ -42,7 +42,7 @@ namespace gc::detail {
             return true;
         }
     public:
-        bump_allocator(uint8_t* base, std::size_t max_sz) : _base(base), _max_sz(max_sz) {
+        bump_allocator(uint8_t* base, std::size_t max_sz) : _cursor(0), _committed(0), _base(base), _max_sz(max_sz) {
             assert((std::size_t)base % config::commit_syscall_sz == 0 && max_sz % config::commit_syscall_sz == 0
                 && "commits are rounded up to commit_syscall_sz, so the region has to be made of whole ones");
         }

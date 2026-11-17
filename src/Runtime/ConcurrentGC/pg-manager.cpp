@@ -35,7 +35,7 @@ void pg_manager::free_pgs() {
     while (wl) {
         auto pg = wl;
         wl = wl->next();
-        pg->mark_inactive();
+        pg->set_active(false);
         auto idx = compute_idx(pg, _allocator.meta_base());
         lo = std::min(lo, idx);
         hi = std::max(hi, idx);

@@ -1,42 +1,70 @@
 #pragma once
 
-#include <vector>
+#include <atomic>
+#include <mutex>
 #include <span>
+#include <vector>
+#include <optional>
 
 #include "managed.h"
 #include "pg-meta.h"
-#include "ref-slot.h"
+#include "work-queue.h"
+#include "allocator/reloc-hdrs.h"
 
 namespace gc::detail {
-    class pg_meta;
-    // Reduces fragmentation through copying and resets color byte to first epoch
-    class copier {
-        double _evac_threshold;
+    struct copy_plan {
+        std::vector<pg_meta*> runs;
+        size_t bytes;   // moved
+        size_t freed;   // handed back
+    };
 
-        std::pair<std::vector<pg_meta*>, std::vector<pg_meta*>> split_pages(pg_meta* pg_list) const;
+    // Compacts sparse runs of a size class into the front of the same runs: survivors keep their
+    // order, the emptied tail is retired by the pruner, and reloc hdrs + units map every old
+    // address to the new one
+    class copier {
+        struct candidate { pg_meta* pg; uint32_t live; };
+        // A list's candidates, sparsest first
+        using list_cands = std::vector<candidate>;
+
+        double _evac_threshold;
+        std::mutex _mtx;
+        std::vector<list_cands> _lists;
+        work_queue<copy_plan> _plans;
+        std::atomic<size_t> _moved;
+
+        // The first `runs` candidates of a list picked so far, the blocks they hold and how many runs
+        // packing them empties
+        struct selection { size_t runs, live_blocks, runs_freed; };
+        // How far a list's selection has to grow to empty one more run, and the bytes that moves
+        struct extension { size_t byte_cost, list, runs_added, live_blocks; };
+
+        std::optional<extension> try_extend(size_t list, const selection& sel) const;
+        // Greedly grows the selections
+        std::vector<selection> select_within_budget(size_t budget) const;
+        // A plan for every selection that empties at least one run
+        std::vector<copy_plan> plans_from(const std::vector<selection>& sels) const;
+        static copy_plan plan_from(std::span<const candidate> runs, size_t runs_freed);
 
     public:
-        copier(double evac_threshold) : _evac_threshold(evac_threshold) {}
+        explicit copier(double evac_threshold) : _evac_threshold(evac_threshold), _lists(), _plans(), _moved(0) {}
 
-        void copy_objects(pg_meta* pg_list) const;
+        void gather(pg_meta* list);
+        // One thread, once everyone has gathered
+        size_t select(size_t budget, size_t min_gain = 1);
+        // Taking plans doesn't change the answer because the vector is never emptied concurrently
+        bool has_plans() const { return !_plans.empty(); }
+        copy_plan* take_plan() { return _plans.take(); }
+        void compact(const copy_plan& plan, reloc_hdrs& relocs);
+        // Returns the bytes compact moved
+        size_t end_copy();
 
         void update_ptrs(pg_meta* pg) const;
         void update_globals(std::span<size_t*> roots);
     };
 
-    // Relies on little endian
-    inline void set_moved(managed* src, managed* dest) {
-        // Save the bottom 16 bits so that we can read the move correctly
-        src->set_state(move_state::moved);
-        auto& w = *(size_t*)src;
-        store_raw(w, (load_raw(w) & 0x000000000000ffffull) | ((size_t)dest << 16));
-    }
-
-    inline managed* get_moved(managed* obj) {
-        if (obj->state() != move_state::moved)
-            return obj;
-        auto w = load_raw(*(size_t*)obj);
-        w = w >> 16;
-        return (managed*)w;
+    // Constants compiled into the program are unmanaged and live outside the heap
+    inline managed* forward(managed* obj) {
+        if (obj->state() == move_state::unmanaged) return obj;
+        return (managed*)reloc::forward((uint8_t*)obj);
     }
 }

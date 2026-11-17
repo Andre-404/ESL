@@ -10,6 +10,12 @@ using namespace gc;
 using namespace gc::detail;
 using gc::test::test_page;
 
+static std::vector<uint16_t> marked(pg_meta* pg) {
+    auto out = std::vector<uint16_t> {};
+    pg->for_each_marked([&](uint16_t b) { out.push_back(b); });
+    return out;
+}
+
 TEST(PgMetaTest, ConstructorRecordsBlockSize) {
     test_page p{64};
     EXPECT_EQ(p->block_sz(), 64u);
@@ -55,16 +61,9 @@ TEST(PgMetaTest, NextCycleAdoptsTheMarkBitmapAsAlloc) {
     EXPECT_FALSE(p->has_pinned());
 }
 
-// The per-cycle bits share one byte with each other and with nothing else, which is what
-// keeps the header at 16 bytes. They are independent and all start clear.
-TEST(PgFlagsTest, FlagsAreIndependentAndStartClear) {
+TEST(PgFlagsTest, PinnedStartsClear) {
     test_page p{64};
     EXPECT_FALSE(p->has_pinned());
-    EXPECT_FALSE(p->is_source());
-    EXPECT_FALSE(p->has_pinned()) << "flags sharing a byte must not bleed into each other";
-    EXPECT_FALSE(p->is_source());
-
-    p->nominate();
     p.mark(0, true);
     EXPECT_TRUE(p->has_pinned());
 }
@@ -77,7 +76,6 @@ TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
     ASSERT_EQ(p->num_pages(), 3u);
     ASSERT_EQ(pg_meta::head_from_ptr(p->get_data() + config::page_sz * 2 + 8), p.pg());
 
-    p->nominate();
     p.mark(0, true);
     p.next_cycle();
 
@@ -85,92 +83,32 @@ TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
     EXPECT_EQ(pg_meta::head_from_ptr(p->get_data() + config::page_sz * 2 + 8), p.pg());
     EXPECT_EQ(p->block_sz(), config::page_sz * 3);
     EXPECT_FALSE(p->has_pinned());
-    EXPECT_FALSE(p->is_source());
 }
 
 // A single page has no continuation bit set, and the cycle bits must not fabricate one
 TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
     test_page p{64};
-    p->nominate();
     p.mark(0, true);
     EXPECT_EQ(p->num_pages(), config::small_obj_pgs);
     EXPECT_EQ(p->block_sz(), 64u);
 }
 
-TEST(PgFlagsTest, SetSourceRoundTrips) {
+// The pin is a statement about this cycle only, so the sweep has to wipe it along with the
+// mark bitmap. A bit that survived would silently describe the wrong cycle.
+TEST(PgFlagsTest, NextCycleClearsPinned) {
     test_page p{64};
-    p->nominate();
-    EXPECT_TRUE(p->is_source());
-    p->demote();
-    EXPECT_FALSE(p->is_source());
-    p->nominate();
-    EXPECT_TRUE(p->is_source());
-}
-
-// Every one of these is a statement about this cycle only, so the sweep has to wipe all of them
-// along with the mark bitmap. A bit that survived would silently describe the wrong cycle.
-TEST(PgFlagsTest, NextCycleClearsEveryPerCycleFlag) {
-    test_page p{64};
-    p->nominate();
     p.mark(0, true);
     ASSERT_TRUE(p->has_pinned());
 
     p.next_cycle();
     EXPECT_FALSE(p->has_pinned());
-    EXPECT_FALSE(p->is_source());
 }
 
-TEST(ComputeAllocTest, CountsEveryPublishedAllocBit) {
-    test_page p{64};
-    EXPECT_EQ(p->compute_alloc(), 0u);
-    p.allocate(0);
-    p.allocate(63);
-    p.allocate(64);
-    p.allocate(p->block_cnt() - 1);
-    EXPECT_EQ(p->compute_alloc(), 4u);
-}
-
-TEST(PgSlotsIterTest, IteratesExactlyBlockCntSlots) {
-    test_page p{64};
-    pg_meta::pg_slots_iter it{p.pg(), 0};
-
-    int seen = 0;
-    while (!it.at_end()) {
-        ASSERT_NE(it.get(), nullptr);
-        it.next();
-        ++seen;
-    }
-    EXPECT_EQ(seen, p->block_cnt());
-    EXPECT_EQ(it.get(), nullptr); // at_end returns nullptr
-}
-
-TEST(PgSlotsIterTest, ConstructedAtEndReportsAtEnd) {
-    test_page p{64};
-    pg_meta::pg_slots_iter it{p.pg(), p->block_cnt()};
-    EXPECT_TRUE(it.at_end());
-    EXPECT_EQ(it.get(), nullptr);
-}
-
-TEST(PgSlotsIterTest, GetReturnsPointersAtExpectedSlotOffsets) {
-    test_page p{64};
-    pg_meta::pg_slots_iter it{p.pg(), 0};
-
-    for (uint16_t i = 0; i < p->block_cnt(); ++i) {
-        ASSERT_FALSE(it.at_end());
-        EXPECT_EQ(reinterpret_cast<uint8_t*>(it.get()), p.slot_addr(i)) << "slot " << i;
-        it.next();
-    }
-    EXPECT_TRUE(it.at_end());
-}
-
-TEST(PgSlotsIterTest, EverySlotPointsIntoSamePage) {
+TEST(PgFromPtr, EverySlotMapsToItsPage) {
     for (size_t sz : config::sz_classes) {
         test_page p{sz};
-        pg_meta::pg_slots_iter it{p.pg(), 0};
-        while (!it.at_end()) {
-            EXPECT_EQ(pg_meta::head_from_ptr(it.get()), p.pg()) << "sz=" << sz;
-            it.next();
-        }
+        for (uint16_t i = 0; i < p->block_cnt(); ++i)
+            EXPECT_EQ(pg_meta::head_from_ptr(p.slot_addr(i)), p.pg()) << "sz=" << sz;
     }
 }
 
@@ -216,50 +154,6 @@ TEST(RecordMarkTest, IsPinnedTrueSetsHasPinned) {
     EXPECT_TRUE(p->has_pinned());
 }
 
-// An object that cannot move vetoes the page's evacuation, whatever nominated it
-TEST(RecordMarkTest, PinningOverridesTheSourceRole) {
-    test_page p{64};
-    p->nominate();
-    ASSERT_TRUE(p->is_source());
-
-    p.mark(0, true);
-    EXPECT_TRUE(p->has_pinned());
-    EXPECT_FALSE(p->is_source()) << "a pinned page cannot be evacuated";
-}
-
-// Nomination races marking, so it has to lose against a pin either way round
-TEST(RecordMarkTest, NominationLosesToAnAlreadyPinnedPage) {
-    test_page p{64};
-    p.mark(0, true);
-    ASSERT_TRUE(p->has_pinned());
-
-    EXPECT_FALSE(p->nominate());
-    EXPECT_FALSE(p->is_source()) << "a pinned page must not be nominated back into a source";
-}
-
-// f_pinned masks f_source rather than clearing it, so the masked bit must not survive the
-// sweep - a page that comes back with it set and no pin would be a source nobody nominated
-TEST(RecordMarkTest, NextCycleDropsTheMaskedSourceBit) {
-    test_page p{64};
-    p.mark(0, true);
-    p->nominate();
-    ASSERT_FALSE(p->is_source());
-
-    p.next_cycle();
-    EXPECT_FALSE(p->has_pinned());
-    EXPECT_FALSE(p->is_source());
-    EXPECT_TRUE(p->nominate()) << "and the page is a candidate again";
-    EXPECT_TRUE(p->is_source());
-}
-
-TEST(RecordMarkTest, UnpinnedMarkLeavesTheSourceRoleAlone) {
-    test_page p{64};
-    p->nominate();
-    p.mark(0, false);
-    EXPECT_TRUE(p->is_source());
-    EXPECT_FALSE(p->has_pinned());
-}
-
 TEST(RecordMarkTest, IsPinnedFalseDoesNotClearPreviouslySetPinned) {
     test_page p{64};
     p.mark(0, true);
@@ -277,22 +171,14 @@ TEST(RecordMarkTest, IsMarkedReflectsMarks) {
     test_page p{64};
     p.mark(5);
     p.mark(20);
-
-    pg_meta::pg_slots_iter it{p.pg(), 0};
-    for (uint16_t i = 0; i < p->block_cnt(); ++i) {
-        EXPECT_EQ(it.is_marked(), (i == 5 || i == 20)) << "slot " << i;
-        it.next();
-    }
+    EXPECT_EQ(marked(p.pg()), (std::vector<uint16_t>{ 5, 20 }));
 }
 
 TEST(RecordMarkTest, WorksAtTheLastSlotIndex) {
     test_page p{32};
     uint16_t last = p->block_cnt() - 1;
     EXPECT_TRUE(p.mark(last));
-    EXPECT_EQ(p->compute_live(), 1u);
-
-    pg_meta::pg_slots_iter it{p.pg(), last};
-    EXPECT_TRUE(it.is_marked());
+    EXPECT_EQ(marked(p.pg()), (std::vector<uint16_t>{ last }));
 }
 
 TEST(RecordMarkTest, NextCycleDropsTheMarksItJustAdopted) {
@@ -301,13 +187,7 @@ TEST(RecordMarkTest, NextCycleDropsTheMarksItJustAdopted) {
     ASSERT_EQ(p->compute_live(), 1u);
 
     p.next_cycle();
-    EXPECT_EQ(p->compute_live(), 0u);
-
-    pg_meta::pg_slots_iter it{p.pg(), 0};
-    for (uint16_t i = 0; i < p->block_cnt(); ++i) {
-        EXPECT_FALSE(it.is_marked()) << "slot " << i;
-        it.next();
-    }
+    EXPECT_TRUE(marked(p.pg()).empty());
     EXPECT_EQ(p->load_alloc_word(0), 0b10);
 }
 

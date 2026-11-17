@@ -209,3 +209,78 @@ TEST(GcHeuristicsTest, RateAlphaControlsResponsiveness) {
 
     EXPECT_LT(h_fast.heap_trigger(), h_slow.heap_trigger());
 }
+
+// ---------------------------------------------------------------- copying
+
+TEST(GcHeuristicsTest, CopyBudgetIsWhatTheRateMovesInTheTimeLeftOver) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms, .initial_copy_overhead_rate = 1e9 }, clk.now() };
+    EXPECT_EQ(h.copy_budget_bytes(), 1'000'000u) << "no live set yet, so no overhead";
+    h.end_cycle(clk.advance(100ms), plain_cycle(MB, 2'000'000));   // 2ms of overhead
+    EXPECT_EQ(h.copy_budget_bytes(), 800'000u);
+}
+
+TEST(GcHeuristicsTest, CopyOverheadScalesWithTheLiveSet) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms, .initial_copy_overhead_rate = 1e12 }, clk.now() };
+    auto s = plain_cycle(MB, 100 * MB);
+    s.copied_bytes = 100'000;
+    s.compact_time = 1ms;
+    s.copy_time = 5ms;   // 100MB in 4ms
+    h.end_cycle(clk.advance(100ms), s);
+    h.end_cycle(clk.advance(100ms), plain_cycle(MB, 50 * MB));
+    // 50MB at the same rate is 2ms, leaving 8ms at 100MB/s
+    EXPECT_NEAR(double(h.copy_budget_bytes()), 0.8e6, 0.01e6);
+}
+
+TEST(GcHeuristicsTest, ASlowerOverheadIsAdoptedAtOnce) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms, .initial_copy_overhead_rate = 100e9 }, clk.now() };
+    auto s = plain_cycle(MB, 10 * MB);
+    s.copied_bytes = 100'000;
+    s.compact_time = 1ms;
+    s.copy_time = 6ms;   // 10MB in 5ms, a fiftieth of the guess
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_NEAR(double(h.copy_budget_bytes()), 0.5e6, 0.01e6) << "the next pause plans with the slow rate, not a blend";
+}
+
+TEST(GcHeuristicsTest, OverheadAboveTheBudgetLeavesNothingToCopy) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .copy_budget = 10ms, .initial_copy_overhead_rate = 1e9 }, clk.now() };
+    h.end_cycle(clk.advance(100ms), plain_cycle(MB, 20'000'000));   // 20ms of overhead
+    EXPECT_EQ(h.copy_budget_bytes(), 0u);
+}
+
+TEST(GcHeuristicsTest, CopyRateLearnsFromTheBytesTheCompactionMoved) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6 }, clk.now() };
+    auto s = plain_cycle(MB, MB);
+    s.copied_bytes = 4 * MB;
+    s.compact_time = 1ms;
+    s.copy_time = 2ms;
+    s.evac_move_bytes = 1;   // the estimate must not be what the rate is measured on
+    settle(h, clk, s, 100ms);
+    EXPECT_NEAR(h.copy_rate(), 4.0 * MB / 1e-3, 0.01 * 4.0 * MB / 1e-3);
+}
+
+TEST(GcHeuristicsTest, CopyingIsOnlyWantedWhenTheEstimateClearsTheMinimumGain) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .initial_copy_overhead_rate = 1e12, .min_copy_gain = 0.1 }, clk.now() };
+    auto s = plain_cycle(MB, 100 * MB);
+    s.evac_gain_bytes = 5 * MB;
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_FALSE(h.wants_copy()) << "5% of the live set is below the 10% minimum";
+
+    s.evac_gain_bytes = 20 * MB;
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_TRUE(h.wants_copy());
+}
+
+TEST(GcHeuristicsTest, NoTimeLeftToCopyMeansNoCopyingCycle) {
+    fake_clock clk;
+    gc_heuristics h { gc_tuning { .copy_budget = 10ms, .initial_copy_overhead_rate = 1e9, .min_copy_gain = 0.1 }, clk.now() };
+    auto s = plain_cycle(MB, 20'000'000);   // 20ms of overhead
+    s.evac_gain_bytes = 10'000'000;
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_FALSE(h.wants_copy()) << "plenty to free, but the pointer update alone runs past the budget";
+}

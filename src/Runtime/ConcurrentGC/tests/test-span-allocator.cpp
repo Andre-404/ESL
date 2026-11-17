@@ -205,12 +205,15 @@ TEST(PgAllocatorTest, RelocHdrsOutliveTheirPages) {
     ASSERT_NE(pg, nullptr);
     auto idx = std::size_t(pg - pa.meta_base());
     EXPECT_EQ(pa.relocs().get(idx), 0u);
-    pa.relocs().set(idx, 0x10);
+    reloc_unit table[1] {};
+    pa.relocs().set(idx, 64, reloc::split_none, table, 0);
+    auto entry = pa.relocs().get(idx);
+    ASSERT_NE(entry, 0u);
 
     pa.free_pgs(pg);
     auto* again = pa.alloc_pg(32, config::small_obj_pgs, true);
     ASSERT_EQ(again, pg) << "expected the same page back";
-    EXPECT_EQ(pa.relocs().get(idx), 0x10u) << "freeing and reusing a page leaves its entry alone";
+    EXPECT_EQ(pa.relocs().get(idx), entry) << "freeing and reusing a page leaves its entry alone";
 
     pa.relocs().clear();
     EXPECT_EQ(pa.relocs().get(idx), 0u);
@@ -227,32 +230,46 @@ TEST(PgTablesTest, RelocHdrsAreCommittedWithHeadersAndClearedTogether) {
     ASSERT_TRUE(t.ensure(far, 1));
     for (auto pg : { std::size_t(0), n - 1, far }) ASSERT_EQ(r.get(pg), 0u) << "page " << pg;
 
-    r.set(0, 0x10);
-    r.set(1, 0x11); // same run as 0
-    r.set(n - 1, 0x20);
-    r.set(far, 0x30);
-    EXPECT_EQ(r.get(1), 0x11u);
+    reloc_unit table[1] {};
+    for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) r.set(pg, 16, reloc::split_none, table, 0); // 1 is in 0's run
+    EXPECT_NE(r.get(1), 0u);
 
     r.clear();
     for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) EXPECT_EQ(r.get(pg), 0u) << "page " << pg;
     r.clear();
 }
 
-TEST(PgAllocatorTest, RelocUnitsAreZeroedAndReusedAfterClear) {
+TEST(PgAllocatorTest, RelocTablesForwardAndAreReusedAfterClear) {
     pg_allocator pa;
-    auto a = pa.relocs().alloc_units(3);
-    ASSERT_EQ(a.size(), 6u);
-    EXPECT_EQ(uintptr_t(a.data()) % config::reloc_unit_sz, 0u);
-    for (auto w : a) EXPECT_EQ(w, 0u);
-    std::fill(a.begin(), a.end(), ~0ull);
+    auto* pg = pa.alloc_pg(16, config::small_obj_pgs, true);
+    ASSERT_NE(pg, nullptr);
+    auto idx = std::size_t(pg - pa.meta_base());
+    auto data = pg->get_data();
 
-    auto b = pa.relocs().alloc_units(1);
-    EXPECT_EQ(b.data(), a.data() + a.size()) << "units are bumped back to back";
+    // The page's only survivors are in its last unit, the first table in the arena is stored
+    // that far below where it starts
+    constexpr std::size_t pos = reloc::split_none - 2;
+    auto first = reloc::unit_of(pos, reloc::split_none);
+    reloc_unit table[reloc::pg_units] {};
+    table[first] = { 0b11ull << (pos % 64), data + 4096 };
+
+    auto check = [&] {
+        EXPECT_EQ(reloc::forward(data + pos * 16), data + 4096);
+        EXPECT_EQ(reloc::forward(data + (pos + 1) * 16), data + 4096 + 16);
+    };
+    pa.relocs().set(idx, 16, reloc::split_none, table, first);
+    check();
+    auto entry = pa.relocs().get(idx);
+    EXPECT_EQ(reloc::forward(data + config::page_sz), data + config::page_sz) << "the next page has no entry";
 
     pa.relocs().clear();
-    auto again = pa.relocs().alloc_units(3);
-    ASSERT_EQ(again.data(), a.data()) << "clear rewinds the arena";
-    for (auto w : again) EXPECT_EQ(w, 0u) << "reused units come back zeroed";
+    EXPECT_EQ(reloc::forward(data + pos * 16), data + pos * 16);
+    pa.relocs().set(idx, 16, reloc::split_none, table, first);
+    check();
+    EXPECT_EQ(pa.relocs().get(idx), entry) << "clear rewinds the arena";
+
+    pa.relocs().clear();
+    pa.free_pgs(pg);
 }
 
 TEST(SpanAllocatorTest, ImpossibleRequestsFail) {

@@ -49,5 +49,5 @@ namespace gc {
     void exec_at_safepoint(tcb_handle* handle) { GC->process_pending(t(handle)); }
     void push_wbbuf(tcb_handle* handle) { GC->flush_wbbuf(t(handle)); }
 
-    managed* to_moved_ptr(managed* obj) { return detail::get_moved(obj); }
+    managed* to_moved_ptr(managed* obj) { return detail::forward(obj); }
 }

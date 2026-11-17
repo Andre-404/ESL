@@ -28,7 +28,7 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs, bool aligned) {
     for (std::size_t i = 1; i < num_pgs; ++i)
         pg_meta::emplace_continuation(head + i, int32_t(i), num_pgs);
 
-    head->mark_active();
+    head->set_active(true);
     return head;
 }
 

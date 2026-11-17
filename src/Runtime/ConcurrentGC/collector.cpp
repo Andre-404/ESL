@@ -57,17 +57,17 @@ void collector::stw_enter(std::span<tcb*> owned, stw_role role) {
     if (role == stw_role::collector) _pg_manager.bits().flip();
 }
 
-size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
+size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
     // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
     auto _ = _metrics.time(gc_metrics::phase::mark);
     for (auto t : owned)
-        _marker.scan_stack(t->get_mark_info(), copying, get_obj_base());
+        _marker.scan_stack(t->get_mark_info(), true, get_obj_base());
 
     size_t snapshot = 0;
     if (role == stw_role::collector) {
         // Safe to scan roots because all mutators are stopped
         for (auto [tcb, sp] : _temp_roots)
-            _marker.scan_temp(sp, get_obj_base(), copying);
+            _marker.scan_temp(sp, get_obj_base());
         _marker.scan_globals(_roots);
         snapshot = _alloc_sz.load();
         // Every thread has stopped at this point so this is safe to do
@@ -84,11 +84,22 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role, bool copying) {
 void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::copy);
 
-    if (role == stw_role::collector) _pg_manager.relocs().clear();
+    // Gather: every thread offers the lists it owns
+    mutate_all(owned, role, gather_fn());
     _gate.arrive_and_wait();
 
-    mutate_all(owned, role, copy_objs_fn());
+    gc_clock::time_point _compact_start;
+    if (role == stw_role::collector) {
+        auto min_gain = _collection_req.is_express() ? 1 : _heuristic.min_copy_gain();
+        _copier.select(_heuristic.copy_budget_bytes(), min_gain);
+        _compact_start = gc_clock::now();
+    }
     _gate.arrive_and_wait();
+    if (!_copier.has_plans()) return;
+
+    while (auto plan = _copier.take_plan()) _copier.compact(*plan, _pg_manager.relocs());
+    _gate.arrive_and_wait();
+    if (role == stw_role::collector) _cycle.compact_time = gc_clock::now() - _compact_start;
 
     mutate_all(owned, role, update_ptrs_fn());
     if (role == stw_role::collector) _copier.update_globals(_roots);
@@ -101,17 +112,18 @@ void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
 }
 
 size_t collector::stw(std::span<tcb*> owned, stw_role role) {
-    // When every thread enters the stw gc_flag is cleared, get the copy decision before that
-    auto copying = is_copying();
     stw_enter(owned, role);
-    auto snapshot = stw_mark(owned, role, copying);
-    if (copying) [[unlikely]] stw_copy(owned, role);
+    auto snapshot = stw_mark(owned, role);
+    // Marking has healed every pointer into the last copy's old pages
+    if (role == stw_role::collector) _pg_manager.relocs().clear();
+    // Only the collector changes the heuristic, and only outside a pause, so every thread agrees
+    if (_heuristic.wants_copy()) [[unlikely]] stw_copy(owned, role);
     stw_prune(owned, role);
     return snapshot;
 }
 
-void collector::concurrent_mark(uint8_t copying) {
-    auto blocked = post_with_state(uint8_t(gc_state::marking) | copying, op_mark_stack);
+void collector::concurrent_mark() {
+    auto blocked = post_with_state(uint8_t(gc_state::marking), op_mark_stack);
     _mark_alloc_start = _alloc_sz.load(std::memory_order_relaxed);
     for (auto t : blocked)
         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
@@ -129,8 +141,7 @@ void collector::concurrent_mark(uint8_t copying) {
 
 size_t collector::worker_stw() {
     auto _ = _metrics.time(gc_metrics::phase::pause);
-    auto copy_bit = is_copying() ? gc_flag_copying : uint8_t(0);
-    auto blocked = post_with_state(uint8_t(gc_state::stw) | copy_bit, op_stw);
+    auto blocked = post_with_state(uint8_t(gc_state::stw), op_stw);
     auto snapshot = stw(blocked, stw_role::collector);
     _tcb_registry.with_snapshot([&](auto& thds){
         _thd_state_mngr.finish_stw(std::views::all(thds));
@@ -169,12 +180,8 @@ void collector::concurrent_loop() {
     while (true) {
         if (_collection_req.await_request()) break;
         _cycle = {};
-        // Decided before marking, because pinning happens during it and a cycle that has
-        // already started cannot be upgraded. Nothing nominates pages any more, so only an
-        // express request asks for a copy phase - and with no sources it finds nothing to move
-        auto copying = _collection_req.is_express() ? gc_flag_copying : uint8_t(0);
         _cycle.mark_time = gc_clock::now().time_since_epoch();
-        concurrent_mark(copying);
+        concurrent_mark();
 
         _gate.register_waiter();
         auto snapshot = worker_stw();
@@ -183,13 +190,11 @@ void collector::concurrent_loop() {
         _gate.deregister_waiter();
 
         collect_metrics();
+        _cycle.copied_bytes = _copier.end_copy();
 
         auto watermark = end_cycle(snapshot);
 
         _pg_manager.bits().clear_mark(watermark);
-        // A copying cycle that comes after another copying cylce needs headers clear
-        // so we clear them in stw_copy
-        if (!copying) _pg_manager.relocs().clear();
         _pg_manager.free_pgs();
 
         _tcb_registry.under_lock([&] {

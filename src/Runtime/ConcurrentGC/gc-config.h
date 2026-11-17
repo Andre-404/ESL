@@ -80,9 +80,12 @@ namespace gc {
         constexpr std::size_t reloc_hdr_sz = 8;
         constexpr std::size_t reloc_region_sz = total_pages * reloc_hdr_sz;
 
-        // Worst case is every page compacted at 16 byte blocks, one 16 byte unit per 64 of them
+        // Worst case is every run compacted at 16 byte blocks: one 16 byte unit per 64 of them, one
+        // more for the run's split, and a commit granule for the units the arena leaves unused
         constexpr std::size_t reloc_unit_sz = 16;
-        constexpr std::size_t reloc_units_sz = 1ull << (heap_bits - 6);
+        constexpr std::size_t reloc_units_per_run = small_obj_pgs * (page_sz / 16 / 64) + 1;
+        constexpr std::size_t reloc_units_sz = total_pages / small_obj_pgs * reloc_units_per_run * reloc_unit_sz
+                                             + commit_syscall_sz;
         // Reloc hdrs point at their units with a 32 bit offset in unit steps
         static_assert(reloc_units_sz / reloc_unit_sz - 1 <= UINT32_MAX);
 
