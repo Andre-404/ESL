@@ -34,7 +34,7 @@ void ESLJIT::createJIT(){
     if (!JTMB.getCodeModel())
         JTMB.setCodeModel(llvm::CodeModel::Small);
     JTMB.setRelocationModel(llvm::Reloc::PIC_);
-    JTMB.addFeatures({"reserve-r15"});
+    JTMB.addFeatures({"reserve-r15", "reserve-r14"});
     builder.setJITTargetMachineBuilder(JTMB);
     llvm::cantFail(builder.prepareForConstruction());
     JIT.underlyingJIT = llvm::cantFail(builder.create());

@@ -70,8 +70,8 @@ namespace gc::detail {
             double headroom = std::lerp(_cfg.max_headroom, _cfg.min_headroom, pressure);
             double floor    = double(std::max<size_t>(_cfg.initial_heap, occupancy));
             double basis    = std::max(double(live), _peak_live);
-            return size_t(std::clamp(basis * (1.0 + headroom) + double(black),
-                                     floor, _cfg.max_heap / 2.0));
+            return size_t(std::min(std::max(basis * (1.0 + headroom) + double(black), floor),
+                                   _cfg.max_heap / 2.0));
         }
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())

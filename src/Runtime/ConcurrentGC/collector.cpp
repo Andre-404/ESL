@@ -177,6 +177,7 @@ uint64_t* collector::end_cycle(size_t alloc_snapshot) {
 
 void collector::concurrent_loop() {
     rpmalloc_thread_initialize();
+    reload_color();
     while (true) {
         if (_collection_req.await_request()) break;
         _cycle = {};
@@ -234,6 +235,7 @@ void collector::thd_prologue(tcb *t) {
     rpmalloc_thread_initialize();
     _thd_state_mngr.prologue(t);
     _tcb_registry.under_lock([&](){ _temp_roots.erase(t); });
+    reload_color();
 }
 
 void collector::set_paused(tcb *t) {
@@ -244,6 +246,7 @@ void collector::set_paused(tcb *t) {
 
 void collector::set_resumed(tcb *t) {
     _thd_state_mngr.exit_blocked(t);
+    reload_color();
 }
 
 tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
@@ -318,4 +321,5 @@ void collector::process_pending(tcb *t) {
     t->get_arena().flush_alloc_caches();
     flush_wbbuf(t);
     _thd_state_mngr.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
+    reload_color();
 }

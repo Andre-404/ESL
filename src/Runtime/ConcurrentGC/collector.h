@@ -29,6 +29,8 @@ namespace gc::detail {
         size_t _mark_alloc_start;
         post_manager _thd_state_mngr;
         std::atomic_ref<uint8_t> _gc_flag;
+        // Master copy of the good pointer color, every thread caches it in r14
+        std::atomic<uint64_t> _good_color { 0 };
         collection_request _collection_req;
 
         sync_point _gate;
@@ -53,6 +55,9 @@ namespace gc::detail {
 
         bool state_is(gc_state s) const {
             return (_gc_flag.load(std::memory_order_acquire) & gc_state_mask) == (uint8_t)s;
+        }
+        void reload_color() const {
+            platform::write_color(_good_color.load(std::memory_order_relaxed));
         }
 
         // Page mutators, shared by mutator and worker stw functions. All three tolerate a null

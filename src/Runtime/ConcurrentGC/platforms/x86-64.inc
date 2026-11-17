@@ -20,6 +20,16 @@ __attribute__((noinline)) inline void* read_stack() {
     return sp;
 }
 
+inline uint64_t read_color() {
+    uint64_t c;
+    asm volatile("mov %%r14, %0" : "=r"(c));
+    return c;
+}
+
+inline void write_color(uint64_t c) {
+    asm volatile("mov %0, %%r14" : : "r"(c));
+}
+
 __attribute__((noinline)) inline void* read_tcb() {
     void *sp;
     asm volatile("mov %%r15, %0" : "=r"(sp));
