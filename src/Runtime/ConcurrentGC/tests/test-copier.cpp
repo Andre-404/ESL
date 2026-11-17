@@ -78,11 +78,10 @@ namespace {
             auto out = std::map<uint8_t*, uint8_t*> {};
             size_t g = 0;
             for (auto* p : pages)
-                for (auto it = pg_meta::pg_slots_iter { p->pg(), 0 }; !it.at_end(); it.next())
-                    if (it.is_marked()) {
-                        out[(uint8_t*)it.get()] = pages[g / kCap]->slot_addr(uint16_t(g % kCap));
-                        ++g;
-                    }
+                p->pg()->for_each_marked([&](uint16_t b) {
+                    out[p->slot_addr(b)] = pages[g / kCap]->slot_addr(uint16_t(g % kCap));
+                    ++g;
+                });
             return out;
         }
 
@@ -335,8 +334,8 @@ TEST_F(CopierTest, KeptRunsAreMarkedFromTheFrontAndTheTailIsEmpty) {
     EXPECT_FALSE(sorted[2]->pg()->is_active()) << "the emptied tail is retired";
     // Marked from the front: every marked block comes before every unmarked one
     size_t blk = 0;
-    for (auto it = pg_meta::pg_slots_iter { sorted[1]->pg(), 0 }; !it.at_end(); it.next(), ++blk)
-        EXPECT_EQ(it.is_marked(), blk < total - kCap) << "block " << blk;
+    sorted[1]->pg()->for_each_marked([&](uint16_t b) { EXPECT_EQ(b, blk++) << "block " << b; });
+    EXPECT_EQ(blk, total - kCap);
 }
 
 TEST_F(CopierTest, ForwardLeavesUncompactedRunsAlone) {
