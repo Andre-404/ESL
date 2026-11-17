@@ -3,27 +3,31 @@
 #include "../Values/valueHelpersInline.h"
 
 namespace {
+    template<typename T>
+    T* strip(T* ptr) { return (T*)((size_t)ptr & ~gc::config::color_bit); }
+
     // Tracing runs alongside the mutators: every slot is loaded exactly once, with acquire because
     // the marker goes on to read the object behind it (see load_raw)
     template<typename T>
     void trace_ptr(T*& slot, trace_fn cb) {
-        if (auto ptr = gc::load_raw(slot, std::memory_order_acquire)) cb(ptr);
+        if (auto ptr = strip(gc::load_raw(slot, std::memory_order_acquire))) cb(ptr);
     }
     void trace_vals(std::span<Value> slots, trace_fn cb) {
         for (auto& slot : slots) {
             auto val = gc::load_raw(slot, std::memory_order_acquire);
-            if (isObj(val)) cb(decodeObj(val));
+            if (gc::is_ref_word(val)) cb(decodeObj(val));
         }
     }
     // Updating is done during STW, no need to worry about syncronization, will soon be done with a read barrier
     template<typename T>
     void update_ptr(T*& slot) {
-        if (auto ptr = gc::load_raw(slot)) gc::store_raw(slot, (T*)gc::to_moved_ptr(ptr));
+        if (auto ptr = strip(gc::load_raw(slot))) gc::store_raw(slot, (T*)gc::to_moved_ptr(ptr));
     }
     void update_vals(std::span<Value> slots) {
         for (auto& slot : slots) {
             auto val = gc::load_raw(slot);
-            if (isObj(val)) gc::store_raw(slot, encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(val))));
+            if (gc::is_ref_word(val))
+                gc::store_raw(slot, encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(val))));
         }
     }
 }
@@ -94,12 +98,12 @@ namespace gc {
         }
     }
     managed* to_accurate_ptr(size_t w) {
-        if (isObj(w)) return decodeObj(w);
+        if (is_ref_word(w)) return decodeObj(w);
         return nullptr;
     }
     uint8_t* to_possible_ptr(size_t w) {
-        if (isObj(w)) return (uint8_t*)decodeObj(w);
-        if ((w & 0xffff'0000'0000'0000) == 0) return (uint8_t*)w;
+        if (is_ref_word(w)) return (uint8_t*)decodeObj(w);
+        if ((w >> 49) == 0) return (uint8_t*)(w & ~config::color_bit);
         return nullptr;
     }
     size_t ptr_to_word(managed* p) {

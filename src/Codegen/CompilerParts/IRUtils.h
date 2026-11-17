@@ -16,7 +16,7 @@ inline void create_if(llvm::IRBuilder<>& b, llvm::Value* cond,
     b.CreateCondBr(cond, thenBB, elseBB);
     b.SetInsertPoint(thenBB);
     then();
-    if (!b.GetInsertBlock()->back().isTerminator()) b.CreateBr(mergeBB);
+    if (b.GetInsertBlock()->empty() || !b.GetInsertBlock()->back().isTerminator()) b.CreateBr(mergeBB);
 
     F->insert(F->end(), elseBB);
     b.SetInsertPoint(elseBB);

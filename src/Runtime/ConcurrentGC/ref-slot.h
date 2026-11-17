@@ -3,16 +3,21 @@
 #include <cstddef>
 #include <type_traits>
 
+#include "gc-config.h"
 #include "managed.h"
+#include "platform-specific.h"
 
 // A reference slot is memory that can hold a pointer to a managed object: a field of a managed
 // object, an element of its trailing array, a registered root.
 // Mutators and the collector access slots concurrently, so once its object is constructed a slot is
 // only ever loaded and stored atomically. A plain access that races lets the compiler load the
 // slot twice and act on two different values, or split a store.
-//   load_raw, store_raw  the collector's own access, never gets a barrier
-//   read_ref, store_ref  a mutator's access, might include barriers in the future
+//   load_raw, store_raw  the collector's own access, sees the color bit
+//   read_ref, store_ref  a mutator's access, strips and adds the color. Only works for pointer slots
 namespace gc {
+    // The color bit a good reference carries in its slot, r14 holds it as is
+    [[gnu::always_inline]] inline size_t good_color() { return detail::platform::read_color(); }
+
     // A pointer to a managed object, or a word that customization.h's to_accurate_ptr() decides about
     template<typename T>
     concept ref_slot = std::is_same_v<T, size_t> ||
@@ -35,15 +40,23 @@ namespace gc {
         std::atomic_ref<T> { slot }.store(value, order);
     }
 
-    // Same thing as gc_read_val/gc_read_ptr in jitted code (runtime_bridge::build_ir_helpers)
-    template<ref_slot T>
+    // Slow paths for a reference with the bad color, return it uncolored and fixed
+    [[gnu::cold]] size_t heal_ptr(size_t* slot, size_t seen);
+    [[gnu::cold]] size_t heal_word(size_t* slot, size_t seen);
+
+    // Same thing as gc_read_ptr in jitted code (runtime_bridge::build_ir_helpers)
+    template<ref_slot T> requires std::is_pointer_v<T>
     [[nodiscard, gnu::always_inline]] inline T read_ref(T& slot) noexcept {
-        return load_raw(slot, std::memory_order_relaxed);
+        auto w = (size_t)load_raw(slot, std::memory_order_relaxed);
+        auto x = w ^ good_color();
+        if (x & config::color_bit) [[unlikely]] return (T)heal_ptr((size_t*)&slot, w);
+        return (T)x;
     }
 
-    // Same thing as gc_store_val/gc_store_ptr. The write barrier stays its own call after it
-    template<ref_slot T>
+    // Same thing as gc_store_ptr
+    // A null gets the color too, it reads back as null either way
+    template<ref_slot T> requires std::is_pointer_v<T>
     [[gnu::always_inline]] inline void store_ref(T& slot, std::type_identity_t<T> value) noexcept {
-        store_raw(slot, value, std::memory_order_relaxed);
+        store_raw(slot, (T)((size_t)value | good_color()), std::memory_order_relaxed);
     }
 }

@@ -961,7 +961,7 @@ void Compiler::create_if(llvm::Value* cond, std::function<void()> then, std::fun
     builder.CreateCondBr(cond, thenBB, elseBB);
     builder.SetInsertPoint(thenBB);
     then();
-    if (!builder.GetInsertBlock()->back().isTerminator()) builder.CreateBr(mergeBB);
+    if (builder.GetInsertBlock()->empty() || !builder.GetInsertBlock()->back().isTerminator()) builder.CreateBr(mergeBB);
 
     F->insert(F->end(), elseBB);
     builder.SetInsertPoint(elseBB);

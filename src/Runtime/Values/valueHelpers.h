@@ -28,6 +28,8 @@ constexpr uint64_t mask_type_bool = 0x0000000000000000ull;
 constexpr uint64_t mask_type_true = 0x0000000000000001ull;
 constexpr uint64_t mask_type_null = 0x0001000000000000ull;
 constexpr uint64_t mask_type_obj  = 0x0002000000000000ull;
+// An obj with the gc's color bit set, the gc treats anything here as a reference
+constexpr uint64_t mask_type_reserved = 0x0003000000000000ull;
 
 // Signatures
 constexpr uint64_t mask_signature_bool = mask_qnan | mask_type_bool;
@@ -35,6 +37,9 @@ constexpr uint64_t mask_signature_false = mask_signature_bool;
 constexpr uint64_t mask_signature_true = mask_signature_bool | mask_type_true;
 constexpr uint64_t mask_signature_null = mask_qnan | mask_type_null;
 constexpr uint64_t mask_signature_obj = mask_qnan | mask_type_obj;
+static_assert(mask_signature_obj == gc::ref_floor && (mask_signature_obj & gc::config::color_bit) == 0);
+static_assert((mask_type_obj | gc::config::color_bit) == mask_type_reserved);
+static_assert((mask_payload_obj & gc::config::color_bit) == 0);
 
 namespace valueHelpers {
     string toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj *>> stack = nullptr);

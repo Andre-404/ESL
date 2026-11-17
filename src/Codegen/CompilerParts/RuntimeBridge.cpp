@@ -5,6 +5,7 @@
 #include "../../Includes/fmt/core.h"
 #include "BridgeObjects.h"
 
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 
@@ -387,6 +388,19 @@ void runtime_bridge::declare_runtime_functions() {
     });
     declare("end_program", voidTy, {}, { llvm::Attribute::NoUnwind });
 
+    // Slow paths of gc_read_val/gc_read_ptr: (slot, what was in it), return the fixed reference.
+    // Declared as only reading, although they CAS the fixed reference into the slot: that write
+    // never changes which object the slot refers to, and a read that reuses the stale word just
+    // heals again with the same result. Admitting it would make every later load of the slot
+    // wait for this one, and stop CSE across barriers
+    for (auto [name, ty] : { std::pair<const char*, llvm::Type*> { "gc_heal_val", val }, { "gc_heal_ptr", ptr } }) {
+        auto heal = declare(name, ty, { ptr, ty }, total_fn);
+        heal->addFnAttr(llvm::Attribute::Cold);
+        heal->setMemoryEffects(llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::Ref));
+        heal->addParamAttr(0, llvm::Attribute::NonNull);
+        heal->addParamAttr(0, no_capture(c));
+    }
+
     _mod.getOrInsertGlobal("gc_flag", _b.getInt8Ty());
     _gc_flag = _mod.getNamedGlobal("gc_flag");
     _gc_flag->setLinkage(llvm::GlobalVariable::PrivateLinkage);
@@ -496,26 +510,54 @@ void runtime_bridge::build_ir_helpers() {
     //   gc_read_ptr(slot)          slot holds a raw pointer to a managed object: an array's
     //   gc_store_ptr(slot, value)  storage
     auto define_access = [&](const char* name, llvm::Type* slotTy, bool is_store) {
-        std::vector<llvm::Type*> params { ptr };
-        if (is_store) params.push_back(slotTy);
-        auto fnTy = llvm::FunctionType::get(is_store ? voidTy : slotTy, params, false);
+        const bool is_val = slotTy == val;
+        auto fnTy = is_store ? ft(voidTy, { ptr, slotTy }) : ft(slotTy, { ptr });
         auto* access = define_fn(name, fnTy, priv, [&](llvm::Function* F) {
+            auto if_false = [&](llvm::Value* cond, const char* label, auto then, llvm::MDNode* weights = nullptr) {
+                auto out = llvm::BasicBlock::Create(c, label, F);
+                auto rest = llvm::BasicBlock::Create(c, "", F);
+                _b.CreateCondBr(cond, rest, out, weights);
+                _b.SetInsertPoint(out);
+                then();
+                _b.SetInsertPoint(rest);
+            };
             auto slot = F->getArg(0);
+            // r14 holds the color a good reference carries. A Value below ref_floor is not a reference
+            auto r14 = llvm::MetadataAsValue::get(c, llvm::MDNode::get(c, { llvm::MDString::get(c, "r14") }));
+            auto good = _b.CreateIntrinsic(i64, llvm::Intrinsic::read_register, { r14 }, nullptr, "good.color");
+            auto ref_floor = _b.getInt64(gc::ref_floor);
+
             if (is_store) {
-                auto stored = _b.CreateAlignedStore(F->getArg(1), slot, ref_slot_align);
-                stored->setAtomic(ref_slot_ordering);
-                _b.CreateRetVoid();
-                return;
+                auto store = [&](llvm::Value* v) {
+                    _b.CreateAlignedStore(v, slot, ref_slot_align)->setAtomic(ref_slot_ordering);
+                    _b.CreateRetVoid();
+                };
+                auto v = toI64(F->getArg(1));
+                // A branch, not a select, so the stored value doesn't wait on the check. The
+                // weights keep simplifycfg from sinking the two stores into one select
+                auto rare = llvm::MDBuilder(c).createBranchWeights(1, 1000);
+                if (is_val) if_false(_b.CreateICmpSGE(v, ref_floor), "not.ref", [&] { store(v); }, rare);
+                return store(_b.CreateOr(v, good));
             }
             auto loaded = _b.CreateAlignedLoad(slotTy, slot, ref_slot_align, "ref");
             loaded->setAtomic(ref_slot_ordering);
-            _b.CreateRet(loaded);
+            auto w = toI64(loaded);
+            // Anything but a reference comes back as loaded, after one compare
+            if (is_val) if_false(_b.CreateICmpSGE(w, ref_floor), "not.ref", [&] { _b.CreateRet(loaded); });
+
+            auto x = _b.CreateXor(w, good);
+            auto ok = _b.CreateIsNull(_b.CreateAnd(x, gc::config::color_bit));
+            if_false(_b.CreateIntrinsic(i1, llvm::Intrinsic::expect, { ok, _b.getTrue() }), "bad.color", [&] {
+                _b.CreateRet(call(is_val ? "gc_heal_val" : "gc_heal_ptr", { slot, loaded }));
+            });
+            _b.CreateRet(_b.CreateIntToPtr(x, slotTy));
         });
         add_attrs(access, total_fn);
         access->addFnAttr(llvm::Attribute::AlwaysInline);
-        access->setMemoryEffects(llvm::MemoryEffects::argMemOnly(
-            is_store ? llvm::ModRefInfo::Mod : llvm::ModRefInfo::Ref
-        ));
+        access->setMemoryEffects(
+            llvm::MemoryEffects::argMemOnly(is_store ? llvm::ModRefInfo::Mod : llvm::ModRefInfo::Ref) |
+            llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::Ref)
+        );
         // Only the slot: storing the value is what captures it
         access->addParamAttr(0, llvm::Attribute::NonNull);
         access->addParamAttr(0, no_capture(c));

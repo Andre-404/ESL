@@ -89,6 +89,8 @@ namespace gc {
         // Reloc hdrs point at their units with a 32 bit offset in unit steps
         static_assert(reloc_units_sz / reloc_unit_sz - 1 <= UINT32_MAX);
 
+        constexpr uint64_t color_bit = 1ull << 48;
+
         // Heuristics
         constexpr int64_t debt_trigger = 128 * 1024;
 

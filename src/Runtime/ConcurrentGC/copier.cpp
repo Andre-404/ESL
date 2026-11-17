@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <queue>
 #include <span>
 
@@ -226,4 +228,14 @@ void copier::update_globals(std::span<size_t*> roots) {
         if (!ptr) continue;
         store_raw(*root, ptr_to_word(forward(ptr)));
     }
+}
+
+// Nothing flips the color yet, so a bad one means a store skipped the color or r14 wasn't loaded
+size_t gc::heal_ptr(size_t* slot, size_t seen) {
+    fprintf(stderr, "bad pointer color in slot %p: %#zx\n", (void*)slot, seen);
+    std::abort();
+}
+size_t gc::heal_word(size_t* slot, size_t seen) {
+    fprintf(stderr, "bad word color in slot %p: %#zx\n", (void*)slot, seen);
+    std::abort();
 }

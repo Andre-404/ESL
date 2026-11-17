@@ -124,6 +124,14 @@ EXPORT void gc_add_root(Value* ptr){
     gc::register_root(ptr);
 }
 
+// Slow paths of gc_read_val/gc_read_ptr
+EXPORT Value gc_heal_val(Value* slot, Value seen) {
+    return gc::heal_word(slot, seen);
+}
+EXPORT size_t gc_heal_ptr(size_t* slot, size_t seen) {
+    return gc::heal_ptr(slot, seen);
+}
+
 EXPORT Value hashmap_get(rt_hashmap* map, rt_string* key){
     if (auto v = map->find(key); v) return gc::read_ref(*v);
     return encodeNil();
