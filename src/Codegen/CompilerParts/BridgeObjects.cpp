@@ -7,8 +7,8 @@
 // ---------------------------------------------------------------------------------------------
 
 field_ref::field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm::Align align,
-                     const char* name, slot_kind kind)
-    : _br(&br), _ty(ty), _ptr(ptr), _align(align), _name(name), _kind(kind) {
+                     const char* name, slot_kind kind, llvm::MDNode* fixed)
+    : _br(&br), _ty(ty), _ptr(ptr), _align(align), _name(name), _kind(kind), _fixed(fixed) {
     assert((kind == slot_kind::plain || align >= runtime_bridge::ref_slot_align)
            && "a reference slot is pointer aligned");
 }
@@ -16,10 +16,15 @@ field_ref::field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm:
 llvm::Value* field_ref::load() const {
     switch (_kind) {
         case slot_kind::plain: return _br->b().CreateAlignedLoad(_ty, _ptr, _align, _name);
-        case slot_kind::val:   return _br->call("gc_read_val", { _ptr }, _name);
-        case slot_kind::ptr:   return _br->call("gc_read_ptr", { _ptr }, _name);
+        case slot_kind::val:   return read("gc_read_val");
+        case slot_kind::ptr:   return read("gc_read_ptr");
     }
     __builtin_unreachable();
+}
+llvm::CallInst* field_ref::read(const char* helper) const {
+    auto call = _br->call(helper, { _ptr }, _name);
+    if (_fixed) call->setMetadata(runtime_bridge::fixed_slot_md, _fixed);
+    return call;
 }
 llvm::Instruction* field_ref::store(llvm::Value* val) const {
     switch (_kind) {
@@ -52,7 +57,8 @@ field_ref rt_ref::at(bridge_ty ty, unsigned idx, const char* name, slot_kind kin
     auto st = _br->sty(ty);
     auto fieldTy = st->getElementType(idx);
     auto ptr = b().CreateStructGEP(st, _ptr, idx, name);
-    return { *_br, fieldTy, ptr, _br->field_align(ty, idx), name, kind };
+    return { *_br, fieldTy, ptr, _br->field_align(ty, idx), name, kind,
+             kind == slot_kind::plain ? nullptr : _br->fixed_slot(ty) };
 }
 
 field_ref rt_ref::trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, const char* name,

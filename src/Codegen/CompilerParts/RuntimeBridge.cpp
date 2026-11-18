@@ -5,11 +5,14 @@
 #include "../../Includes/fmt/core.h"
 #include "BridgeObjects.h"
 
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 
 #include <iostream>
+#include <llvm-23/llvm/IR/Attributes.h>
+#include <llvm-23/llvm/IR/CallingConv.h>
 
 namespace {
 
@@ -174,6 +177,27 @@ llvm::Align runtime_bridge::field_align(bridge_ty ty, unsigned idx) const {
 
 uint64_t runtime_bridge::trailing_off(bridge_ty ty) const {
     return _DL.getTypeAllocSize(_types[+ty]);
+}
+
+llvm::MDNode* runtime_bridge::fixed_slot(bridge_ty owner) const {
+    std::optional<object::rt_type> tag;
+    if (owner == RtString::layout) tag = RtString::tag;
+    else if (owner == RtArr::layout) tag = RtArr::tag;
+    else if (owner == RtClosure::layout) tag = RtClosure::tag;
+    else if (owner == RtInst::layout) tag = RtInst::tag;
+    if (!tag) return nullptr;
+    auto masks = obj_type_masks(*tag);
+    auto md = [&](uint64_t v) { return llvm::ConstantAsMetadata::get(_b.getInt64(v)); };
+    return llvm::MDNode::get(ctx(), { md(std::get<0>(masks)), md(std::get<1>(masks)) });
+}
+
+llvm::Value* runtime_bridge::decoded_from(llvm::Value* ptr) {
+    // decode_obj once inlined
+    auto mask = llvm::dyn_cast<llvm::IntrinsicInst>(ptr->stripInBoundsConstantOffsets());
+    if (!mask || mask->getIntrinsicID() != llvm::Intrinsic::ptrmask) return nullptr;
+    auto bits = llvm::dyn_cast<llvm::ConstantInt>(mask->getArgOperand(1));
+    if (!bits || bits->getZExtValue() != mask_payload_obj) return nullptr;
+    return mask->getArgOperand(0)->stripPointerCasts();
 }
 
 void runtime_bridge::verify_layouts() const {
@@ -396,6 +420,8 @@ void runtime_bridge::declare_runtime_functions() {
     // wait for this one, and stop CSE across barriers
     for (auto [name, ty] : { std::pair<const char*, llvm::Type*> { "gc_heal_val", val }, { "gc_heal_ptr", ptr } }) {
         auto heal = declare(name, ty, { ptr, ty }, total_fn);
+        // Must match the call sites and the definitions in LLVMHelperExports.h
+        heal->setCallingConv(llvm::CallingConv::PreserveAll);
         heal->addFnAttr(llvm::Attribute::Cold);
         heal->setMemoryEffects(llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::Ref));
         heal->addParamAttr(0, llvm::Attribute::NonNull);
@@ -539,7 +565,9 @@ void runtime_bridge::build_ir_helpers() {
             auto uncolored = _b.CreateXor(bits, read_reg("r14", "good.color"));
             auto ok = _b.CreateIsNull(_b.CreateAnd(uncolored, gc::config::color_bit));
             guard(ok, "bad.color", [&] {
-                _b.CreateRet(call(ty == val ? "gc_heal_val" : "gc_heal_ptr", { slot, loaded }));
+                auto c = call(ty == val ? "gc_heal_val" : "gc_heal_ptr", { slot, loaded });
+                c->setCallingConv(llvm::CallingConv::PreserveAll);
+                _b.CreateRet(c);
             }, llvm::MDBuilder(c).createLikelyBranchWeights());
             _b.CreateRet(_b.CreateIntToPtr(uncolored, ty));
         });

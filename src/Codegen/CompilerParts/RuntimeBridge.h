@@ -25,6 +25,9 @@ public:
     static constexpr const char* late_inline_attr = "esl-late-inline";
     // Calls that read exactly the slot their only argument points to
     static constexpr const char* slot_read_attr = "esl-slot-read";
+    // On a gc_read_* call: the slot is at a fixed offset of an object whose Values pass the tag check
+    // {expected, mask}, so it can be read wherever the owner does
+    static constexpr const char* fixed_slot_md = "esl.fixed_slot";
 
     // An ESL Value: an opaque pointer in addrspace 1
     static llvm::Type* eslValType(llvm::LLVMContext& ctx);
@@ -37,6 +40,10 @@ public:
     llvm::Align field_align(bridge_ty ty, unsigned idx) const;
     // Where the flexible array member behind `ty` starts (== sizeof of the C++ type).
     uint64_t trailing_off(bridge_ty ty) const;
+    // The fixed_slot_md node for reference fields of `owner`, null if no Value is tagged with it
+    llvm::MDNode* fixed_slot(bridge_ty owner) const;
+    // The Value a decoded object pointer, or a constant offset into one, came from. Null otherwise
+    static llvm::Value* decoded_from(llvm::Value* ptr);
 
     // Runtime + helper functions only, by name
     llvm::Function* fn(const std::string& name) const;

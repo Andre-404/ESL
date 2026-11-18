@@ -125,10 +125,10 @@ EXPORT void gc_add_root(Value* ptr){
 }
 
 // Slow paths of gc_read_val/gc_read_ptr
-EXPORT Value gc_heal_val(Value* slot, Value seen) {
+EXPORT [[clang::preserve_all]] Value gc_heal_val(Value* slot, Value seen) {
     return gc::heal_word(slot, seen);
 }
-EXPORT size_t gc_heal_ptr(size_t* slot, size_t seen) {
+EXPORT [[clang::preserve_all]] size_t gc_heal_ptr(size_t* slot, size_t seen) {
     return gc::heal_ptr(slot, seen);
 }
 

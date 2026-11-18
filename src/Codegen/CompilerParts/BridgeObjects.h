@@ -38,10 +38,13 @@ class field_ref {
     llvm::Align _align;
     const char* _name = "";
     slot_kind _kind = slot_kind::plain;
+    llvm::MDNode* _fixed = nullptr; // Set if we know the type of object that contains this field ref
+
+    llvm::CallInst* read(const char* helper) const;
 public:
     field_ref() = default;
     field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm::Align align, const char* name,
-              slot_kind kind = slot_kind::plain);
+              slot_kind kind = slot_kind::plain, llvm::MDNode* fixed = nullptr);
 
     llvm::Type* type() const { return _ty; }
     llvm::Value* ptr() const { return _ptr; }
