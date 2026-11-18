@@ -42,6 +42,7 @@ namespace CFG{
 
         CLOSURE, // All local functions fall under this
         FUNC_DECL,
+        EXPR_STMT,
         RETURN,
 
         UNCOND_JMP,
@@ -678,7 +679,7 @@ namespace CFG{
     public:
         exprPtr expr;
 
-        ExprStmt(exprPtr _expr) : expr(_expr) {}
+        ExprStmt(exprPtr _expr) : expr(_expr) { type = NodeType::EXPR_STMT; }
         void accept(CFGVisitor* vis) override{
             vis->visitExprStmt(this);
         }
