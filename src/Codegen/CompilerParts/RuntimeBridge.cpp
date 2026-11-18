@@ -505,68 +505,83 @@ void runtime_bridge::build_ir_helpers() {
     // Accesses to reference slots (see Runtime/ConcurrentGC/ref-slot.h). Every load and store
     // jitted code does of memory that can hold a reference to a managed object is a call to one
     // of these
-    //   gc_read_val(slot)          slot holds a Value: instance field, array element, captured
-    //   gc_store_val(slot, value)  variable, global
-    //   gc_read_ptr(slot)          slot holds a raw pointer to a managed object: an array's
-    //   gc_store_ptr(slot, value)  storage
-    auto define_access = [&](const char* name, llvm::Type* slotTy, bool is_store) {
-        const bool is_val = slotTy == val;
-        auto fnTy = is_store ? ft(voidTy, { ptr, slotTy }) : ft(slotTy, { ptr });
-        auto* access = define_fn(name, fnTy, priv, [&](llvm::Function* F) {
-            auto if_false = [&](llvm::Value* cond, const char* label, auto then, llvm::MDNode* weights = nullptr) {
-                auto out = llvm::BasicBlock::Create(c, label, F);
-                auto rest = llvm::BasicBlock::Create(c, "", F);
-                _b.CreateCondBr(cond, rest, out, weights);
-                _b.SetInsertPoint(out);
-                then();
-                _b.SetInsertPoint(rest);
-            };
+    //   gc_read_val / gc_store_val  slot holds a Value: instance field, array element, captured variable, global
+    //   gc_read_ptr / gc_store_ptr  slot holds a raw pointer to a managed object: an array's storage
+    auto read_reg = [&](const char* reg, const llvm::Twine& name = "") {
+        auto md = llvm::MetadataAsValue::get(c, llvm::MDNode::get(c, { llvm::MDString::get(c, reg) }));
+        return _b.CreateIntrinsic(i64, llvm::Intrinsic::read_register, { md }, nullptr, name);
+    };
+    // Carries on when cond holds, otherwise runs exit, which has to end in a ret
+    auto guard = [&](llvm::Value* cond, const char* label, auto exit, llvm::MDNode* weights = nullptr) {
+        auto F = _b.GetInsertBlock()->getParent();
+        auto out = llvm::BasicBlock::Create(c, label, F);
+        auto rest = llvm::BasicBlock::Create(c, "", F);
+        _b.CreateCondBr(cond, rest, out, weights);
+        _b.SetInsertPoint(out);
+        exit();
+        _b.SetInsertPoint(rest);
+    };
+    // A Value below ref_floor is not a reference
+    auto is_ref = [&](llvm::Value* bits) { return _b.CreateICmpSGE(bits, _b.getInt64(gc::ref_floor)); };
+
+    // r14 holds the color a good reference carries
+    auto define_read = [&](const char* name, llvm::Type* ty) {
+        auto* read = define_fn(name, ft(ty, { ptr }), priv, [&](llvm::Function* F) {
             auto slot = F->getArg(0);
-            // r14 holds the color a good reference carries. A Value below ref_floor is not a reference
-            auto r14 = llvm::MetadataAsValue::get(c, llvm::MDNode::get(c, { llvm::MDString::get(c, "r14") }));
-            auto good = _b.CreateIntrinsic(i64, llvm::Intrinsic::read_register, { r14 }, nullptr, "good.color");
-            auto ref_floor = _b.getInt64(gc::ref_floor);
-
-            if (is_store) {
-                auto store = [&](llvm::Value* v) {
-                    _b.CreateAlignedStore(v, slot, ref_slot_align)->setAtomic(ref_slot_ordering);
-                    _b.CreateRetVoid();
-                };
-                auto v = toI64(F->getArg(1));
-                // A branch, not a select, so the stored value doesn't wait on the check. The
-                // weights keep simplifycfg from sinking the two stores into one select
-                auto rare = llvm::MDBuilder(c).createBranchWeights(1, 1000);
-                if (is_val) if_false(_b.CreateICmpSGE(v, ref_floor), "not.ref", [&] { store(v); }, rare);
-                return store(_b.CreateOr(v, good));
-            }
-            auto loaded = _b.CreateAlignedLoad(slotTy, slot, ref_slot_align, "ref");
+            auto loaded = _b.CreateAlignedLoad(ty, slot, ref_slot_align, "ref");
             loaded->setAtomic(ref_slot_ordering);
-            auto w = toI64(loaded);
+            auto bits = toI64(loaded);
             // Anything but a reference comes back as loaded, after one compare
-            if (is_val) if_false(_b.CreateICmpSGE(w, ref_floor), "not.ref", [&] { _b.CreateRet(loaded); });
+            if (ty == val) guard(is_ref(bits), "not.ref", [&] { _b.CreateRet(loaded); });
+            auto uncolored = _b.CreateXor(bits, read_reg("r14", "good.color"));
+            auto ok = _b.CreateIsNull(_b.CreateAnd(uncolored, gc::config::color_bit));
+            guard(ok, "bad.color", [&] {
+                _b.CreateRet(call(ty == val ? "gc_heal_val" : "gc_heal_ptr", { slot, loaded }));
+            }, llvm::MDBuilder(c).createLikelyBranchWeights());
+            _b.CreateRet(_b.CreateIntToPtr(uncolored, ty));
+        });
+        add_attrs(read, total_fn);
+        // Stays a call until the end of the pipeline (expand_gc_barriers), so GVN/LICM can merge
+        // and move whole barriers. The result only depends on what's in the slot, not on r14,
+        // and slot_read_aa tells AA it reads just the slot
+        read->addFnAttr(llvm::Attribute::NoInline);
+        read->addFnAttr(late_inline_attr);
+        read->addFnAttr(slot_read_attr);
+        read->setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
+        read->addParamAttr(0, llvm::Attribute::NonNull);
+        read->addParamAttr(0, no_capture(c));
+        read->addParamAttr(0, llvm::Attribute::ReadOnly);
+    };
 
-            auto x = _b.CreateXor(w, good);
-            auto ok = _b.CreateIsNull(_b.CreateAnd(x, gc::config::color_bit));
-            if_false(_b.CreateIntrinsic(i1, llvm::Intrinsic::expect, { ok, _b.getTrue() }), "bad.color", [&] {
-                _b.CreateRet(call(is_val ? "gc_heal_val" : "gc_heal_ptr", { slot, loaded }));
-            });
-            _b.CreateRet(_b.CreateIntToPtr(x, slotTy));
+    auto define_store = [&](const char* name, llvm::Type* ty) {
+        auto* access = define_fn(name, ft(voidTy, { ptr, ty }), priv, [&](llvm::Function* F) {
+            auto store = [&](llvm::Value* v) {
+                _b.CreateAlignedStore(v, F->getArg(0), ref_slot_align)->setAtomic(ref_slot_ordering);
+                _b.CreateRetVoid();
+            };
+            auto bits = toI64(F->getArg(1));
+            // A branch, not a select, so the stored value doesn't wait on the check. The
+            // weights keep simplifycfg from sinking the two stores into one select
+            auto rare = llvm::MDBuilder(c).createBranchWeights(1, 1000);
+            if (ty == val) guard(is_ref(bits), "not.ref", [&] { store(bits); }, rare);
+            store(_b.CreateOr(bits, read_reg("r14", "good.color")));
         });
         add_attrs(access, total_fn);
         access->addFnAttr(llvm::Attribute::AlwaysInline);
         access->setMemoryEffects(
-            llvm::MemoryEffects::argMemOnly(is_store ? llvm::ModRefInfo::Mod : llvm::ModRefInfo::Ref) |
+            llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Mod) |
             llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::Ref)
         );
         // Only the slot: storing the value is what captures it
         access->addParamAttr(0, llvm::Attribute::NonNull);
         access->addParamAttr(0, no_capture(c));
-        access->addParamAttr(0, is_store ? llvm::Attribute::WriteOnly : llvm::Attribute::ReadOnly);
+        access->addParamAttr(0, llvm::Attribute::WriteOnly);
     };
-    define_access("gc_read_val", val, false);
-    define_access("gc_read_ptr", ptr, false);
-    define_access("gc_store_val", val, true);
-    define_access("gc_store_ptr", ptr, true);
+
+    define_read("gc_read_val", val);
+    define_read("gc_read_ptr", ptr);
+    define_store("gc_store_val", val);
+    define_store("gc_store_ptr", ptr);
 
     // Memory effects stay unknown on purpose: a safepoint is where the collector gets to move
     // objects and rewrite the heap slots pointing at them, so no heap load survives across one
@@ -575,12 +590,7 @@ void runtime_bridge::build_ir_helpers() {
             auto runGCBB = llvm::BasicBlock::Create(c, "runGC", F);
             auto mergeBB = llvm::BasicBlock::Create(c, "merge", F);
 
-            auto R15MD = llvm::MDNode::get(c, { llvm::MDString::get(c, "r15") });
-            auto MDAsVal = llvm::MetadataAsValue::get(c, R15MD);
-            llvm::Value* tcb = _b.CreateIntrinsic(
-                _b.getInt64Ty(), llvm::Intrinsic::read_register, { MDAsVal }
-            );
-            tcb = _b.CreateIntToPtr(tcb, ptr);
+            auto tcb = _b.CreateIntToPtr(read_reg("r15"), ptr);
 
             auto gep = _b.CreateConstInBoundsGEP1_64(i8, tcb, tcb_state_off, "tcb.state");
             // TODO: can we have some static check that the offset is 8?
@@ -655,11 +665,7 @@ void runtime_bridge::build_ir_helpers() {
 
         _b.SetInsertPoint(activeWB);
 
-        auto R15MD = llvm::MDNode::get(c, { llvm::MDString::get(c, "r15") });
-        auto MDAsVal = llvm::MetadataAsValue::get(c, R15MD);
-        llvm::Value* tcb = _b.CreateIntrinsic(_b.getInt64Ty(), llvm::Intrinsic::read_register,
-                                              { MDAsVal });
-        tcb = _b.CreateIntToPtr(tcb, ptr);
+        auto tcb = _b.CreateIntToPtr(read_reg("r15"), ptr);
 
         auto bufSlot = _b.CreateConstInBoundsGEP1_64(i8, tcb, tcb_wbbuf_off, "tcb.wbbuf");
         auto buf = _b.CreateAlignedLoad(ptr, bufSlot, llvm::Align(8), "wbbuf");

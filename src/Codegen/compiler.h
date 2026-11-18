@@ -139,7 +139,6 @@ class Compiler : public CFG::CFGCodeGen {
 
         // LLVM stuff
         void setupModule(const llvm::DataLayout& DL);
-        void optimizeModule(llvm::Module& module);
         // Declares both user and native functions
         llvm::Function* declareFunction(const std::shared_ptr<types::FunctionType> fnTy);
         void createMainEntrypoint(string entrypointName);

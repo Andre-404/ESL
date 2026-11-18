@@ -21,6 +21,10 @@ public:
 
     // Needed for atomic access to pointers in objects/globals
     static constexpr llvm::Align ref_slot_align = llvm::Align::Constant<8>();
+    // Helpers that stay calls through the pipeline and get inlined at its end
+    static constexpr const char* late_inline_attr = "esl-late-inline";
+    // Calls that read exactly the slot their only argument points to
+    static constexpr const char* slot_read_attr = "esl-slot-read";
 
     // An ESL Value: an opaque pointer in addrspace 1
     static llvm::Type* eslValType(llvm::LLVMContext& ctx);

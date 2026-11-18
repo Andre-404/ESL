@@ -1,9 +1,9 @@
 #include "compiler.h"
+#include "CompilerParts/Optimizer.h"
 #include "../ErrorHandling/errorHandler.h"
 #include "../Includes/fmt/core.h"
 #include "../Runtime/Values/valueHelpers.h"
 
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/Type.h"
@@ -63,7 +63,8 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
 #endif
     debugEmitter.finalize();
     llvm::errs()<<"--------------------Optimized module--------------------\n";
-    optimizeModule(*curModule);
+    optimize(*curModule);
+    curModule->print(llvm::errs(), nullptr);
     return std::move(llvm::orc::ThreadSafeModule(std::move(curModule), std::move(ctx)));
 }
 
@@ -865,26 +866,6 @@ void Compiler::setupModule(const llvm::DataLayout& DL){
     auto targetTriple = llvm::sys::getDefaultTargetTriple();
     curModule->setDataLayout(DL);
     curModule->setTargetTriple(llvm::Triple(targetTriple));
-}
-
-void Compiler::optimizeModule(llvm::Module& module){
-    // Create the analysis managers.
-    llvm::LoopAnalysisManager LAM;
-    llvm::FunctionAnalysisManager FAM;
-    llvm::CGSCCAnalysisManager CGAM;
-    llvm::ModuleAnalysisManager MAM;
-
-    llvm::PassBuilder PB;
-    // Register all the basic analyses with the managers.
-    PB.registerModuleAnalyses(MAM);
-    PB.registerCGSCCAnalyses(CGAM);
-    PB.registerFunctionAnalyses(FAM);
-    PB.registerLoopAnalyses(LAM);
-    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-    // Create the pass manager.
-    auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-    MPM.run(module, MAM);
-    curModule->print(llvm::errs(), nullptr);
 }
 
 llvm::Function* Compiler::declareFunction(const std::shared_ptr<types::FunctionType> fnType){
