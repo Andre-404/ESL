@@ -677,8 +677,10 @@ llvm::Value* Compiler::visitWhileStmt(CFG::WhileStmt* stmt) {
     llvm::BasicBlock* headerBB = llvm::BasicBlock::Create(*ctx, "while.header", F);
     llvm::BasicBlock* loopBB = llvm::BasicBlock::Create(*ctx, "while.loop");
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(*ctx, "while.merge");
+    // End of the body and target of continue, so a for loop's step runs on both paths
+    llvm::BasicBlock* latchBB = llvm::BasicBlock::Create(*ctx, "while.latch");
 
-    continueJumpDest.push(headerBB);
+    continueJumpDest.push(latchBB);
     breakJumpDest.push(mergeBB);
     builder.CreateBr(headerBB);
     builder.SetInsertPoint(headerBB);
@@ -691,13 +693,13 @@ llvm::Value* Compiler::visitWhileStmt(CFG::WhileStmt* stmt) {
     F->insert(F->end(), loopBB);
     builder.SetInsertPoint(loopBB);
     codegenBlock(stmt->loopBody);
+    if(!stmt->loopBody.terminates) builder.CreateBr(latchBB);
+
+    F->insert(F->end(), latchBB);
+    builder.SetInsertPoint(latchBB);
     // As the name suggests, this is eval-ed after the main body of the loop is ran
     if(stmt->afterLoopExpr) stmt->afterLoopExpr->codegen(this);
-    // Only jump to condition if the main body doesn't terminate already(eg. an unconditional break stmt at the end of loop)
-    if(!stmt->loopBody.terminates){
-        builder.CreateCall(safeGetFunc("safepoint_poll"));
-        builder.CreateBr(headerBB);
-    }
+    builder.CreateBr(headerBB);
 
     F->insert(F->end(), mergeBB);
     // Sets the builder up to emit code after the while stmt
@@ -1146,7 +1148,6 @@ llvm::Function* Compiler::startFuncDef(const string &name, const std::shared_ptr
 
     llvm::BasicBlock* BB = llvm::BasicBlock::Create(*ctx, "entry", fn);
     builder.SetInsertPoint(BB);
-    builder.CreateCall(safeGetFunc("safepoint_poll"));
     return fn;
 }
 void Compiler::declareFuncArgs(const vector<std::shared_ptr<CFG::VarDecl>>& args){

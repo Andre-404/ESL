@@ -207,11 +207,19 @@ llvm::FunctionType* CompClass::lookup_fn_ty(runtime_bridge& br) {
     return llvm::FunctionType::get(br.b().getInt32Ty(), { br.eslValType() }, false);
 }
 
+// The callee is always a createStrToIdxFunc lookup, a pure chain of selects, but called through a
+// pointer LLVM can't see that. Without this every dynamic field access looks like it writes memory
+static llvm::CallInst* pure_lookup(llvm::CallInst* call) {
+    call->setDoesNotAccessMemory();
+    call->setDoesNotThrow();
+    call->addFnAttr(llvm::Attribute::WillReturn);
+    return call;
+}
 llvm::Value* CompClass::lookup_field(llvm::Constant* field_name) const {
-    return b().CreateCall(lookup_fn_ty(br()), get_field_fn().load(), field_name, "field.idx");
+    return pure_lookup(b().CreateCall(lookup_fn_ty(br()), get_field_fn().load(), field_name, "field.idx"));
 }
 llvm::Value* CompClass::lookup_method(llvm::Constant* field_name) const {
-    return b().CreateCall(lookup_fn_ty(br()), get_method_fn().load(), field_name, "method.idx");
+    return pure_lookup(b().CreateCall(lookup_fn_ty(br()), get_method_fn().load(), field_name, "method.idx"));
 }
 
 llvm::Constant* CompClass::const_build(

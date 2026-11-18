@@ -367,7 +367,8 @@ void runtime_bridge::declare_runtime_functions() {
     boxed_ret(declare("create_hashmap", val, { i32 }, may_gc_fn, true));
     // fn ptr, arity, name, freevar count, then that many freevars
     boxed_ret(declare("create_closure", val, { ptr, i8, ptr, i32 }, may_gc_fn, true));
-    declare("hashmap_get", val, { ptr, ptr }, may_gc_fn);
+    // Only probes the table and reads the value out with read_ref, it never allocates
+    declare("hashmap_get", val, { ptr, ptr }, total_fn)->setOnlyReadsMemory();
     declare("hashmap_set", voidTy, { ptr, ptr, val }, may_gc_fn);
 
     // wrapper fn ptr, alloca holding the args, argc. No nocallback and no nosync: the wrapper is a
@@ -467,16 +468,18 @@ void runtime_bridge::build_ir_helpers() {
         auto c3 = call("is_null", arg);
         _b.CreateRet(_b.CreateNot(_b.CreateOr(_b.CreateAnd(c1, c2), c3)));
     });
+    // Encoding and decoding keep the pointer's provenance, so AA can still tell which object a decoded
+    // pointer belongs to
+    // Through ptrtoint/inttoptr every decoded pointer could alias any other
     define_fn("encode_obj", ft(val, { ptr, i64 }), priv, [&](llvm::Function* f) {
-        // MASK_SIGNATURE_OBJ | type | (Int64)x
-        auto cast = _b.CreatePtrToInt(f->getArg(0), _b.getInt64Ty());
-        auto mask = _b.CreateOr(_b.getInt64(mask_signature_obj), f->getArg(1));
-        _b.CreateRet(_b.CreateIntToPtr(_b.CreateOr(mask, cast), val));
+        // MASK_SIGNATURE_OBJ | type | (Int64)x, as a GEP: the tag bits never overlap the pointer's
+        auto tag = _b.CreateOr(_b.getInt64(mask_signature_obj), f->getArg(1));
+        _b.CreateRet(_b.CreateAddrSpaceCast(_b.CreateGEP(_b.getInt8Ty(), f->getArg(0), tag), val));
     });
     define_fn("decode_obj", ft(ptr, { val }), priv, [&](llvm::Function* f) {
         // (rt_obj*)(x & MASK_PAYLOAD_OBJ)
-        auto masked = _b.CreateAnd(toI64(f->getArg(0)), _b.getInt64(mask_payload_obj));
-        _b.CreateRet(_b.CreateIntToPtr(masked, ptr));
+        auto p = _b.CreateAddrSpaceCast(f->getArg(0), ptr);
+        _b.CreateRet(_b.CreateIntrinsic(llvm::Intrinsic::ptrmask, { ptr, i64 }, { p, _b.getInt64(mask_payload_obj) }));
     });
     define_fn("is_rt_type", ft(i1, { val, i8 }), priv, [&](llvm::Function* f) {
         // (x & (MASK_SIGNATURE | MASK_PAYLOAD_TYPE)) == (MASK_SIGNATURE_OBJ | expectedType)
@@ -613,6 +616,8 @@ void runtime_bridge::build_ir_helpers() {
             _b.CreateRetVoid();
         });
     poll->addFnAttr(llvm::Attribute::NoUnwind);
+    // Calls to it only appear after O3 (place_safepoints in Optimizer.cpp)
+    poll->addFnAttr(late_inline_attr);
 
     auto* isInstOf = define_fn("is_inst_of_class",
         ft(i1, { val, llvm::Type::getInt32Ty(c), llvm::Type::getInt32Ty(c) }),
@@ -696,6 +701,11 @@ void runtime_bridge::build_ir_helpers() {
         _b.CreateRetVoid();
     });
     writeBarrier->addFnAttr(llvm::Attribute::NoUnwind);
+    writeBarrier->addFnAttr(llvm::Attribute::NoInline);
+    writeBarrier->addFnAttr(late_inline_attr);
+    writeBarrier->addFnAttr(llvm::Attribute::WillReturn);
+    writeBarrier->addFnAttr(llvm::Attribute::NoCallback);
+    writeBarrier->setMemoryEffects(llvm::MemoryEffects::inaccessibleMemOnly());
 
     auto* arrBarrier = define_fn("arr_write_barrier", ft(voidTy, { ptr, val }), priv, [&](llvm::Function* F) {
         auto isObjV = call("is_obj", F->getArg(1));

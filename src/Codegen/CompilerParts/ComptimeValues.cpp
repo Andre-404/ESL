@@ -17,8 +17,9 @@ llvm::Constant* ComptimeValues::createMethodObj(const std::string& name, uint8_t
 }
 
 llvm::Constant* ComptimeValues::constObjToVal(llvm::Constant* obj, object::rt_type type) const {
-    auto val = llvm::ConstantExpr::getPtrToInt(obj, _b.getInt64Ty());
-    return _tyhelper.ConstCastToESLVal(llvm::ConstantExpr::getAdd(val, _b.getInt64(mask_signature_obj | +type)));
+    // Same as encode_obj: a byte offset rather than ptrtoint to keep pointer provenance
+    auto tagged = llvm::ConstantExpr::getGetElementPtr(_b.getInt8Ty(), obj, _b.getInt64(mask_signature_obj | +type));
+    return llvm::ConstantExpr::getAddrSpaceCast(tagged, _tyhelper.getESLValType());
 }
 
 llvm::GlobalVariable* ComptimeValues::storeConstObj(llvm::Constant* obj) const {
