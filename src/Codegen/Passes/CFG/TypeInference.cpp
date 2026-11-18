@@ -31,6 +31,7 @@ static tyPtr last_evaluated(tyPtr first, Args... types) {
 
 class VariableTypeFinder : CFG::CFGVisitor {
     uint64_t _target = 0;
+    tyPtr _target_decl_type = nullptr;
     tyPtr _target_type = nullptr;
     std::unordered_set<CFG::WhileStmt*> _loop_labels;
 
@@ -42,6 +43,8 @@ class VariableTypeFinder : CFG::CFGVisitor {
         return _target_type;
     }
     tyPtr visit_antecedents(const CFG::CFGStmt* stmt) {
+        // Reached the function's entry without finding a constraint, e.g. an argument
+        if (stmt->antecedents.empty()) return _target_decl_type;
         tyPtr tmp = getBasicType(TypeFlag::UNKNOWN);
         for (const auto& antecedent : stmt->antecedents)
             tmp = typeUnion(tmp, extract_type(antecedent));
@@ -52,8 +55,9 @@ class VariableTypeFinder : CFG::CFGVisitor {
         return std::reinterpret_pointer_cast<CFG::VarRead>(expr)->varPtr->uuid == _target;
     }
     public:
-    tyPtr run(uint64_t var, CFG::CFGStmt* cur_stmt) {
+    tyPtr run(uint64_t var, tyPtr decl_type, CFG::CFGStmt* cur_stmt) {
         _target = var;
+        _target_decl_type = decl_type;
         return visit_antecedents(cur_stmt);
     }
     // Returning UNKNOWN in any method here means we explored everything and found no constraints on the target
@@ -96,13 +100,10 @@ class VariableTypeFinder : CFG::CFGVisitor {
                 if (is_target(expr->lhs) || is_target(expr->rhs)) return ret_target(getBasicType(TypeFlag::NUMBER));
                 break;
             case CFG::ComparisonOp::EQUAL:
-                // TODO: what if type of the other side is ANY? we can probably do better
-                if (is_target(expr->lhs) && !is_target(expr->rhs)) return ret_target(expr->rhs->exprType);
-                if (!is_target(expr->lhs) && is_target(expr->rhs)) return ret_target(expr->lhs->exprType);
             case CFG::ComparisonOp::NOT_EQUAL:
             case CFG::ComparisonOp::AND:
             case CFG::ComparisonOp::OR:
-                break;// These ops don't constraint the type in any way since booleans are evaluated with isTruthy
+                break;// These ops don't constraint the type in any way: (in)equality works on any types and booleans are evaluated with isTruthy
         }
         return ret_target(last_evaluated(extract_type(expr->lhs), extract_type(expr->rhs)));
     }
@@ -249,7 +250,7 @@ tyPtr TypeInferencePass::getVarType(std::shared_ptr<CFG::VarDecl> decl) {
     if (decl->varType == CFG::VarType::GLOBAL) return getBasicType(TypeFlag::ANY);
     if (decl->varType == CFG::VarType::GLOBAL_FUNC) return _function_types[decl->uuid];
     VariableTypeFinder varTypeFinder;
-    auto tmp = varTypeFinder.run(decl->uuid, _cur_stmt);
+    auto tmp = varTypeFinder.run(decl->uuid, decl->declType, _cur_stmt);
     // If we couldn't constrain the type to anything we know take the most conservative approach
     if (typeFlagMatch(tmp, TypeFlag::UNKNOWN)) return decl->declType;
     return tmp;
@@ -431,9 +432,9 @@ void TypeInferencePass::visitIfStmt(CFG::IfStmt* stmt) {
     for (const auto& stmt : stmt->elseBlock.stmts) stmt->accept(this);
 }
 void TypeInferencePass::visitWhileStmt(CFG::WhileStmt* stmt) {
-    _cur_stmt = stmt;
     // TODO: determine if doing this is really worth it
     for (int i = 0; i < 2; i++) {
+        _cur_stmt = stmt;
         if (stmt->cond) stmt->cond->accept(this);
         for (const auto& stmt : stmt->loopBody.stmts) stmt->accept(this);
         if (stmt->afterLoopExpr) stmt->afterLoopExpr->accept(this);

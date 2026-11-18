@@ -591,6 +591,8 @@ void ASTTransformer::visitIfStmt(AST::IfStmt* stmt) {
     tmpIf->thenBlock = parseStmtToBlock(stmt->thenBranch);
     vector<CFG::nodePtr> antecedents = current->get_stmt();
     if(stmt->elseBranch){
+        // get_stmt() above left this empty, but the else branch is entered from the condition too
+        current->set_stmt({ tmpIf });
         tmpIf->elseBlock = parseStmtToBlock(stmt->elseBranch);
         auto tmp = current->get_stmt();
         antecedents.insert(antecedents.end(), tmp.begin(), tmp.end());
