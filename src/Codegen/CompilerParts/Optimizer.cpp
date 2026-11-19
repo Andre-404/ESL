@@ -1,6 +1,8 @@
 #include "Optimizer.h"
 #include "ESLPasses/ExpandGCBarriers.h"
 #include "ESLPasses/HoistBarriers.h"
+#include "ESLPasses/IntCounters.h"
+#include "ESLPasses/NumberFolds.h"
 #include "ESLPasses/PlaceSafepoints.h"
 #include "ESLPasses/SlotReadAA.h"
 
@@ -52,6 +54,11 @@ void optimize(llvm::Module& module) {
     PB.registerLoopAnalyses(LAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
+    // Inside O3: the loop passes after this point need the counters already integers
+    PB.registerScalarOptimizerLateEPCallback([](llvm::FunctionPassManager& FPM, llvm::OptimizationLevel) {
+        FPM.addPass(esl_passes::int_counters());
+        FPM.addPass(esl_passes::number_folds());
+    });
     auto MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
     add_gc_passes(MPM);
     MPM.run(module, MAM);
