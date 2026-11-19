@@ -61,7 +61,8 @@ void RuntimeTypecheck::createTypeCheckUnary(const string& err, llvm::Value* cons
     );
 }
 void RuntimeTypecheck::createTypeCheckBinary(
-    const string& err, llvm::Value* const lhs, llvm::Value* const rhs, std::tuple<uint64_t, uint64_t, bool> masks
+    const string& err, llvm::Value* const lhs, llvm::Value* const rhs, std::tuple<uint64_t, uint64_t, bool> masks,
+    bool checkLhs, bool checkRhs
 ) const {
     auto [expected, mask, useNEQ] = masks;
 
@@ -69,12 +70,12 @@ void RuntimeTypecheck::createTypeCheckBinary(
     auto castRhs = _tyhelp.ESLValTo(rhs, _b.getInt64Ty());
     auto expectedType = _b.getInt64(expected);
 
-    auto condLhs = _b.CreateICmpEQ(_b.CreateAnd(castLhs, mask), expectedType, "type.check.lhs");;
-    auto condRhs = _b.CreateICmpEQ(_b.CreateAnd(castRhs, mask), expectedType, "type.check.rhs");
-    if(useNEQ) {
-        condLhs = _b.CreateNot(condLhs);
-        condRhs = _b.CreateNot(condRhs);
-    }
+    auto check = [&](llvm::Value* val, const char* name) -> llvm::Value* {
+        auto cond = _b.CreateICmpEQ(_b.CreateAnd(val, mask), expectedType, name);
+        return useNEQ ? _b.CreateNot(cond) : cond;
+    };
+    auto condLhs = checkLhs ? check(castLhs, "type.check.lhs") : _b.getTrue();
+    auto condRhs = checkRhs ? check(castRhs, "type.check.rhs") : _b.getTrue();
     auto cond = _b.CreateAnd(condLhs, condRhs);
     cond = _b.CreateIntrinsic(_b.getInt1Ty(), llvm::Intrinsic::expect, {cond, _b.getInt1(true)});
     create_if(_b, _b.CreateNot(cond),

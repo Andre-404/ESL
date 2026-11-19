@@ -19,8 +19,10 @@ public:
 
     void createTypeCheckFail(const string& err, llvm::Value* val) const;
     void createTypeCheckUnary(const string& err, llvm::Value* val, std::tuple<uint64_t, uint64_t, bool> masks) const;
+    // A side whose type is known at compile time can skip its check, the error still reports both
     void createTypeCheckBinary(
-        const string& err, llvm::Value* lhs, llvm::Value* rhs, std::tuple<uint64_t, uint64_t, bool> masks
+        const string& err, llvm::Value* lhs, llvm::Value* rhs, std::tuple<uint64_t, uint64_t, bool> masks,
+        bool checkLhs = true, bool checkRhs = true
     ) const;
     void createArrBoundsCheck(const string& err, llvm::Value* arr, llvm::Value* index) const;
     void createInstNoField(const string& err, const string& field, llvm::Value* inst) const;

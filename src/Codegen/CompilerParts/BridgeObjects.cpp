@@ -16,7 +16,8 @@ field_ref::field_ref(runtime_bridge& br, llvm::Type* ty, llvm::Value* ptr, llvm:
 llvm::Value* field_ref::load() const {
     switch (_kind) {
         case slot_kind::plain: return _br->b().CreateAlignedLoad(_ty, _ptr, _align, _name);
-        case slot_kind::val:   return read("gc_read_val");
+        case slot_kind::val:
+        case slot_kind::non_ref_val: return read("gc_read_val");
         case slot_kind::ptr:   return read("gc_read_ptr");
     }
     __builtin_unreachable();
@@ -31,6 +32,11 @@ llvm::Instruction* field_ref::store(llvm::Value* val) const {
         case slot_kind::plain: return _br->b().CreateAlignedStore(val, _ptr, _align);
         case slot_kind::val:   return _br->call("gc_store_val", { _ptr, val });
         case slot_kind::ptr:   return _br->call("gc_store_ptr", { _ptr, val });
+        case slot_kind::non_ref_val: {
+            auto st = _br->b().CreateAlignedStore(val, _ptr, _align);
+            st->setAtomic(runtime_bridge::ref_slot_ordering);
+            return st;
+        }
     }
     __builtin_unreachable();
 }
@@ -128,11 +134,11 @@ llvm::Value* RtArrStore::data_ptr() const {
         b().getInt8Ty(), ptr(), br().trailing_off(layout), "store.data"
     );
 }
-field_ref RtArrStore::data(llvm::Value* idx) const {
-    return trailing(layout, br().eslValType(), idx, "arr.elem", slot_kind::val);
+field_ref RtArrStore::data(llvm::Value* idx, slot_kind kind) const {
+    return trailing(layout, br().eslValType(), idx, "arr.elem", kind);
 }
-field_ref RtArrStore::data(unsigned idx) const {
-    return data(b().getInt32(idx));
+field_ref RtArrStore::data(unsigned idx, slot_kind kind) const {
+    return data(b().getInt32(idx), kind);
 }
 
 void RtArrStore::set_has_obj() const {

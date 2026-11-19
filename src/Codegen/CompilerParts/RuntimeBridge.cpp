@@ -60,15 +60,6 @@ static_assert(
 );
 
 // ---------------------------------------------------------------------------------------------
-// Ordering of every load and store of a reference slot in jitted code (the gc_read_* and
-// gc_store_* helpers)
-// Other threads store to the slot and the collector reads and rewrites it, and a plain load that
-// races returns undef: the optimizer may load the slot twice and hand out two different values
-// (one gets type checked, the other dereferenced) or load it in pieces. 
-// ---------------------------------------------------------------------------------------------
-constexpr auto ref_slot_ordering = llvm::AtomicOrdering::Unordered;
-
-// ---------------------------------------------------------------------------------------------
 // Attribute bundles
 // Runtime functions have no body in this module, so their attributes are the only thing the
 // optimizer knows about them
@@ -473,9 +464,9 @@ void runtime_bridge::build_ir_helpers() {
         _b.CreateRet(_b.CreateICmpNE(_b.CreateAnd(toI64(f->getArg(0)), qnan), qnan));
     });
     define_fn("is_bool", ft(i1, { val }), priv, [&](llvm::Function* f) {
-        // (x & MASK_SIGNATURE_BOOL) == MASK_SIGNATURE_BOOL
-        auto m = _b.getInt64(mask_signature_bool);
-        _b.CreateRet(_b.CreateICmpEQ(m, _b.CreateAnd(m, toI64(f->getArg(0)))));
+        // (x & MASK_SIGNATURE) == MASK_SIGNATURE_BOOL, like isBool. Every non-number has the bool signature's bits
+        auto masked = _b.CreateAnd(toI64(f->getArg(0)), _b.getInt64(mask_signature));
+        _b.CreateRet(_b.CreateICmpEQ(masked, _b.getInt64(mask_signature_bool)));
     });
     define_fn("is_null", ft(i1, { val }), priv, [&](llvm::Function* f) {
         _b.CreateRet(_b.CreateICmpEQ(toI64(f->getArg(0)), _b.getInt64(mask_signature_null)));

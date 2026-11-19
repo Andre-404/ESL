@@ -108,7 +108,7 @@ class VariableTypeFinder : CFG::CFGVisitor {
         return ret_target(last_evaluated(extract_type(expr->lhs), extract_type(expr->rhs)));
     }
     void visitInstanceofExpr(CFG::InstanceofExpr* expr) override {
-        if (is_target(expr->lhs)) return ret_target(std::make_shared<InstanceType>(expr->classType));
+        // `is` never fails, so it only says something about the type on its true branch
         return ret_target(extract_type(expr->lhs));
     }
     void visitUnaryExpr(CFG::UnaryExpr* expr) override {

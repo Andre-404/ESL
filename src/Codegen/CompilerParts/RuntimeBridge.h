@@ -21,6 +21,12 @@ public:
 
     // Needed for atomic access to pointers in objects/globals
     static constexpr llvm::Align ref_slot_align = llvm::Align::Constant<8>();
+    // Ordering of every load and store of a reference slot in jitted code (the gc_read_* and
+    // gc_store_* helpers)
+    // Other threads store to the slot and the collector reads and rewrites it, and a plain load that
+    // races returns undef: the optimizer may load the slot twice and hand out two different values
+    // (one gets type checked, the other dereferenced) or load it in pieces.
+    static constexpr llvm::AtomicOrdering ref_slot_ordering = llvm::AtomicOrdering::Unordered;
     // Helpers that stay calls through the pipeline and get inlined at its end
     static constexpr const char* late_inline_attr = "esl-late-inline";
     // Calls that read exactly the slot their only argument points to

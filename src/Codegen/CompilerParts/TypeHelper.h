@@ -39,7 +39,7 @@ public:
         return { mask_qnan, mask_qnan, true };
     }
     static std::tuple<uint64_t, uint64_t, bool> getBoolTypeMasks(){
-        return { mask_signature_bool, mask_signature_bool, false };
+        return { mask_signature_bool, mask_signature, false };
     }
     static std::tuple<uint64_t, uint64_t, bool> getNullTypeMasks(){
         return { mask_signature_null, mask_signature_null, false };

@@ -28,6 +28,9 @@ enum class slot_kind : uint8_t {
     plain,  // Never a reference to a managed object
     val,    // An ESL Value, which can be a NaN-boxed reference
     ptr,    // A raw pointer to a managed object
+    // A val slot written with a Value that is never a reference (number, bool, nil). Loads still go
+    // through gc_read_val, the store is the atomic one gc_store_val does for such a Value
+    non_ref_val,
 };
 
 // Carries its own alignment because LLVM rejects atomic accesses that don't have one
@@ -154,8 +157,9 @@ public:
 
     field_ref contains_obj() const;  // atomic, acquire/release
     field_ref capacity() const;
-    field_ref data(llvm::Value* idx) const;
-    field_ref data(unsigned idx) const;
+    // kind can only be val or non_ref_val
+    field_ref data(llvm::Value* idx, slot_kind kind = slot_kind::val) const;
+    field_ref data(unsigned idx, slot_kind kind = slot_kind::val) const;
     llvm::Value* data_ptr() const;  // base of the trailing Value[]
 
     // Mirrors rt_arr_store::set_has_obj

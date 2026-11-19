@@ -155,7 +155,11 @@ class Compiler : public CFG::CFGCodeGen {
 
         // Codegen functions(take in a CFG expression and transform into LLVM IR)
         // Made to avoid monolithic functions that contain a bunch of builder calls
-        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op);
+        // A side typed number or string at compile time decides which addition it has to be
+        llvm::Value* codegenBinaryAdd(llvm::Value* lhs, llvm::Value* rhs, Token op,
+                                      types::tyPtr lhsTy = nullptr, types::tyPtr rhsTy = nullptr);
+        // i1 truthiness of val, a constant when its type decides it
+        llvm::Value* codegenTruthy(llvm::Value* val, const types::tyPtr& ty);
         llvm::Value* codegenLogicOps(const typedExprPtr lhs, const typedExprPtr rhs, const CFG::ComparisonOp op);
         llvm::Value* codegenCmp(const typedExprPtr expr1, const typedExprPtr expr2, const bool neg);
         llvm::Value* codegenNeg(llvm::Value* rhs, const types::tyPtr type, const CFG::UnaryOp op, const Token dbg);
@@ -164,7 +168,7 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Value *codegenVarIncrement(const CFG::UnaryOp op, const std::shared_ptr<CFG::VarRead> expr, Token dbg);
         llvm::Value *codegenInstIncrement(const CFG::UnaryOp op, const std::shared_ptr<CFG::InstGet> expr, Token dbg);
         llvm::Value* codegenVarRead(std::shared_ptr<CFG::VarDecl> varPtr);
-        llvm::Value* codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore);
+        llvm::Value* codegenVarStore(std::shared_ptr<CFG::VarDecl> varPtr, llvm::Value* toStore, bool nonRef = false);
 
         // Functions helpers
         llvm::Function* startFuncDef(const string &name, const std::shared_ptr<types::FunctionType> fnTy, Token& loc);
@@ -174,7 +178,8 @@ class Compiler : public CFG::CFGCodeGen {
         llvm::Value* decoupleSetOperation(llvm::Value* storedVal, llvm::Value* newVal, CFG::SetType opTy, Token dbg);
         llvm::Value* getArrElement(llvm::Value* arr, llvm::Value* index, bool opt, Token dbg);
         llvm::Value* getMapElement(llvm::Value* map, llvm::Value* field, bool opt, Token dbg);
-        llvm::Value* setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal, CFG::SetType opTy, Token dbg);
+        llvm::Value* setArrElement(llvm::Value* arr, llvm::Value* index, llvm::Value* val, bool optIdx, bool optVal,
+                                   bool valNonRef, CFG::SetType opTy, Token dbg);
         llvm::Value* setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal, CFG::SetType opTy, Token dbg);
         // Switch stmt stuff
         llvm::ConstantInt* createSwitchConstantInt(std::variant<double, bool, void*, string>& constant);
@@ -183,7 +188,8 @@ class Compiler : public CFG::CFGCodeGen {
 
         // Class helpers
         llvm::Function* createStrToIdxFunc(std::shared_ptr<types::ClassType> classType, bool isMethod);
-        void codegenMethod(string classname, CFG::ClassMethod& method, llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
+        void codegenMethod(string classname, CFG::ClassMethod& method, llvm::Function* checked,
+                           llvm::Constant* subClassIdxStart, llvm::Constant* subClassIdxEnd);
 
         // Multithreading
         // Unfortunately right now we need to create a threadWrapper for each spawn statement
