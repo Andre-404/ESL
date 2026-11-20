@@ -60,13 +60,10 @@ namespace gc::detail {
             platform::write_color(_good_color.load(std::memory_order_relaxed));
         }
 
-        // Page mutators, shared by mutator and worker stw functions. All three tolerate a null
+        // Page mutators, shared by mutator and worker stw functions. Both tolerate a null
         // list, which is what an arena with no pages of a given size class hands them.
         auto gather_fn() {
             return [this](pg_meta* start) { _copier.gather(start); return start; };
-        }
-        auto update_ptrs_fn() const {
-            return [this](pg_meta* start) { _copier.update_ptrs(start); return start; };
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {

@@ -1,14 +1,11 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cstdio>
-#include <cstdlib>
 #include <queue>
 #include <span>
 
 #include "copier.h"
 #include "customization.h"
-#include "ref-slot.h"
 
 using namespace gc::detail;
 
@@ -210,33 +207,4 @@ size_t copier::end_copy() {
     _lists.clear();
     _plans.clear();
     return _moved.exchange(0, std::memory_order_relaxed);
-}
-
-void copier::update_ptrs(pg_meta *pg) const  {
-    for (; pg; pg = pg->next()) {
-        if (!pg->is_active()) continue;
-        auto data = pg->get_data();
-        auto size = pg->block_sz();
-        pg->for_each_marked([&](uint16_t b) { obj_update_ptrs((gc::managed*)(data + size_t(b) * size)); });
-    }
-}
-
-void copier::update_globals(std::span<size_t*> roots) {
-    // Stw, so nothing else touches the roots and relaxed in load_raw is enough
-    for (auto root : roots) {
-        auto ptr = to_accurate_ptr(load_raw(*root));
-        if (!ptr) continue;
-        store_raw(*root, ptr_to_word(forward(ptr)) | good_color());
-    }
-}
-
-// The flip comes with a walk that rewrites every live slot, so a bad color means a slot the walk
-// missed, a store that skipped the color, or an r14 that wasn't reloaded
-size_t gc::heal_ptr(size_t* slot, size_t seen) {
-    fprintf(stderr, "bad pointer color in slot %p: %#zx\n", (void*)slot, seen);
-    std::abort();
-}
-size_t gc::heal_word(size_t* slot, size_t seen) {
-    fprintf(stderr, "bad word color in slot %p: %#zx\n", (void*)slot, seen);
-    std::abort();
 }

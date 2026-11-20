@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <type_traits>
 
-#include "gc-config.h"
 #include "managed.h"
 #include "platform-specific.h"
 
@@ -13,50 +12,33 @@
 // only ever loaded and stored atomically. A plain access that races lets the compiler load the
 // slot twice and act on two different values, or split a store.
 //   load_raw, store_raw  the collector's own access, sees the color bit
-//   read_ref, store_ref  a mutator's access, strips and adds the color. Only works for pointer slots
+//   read_ref, store_ref  a mutator's access (gc-api.h), strips and adds the color. Only works for pointer slots
 namespace gc {
     // The color bit a good reference carries in its slot, r14 holds it as is
     [[gnu::always_inline]] inline size_t good_color() { return detail::platform::read_color(); }
 
+    template<typename T>
+    concept managed_ptr = std::is_pointer_v<T> && std::is_base_of_v<managed, std::remove_pointer_t<T>>;
     // A pointer to a managed object, or a word that customization.h's to_accurate_ptr() decides about
     template<typename T>
-    concept ref_slot = std::is_same_v<T, size_t> ||
-        (std::is_pointer_v<T> && std::is_base_of_v<managed, std::remove_pointer_t<T>>);
+    concept ref_slot = std::is_same_v<T, size_t> || managed_ptr<T>;
+
+    constexpr auto relaxed = std::memory_order_relaxed;
 
     // Relaxed is enough when the value is used on its own or nothing else is running (stw). The
     // concurrent marker passes acquire: it reads through the pointer it loaded, and acquire pairs
     // with the release fence make_gc puts after the constructor
     template<ref_slot T>
-    [[nodiscard, gnu::always_inline]] inline T load_raw(
-        T& slot, std::memory_order order = std::memory_order_relaxed
-    ) noexcept {
+    [[gnu::always_inline]] inline T load_raw(T& slot, std::memory_order order = relaxed) {
         return std::atomic_ref<T> { slot }.load(order);
     }
 
     template<ref_slot T>
-    [[gnu::always_inline]] inline void store_raw(
-        T& slot, std::type_identity_t<T> value, std::memory_order order = std::memory_order_relaxed
-    ) noexcept {
-        std::atomic_ref<T> { slot }.store(value, order);
+    [[gnu::always_inline]] inline void store_raw(T& slot, std::type_identity_t<T> value) {
+        std::atomic_ref<T> { slot }.store(value, relaxed);
     }
 
-    // Slow paths for a reference with the bad color, return it uncolored and fixed
+    // Slow paths for a reference with the bad color, return it uncolored and fixed (ref-slot.cpp)
     [[gnu::cold]] size_t heal_ptr(size_t* slot, size_t seen);
     [[gnu::cold]] size_t heal_word(size_t* slot, size_t seen);
-
-    // Same thing as gc_read_ptr in jitted code (runtime_bridge::build_ir_helpers)
-    template<ref_slot T> requires std::is_pointer_v<T>
-    [[nodiscard, gnu::always_inline]] inline T read_ref(T& slot) noexcept {
-        auto w = (size_t)load_raw(slot, std::memory_order_relaxed);
-        auto x = w ^ good_color();
-        if (x & config::color_bit) [[unlikely]] return (T)heal_ptr((size_t*)&slot, w);
-        return (T)x;
-    }
-
-    // Same thing as gc_store_ptr
-    // A null gets the color too, it reads back as null either way
-    template<ref_slot T> requires std::is_pointer_v<T>
-    [[gnu::always_inline]] inline void store_ref(T& slot, std::type_identity_t<T> value) noexcept {
-        store_raw(slot, (T)((size_t)value | good_color()), std::memory_order_relaxed);
-    }
 }

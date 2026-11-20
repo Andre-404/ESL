@@ -6,7 +6,6 @@
 #include <vector>
 #include <optional>
 
-#include "managed.h"
 #include "pg-meta.h"
 #include "work-queue.h"
 #include "allocator/reloc-hdrs.h"
@@ -57,14 +56,5 @@ namespace gc::detail {
         void compact(const copy_plan& plan, reloc_hdrs& relocs);
         // Returns the bytes compact moved
         size_t end_copy();
-
-        void update_ptrs(pg_meta* pg) const;
-        void update_globals(std::span<size_t*> roots);
     };
-
-    // Constants compiled into the program are unmanaged and live outside the heap
-    inline managed* forward(managed* obj) {
-        if (obj->state() == move_state::unmanaged) return obj;
-        return (managed*)reloc::forward((uint8_t*)obj);
-    }
 }

@@ -39,6 +39,20 @@ namespace gc {
     void exec_at_safepoint(tcb_handle* handle);
     void push_wbbuf(tcb_handle* handle);
 
-    // For object handling
-    managed* to_moved_ptr(managed* obj);
+    // Same thing as gc_read_ptr in jitted code (runtime_bridge::build_ir_helpers). obj_trace loads
+    // through it with acquire (see load_raw), which is how a mark heals every slot
+    template<managed_ptr T>
+    [[gnu::always_inline]] inline T read_ref(T& slot, std::memory_order order = relaxed) {
+        auto w = (size_t)load_raw(slot, order);
+        auto x = w ^ good_color();
+        if (x & config::color_bit) [[unlikely]] return (T)heal_ptr((size_t*)&slot, w);
+        return (T)x;
+    }
+
+    // Same thing as gc_store_ptr
+    // A null gets the color too, it reads back as null either way
+    template<managed_ptr T>
+    [[gnu::always_inline]] inline void store_ref(T& slot, std::type_identity_t<T> value) {
+        store_raw(slot, (T)((size_t)value | good_color()));
+    }
 }

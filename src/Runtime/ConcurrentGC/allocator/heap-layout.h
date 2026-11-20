@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <cstdint>
 #include <new>
 
@@ -18,12 +19,15 @@ namespace gc::detail {
         static constexpr std::size_t units_off = relocs_off + config::reloc_region_sz;
         static constexpr std::size_t total_sz = units_off + config::reloc_units_sz;
 
-        uint8_t* _base;
+        inline static uint8_t* _base = nullptr;
     public:
-        heap_layout() : _base((uint8_t*)os::reserve(total_sz, config::heap_max_sz)) {
+        // One heap per process, the barrier and heal paths find it by address alone
+        heap_layout() {
+            assert(!_base && "one heap per process");
+            _base = (uint8_t*)os::reserve(total_sz, config::heap_max_sz);
             if (!_base) throw std::bad_alloc{};
         }
-        ~heap_layout() { os::release(_base, total_sz); }
+        ~heap_layout() { os::release(_base, total_sz); _base = nullptr; }
         heap_layout(const heap_layout&) = delete;
         heap_layout& operator=(const heap_layout&) = delete;
 
@@ -39,6 +43,8 @@ namespace gc::detail {
         static uint8_t* bits(const void* in_heap) { return heap(in_heap) + bits_off; }
         static uint8_t* relocs(const void* in_heap) { return heap(in_heap) + relocs_off; }
         static uint8_t* reloc_units(const void* in_heap) { return heap(in_heap) + units_off; }
+        // By address alone, p is never read
+        static bool in_heap(const void* p) { return _base && heap(p) == _base; }
         // Masking a header lands on the start of the header region, the heap sits right below it
         static uint8_t* heap_from_hdr(const void* hdr) { return heap(hdr) - hdrs_off; }
 

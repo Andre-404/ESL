@@ -22,7 +22,10 @@ void marker::scan_globals(std::span<size_t*> roots)  {
     // object behind the root, hence acquire (see load_raw)
     for (auto root : roots) {
         auto word = load_raw(*root, std::memory_order_acquire);
-        if (auto ptr = (managed*)to_accurate_ptr(word)) mark(ptr);
+        auto ptr = to_accurate_ptr(word);
+        if (!ptr) continue;
+        if ((word ^ good_color()) & config::color_bit) ptr = to_accurate_ptr(heal_word(root, word));
+        mark(ptr);
     }
 
     push_buf(buf);

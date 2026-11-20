@@ -17,8 +17,6 @@ namespace gc::detail::test_custom {
                 = [](managed*, auto&) {};
         std::function<void(managed* src, managed* dest)>                           obj_copy
                 = [](managed* s, managed* d) { std::memcpy(d, s, sizeof(size_t)); };
-        std::function<void(managed*)>                                              obj_update_ptrs
-                = [](managed*) {};
 
         // Words are raw pointers, either color
         std::function<managed*(size_t)>                                            to_accurate_ptr

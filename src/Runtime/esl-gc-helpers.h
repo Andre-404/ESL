@@ -13,8 +13,8 @@ namespace gc {
 
     // Same thing as gc_read_val in jitted code (runtime_bridge::build_ir_helpers). Branches
     // rather than selects, so a number doesn't wait on the check
-    [[nodiscard, gnu::always_inline]] inline Value read_ref(Value& slot) noexcept {
-        auto w = load_raw(slot);
+    [[gnu::always_inline]] inline Value read_ref(Value& slot, std::memory_order order = relaxed) {
+        auto w = load_raw(slot, order);
         if ((int64_t)w < ref_floor) return w;
         auto x = w ^ good_color();
         if (x & config::color_bit) [[unlikely]] return heal_word(&slot, w);
@@ -22,7 +22,7 @@ namespace gc {
     }
 
     // Same thing as gc_store_val
-    [[gnu::always_inline]] inline void store_ref(Value& slot, Value v) noexcept {
+    [[gnu::always_inline]] inline void store_ref(Value& slot, Value v) {
         if ((int64_t)v >= ref_floor) v |= good_color();
         store_raw(slot, v);
     }

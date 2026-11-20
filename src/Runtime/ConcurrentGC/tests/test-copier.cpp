@@ -344,13 +344,6 @@ TEST_F(CopierTest, ForwardLeavesUncompactedRunsAlone) {
     EXPECT_EQ(reloc::forward(lone->slot_addr(3)), lone->slot_addr(3));
 }
 
-TEST_F(CopierTest, ForwardLeavesUnmanagedObjectsAlone) {
-    // Constants compiled into the program, outside the heap entirely
-    alignas(16) static uint8_t constant[16];
-    auto* obj = new (constant) managed(1, move_state::unmanaged);
-    EXPECT_EQ(forward(obj), obj);
-}
-
 TEST_F(CopierTest, CompactThenPruneFreesTheEmptiedRunsAndCountsSurvivorsOnce) {
     auto* a = run_n(kCap / 10);
     auto* b = run_n(kCap / 10);
@@ -383,91 +376,4 @@ TEST_F(CopierTest, EndCopyReportsTheBytesMovedAndResets) {
     // Only the higher run's survivors move, the lower ones are already in place
     EXPECT_EQ(c.end_copy(), (kCap / 10) * kBlock);
     EXPECT_EQ(c.select(kUnlimited), 0u) << "nothing left over from the last cycle";
-}
-
-// ---------------------------------------------------------------------------------------
-// Updating
-// ---------------------------------------------------------------------------------------
-TEST_F(CopierTest, UpdateGlobalsLeavesUnmovedPointerEncoded) {
-    auto* p = run({ 0 });
-    copier c { 0.85 };
-    size_t root = reinterpret_cast<size_t>(p->slot(0));
-    std::vector<size_t*> roots = { &root };
-    c.update_globals(roots);
-    EXPECT_EQ(root, reinterpret_cast<size_t>(p->slot(0)));
-}
-
-TEST_F(CopierTest, UpdateGlobalsFollowsTheRelocTables) {
-    auto* a = run_n(kCap / 10);
-    auto* b = run_n(kCap / 10);
-    auto* hi = std::max(a, b, [](test_page* x, test_page* y) { return x->pg() < y->pg(); });
-    auto want = expected_moves({ a, b });
-
-    copier c { 0.85 };
-    c.gather(chain({ a, b }));
-    ASSERT_GT(c.select(kUnlimited), 0u);
-    compact_all(c);
-    c.end_copy();
-
-    size_t root = reinterpret_cast<size_t>(hi->slot(0));
-    std::vector<size_t*> roots = { &root };
-    c.update_globals(roots);
-    EXPECT_EQ(root, reinterpret_cast<size_t>(want[hi->slot_addr(0)]));
-}
-
-// The update runs after the flip and gives every root the new good color, whatever color it had
-TEST_F(CopierTest, UpdateGlobalsWritesTheGoodColor) {
-    auto* p = run({ 0 });
-    copier c { 0.85 };
-    auto addr = reinterpret_cast<size_t>(p->slot(0));
-    size_t root = addr;
-    std::vector<size_t*> roots = { &root };
-
-    detail::platform::write_color(config::color_bit);
-    c.update_globals(roots);
-    EXPECT_EQ(root, addr | config::color_bit);
-
-    detail::platform::write_color(0);
-    c.update_globals(roots);
-    EXPECT_EQ(root, addr);
-}
-
-TEST_F(CopierTest, UpdateGlobalsSkipsRootsThatToAccuratePtrRejects) {
-    test_custom::hooks.to_accurate_ptr = [](size_t) -> managed* { return nullptr; };
-    copier c { 0.85 };
-    size_t root = 0xDEADBEEF;
-    std::vector<size_t*> roots = { &root };
-    c.update_globals(roots);
-    EXPECT_EQ(root, 0xDEADBEEFu) << "rejected root must not be rewritten";
-}
-
-TEST_F(CopierTest, UpdateGlobalsRunsPtrToWordOnEveryUpdate) {
-    auto* p = run({ 0 });
-    test_custom::hooks.ptr_to_word = [](managed* m) { return reinterpret_cast<size_t>(m) | 0xAB00000000000000ull; };
-    copier c { 0.85 };
-    size_t root = reinterpret_cast<size_t>(p->slot(0));
-    std::vector<size_t*> roots = { &root };
-    c.update_globals(roots);
-    EXPECT_EQ(root & 0xFF00000000000000ull, 0xAB00000000000000ull);
-}
-
-TEST_F(CopierTest, UpdatePtrsVisitsMarkedSlotsOnly) {
-    auto* p = run({ 0, 1, 2 });
-    p->construct(3);
-    std::unordered_set<managed*> updated;
-    test_custom::hooks.obj_update_ptrs = [&](managed* m) { updated.insert(m); };
-
-    copier c { 0.85 };
-    c.update_ptrs(p->pg());
-    EXPECT_EQ(updated.size(), 3u);
-    EXPECT_FALSE(updated.count(p->slot(3))) << "dead";
-}
-
-TEST_F(CopierTest, UpdatePtrsOnEmptyPageDoesNothing) {
-    auto* p = run({});
-    bool any = false;
-    test_custom::hooks.obj_update_ptrs = [&](managed*) { any = true; };
-    copier c { 0.85 };
-    c.update_ptrs(p->pg());
-    EXPECT_FALSE(any);
 }

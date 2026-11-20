@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
-#include "../ref-slot.h"
+#include "../gc-api.h"
 #include "../platform-specific.h"
 
 using namespace gc;
@@ -45,7 +45,7 @@ TEST(RefSlotTest, StoresWhatItIsGiven) {
     size_t word = 0;
     store_raw(word, 0x7ffe'0000'dead'bee0);
     EXPECT_EQ(word, 0x7ffe'0000'dead'bee0);
-    store_raw(word, 1, std::memory_order_release);
+    store_raw(word, 1);
     EXPECT_EQ(word, 1u);
 
     // The value converts to what the slot holds, so a derived pointer or nullptr needs no cast
@@ -121,9 +121,39 @@ TEST_F(colored, NullReadsBackAsNullInEitherColor) {
     EXPECT_EQ(read_ref(ptr), nullptr);
 }
 
-// Every flip comes with a walk that recolors all slots, so a bad one is a bug and the slow path stops the program
-TEST_F(colored, BadColorTakesTheSlowPath) {
+// The slow path: forward what a bad colored slot held and put it back with the good color. Static
+// storage is outside the heap, so it forwards to itself
+TEST_F(colored, ReadingABadColorHealsTheSlot) {
     node target;
-    managed* ptr = (managed*)((size_t)&target | config::color_bit);
-    EXPECT_DEATH((void)read_ref(ptr), "bad pointer color");
+    auto* want = (managed*)&target;
+
+    auto* slot = (managed*)((size_t)want | config::color_bit);
+    EXPECT_EQ(read_ref(slot), want);
+    EXPECT_EQ(load_raw(slot), want) << "healed with the good color";
+
+    managed* null = (managed*)config::color_bit;
+    EXPECT_EQ(read_ref(null), nullptr);
+    EXPECT_EQ(load_raw(null), nullptr);
+
+    // A word slot goes through to_accurate_ptr and ptr_to_word, raw pointers under the test hooks
+    size_t word = (size_t)want | config::color_bit;
+    EXPECT_EQ(heal_word(&word, word), (size_t)want);
+    EXPECT_EQ(word, (size_t)want);
+}
+
+// Outside the heap is told by address alone: a stale pointer can outlive the run its object moved
+// out of, so the heal never reads through it
+TEST_F(colored, HealNeverReadsThroughThePointer) {
+    auto* unmapped = (managed*)uintptr_t(16);
+    auto* slot = (managed*)((size_t)unmapped | config::color_bit);
+    EXPECT_EQ(read_ref(slot), unmapped);
+}
+
+// A store that lands between the load and the heal wins: the CAS fails and the reader still gets
+// what it loaded, fixed
+TEST_F(colored, HealLosesToANewerStore) {
+    node stale, newer;
+    managed* slot = &newer;
+    EXPECT_EQ(heal_ptr((size_t*)&slot, (size_t)&stale | config::color_bit), (size_t)&stale);
+    EXPECT_EQ(load_raw(slot), (managed*)&newer);
 }

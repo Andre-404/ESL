@@ -10,9 +10,9 @@ namespace gc {
     size_t ptr_to_word(managed* ptr);
     size_t obj_size(managed* obj);
     bool obj_traceable(managed* obj);
+    // Loads every slot with read_ref(slot, std::memory_order_acquire) to heal them
     void obj_trace(managed* obj, function_ref<void(managed*)> trace);
     void obj_destroy(managed* obj);
     // Extension for copying gc
     void obj_copy(managed* src, managed* dest);
-    void obj_update_ptrs(managed* obj);
 }

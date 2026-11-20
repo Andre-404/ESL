@@ -80,6 +80,7 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Runtime/ConcurrentGC/allocator/scavenger.cpp
         src/Runtime/ConcurrentGC/pg-manager.cpp
         src/Runtime/ConcurrentGC/copier.cpp
+        src/Runtime/ConcurrentGC/ref-slot.cpp
         src/Runtime/ConcurrentGC/mark-buf.cpp
         src/Runtime/ConcurrentGC/marker.cpp
         src/Runtime/ConcurrentGC/collector.cpp

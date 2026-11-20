@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -9,7 +10,7 @@
 #include "../managed.h"
 #include "../pg-meta.h"
 #include "../gc-heuristic.h"
-#include "../ref-slot.h"
+#include "../gc-api.h"
 #include "customization-helper.h"
 #include "rpmalloc/rpmalloc.h"
 
@@ -514,6 +515,15 @@ namespace {
             if (needs_safepoint(t)) gc->process_pending(t);
         }
 
+        // A mutator's load of a word slot, for the raw pointer words of the test hooks. Only
+        // right on a mutator thread, whose r14 is reloaded after every pause
+        static managed* read_word(size_t& slot) {
+            auto w = load_raw(slot);
+            if ((w & ~config::color_bit) && ((w ^ platform::read_color()) & config::color_bit))
+                w = heal_word(&slot, w);
+            return reinterpret_cast<managed*>(w & ~config::color_bit);
+        }
+
         // Fills the root array, spacing the objects out with garbage so they end up scattered
         // over many pages rather than packed onto one.
         //
@@ -595,8 +605,8 @@ TEST_F(CollectorCycleTest, ConcurrentThreadsSurviveManyCycles) {
 }
 
 // Objects reachable from a registered root have to survive every cycle, and have to still be
-// allocated slots afterwards - following the forwarding pointer if a copying cycle moved them.
-// This is the end to end statement of what mark, copy, root fixup and prune owe each other.
+// allocated slots afterwards - healing a root left from before a copy on the way.
+// This is the end to end statement of what mark, copy, root healing and prune owe each other.
 TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
     constexpr int kRoots = 32;
     // Never resized: the collector holds pointers into this storage for its whole life.
@@ -612,46 +622,80 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
             ASSERT_NE(fresh(64, t), nullptr);
             poll(t);
         }
-        gc->delete_tcb(t);
-    } };
-    thd.join();
-
-    ASSERT_GE(gc->metrics().cycles(), 1u);
-    for (int i = 0; i < kRoots; ++i) {
-        auto* obj = to_accurate_ptr(roots[i]);
-        ASSERT_NE(obj, nullptr) << "root " << i << " was cleared";
-        auto* pg = pg_meta::head_from_ptr(obj);
-        EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
-            << "root " << i << " no longer points at an allocated slot";
-    }
-}
-
-// A copying cycle flips the good color and rewrites the roots with it. Once a mutator is past the
-// pause its r14 has to agree with them, or its next store into a slot would carry the old color
-TEST_F(CollectorCycleTest, RootsCarryTheColorTheMutatorReloads) {
-    constexpr int kRoots = 32;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-
-    size_t flips = 0;
-    auto* t = make_tcb();
-    auto thd = std::thread { [&, t] {
-        gc->thd_prologue(t);
-        seed_roots(roots, 3, t);
-        auto color = platform::read_color();
-        for (int i = 0; i < 200'000 && gc->metrics().cycles() < 10; ++i) {
-            ASSERT_NE(fresh(64, t), nullptr);
-            poll(t);
-            flips += platform::read_color() != color;
-            color = platform::read_color();
-            // Roots are only written inside the pause, which this thread takes part in
-            for (auto& r : roots) ASSERT_EQ(load_raw(r) & config::color_bit, color) << "after " << flips << " flips";
+        // Read like a mutator would, which takes this thread's color
+        for (int i = 0; i < kRoots; ++i) {
+            auto* obj = read_word(roots[i]);
+            ASSERT_NE(obj, nullptr) << "root " << i << " was cleared";
+            auto* pg = pg_meta::head_from_ptr(obj);
+            EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
+                << "root " << i << " no longer points at an allocated slot";
         }
         gc->delete_tcb(t);
     } };
     thd.join();
 
     ASSERT_GE(gc->metrics().cycles(), 1u);
+}
+
+// Nothing rewrites pointers in the pause: a copy only flips the color, and every reference left
+// from before it, in a root or inside an object, is forwarded by its next load or by the next
+// mark, which then lets the reloc tables go. Half the chains are only ever walked at the end, so
+// they rely on the marker alone, across several copies
+TEST_F(CollectorCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
+    struct node : managed {
+        uint64_t id;
+        managed* next;
+        explicit node(uint64_t i) : managed(1, move_state::none), id(i), next(nullptr) {}
+    };
+    constexpr int kChains = 16, kLen = 4;
+    test_custom::hooks.obj_copy = [](managed* s, managed* d) { std::memcpy(d, s, sizeof(node)); };
+    test_custom::hooks.obj_trace = [](managed* m, std::function<void(managed*)>& cb) {
+        if (auto next = read_ref(static_cast<node*>(m)->next, std::memory_order_acquire)) cb(next);
+    };
+    std::vector<size_t> roots(kChains, 0);
+    for (auto& r : roots) gc->register_root(&r);
+
+    size_t flips = 0;
+    auto* t = make_tcb();
+    auto thd = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        // Every block is a node, garbage too: the marker may trace whatever the stack scan finds
+        auto make = [&](uint64_t id) { return new (gc->alloc(64, false, t)) node(id); };
+        // Garbage between the nodes, so the runs they end up in are sparse
+        for (int c = 0; c < kChains; ++c) {
+            node* prev = nullptr;
+            for (int k = 0; k < kLen; ++k) {
+                auto* n = make(c * kLen + k);
+                if (prev) store_ref(prev->next, (managed*)n); else roots[c] = ptr_to_word(n);
+                prev = n;
+                for (int g = 0; g < 3; ++g) make(~0ull);
+            }
+        }
+        ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+
+        auto walk = [&](int c) {
+            auto* n = read_word(roots[c]);
+            for (int k = 0; k < kLen; ++k, n = read_ref(static_cast<node*>(n)->next)) {
+                ASSERT_NE(n, nullptr) << "chain " << c << " cut at " << k;
+                ASSERT_EQ(pg_meta::head_from_ptr(n)->from_interior((uint8_t*)n), n) << "chain " << c << " node " << k;
+                ASSERT_EQ(static_cast<node*>(n)->id, uint64_t(c * kLen + k)) << "chain " << c << " node " << k;
+            }
+        };
+        auto color = platform::read_color();
+        for (int i = 0; i < 400'000 && gc->metrics().cycles() < 20; ++i) {
+            make(~0ull);
+            poll(t);
+            if (platform::read_color() == color) continue;
+            color = platform::read_color();
+            flips++;
+            for (int c = 0; c < kChains; c += 2) walk(c);
+        }
+        for (int c = 0; c < kChains; ++c) walk(c);
+        gc->delete_tcb(t);
+    } };
+    thd.join();
+
+    EXPECT_GE(flips, 2u) << "fewer than two copies ran, the marker's healing went untested";
 }
 
 // Reclamation has to keep up: allocating many times the heap trigger only works if dead pages

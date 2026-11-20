@@ -1,6 +1,5 @@
 #include "gc-api.h"
 #include "collector.h"
-#include "copier.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 
 namespace gc {
@@ -48,6 +47,4 @@ namespace gc {
     // In the interest of having a complete gc the above functions are also provided which do the check + action
     void exec_at_safepoint(tcb_handle* handle) { GC->process_pending(t(handle)); }
     void push_wbbuf(tcb_handle* handle) { GC->flush_wbbuf(t(handle)); }
-
-    managed* to_moved_ptr(managed* obj) { return detail::forward(obj); }
 }

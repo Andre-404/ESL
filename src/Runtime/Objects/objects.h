@@ -89,7 +89,6 @@ namespace object {
 
         // For the collector, see gc-customization.cpp
         void gc_trace(trace_fn cb);
-        void gc_update_ptrs();
     };
 
     class rt_arr : public rt_obj {
@@ -122,7 +121,6 @@ namespace object {
         void clear();
 
         void gc_trace(trace_fn cb);
-        void gc_update_ptrs();
     };
 
 
@@ -161,7 +159,6 @@ namespace object {
         byte arity() { return _arity; }
 
         void gc_trace(trace_fn cb);
-        void gc_update_ptrs();
     };
 
     // Never created at runtime, only emitted by the compiler.
@@ -190,7 +187,6 @@ namespace object {
         comp_class* get_class() { return _klass; }
 
         void gc_trace(trace_fn cb);
-        void gc_update_ptrs();
     };
 
     // Swiss table(see abseil's flat_hash_map / go's swisstable)
@@ -278,7 +274,6 @@ namespace object {
         }
 
         void gc_trace(trace_fn cb);
-        void gc_update_ptrs();
     };
 
 
