@@ -4,6 +4,7 @@
 #include <cstring>
 #include <functional>
 #include "../customization.h"
+#include "../gc-config.h"
 
 namespace gc::detail::test_custom {
 
@@ -19,10 +20,11 @@ namespace gc::detail::test_custom {
         std::function<void(managed*)>                                              obj_update_ptrs
                 = [](managed*) {};
 
+        // Words are raw pointers, either color
         std::function<managed*(size_t)>                                            to_accurate_ptr
-                = [](size_t w) { return reinterpret_cast<managed*>(w); };
+                = [](size_t w) { return reinterpret_cast<managed*>(w & ~config::color_bit); };
         std::function<uint8_t*(size_t)>                                            to_possible_ptr
-                = [](size_t w) { return reinterpret_cast<uint8_t*>(w); };
+                = [](size_t w) { return reinterpret_cast<uint8_t*>(w & ~config::color_bit); };
         std::function<size_t(managed*)>                                            ptr_to_word
                 = [](managed* p) { return reinterpret_cast<size_t>(p); };
 

@@ -18,16 +18,18 @@ namespace {
             if (gc::is_ref_word(val)) cb(decodeObj(val));
         }
     }
-    // Updating is done during STW, no need to worry about syncronization, will soon be done with a read barrier
+    // Updating is done during STW, after the color flip: every reference slot gets the new color,
+    // a null pointer too
     template<typename T>
     void update_ptr(T*& slot) {
-        if (auto ptr = strip(gc::load_raw(slot))) gc::store_raw(slot, (T*)gc::to_moved_ptr(ptr));
+        auto ptr = strip(gc::load_raw(slot));
+        gc::store_ref(slot, ptr ? (T*)gc::to_moved_ptr(ptr) : nullptr);
     }
     void update_vals(std::span<Value> slots) {
         for (auto& slot : slots) {
             auto val = gc::load_raw(slot);
             if (gc::is_ref_word(val))
-                gc::store_raw(slot, encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(val))));
+                gc::store_ref(slot, encodeObj((rt_obj*)gc::to_moved_ptr(decodeObj(val))));
         }
     }
 }

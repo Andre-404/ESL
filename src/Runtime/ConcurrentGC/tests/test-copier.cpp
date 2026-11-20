@@ -10,6 +10,7 @@
 #include "../pg-meta.h"
 #include "../allocator/pg-allocator.h"
 #include "../pruner.h"
+#include "../ref-slot.h"
 #include "customization-helper.h"
 #include "pg-fixture.h"
 
@@ -412,6 +413,23 @@ TEST_F(CopierTest, UpdateGlobalsFollowsTheRelocTables) {
     std::vector<size_t*> roots = { &root };
     c.update_globals(roots);
     EXPECT_EQ(root, reinterpret_cast<size_t>(want[hi->slot_addr(0)]));
+}
+
+// The update runs after the flip and gives every root the new good color, whatever color it had
+TEST_F(CopierTest, UpdateGlobalsWritesTheGoodColor) {
+    auto* p = run({ 0 });
+    copier c { 0.85 };
+    auto addr = reinterpret_cast<size_t>(p->slot(0));
+    size_t root = addr;
+    std::vector<size_t*> roots = { &root };
+
+    detail::platform::write_color(config::color_bit);
+    c.update_globals(roots);
+    EXPECT_EQ(root, addr | config::color_bit);
+
+    detail::platform::write_color(0);
+    c.update_globals(roots);
+    EXPECT_EQ(root, addr);
 }
 
 TEST_F(CopierTest, UpdateGlobalsSkipsRootsThatToAccuratePtrRejects) {

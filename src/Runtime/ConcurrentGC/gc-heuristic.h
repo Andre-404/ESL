@@ -39,7 +39,7 @@ namespace gc::detail {
         // update), which visits every live object and so scales with the live set
         double initial_copy_overhead_rate = 4e9;
         // A copy has to hand back this fraction of the live set to be worth updating the pointers
-        double min_copy_gain = 0.1;
+        double min_copy_gain = 0.2;
     };
 
     class gc_heuristics {

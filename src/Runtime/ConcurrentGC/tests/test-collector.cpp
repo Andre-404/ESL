@@ -9,6 +9,7 @@
 #include "../managed.h"
 #include "../pg-meta.h"
 #include "../gc-heuristic.h"
+#include "../ref-slot.h"
 #include "customization-helper.h"
 #include "rpmalloc/rpmalloc.h"
 
@@ -623,6 +624,34 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
         EXPECT_EQ(pg->from_interior(reinterpret_cast<uint8_t*>(obj)), obj)
             << "root " << i << " no longer points at an allocated slot";
     }
+}
+
+// A copying cycle flips the good color and rewrites the roots with it. Once a mutator is past the
+// pause its r14 has to agree with them, or its next store into a slot would carry the old color
+TEST_F(CollectorCycleTest, RootsCarryTheColorTheMutatorReloads) {
+    constexpr int kRoots = 32;
+    std::vector<size_t> roots(kRoots, 0);
+    for (auto& r : roots) gc->register_root(&r);
+
+    size_t flips = 0;
+    auto* t = make_tcb();
+    auto thd = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        seed_roots(roots, 3, t);
+        auto color = platform::read_color();
+        for (int i = 0; i < 200'000 && gc->metrics().cycles() < 10; ++i) {
+            ASSERT_NE(fresh(64, t), nullptr);
+            poll(t);
+            flips += platform::read_color() != color;
+            color = platform::read_color();
+            // Roots are only written inside the pause, which this thread takes part in
+            for (auto& r : roots) ASSERT_EQ(load_raw(r) & config::color_bit, color) << "after " << flips << " flips";
+        }
+        gc->delete_tcb(t);
+    } };
+    thd.join();
+
+    ASSERT_GE(gc->metrics().cycles(), 1u);
 }
 
 // Reclamation has to keep up: allocating many times the heap trigger only works if dead pages

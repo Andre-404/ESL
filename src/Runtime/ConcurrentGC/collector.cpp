@@ -98,7 +98,10 @@ void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     if (!_copier.has_plans()) return;
 
     while (auto plan = _copier.take_plan()) _copier.compact(*plan, _pg_manager.relocs());
+    // The update below rewrites every slot of every live object and root, with the new color
+    if (role == stw_role::collector) _good_color.fetch_xor(config::color_bit, std::memory_order_relaxed);
     _gate.arrive_and_wait();
+    reload_color();
     if (role == stw_role::collector) _cycle.compact_time = gc_clock::now() - _compact_start;
 
     mutate_all(owned, role, update_ptrs_fn());

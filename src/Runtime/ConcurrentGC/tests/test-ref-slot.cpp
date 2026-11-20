@@ -121,7 +121,7 @@ TEST_F(colored, NullReadsBackAsNullInEitherColor) {
     EXPECT_EQ(read_ref(ptr), nullptr);
 }
 
-// Nothing flips the color yet, so a bad one is a bug and the slow path stops the program
+// Every flip comes with a walk that recolors all slots, so a bad one is a bug and the slow path stops the program
 TEST_F(colored, BadColorTakesTheSlowPath) {
     node target;
     managed* ptr = (managed*)((size_t)&target | config::color_bit);

@@ -226,11 +226,12 @@ void copier::update_globals(std::span<size_t*> roots) {
     for (auto root : roots) {
         auto ptr = to_accurate_ptr(load_raw(*root));
         if (!ptr) continue;
-        store_raw(*root, ptr_to_word(forward(ptr)));
+        store_raw(*root, ptr_to_word(forward(ptr)) | good_color());
     }
 }
 
-// Nothing flips the color yet, so a bad one means a store skipped the color or r14 wasn't loaded
+// The flip comes with a walk that rewrites every live slot, so a bad color means a slot the walk
+// missed, a store that skipped the color, or an r14 that wasn't reloaded
 size_t gc::heal_ptr(size_t* slot, size_t seen) {
     fprintf(stderr, "bad pointer color in slot %p: %#zx\n", (void*)slot, seen);
     std::abort();
