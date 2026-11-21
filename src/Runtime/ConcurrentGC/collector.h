@@ -112,7 +112,10 @@ namespace gc::detail {
         {
             _worker = std::thread { &collector::concurrent_loop, this };
         }
-        ~collector() {
+        ~collector() { stop(); }
+        // Ends collection and prints the report, mutators may keep running against the collector after it
+        void stop() {
+            if (!_worker.joinable()) return;
             _collection_req.shutdown();
             _worker.join();
             printf("%s\n", _metrics.report().c_str());

@@ -13,8 +13,9 @@ namespace gc {
         rpmalloc_initialize();
         GC = new detail::collector { flag };
     }
+    // Never freed: threads that haven't finished keep polling and allocating into it until the process exits
     void end_gc() {
-        delete GC;
+        GC->stop();
     }
     [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt) {
         return GC->create_tcb(static_cast<size_t*>(start_args), arg_cnt);

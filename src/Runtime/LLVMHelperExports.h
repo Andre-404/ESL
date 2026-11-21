@@ -175,8 +175,13 @@ EXPORT void flush_wb() {
     gc::push_wbbuf(gc::read_tcb());
 }
 
+// Main returning ends the program and kills the threads that haven't finished. _Exit skips the static
+// destructors and the JIT teardown, which would pull memory out from under them
 EXPORT void end_program() {
     gc::end_gc();
+    // Not fflush(nullptr): that locks every stream, and a thread blocked in input() holds stdin's
+    std::fflush(stdout);
+    std::_Exit(0);
 }
 
 #undef EXPORT
