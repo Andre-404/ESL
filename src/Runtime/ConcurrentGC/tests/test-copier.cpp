@@ -3,6 +3,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -400,4 +401,113 @@ TEST_F(CopierTest, EndCopyReportsTheBytesMovedAndResets) {
     // Only the higher run's survivors move, the lower ones are already in place
     EXPECT_EQ(c.end_copy(), (kCap / 10) * kBlock);
     EXPECT_EQ(c.select(kUnlimited), 0u) << "nothing left over from the last cycle";
+}
+
+// ---------------------------------------------------------------------------------------
+// Splitting for several threads
+// ---------------------------------------------------------------------------------------
+// Four runs at 10% pack into one, split for two threads they pack into one per plan. Every plan is a
+// strip of its own and its survivors stay in it, so two threads can compact them at once
+TEST_F(CopierTest, SplitPlansAreStripsOfTheirOwn) {
+    auto pages = std::vector<test_page*> { run_n(kCap / 10), run_n(kCap / 10), run_n(kCap / 10), run_n(kCap / 10) };
+    copier c { 0.85 };
+    c.gather(chain({ pages[0], pages[1], pages[2], pages[3] }));
+    ASSERT_EQ(c.select(kUnlimited, 1, 2), 2 * kRun) << "each plan keeps a run, one more than unsplit";
+
+    copy_plan* plans[] = { c.take_plan(), c.take_plan() };
+    ASSERT_TRUE(plans[0] && plans[1]);
+    EXPECT_EQ(c.take_plan(), nullptr);
+    auto want = std::map<uint8_t*, uint8_t*> {};
+    for (auto* plan : plans) {
+        ASSERT_EQ(plan->runs.size(), 2u);
+        auto mine = std::vector<test_page*> {};
+        for (auto* pg : plan->runs) mine.push_back(*std::ranges::find(pages, pg, [](test_page* p) { return p->pg(); }));
+        want.merge(expected_moves(mine));
+    }
+    auto other = std::thread { [&] { c.compact(*plans[1], relocs()); } };
+    c.compact(*plans[0], relocs());
+    other.join();
+    c.end_copy();
+
+    EXPECT_EQ(want.size(), 4 * (kCap / 10));
+    for (auto [from, to] : want) {
+        EXPECT_EQ(reloc::forward(from), to);
+        EXPECT_EQ(id_at(to), uint64_t(from));
+    }
+}
+
+// Runs are dealt to the plans in density order, so dense runs next to each other in memory still
+// spread evenly over the threads
+TEST_F(CopierTest, SplitPlansGetTheSameMixOfDensities) {
+    auto* d1 = run_n(kCap * 3 / 10);
+    auto* d2 = run_n(kCap * 3 / 10);
+    auto* s1 = run_n(kCap / 20);
+    auto* s2 = run_n(kCap / 20);
+    auto* s3 = run_n(kCap / 20);
+    auto* s4 = run_n(kCap / 20);
+    auto* s5 = run_n(kCap / 20);
+    auto* s6 = run_n(kCap / 20);
+    copier c { 0.85 };
+    c.gather(chain({ d1, d2, s1, s2, s3, s4, s5, s6 }));
+    ASSERT_EQ(c.select(kUnlimited, 1, 2), 6 * kRun);
+
+    auto* a = c.take_plan();
+    auto* b = c.take_plan();
+    ASSERT_TRUE(a && b);
+    EXPECT_EQ(a->runs.size(), 4u);
+    EXPECT_EQ(b->runs.size(), 4u);
+    EXPECT_EQ(a->bytes, (kCap * 3 / 10 + 3 * (kCap / 20)) * kBlock) << "one dense and three sparse runs each";
+    EXPECT_EQ(a->bytes, b->bytes);
+    c.compact(*a, relocs());
+    c.compact(*b, relocs());
+    c.end_copy();
+}
+
+// Two runs at 30% free one when packed together and none apart, so they stay one plan
+TEST_F(CopierTest, NeverMorePlansThanRunsFreed) {
+    auto* a = run_n(kCap * 3 / 10);
+    auto* b = run_n(kCap * 3 / 10);
+    copier c { 0.85 };
+    c.gather(chain({ a, b }));
+    EXPECT_EQ(c.select(kUnlimited, 1, 2), kRun);
+    EXPECT_NE(c.take_plan(), nullptr);
+    EXPECT_EQ(c.take_plan(), nullptr);
+    c.end_copy();
+}
+
+// Split two ways, the middle run is a plan alone that empties nothing. Every other block of it is
+// free, so it's compacted for its holes
+TEST_F(CopierTest, APlanThatFreesNothingIsKeptForItsHoles) {
+    auto* sparse = run_n(kCap / 10);
+    auto* holey = _pages.emplace_back(std::make_unique<test_page>(kBlock)).get();
+    for (uint16_t b = 0; b < kCap * 8 / 10; b += 2) stamp(*holey, b);
+    auto* dense = run_n(kCap * 45 / 100);
+    auto old = std::vector<uint8_t*> {};
+    holey->pg()->for_each_marked([&](uint16_t b) { old.push_back(holey->slot_addr(b)); });
+
+    copier c { 0.85 };
+    c.gather(chain({ sparse, holey, dense }));
+    ASSERT_EQ(c.select(kUnlimited, 1, 2), kRun) << "the holey plan adds nothing to what's freed";
+    compact_all(c);
+    c.end_copy();
+
+    EXPECT_EQ(marked(holey), old.size());
+    for (size_t j = 0; j < old.size(); ++j) {
+        EXPECT_EQ(reloc::forward(old[j]), holey->slot_addr(uint16_t(j)));
+        EXPECT_EQ(id_at(holey->slot_addr(uint16_t(j))), uint64_t(old[j]));
+    }
+}
+
+TEST_F(CopierTest, APlanThatFreesNothingWithoutHolesIsDropped) {
+    auto* sparse = run_n(kCap / 10);
+    auto* solid = run_n(kCap * 4 / 10);
+    auto* dense = run_n(kCap * 45 / 100);
+    copier c { 0.85 };
+    c.gather(chain({ sparse, solid, dense }));
+    ASSERT_EQ(c.select(kUnlimited, 1, 2), kRun);
+    compact_all(c);
+    c.end_copy();
+
+    EXPECT_EQ(marked(solid), kCap * 4 / 10);
+    EXPECT_EQ(relocs().get(size_t(solid->pg() - gc::test::heap().meta_base())), 0u) << "never compacted";
 }

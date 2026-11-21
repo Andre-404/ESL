@@ -87,7 +87,7 @@ void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
 
     if (role == stw_role::collector) {
         auto min_gain = _collection_req.is_express() ? 1 : _heuristic.min_copy_gain();
-        _copier.select(_heuristic.copy_budget_bytes(), min_gain);
+        _copier.select(_heuristic.copy_budget_bytes(), min_gain, _gate.expected());
     }
     _gate.arrive_and_wait();
     if (!_copier.has_plans()) return;

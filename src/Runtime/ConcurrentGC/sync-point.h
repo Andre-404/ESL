@@ -12,6 +12,8 @@ namespace gc::detail {
     public:
         sync_point() : _waiting(0), _expected(0), _phase(0) {}
         void register_waiter()  { std::lock_guard lk(_mtx); ++_expected; }
+
+        size_t expected() { std::lock_guard lk(_mtx); return _expected; }
         
         void deregister_waiter() {
             auto lk = std::unique_lock { _mtx };

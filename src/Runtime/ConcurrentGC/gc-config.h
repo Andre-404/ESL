@@ -97,6 +97,8 @@ namespace gc {
         constexpr std::size_t empty_mark_bufs_limit = 256;
         constexpr std::size_t trace_batch = 16 * (1 << 20);
         constexpr double copy_evac_threshold = 0.85;
+        // Holes per free block that make moving runs worth it even when it empties none
+        constexpr double copy_hole_threshold = 0.5;
         constexpr std::size_t free_batch_sz = 128 * 1024 * 1024;
     }
 

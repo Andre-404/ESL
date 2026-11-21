@@ -21,13 +21,13 @@ namespace gc::detail {
     // order, the emptied tail is retired by the pruner, and reloc hdrs + units map every old
     // address to the new one
     class copier {
-        struct candidate { pg_meta* pg; uint32_t live; };
+        struct candidate { pg_meta* pg; uint32_t live; uint32_t holes; };
         // A list's candidates, sparsest first
         using list_cands = std::vector<candidate>;
 
         double _evac_threshold;
         std::mutex _mtx;
-        std::vector<list_cands> _lists;
+        std::vector<list_cands> _clists;
         work_queue<copy_plan> _plans;
         std::atomic<size_t> _moved;
 
@@ -40,16 +40,15 @@ namespace gc::detail {
         std::optional<extension> try_extend(size_t list, const selection& sel) const;
         // Greedly grows the selections
         std::vector<selection> select_within_budget(size_t budget) const;
-        // A plan for every selection that empties at least one run
-        std::vector<copy_plan> plans_from(const std::vector<selection>& sels) const;
-        static copy_plan plan_from(std::span<const candidate> runs, size_t runs_freed);
+        // Up to threads plans for every selection that empties at least one run, each a strip of its own
+        std::vector<copy_plan> plans_from(const std::vector<selection>& sels, size_t threads) const;
+        static std::optional<copy_plan> plan_from(std::span<const candidate> runs, size_t offset, size_t stride);
 
     public:
-        explicit copier(double evac_threshold) : _evac_threshold(evac_threshold), _lists(), _plans(), _moved(0) {}
+        explicit copier(double evac_threshold) : _evac_threshold(evac_threshold), _clists(), _plans(), _moved(0) {}
 
         void gather(pg_meta* list);
-        // One thread, once everyone has gathered
-        size_t select(size_t budget, size_t min_gain = 1);
+        size_t select(size_t budget, size_t min_gain = 1, size_t threads = 1);
         // Taking plans doesn't change the answer because the vector is never emptied concurrently
         bool has_plans() const { return !_plans.empty(); }
         copy_plan* take_plan() { return _plans.take(); }

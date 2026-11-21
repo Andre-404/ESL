@@ -37,7 +37,8 @@ struct hoist_barriers : llvm::PassInfoMixin<hoist_barriers> {
         auto& MSSA = FAM.getResult<llvm::MemorySSAAnalysis>(F).getMSSA();
         for (auto& I : llvm::instructions(F)) {
             auto call = llvm::dyn_cast<llvm::CallInst>(&I);
-            if (!call || !call->hasFnAttr(runtime_bridge::slot_read_attr)) continue;
+            // When every call reads the same slot, IPO folds it into the body and drops the argument
+            if (!call || !call->hasFnAttr(runtime_bridge::slot_read_attr) || call->arg_size() != 1) continue;
             auto slot = call->getArgOperand(0);
             auto clob = MSSA.getWalker()->getClobberingMemoryAccess(call)->getBlock();
             // The outermost loop the slot is invariant in and unwritten

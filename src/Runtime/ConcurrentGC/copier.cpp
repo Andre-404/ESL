@@ -11,6 +11,16 @@
 
 using namespace gc::detail;
 
+[[gnu::hot]] size_t count_holes(std::span<const uint64_t> s) {
+    if (s.size() == 0) return 0;
+    size_t starts = __builtin_popcountll(s[0] & ~(s[0] << 1));
+    for (size_t i = 1; i < s.size(); i++) {
+        uint64_t prev = s[i - 1] >> 63;
+        starts += __builtin_popcountll(s[i] & ~((s[i] << 1) | prev));
+    }
+    return starts ? starts - 1 : 0;
+}
+
 void copier::gather(pg_meta* list) {
     if (!list || list->szclass() == config::large_class) return;
 
@@ -20,9 +30,10 @@ void copier::gather(pg_meta* list) {
     for (auto pg = list; pg; pg = pg->next()) {
         if (!pg->is_active() || pg->has_pinned()) continue;
         auto live = pg->compute_live();
+        auto holes = count_holes(pg->mark_words());
         // Empty runs are retired by the pruner anyway, dense ones aren't worth moving
         if (live == 0 || live >= _evac_threshold * cap) continue;
-        local.push_back({ pg, uint32_t(live) });
+        local.push_back({ pg, uint32_t(live), uint32_t(holes) });
         free_blocks += cap - live;
     }
     // Packing all of them still wouldn't empty a single run
@@ -30,31 +41,11 @@ void copier::gather(pg_meta* list) {
 
     std::ranges::sort(local, {}, &candidate::live);
     auto lk = std::lock_guard { _mtx };
-    _lists.push_back(std::move(local));
-}
-
-copy_plan copier::plan_from(std::span<const candidate> runs, size_t runs_freed) {
-    auto size = runs.front().pg->block_sz();
-    auto plan = copy_plan { {}, 0, runs_freed * runs.front().pg->num_pages() * config::page_sz };
-    for (auto& c : runs) {
-        plan.runs.push_back(c.pg);
-        plan.bytes += c.live * size;
-    }
-    // The run order is the definition of where everything goes, address order is the natural one
-    std::ranges::sort(plan.runs);
-    return plan;
-}
-
-std::vector<copy_plan> copier::plans_from(const std::vector<selection>& sels) const {
-    auto plans = std::vector<copy_plan> {};
-    for (size_t l = 0; l < _lists.size(); ++l)
-        if (sels[l].runs_freed)
-            plans.push_back(plan_from(std::span { _lists[l] }.first(sels[l].runs), sels[l].runs_freed));
-    return plans;
+    _clists.push_back(std::move(local));
 }
 
 std::optional<copier::extension> copier::try_extend(size_t list, const selection& sel) const {
-    auto& cands = _lists[list];
+    auto& cands = _clists[list];
     const size_t cap = cands.front().pg->block_cnt(), size = cands.front().pg->block_sz();
     auto live = sel.live_blocks;
     for (auto runs = sel.runs; runs < cands.size();) {
@@ -66,13 +57,13 @@ std::optional<copier::extension> copier::try_extend(size_t list, const selection
 }
 
 std::vector<copier::selection> copier::select_within_budget(size_t budget) const {
-    auto sels = std::vector<selection>(_lists.size());
+    auto sels = std::vector<selection>(_clists.size());
     // Note: this code assumes all runs are the same size,
     // if we start compacting large objects this no longer holds and we need to sort on free space
     auto cheapest = [](const extension& a, const extension& b) { return a.byte_cost > b.byte_cost; };
     auto exts = std::priority_queue<extension, std::vector<extension>, decltype(cheapest)> { cheapest };
  
-    for (size_t l = 0; l < _lists.size(); ++l)
+    for (size_t l = 0; l < _clists.size(); ++l)
         if (auto e = try_extend(l, sels[l])) exts.push(*e);
 
     for (size_t spent = 0; !exts.empty();) {
@@ -88,8 +79,43 @@ std::vector<copier::selection> copier::select_within_budget(size_t budget) const
     return sels;
 }
 
-size_t copier::select(size_t budget, size_t min_gain) {
-    auto plans = plans_from(select_within_budget(budget));
+// Every stride-th run from the offset-th sparsest, so dense and sparse runs spread evenly over the plans
+std::optional<copy_plan> copier::plan_from(std::span<const candidate> runs, size_t offset, size_t stride) {
+    const size_t cap = runs.front().pg->block_cnt(), size = runs.front().pg->block_sz();
+    size_t n = 0, live = 0, holes = 0;
+    for (auto i = offset; i < runs.size(); i += stride) ++n, live += runs[i].live, holes += runs[i].holes;
+    auto freed = n - (live + cap - 1) / cap;
+    if (!freed && holes < config::copy_hole_threshold * (n * cap - live)) return std::nullopt;
+    auto plan = copy_plan { {}, live * size, freed * runs.front().pg->num_pages() * config::page_sz };
+    plan.runs.reserve(n);
+    for (auto i = offset; i < runs.size(); i += stride) plan.runs.push_back(runs[i].pg);
+    std::ranges::sort(plan.runs);
+    return plan;
+}
+
+
+std::vector<copy_plan> copier::plans_from(const std::vector<selection>& sels, size_t threads) const {
+    size_t total = 0;
+    for (size_t l = 0; l < _clists.size(); ++l)
+        if (sels[l].runs_freed) total += sels[l].live_blocks * _clists[l].front().pg->block_sz();
+
+    auto plans = std::vector<copy_plan> {};
+    plans.reserve(_clists.size() + threads);
+    for (size_t l = 0; l < _clists.size(); ++l) {
+        auto& sel = sels[l];
+        if (!sel.runs_freed) continue;
+        auto bytes = sel.live_blocks * _clists[l].front().pg->block_sz();
+        auto stride = std::clamp((bytes * threads + total - 1) / total, size_t(1), sel.runs_freed);
+        for (size_t offset = 0; offset < stride; ++offset)
+            if (auto plan = plan_from(std::span { _clists[l] }.first(sel.runs), offset, stride))
+                plans.push_back(std::move(*plan));
+    }
+    return plans;
+}
+
+
+size_t copier::select(size_t budget, size_t min_gain, size_t threads) {
+    auto plans = plans_from(select_within_budget(budget), threads);
     size_t freed = 0;
     for (auto& p : plans) freed += p.freed;
     if (freed < min_gain) return 0;
@@ -238,7 +264,7 @@ void copier::compact(const copy_plan& plan, reloc_hdrs& relocs) {
 }
 
 size_t copier::end_copy() {
-    _lists.clear();
+    _clists.clear();
     _plans.clear();
     return _moved.exchange(0, std::memory_order_relaxed);
 }
