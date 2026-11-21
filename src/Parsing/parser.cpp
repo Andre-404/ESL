@@ -24,9 +24,9 @@ namespace AST {
                 // or module access to identifier
                 // Only the class and one argument list, so `new C(x).m()` calls m on the new instance
                 auto callee = parser->expression(+Precedence::CALL);
-                if(!(callee->type == AST::ASTType::LITERAL || callee->type == AST::ASTType::MODULE_ACCESS)) {
+                if(!(callee->type == AST::ASTType::LITERAL || callee->type == AST::ASTType::MODULE_ACCESS))
                     throw parser->error(token, "Expected a class identifier or module access to class identifier.");
-                }
+
                 Token paren = parser->consume(TokenType::LEFT_PAREN, "Expected a call to class.");
                 auto castCall = std::static_pointer_cast<CallExpr>(parseCall(parser, callee, paren));
                 return make_shared<NewExpr>(castCall, token);
