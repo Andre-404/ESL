@@ -43,29 +43,6 @@ namespace gc {
         auto obj = reinterpret_cast<object::rt_obj*>(m);
         return obj->get_sz();
     }
-    void obj_copy(managed* s, managed* d) {
-        auto obj = reinterpret_cast<object::rt_obj*>(s);
-        switch (obj->type()) {
-            case rt_type::ARRAY:
-            case rt_type::CLOSURE:
-            case rt_type::INSTANCE:
-            case rt_type::STRING:
-            case rt_type::HASH_MAP:
-            case rt_type::BUFFER:
-            case rt_type::ARRAY_STORAGE_HEADER: {
-                // POD gets memcpy
-                memcpy(d, s, obj->get_sz());
-                break;
-            }
-            case rt_type::FILE:
-            case rt_type::MUTEX:
-            case rt_type::CHANNEL:
-            case rt_type::WAIT_GROUP:
-            case rt_type::SOCKET:
-                assert(false && "obj_copy called on pinned obj?");
-                break;
-        }
-    }
     managed* to_accurate_ptr(size_t w) {
         if (is_ref_word(w)) return decodeObj(w);
         return nullptr;

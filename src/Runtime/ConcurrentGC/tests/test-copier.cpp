@@ -32,8 +32,6 @@ namespace {
 
         void SetUp() override {
             test_custom::hooks.reset();
-            // Survivors carry an id past the header so a test can see what ended up where
-            test_custom::hooks.obj_copy = [](managed* s, managed* d) { std::memcpy(d, s, kBlock); };
             relocs().clear();
         }
         void TearDown() override {
@@ -261,7 +259,6 @@ TEST_F(CopierTest, SurvivorsArePackedInOrderAndForwardToTheirNewHome) {
 TEST_F(CopierTest, BlocksThatArentAPowerOfTwoForwardToTheirNewHome) {
     constexpr size_t blk = 48;
     constexpr size_t cap = config::blocks_in_pg(config::sz_to_class(blk));
-    test_custom::hooks.obj_copy = [](managed* s, managed* d) { std::memcpy(d, s, blk); };
     test_page* runs[2];
     for (size_t r = 0; r < 2; ++r) {
         runs[r] = _pages.emplace_back(std::make_unique<test_page>(blk)).get();
@@ -287,10 +284,39 @@ TEST_F(CopierTest, BlocksThatArentAPowerOfTwoForwardToTheirNewHome) {
     }
 }
 
+// 640 byte blocks take the one survivor at a time path and straddle pages. Three runs of 60 pack into
+// two, and the second's 43rd survivor (block 71) crosses into the second kept run in the middle of page 5
+TEST_F(CopierTest, BigBlocksForwardToTheirNewHome) {
+    constexpr size_t blk = 640;
+    constexpr size_t cap = config::blocks_in_pg(config::sz_to_class(blk));
+    test_page* runs[3];
+    for (auto& r : runs) {
+        r = _pages.emplace_back(std::make_unique<test_page>(blk)).get();
+        for (size_t i = 0; i < 60; ++i) stamp(*r, uint16_t(i * cap / 60));
+    }
+    std::ranges::sort(runs, {}, [](test_page* p) { return p->pg(); });
+    auto want = std::map<uint8_t*, uint8_t*> {};
+    size_t g = 0;
+    for (auto* p : runs)
+        p->pg()->for_each_marked([&](uint16_t b) {
+            want[p->slot_addr(b)] = runs[g / cap]->slot_addr(uint16_t(g % cap));
+            ++g;
+        });
+
+    copier c { 0.85 };
+    c.gather(chain({ runs[0], runs[1], runs[2] }));
+    ASSERT_EQ(c.select(kUnlimited), kRun);
+    compact_all(c);
+    c.end_copy();
+    for (auto [from, to] : want) {
+        EXPECT_EQ(reloc::forward(from), to);
+        EXPECT_EQ(id_at(to), uint64_t(from));
+    }
+}
+
 // Three runs of 600 survivors only free a run when all three are packed. The first keeps its 600
-// and takes the second's first 424, so the second's 425th survivor crosses into it at block 424:
-// page 3 of the run, position 40
-TEST_F(CopierTest, ACrossingInsideAPageSplitsItsUnit) {
+// and takes the second's first 424, so the second's 425th survivor crosses into it at block 424
+TEST_F(CopierTest, ACrossingInsideAUnitSplitsIt) {
     test_page* runs[3];
     for (auto& r : runs) r = run_n(600);
     std::ranges::sort(runs, {}, [](test_page* p) { return p->pg(); });
@@ -302,13 +328,11 @@ TEST_F(CopierTest, ACrossingInsideAPageSplitsItsUnit) {
     compact_all(c);
     c.end_copy();
 
-    constexpr size_t per_page = config::page_sz / kBlock;
-    auto first = heap_layout::page_idx(runs[1]->pg()->get_data());
-    auto split = [&](size_t pg) { return reloc::unpack(relocs().get(first + pg)).split; };
-    EXPECT_EQ(split(424 / per_page), 424 % per_page);
-    for (size_t pg = 0; pg < 424 / per_page; ++pg) EXPECT_EQ(split(pg), reloc::split_none) << "page " << pg;
-    for (size_t pg = 600 / per_page + 1; pg < config::small_obj_pgs; ++pg)
-        EXPECT_EQ(relocs().get(first + pg), 0u) << "page " << pg << " has no survivor, so no table";
+    auto first = [](test_page* p) { return heap_layout::page_idx(p->pg()->get_data()); };
+    EXPECT_EQ(reloc::unpack(relocs().get(first(runs[1]))).split, 424u);
+    EXPECT_EQ(reloc::unpack(relocs().get(first(runs[2]))).split, reloc::split_none);
+    for (size_t pg = 1; pg < config::small_obj_pgs; ++pg)
+        EXPECT_EQ(relocs().get(first(runs[1]) + pg), 0u) << "page " << pg << ", a run's entry sits at its first page";
     for (auto [from, to] : want) {
         EXPECT_EQ(reloc::forward(from), to);
         EXPECT_EQ(id_at(to), uint64_t(from));

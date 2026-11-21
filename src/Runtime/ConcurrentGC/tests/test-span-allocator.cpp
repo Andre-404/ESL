@@ -225,17 +225,18 @@ TEST(PgTablesTest, RelocHdrsAreCommittedWithHeadersAndClearedTogether) {
     reloc_hdrs r { layout.relocs(), layout.reloc_units() };
     pg_tables t { layout.hdrs(), r };
     // far is under a different summary word than the run at 0
-    constexpr std::size_t n = 200, far = (1u << 20) - 1;
+    constexpr std::size_t n = 200, far = (1u << 20) - config::small_obj_pgs;
     ASSERT_TRUE(t.ensure(0, n));
     ASSERT_TRUE(t.ensure(far, 1));
     for (auto pg : { std::size_t(0), n - 1, far }) ASSERT_EQ(r.get(pg), 0u) << "page " << pg;
 
+    // Entries sit at the first page of a run
     reloc_unit table[1] {};
-    for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) r.set(pg, 16, reloc::split_none, table, 0); // 1 is in 0's run
-    EXPECT_NE(r.get(1), 0u);
+    for (auto pg : { std::size_t(0), n - config::small_obj_pgs, far }) r.set(pg, 16, reloc::split_none, table, 0);
+    EXPECT_NE(r.get(far), 0u);
 
     r.clear();
-    for (auto pg : { std::size_t(0), std::size_t(1), n - 1, far }) EXPECT_EQ(r.get(pg), 0u) << "page " << pg;
+    for (auto pg : { std::size_t(0), n - config::small_obj_pgs, far }) EXPECT_EQ(r.get(pg), 0u) << "page " << pg;
     r.clear();
 }
 
@@ -246,11 +247,11 @@ TEST(PgAllocatorTest, RelocTablesForwardAndAreReusedAfterClear) {
     auto idx = std::size_t(pg - pa.meta_base());
     auto data = pg->get_data();
 
-    // The page's only survivors are in its last unit, the first table in the arena is stored
+    // The run's only survivors are in its last unit, the first table in the arena is stored
     // that far below where it starts
     constexpr std::size_t pos = reloc::split_none - 2;
     auto first = reloc::unit_of(pos, reloc::split_none);
-    reloc_unit table[reloc::pg_units] {};
+    reloc_unit table[reloc::run_units] {};
     table[first] = { 0b11ull << (pos % 64), data + 4096 };
 
     auto check = [&] {
@@ -260,7 +261,10 @@ TEST(PgAllocatorTest, RelocTablesForwardAndAreReusedAfterClear) {
     pa.relocs().set(idx, 16, reloc::split_none, table, first);
     check();
     auto entry = pa.relocs().get(idx);
-    EXPECT_EQ(reloc::forward(data + config::page_sz), data + config::page_sz) << "the next page has no entry";
+    auto* other = pa.alloc_pg(16, config::small_obj_pgs, true);
+    ASSERT_NE(other, nullptr);
+    EXPECT_EQ(reloc::forward(other->get_data()), other->get_data()) << "a run without an entry forwards to itself";
+    pa.free_pgs(other);
 
     pa.relocs().clear();
     EXPECT_EQ(reloc::forward(data + pos * 16), data + pos * 16);

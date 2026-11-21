@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
+#include <cstring>
+#include <ranges>
 #include <queue>
 #include <span>
 
 #include "copier.h"
-#include "customization.h"
 
 using namespace gc::detail;
 
@@ -98,6 +100,9 @@ size_t copier::select(size_t budget, size_t min_gain) {
 }
 
 namespace {
+    constexpr size_t prefetch_ahead = 4096;
+    constexpr size_t big_block = 512;
+
     // The plan's runs read as one strip of slots. Survivor g goes to slot g: block k of run q
     class strip {
         std::span<pg_meta* const> _runs;
@@ -106,12 +111,17 @@ namespace {
         explicit strip(std::span<pg_meta* const> runs)
             : _runs(runs), _size(runs.front()->block_sz()), _cap(runs.front()->block_cnt()), _q(0), _k(0) {}
 
-        // The next free slot, and whether taking it moved on to the next kept run
-        std::pair<uint8_t*, bool> take() {
-            auto crossed = _k == _cap;
-            if (crossed) { ++_q; _k = 0; }
-            return { _runs[_q]->get_data() + _k++ * _size, crossed };
+        // The free slots left in the current kept run
+        size_t room() const { return _cap - _k; }
+        // The first of the next n slots, all of them in the current kept run
+        uint8_t* take(size_t n) {
+            assert(n <= room());
+            auto at = _runs[_q]->get_data() + _k * _size;
+            _k += n;
+            return at;
         }
+        // On to the next kept run
+        void cross() { ++_q; _k = 0; }
 
         void remark() {
             for (size_t i = 0; i < _runs.size(); i++) {
@@ -122,83 +132,106 @@ namespace {
         }
     };
 
-    class page_table {
-        static constexpr size_t no_page = ~size_t(0);
-
+    // Reloc table of the old run: unit u holds its blocks [64u, 64u + 64), the units past the split one later
+    class run_table {
         reloc_hdrs& _relocs;
-        size_t _size;
-        size_t _page;
+        size_t _page, _size;
         size_t _split;
-        size_t _first, _end;    // the slots used, from the page's first survivor to its last
+        size_t _first, _end;
         std::array<reloc_unit, reloc::max_table_units> _units;
     public:
-        page_table(reloc_hdrs& relocs, size_t block_sz)
-            : _relocs(relocs), _size(block_sz), _page(no_page), _split(reloc::split_none), _first(0), _end(0), _units() {}
+        run_table(reloc_hdrs& relocs, pg_meta* run)
+            : _relocs(relocs), _page(heap_layout::page_idx(run->get_data())), _size(run->block_sz()),
+              _split(reloc::split_none), _first(0), _end(0), _units() {}
 
-        void update(size_t new_page, size_t new_pos, bool crossed) {
-            if (new_page == _page) {
-                if (crossed) [[unlikely]] _split = new_pos;
-                return;
-            }
-            flush();
-            std::fill(_units.begin() + _first, _units.begin() + _end, reloc_unit {});
-            _page = new_page;
-            _split = reloc::split_none;
-            _first = _end = 0;
+        void split(size_t pos) {
+            assert(_split == reloc::split_none && "an old run's survivors cross into the next kept run at most once");
+            _split = pos;
         }
-        void file(size_t pos, [[maybe_unused]] uint8_t* from, uint8_t* to) {
+        // Pos is the start of a (potential) run on live objects that go into dest
+        void file(size_t pos, uint64_t live, uint8_t* dest) {
             auto s = reloc::unit_of(pos, _split);
             if (_end == 0) _first = s;
             _end = s + 1;
             auto& u = _units[s];
-            if (!u.live) u.dest = to;
-            u.live |= 1ull << (pos & 63);
+            if (!u.live) u.dest = dest;
+            u.live |= live;
         }
         void flush() {
-            if (_page == no_page) return;
-            _relocs.set(_page, _size, _split, std::span(_units).first(_end), _first);
-            _page = no_page;
+            if (_end)
+                _relocs.set(_page, _size, _split, std::span(_units).first(_end), _first);
         }
     };
 
-    // Moves src's survivors into the strip's next slots and files each one in its page's table.
-    // Returns the bytes moved
-    size_t relocate(pg_meta* src, strip& dst, page_table& table) {
-        const size_t size = src->block_sz();
-        auto data = src->get_data();
-        [[maybe_unused]] auto crossings = 0;
+    void prefetch(const uint8_t* run, size_t w, size_t bsz) {
+        for (auto m = w; m; m &= m - 1)
+            for (size_t o = 0; o < bsz; o += 64)
+                __builtin_prefetch(run + std::countr_zero(m) + o);
+    }
 
+    // Moves the survivors set in live, counted from block b, to consecutive slots from to. A block never
+    // overlaps its new home (both are block aligned, to < from). Returns the bytes moved
+    size_t move(const pg_meta* run, size_t b, uint64_t live, uint8_t* to) {
         size_t moved = 0;
-        src->for_each_marked([&](uint16_t b) {
-            // A block belongs to the page its first byte is in, positions count from that page's start
-            auto from = data + size_t(b) * size;
-            auto page = heap_layout::page_idx(from);
-            auto pos = ((uint64_t)from & (gc::config::page_sz - 1)) / size;
-
-            auto [to, crossed] = dst.take();
-            table.update(page, pos, crossed);
-            // An old run holds no more survivors than a kept run has blocks
-            assert((crossings += crossed) <= 1);
-            
-            table.file(pos, from, to);
-
+        auto bsz = run->block_sz();
+        auto data = run->get_data();
+        for (; live; live &= live - 1, to += bsz) {
+            auto from = run->get_data() + (b + std::countr_zero(live)) * bsz;
             assert(to <= from);
-            if (from != to) {
-                obj_copy((gc::managed*)from, (gc::managed*)to);
-                moved += size;
-            }
-        });
+            if (from == to) continue;
+            // Size classes are multiples of 16, so small blocks need no call to pick a path by size
+            if (bsz > big_block) std::memcpy(to, from, bsz);
+            else for (size_t o = 0; o < bsz; o += 16) std::memcpy(to + o, from + o, 16);
+            moved += bsz;
+        }
+        return moved;
+    }
+
+    // Moves the survivors set in live, counted from block b, to the strip's next slots and files them.
+    // Returns the bytes moved
+    size_t place(const pg_meta* run, size_t b, uint64_t live, strip& dst, run_table& table) {
+        auto put = [&](uint64_t bits) {
+            auto to = dst.take(std::popcount(bits));
+            table.file(b + std::countr_zero(bits), bits, to);
+            return move(run, b, bits, to);
+        };
+        size_t moved = 0;
+        // If there is more in this chunk than there is room, split it to 2 units
+        if (auto room = dst.room(); size_t(std::popcount(live)) > room) {
+            // The kept run fills up, the rest start the next one and a unit of their own
+            auto rest = live;
+            for (; room; --room) rest &= rest - 1;
+            if (rest != live) moved += put(live ^ rest);
+            dst.cross();
+            table.split(b + std::countr_zero(rest));
+            live = rest;
+        }
+        return moved + put(live);
+    }
+
+    // Moves src's survivors into the strip's next slots and files them, a mark word at a time.
+    // Returns the bytes moved
+    size_t relocate(pg_meta* src, strip& dst, reloc_hdrs& relocs) {
+        // In whole mark words, big blocks are left to the hardware prefetcher
+        auto bsz = src->block_sz();
+        const auto ahead = bsz > big_block ? 0 : std::max<size_t>(1, prefetch_ahead / (64 * bsz));
+        auto table = run_table { relocs, src };
+        size_t moved = 0;
+        auto mark = src->mark_words();
+        for (auto [i, live] : std::views::enumerate(mark)) {
+            if (ahead && i + ahead < mark.size()) prefetch(src->get_data() + i * 64, live, bsz);
+            if (live) moved += place(src, i * 64, live, dst, table);
+        }
+        table.flush();
         return moved;
     }
 }
 
 void copier::compact(const copy_plan& plan, reloc_hdrs& relocs) {
     auto dst = strip { plan.runs };
-    auto table = page_table { relocs, plan.runs.front()->block_sz() };
     size_t moved = 0;
-    for (auto run : plan.runs) moved += relocate(run, dst, table);
+    for (auto run : plan.runs) moved += relocate(run, dst, relocs);
 
-    table.flush();
     dst.remark();
     _moved.fetch_add(moved, std::memory_order_relaxed);
 }

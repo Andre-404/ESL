@@ -169,6 +169,7 @@ namespace gc::detail {
             for (size_t w = 0; w < words.size(); ++w)
                 for (auto m = words[w]; m; m &= m - 1) fn(uint16_t(w * 64 + std::countr_zero(m)));
         }
+        std::span<const size_t> mark_words() const { return _bits.mark_bits(block_cnt()); }
         // Leaves exactly the first n blocks marked
         void mark_prefix(size_t n) {
             for (auto& w : _bits.mark_bits(block_cnt())) {

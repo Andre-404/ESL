@@ -88,7 +88,7 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Runtime/Objects/gc-customization.cpp
         src/Runtime/stub.cpp
 )
-target_compile_features(ESL PRIVATE cxx_std_20)
+target_compile_features(ESL PRIVATE cxx_std_23)
 # r15 holds the TCB pointer and r14 the good pointer color; see ConcurrentGC/platforms/x86-64.inc.
 target_compile_options(ESL PRIVATE -ffixed-r15 -ffixed-r14)
 target_link_libraries(ESL ${ESL_LLVM_LIBS})

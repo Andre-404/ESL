@@ -15,8 +15,6 @@ namespace gc::detail::test_custom {
                 = [](managed*) { return size_t{64}; };
         std::function<void(managed*, std::function<void(managed*)>&)>              obj_trace
                 = [](managed*, auto&) {};
-        std::function<void(managed* src, managed* dest)>                           obj_copy
-                = [](managed* s, managed* d) { std::memcpy(d, s, sizeof(size_t)); };
 
         // Words are raw pointers, either color
         std::function<managed*(size_t)>                                            to_accurate_ptr

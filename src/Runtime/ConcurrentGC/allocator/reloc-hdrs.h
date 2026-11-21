@@ -15,8 +15,8 @@
 #include "os-memory.h"
 
 namespace gc::detail {
-    // Covers 64 positions of an old page: which of them survived, and where the first one went.
-    // The rest follow it in order, one block apart
+    // Covers 64 blocks of an old run, the same 64 as a mark word: which of them survived, and where
+    // the first one went. The rest follow it in order, one block apart
     struct reloc_unit {
         uint64_t live;
         uint8_t* dest;
@@ -24,30 +24,32 @@ namespace gc::detail {
     static_assert(sizeof(reloc_unit) == config::reloc_unit_sz);
 
     namespace reloc {
-        constexpr std::size_t split_none = config::page_sz / 16;
-        constexpr std::size_t pg_units = split_none / 64;
-        constexpr std::size_t max_table_units = pg_units + 1;
+        constexpr std::size_t run_sz = config::small_obj_pgs * config::page_sz;
+        constexpr std::size_t split_none = run_sz / 16;
+        constexpr std::size_t run_units = split_none / 64;
+        constexpr std::size_t max_table_units = run_units + 1;
 
-        // A page's reloc hdr. table is its units' offset into the arena
+        // A run's reloc hdr. table is its units' offset into the arena
         struct entry {
             uint32_t block_sz, split, table;
         };
         // Never zero, a block is at least 16 bytes
         constexpr uint64_t pack(entry e) { return e.block_sz | e.split << 12 | uint64_t(e.table) << 32; }
-        constexpr entry unpack(uint64_t w) { return { uint32_t(w & 0xFFF), uint32_t(w >> 12 & 0x3FF), uint32_t(w >> 32) }; }
-        static_assert(split_none <= 0x3FF && config::sz_classes[config::szclass_cnt - 1] <= 0xFFF);
+        constexpr entry unpack(uint64_t w) { return { uint32_t(w & 0xFFF), uint32_t(w >> 12 & 0xFFFFF), uint32_t(w >> 32) }; }
+        static_assert(split_none <= 0xFFFFF && config::sz_classes[config::szclass_cnt - 1] <= 0xFFF);
 
         constexpr std::size_t unit_of(std::size_t pos, std::size_t split) { return pos / 64 + (pos >= split); }
 
-        // p must be an object that survived
+        // p must be an object that survived. Compacted runs are aligned to their size, so masking
+        // finds the run, whose entry sits at its first page
         constexpr uint8_t* forward(uint8_t* p) {
             auto off = uintptr_t(p - heap_layout::heap(p));
-            auto e = ((const uint64_t*)heap_layout::relocs(p))[off >> config::pg_bits];
+            auto e = ((const uint64_t*)heap_layout::relocs(p))[off / run_sz * config::small_obj_pgs];
             if (!e) return p;
 
-            auto [size, split, table] = unpack(e);
-            auto units = (const reloc_unit*)heap_layout::reloc_units(p) + table;
-            auto pos = uint32_t(off & (config::page_sz - 1)) / size;
+            auto [size, split, ustart] = unpack(e);
+            auto units = (const reloc_unit*)heap_layout::reloc_units(p) + ustart;
+            auto pos = uint32_t(off % run_sz) / size;
             auto bit = pos & 63;
             auto u = units[unit_of(pos, split)];
             assert((u.live >> bit & 1) && "forwarding a pointer to an object that did not survive");
@@ -55,9 +57,9 @@ namespace gc::detail {
         }
     }
 
-    // One entry per heap page saying where the survivors of a compacted page went. Belongs to
-    // the address range, not the page: committed with the pg headers, never decommitted, and
-    // zeroed once the marking after the copy has healed every pointer into the old pages
+    // One slot per heap page, a compacted run's first page holds the entry saying where its survivors
+    // went. Belongs to the address range, not the page: committed with the pg headers, never
+    // decommitted, and zeroed once the marking after the copy has healed every pointer into the old pages
     class reloc_hdrs {
         // Writes are tracked one bit per run (a cache line of entries),
         // plus one summary bit per word of those so clear skips untouched ranges
@@ -74,11 +76,11 @@ namespace gc::detail {
         uint64_t* _sums;
         bump_allocator _units;
 
-        // A table is stored reduced by the unit of its page's first survivor, up to 7 below where
-        // it starts, so the arena never hands out its first pg_units
+        // A table is stored reduced by the unit of its run's first survivor, up to run_units below where
+        // it starts, so the arena never hands out its first run_units
         void reset_units() {
             _units.reset();
-            _units.bump(reloc::pg_units * config::reloc_unit_sz / sizeof(uint64_t), false);
+            _units.bump(reloc::run_units * config::reloc_unit_sz / sizeof(uint64_t), false);
         }
         std::span<reloc_unit> alloc_units(std::size_t n) {
             auto words = _units.bump(n * config::reloc_unit_sz / sizeof(uint64_t), false);
@@ -109,9 +111,10 @@ namespace gc::detail {
         }
 
         uint64_t get(std::size_t pg) const { return _entries[pg]; }
-        // Stores table[first, end), first being the unit of the page's first survivor
+        // Stores table[first, end), first being the unit of the run's first survivor
         void set(std::size_t pg, std::size_t block_sz, std::size_t split, std::span<const reloc_unit> table, std::size_t first) {
-            assert(!_entries[pg] && "a page is compacted at most once per cycle");
+            assert(pg % run_pgs == 0 && "a run's entry sits at its first page");
+            assert(!_entries[pg] && "a run is compacted at most once per cycle");
             auto stored = alloc_units(table.size() - first);
             assert(stored.size() == table.size() - first && "reloc units arena exhausted");
             std::copy(table.begin() + first, table.end(), stored.begin());
