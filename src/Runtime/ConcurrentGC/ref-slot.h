@@ -38,7 +38,8 @@ namespace gc {
         std::atomic_ref<T> { slot }.store(value, relaxed);
     }
 
-    // Slow paths for a reference with the bad color, return it uncolored and fixed (ref-slot.cpp)
-    [[gnu::cold]] size_t heal_ptr(size_t* slot, size_t seen);
-    [[gnu::cold]] size_t heal_word(size_t* slot, size_t seen);
+    // Slow paths for a reference with the bad color, return it uncolored and fixed (ref-slot.cpp).
+    // Leaves with preserve_all, so callers keep their registers across them
+    [[gnu::cold, clang::preserve_all]] size_t heal_ptr(size_t* slot, size_t seen);
+    [[gnu::cold, clang::preserve_all]] size_t heal_word(size_t* slot, size_t seen);
 }

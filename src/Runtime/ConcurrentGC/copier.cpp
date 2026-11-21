@@ -166,7 +166,7 @@ namespace {
     void prefetch(const uint8_t* run, size_t w, size_t bsz) {
         for (auto m = w; m; m &= m - 1)
             for (size_t o = 0; o < bsz; o += 64)
-                __builtin_prefetch(run + std::countr_zero(m) + o);
+                __builtin_prefetch(run + std::countr_zero(m) * bsz + o);
     }
 
     // Moves the survivors set in live, counted from block b, to consecutive slots from to. A block never
@@ -219,7 +219,8 @@ namespace {
         size_t moved = 0;
         auto mark = src->mark_words();
         for (auto [i, live] : std::views::enumerate(mark)) {
-            if (ahead && i + ahead < mark.size()) prefetch(src->get_data() + i * 64, live, bsz);
+            if (ahead && i + ahead < mark.size())
+                prefetch(src->get_data() + (i + ahead) * 64 * bsz, mark[i + ahead], bsz);
             if (live) moved += place(src, i * 64, live, dst, table);
         }
         table.flush();

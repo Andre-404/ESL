@@ -42,7 +42,7 @@ namespace gc::detail {
 
         // p must be an object that survived. Compacted runs are aligned to their size, so masking
         // finds the run, whose entry sits at its first page
-        constexpr uint8_t* forward(uint8_t* p) {
+        [[gnu::always_inline]] constexpr uint8_t* forward(uint8_t* p) {
             auto off = uintptr_t(p - heap_layout::heap(p));
             auto e = ((const uint64_t*)heap_layout::relocs(p))[off / run_sz * config::small_obj_pgs];
             if (!e) return p;
