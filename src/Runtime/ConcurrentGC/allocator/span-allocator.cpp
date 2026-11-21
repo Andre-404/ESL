@@ -86,7 +86,8 @@ void* span_allocator::claim_span(std::size_t start, std::size_t npages) {
         return nullptr;
     }
 
-    _in_use.fetch_add(need_alloc, std::memory_order_relaxed);
+    auto now = _in_use.fetch_add(need_alloc, std::memory_order_relaxed) + need_alloc;
+    if (now > _in_use_peak.load(std::memory_order_relaxed)) _in_use_peak.store(now, std::memory_order_relaxed);
     return _base + start * config::page_sz;
 }
 

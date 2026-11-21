@@ -42,6 +42,10 @@ namespace gc {
         write_barrier(read_tcb(), obj);
     }
 
+    inline void poll() {
+        poll_safepoint(read_tcb());
+    }
+
     template<typename T, typename... Args>
     [[nodiscard]] T* esl_make_gc(size_t extra_bytes, Args&&... args) {
         return make_gc<T>(read_tcb(), T::pinned, extra_bytes, std::forward<Args>(args)...);

@@ -51,8 +51,9 @@ namespace object {
             }
         };
         
-        rt_string(uint32_t sz, char* str) : rt_obj(rt_type::STRING, false), _size(sz) {
-            strcpy(get_str(), str);
+        // The bytes are copied in after construction, which can't poll (see objects.cpp)
+        explicit rt_string(uint32_t sz) : rt_obj(rt_type::STRING, false), _size(sz) {
+            get_str()[sz] = '\0';
         }
 
         char* get_str() const { return (char*)(this + 1);}
@@ -73,8 +74,7 @@ namespace object {
         uint32_t _capacity;
 
     public:
-        // TODO: move this to cpp and add init vals
-        rt_arr_store(uint32_t cap, std::span<Value> init);
+        explicit rt_arr_store(uint32_t cap);
 
         std::span<Value> get_data() { return { (Value*)((this+1)), _capacity }; }
         void set_has_obj() {
@@ -85,7 +85,7 @@ namespace object {
             return ref.load(std::memory_order_acquire) != 0;
         }
 
-        static rt_arr_store* alloc(uint32_t capacity, std::span<Value> init);
+        static rt_arr_store* alloc(uint32_t capacity, std::span<Value> init, bool has_obj = false);
 
         // For the collector, see gc-customization.cpp
         void gc_trace(trace_fn cb);

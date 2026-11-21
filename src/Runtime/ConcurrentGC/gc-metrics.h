@@ -17,6 +17,10 @@ namespace gc::detail {
             mark,
             copy,
             sweep,
+            ttsp,
+            stw,
+            concurrent_mark,
+            compact,
             count
         };
 
@@ -92,6 +96,17 @@ namespace gc::detail {
             return d;
         }
 
+        struct cycle_times { ns mark, compact; };
+        cycle_times collect_cycle() {
+            auto concurrent = collect(phase::concurrent_mark);
+            auto pause = collect(phase::pause), stw = collect(phase::stw);
+            _stats[(size_t)phase::ttsp].record(pause - stw);
+            auto mark = collect(phase::mark);
+            collect(phase::sweep);
+            collect(phase::copy);
+            return { concurrent + (pause - stw) + mark, collect(phase::compact) };
+        }
+
         double max_pause_ms() const { return to_ms(get(phase::pause).max); }
         double last_pause_ms() const { return to_ms(get(phase::pause).last); }
         double mark_pause_ms() const { return to_ms(get(phase::mark).last); }
@@ -110,11 +125,15 @@ namespace gc::detail {
             return fmt::format(
                 "GC pause metrics over {} cycle(s) (last / max / avg ms):\n"
                 "  pause  {:.3f} / {:.3f} / {:.3f}\n"
+                "  ttsp   {:.3f} / {:.3f} / {:.3f}\n"
+                "  stw    {:.3f} / {:.3f} / {:.3f}\n"
                 "  mark   {:.3f} / {:.3f} / {:.3f}\n"
                 "  copy   {:.3f} / {:.3f} / {:.3f}\n"
                 "  sweep  {:.3f} / {:.3f} / {:.3f}\n",
                 cycles(),
                 last_pause_ms(), max_ms(phase::pause), avg_ms(phase::pause),
+                to_ms(last(phase::ttsp)), max_ms(phase::ttsp), avg_ms(phase::ttsp),
+                to_ms(last(phase::stw)), max_ms(phase::stw), avg_ms(phase::stw),
                 mark_pause_ms(), max_ms(phase::mark), avg_ms(phase::mark),
                 copy_pause_ms(), max_ms(phase::copy), avg_ms(phase::copy),
                 sweep_pause_ms(), max_ms(phase::sweep), avg_ms(phase::sweep));

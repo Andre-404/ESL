@@ -18,7 +18,7 @@ void scavenger::loop(std::stop_token st, span_allocator& spans, scavenge_policy 
     while (!st.stop_requested()) {
         auto now = clock::now();
 
-        auto granules = h.plan(now, { spans.in_use(), spans.resident() });
+        auto granules = h.plan(now, { spans.take_in_use_peak(), spans.resident() });
         auto released = spans.scavenge(granules);
 
         auto work_time = clock::now() - now;

@@ -15,6 +15,7 @@ namespace gc::detail {
         radix_tree _tree;
         bitmap _committed; // one bit per commit granule, not per page
         std::atomic<std::size_t> _in_use;         // granules currently allocated
+        std::atomic<std::size_t> _in_use_peak {0}; // most granules allocated since the scavenger last looked
         std::atomic<std::size_t> _resident;       // granules physically backed
         int64_t _scavenge_idx; // Idx in granules
 
@@ -65,6 +66,8 @@ namespace gc::detail {
         // Decommits up to max_granules free granules, walking down from the highest freed one
         std::size_t scavenge(std::size_t max_granules);
         std::size_t in_use() const { return _in_use.load(std::memory_order_relaxed); }
+        // The scavenger only looks now and then, a spike between two looks still has to count
+        std::size_t take_in_use_peak() { return _in_use_peak.exchange(in_use(), std::memory_order_relaxed); }
         std::size_t resident() const { return _resident.load(std::memory_order_relaxed); }
     };
 }

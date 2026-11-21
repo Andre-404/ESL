@@ -11,7 +11,9 @@ using namespace object;
 #define EXPORT extern "C" DLLEXPORT
 
 EXPORT Value print(void*, Value x){
-    std::cout<< valueHelpers::toString(x)<<std::endl;
+    auto str = valueHelpers::toString(x);
+    // The write can block on a full pipe, and the collector mustn't wait for this thread meanwhile
+    gc::run_blocking([&]() { std::cout << str << std::endl; });
     return encodeNil();
 }
 

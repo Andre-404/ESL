@@ -476,6 +476,7 @@ namespace {
         // Small enough that a few hundred KB of garbage drives a cycle, instead of the 20 MB
         // the default tuning wants.
         static constexpr size_t kInitialHeap = 256u << 10;
+        virtual gc_tuning tuning() const { return { .initial_heap = kInitialHeap }; }
 
         collector* gc      = nullptr;
         uint8_t*   gc_flag = nullptr;
@@ -483,7 +484,7 @@ namespace {
         void SetUp() override {
             test_custom::hooks.reset();
             gc_flag = new uint8_t(0);
-            gc = new collector(*gc_flag, gc_tuning { .initial_heap = kInitialHeap });
+            gc = new collector(*gc_flag, tuning());
             std::this_thread::sleep_for(20ms);
             ensure_rpmalloc_thread_ready();
         }
@@ -567,6 +568,18 @@ TEST_F(CollectorCycleTest, CyclesRunToCompletionUnderChurn) {
     EXPECT_GE(gc->metrics().cycles(), 5u) << "a small heap plus steady garbage must drive real cycles";
 }
 
+// A pause is the wait for every thread to stop (ttsp) followed by the stop itself (stw), both
+// inside the pause's interval. Maxima, since a cycle may still be publishing its numbers
+TEST_F(CollectorCycleTest, PauseSplitsIntoTimeToSafepointAndStw) {
+    churn_until_cycles(3);
+    using phase = gc_metrics::phase;
+    auto& m = gc->metrics();
+    EXPECT_GT(m.max_ms(phase::ttsp), 0.0);
+    EXPECT_GT(m.max_ms(phase::stw), 0.0);
+    EXPECT_LE(m.max_ms(phase::ttsp), m.max_ms(phase::pause));
+    EXPECT_LE(m.max_ms(phase::stw), m.max_ms(phase::pause));
+}
+
 TEST_F(CollectorCycleTest, ManyCyclesLeaveTheCollectorUsable) {
     churn_until_cycles(20);
     ASSERT_GE(gc->metrics().cycles(), 20u);
@@ -641,14 +654,20 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
 // from before it, in a root or inside an object, is forwarded by its next load or by the next
 // mark, which then lets the reloc tables go. Half the chains are only ever walked at the end, so
 // they rely on the marker alone, across several copies
-TEST_F(CollectorCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
+namespace {
+    // Copies at the few KB these tests keep live, which the default floor never allows
+    struct CopyingCycleTest : CollectorCycleTest {
+        gc_tuning tuning() const override { return { .initial_heap = kInitialHeap, .min_copy_bytes = 0 }; }
+    };
+}
+
+TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
     struct node : managed {
         uint64_t id;
         managed* next;
         explicit node(uint64_t i) : managed(1, move_state::none), id(i), next(nullptr) {}
     };
     constexpr int kChains = 16, kLen = 4;
-    test_custom::hooks.obj_copy = [](managed* s, managed* d) { std::memcpy(d, s, sizeof(node)); };
     test_custom::hooks.obj_trace = [](managed* m, std::function<void(managed*)>& cb) {
         if (auto next = read_ref(static_cast<node*>(m)->next, std::memory_order_acquire)) cb(next);
     };
@@ -713,14 +732,12 @@ TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
     EXPECT_GT(gc->metrics().cycles(), 10u);
 }
 
-// Churn of 64-256 byte garbage leaves nothing worth packing. A pause may still gather candidates
-// when the fragmentation estimate looks promising, but the exact count then finds no run to free,
-// so nothing moves. Compaction itself is covered in test-copier.cpp, which builds the runs directly.
+// Churn of 64-256 byte garbage leaves nothing worth packing. What it allocates black during a mark
+// can spread over a few runs, but never past the minimum gain's floor (bug 17), so nothing moves.
+// Compaction itself is covered in test-copier.cpp, which builds the runs directly.
 TEST_F(CollectorCycleTest, CyclesWithoutFragmentationNeverCopy) {
-    std::atomic<size_t> copies { 0 };
-    test_custom::hooks.obj_copy = [&](managed*, managed*) { copies.fetch_add(1, std::memory_order_relaxed); };
     churn_until_cycles(4);
 
     ASSERT_GT(gc->metrics().cycles(), 3u);
-    EXPECT_EQ(copies.load(), 0u);
+    EXPECT_EQ(gc->metrics().max_ms(gc_metrics::phase::compact), 0.0);
 }

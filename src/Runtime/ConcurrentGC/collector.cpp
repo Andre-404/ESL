@@ -58,7 +58,6 @@ void collector::stw_enter(std::span<tcb*> owned, stw_role role) {
 }
 
 size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
-    // TODO: this is wrong and only takes into account the mark pause time, not the concurrent mark time
     auto _ = _metrics.time(gc_metrics::phase::mark);
     for (auto t : owned)
         _marker.scan_stack(t->get_mark_info(), true, get_obj_base());
@@ -76,8 +75,6 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
 
     while (_marker.trace_n(config::trace_batch * 1024)) {}
     _gate.arrive_and_wait();
-    if (role == stw_role::collector)
-        _cycle.mark_time = gc_clock::now().time_since_epoch() - _cycle.mark_time;
     return snapshot;
 }
 
@@ -88,21 +85,21 @@ void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     mutate_all(owned, role, gather_fn());
     _gate.arrive_and_wait();
 
-    gc_clock::time_point _compact_start;
     if (role == stw_role::collector) {
         auto min_gain = _collection_req.is_express() ? 1 : _heuristic.min_copy_gain();
         _copier.select(_heuristic.copy_budget_bytes(), min_gain);
-        _compact_start = gc_clock::now();
     }
     _gate.arrive_and_wait();
     if (!_copier.has_plans()) return;
 
-    while (auto plan = _copier.take_plan()) _copier.compact(*plan, _pg_manager.relocs());
+    {
+        auto _ = _metrics.time(gc_metrics::phase::compact);
+        while (auto plan = _copier.take_plan()) _copier.compact(*plan, _pg_manager.relocs());
+    }
 
     if (role == stw_role::collector) _good_color.fetch_xor(config::color_bit, std::memory_order_relaxed);
     _gate.arrive_and_wait();
     reload_color();
-    if (role == stw_role::collector) _cycle.compact_time = gc_clock::now() - _compact_start;
 }
 
 void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
@@ -112,6 +109,8 @@ void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
 
 size_t collector::stw(std::span<tcb*> owned, stw_role role) {
     stw_enter(owned, role);
+    // Every thread has stopped, the pause before this is the wait for them
+    auto _ = _metrics.time(gc_metrics::phase::stw);
     auto snapshot = stw_mark(owned, role);
     // Marking has healed every pointer into the last copy's old pages
     if (role == stw_role::collector) _pg_manager.relocs().clear();
@@ -122,6 +121,7 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
 }
 
 void collector::concurrent_mark() {
+    auto _ = _metrics.time(gc_metrics::phase::concurrent_mark);
     auto blocked = post_with_state(uint8_t(gc_state::marking), op_mark_stack);
     _mark_alloc_start = _alloc_sz.load(std::memory_order_relaxed);
     for (auto t : blocked)
@@ -154,11 +154,9 @@ void collector::mutator_stw(tcb* handle) {
 }
 
 void collector::collect_metrics() {
-    using phase = gc_metrics::phase;
-    _metrics.collect(phase::pause);
-    _metrics.collect(phase::mark);
-    _metrics.collect(phase::sweep);
-    _cycle.copy_time = _metrics.collect(phase::copy);
+    auto t = _metrics.collect_cycle();
+    _cycle.mark_time = t.mark;
+    _cycle.compact_time = t.compact;
 }
 
 uint64_t* collector::end_cycle(size_t alloc_snapshot) {
@@ -180,7 +178,6 @@ void collector::concurrent_loop() {
     while (true) {
         if (_collection_req.await_request()) break;
         _cycle = {};
-        _cycle.mark_time = gc_clock::now().time_since_epoch();
         concurrent_mark();
 
         _gate.register_waiter();

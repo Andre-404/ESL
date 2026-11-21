@@ -34,8 +34,10 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
         case rt_type::ARRAY:{
             auto arr = reinterpret_cast<rt_arr*>(this);
             string str = "[";
-            for (auto& slot : arr->get_data())
+            for (auto& slot : arr->get_data()) {
+                gc::poll();
                 str.append(" " + valueHelpers::toString(gc::read_ref(slot), stack)).append(",");
+            }
             str.erase(str.size() - 1).append(" ]");
             return str;
         }
@@ -45,6 +47,7 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
             auto map = reinterpret_cast<rt_hashmap*>(this);
             string str = "{";
             map->for_each([&](Value key, Value val) {
+                gc::poll();
                 str.append(" \"").append(asString(key)->get_str()).append("\" : ");
                 str.append(valueHelpers::toString(val, stack)).append(",");
             });
@@ -57,6 +60,19 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
 }
 #pragma endregion
 
+// Number of bytes to copy between 2 polls
+static constexpr size_t copy_chunk = 256 * 1024;
+// Elements handled between two safepoints when filling a big store or table
+static constexpr size_t fill_chunk = 16 * 1024;
+
+// For bytes the collector never reads, between objects the stack keeps pinned
+static void copy_bytes(char* dst, const char* src, size_t n) {
+    for (size_t i = 0; i < n; i += copy_chunk) {
+        std::memcpy(dst + i, src + i, std::min(copy_chunk, n - i));
+        gc::poll();
+    }
+}
+
 #pragma region ObjString
 bool rt_string::compare(rt_string* other) {
 	return _size == other->_size && std::memcmp(get_str(), other->get_str(), _size) == 0;
@@ -67,15 +83,16 @@ bool rt_string::compare(const string& other) {
 }
 
 rt_string* rt_string::concat(rt_string* other) {
-    auto ptr = gc::esl_make_gc<rt_string>(_size + other->_size + 1, _size + other->_size, get_str());
-
-    std::memcpy(ptr->get_str() + _size, other->get_str(), other->_size+1);
-
+    auto ptr = gc::esl_make_gc<rt_string>(_size + other->_size + 1, _size + other->_size);
+    copy_bytes(ptr->get_str(), get_str(), _size);
+    copy_bytes(ptr->get_str() + _size, other->get_str(), other->_size);
     return object::string_interner::get().check_interned(ptr);
 }
 
 rt_string* rt_string::create(char* str){
-    auto ptr = gc::esl_make_gc<rt_string>(std::strlen(str) + 1, std::strlen(str), str);
+    auto sz = std::strlen(str);
+    auto ptr = gc::esl_make_gc<rt_string>(sz + 1, sz);
+    copy_bytes(ptr->get_str(), str, sz);
     return object::string_interner::get().check_interned(ptr);
 }
 
@@ -86,29 +103,33 @@ uint64_t rt_string::hash::operator()(const rt_string* str) const noexcept{
 
 #pragma region ObjArray
 
-rt_arr_store::rt_arr_store(uint32_t cap, std::span<Value> init)
-    : rt_obj(rt_type::ARRAY_STORAGE_HEADER, false), _contains_obj(0), _capacity(cap) {
-    auto s = get_data();
-    bool found = false;
-    for (size_t i = 0; i < init.size(); i++) {
-        auto val = gc::read_ref(init[i]);
-        gc::store_ref(s[i], val);
-        if (isObj(val)) {
-            found = true;
-            gc::write_b(decodeObj(val));
-        }
-    }
-    memset(&s[init.size()], 0, (cap - init.size())*sizeof(Value));
-    if (found) _contains_obj = 1;
-}
+rt_arr_store::rt_arr_store(uint32_t cap)
+    : rt_obj(rt_type::ARRAY_STORAGE_HEADER, false), _contains_obj(0), _capacity(cap) {}
 
-
-rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init){
+rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, bool has_obj){
     auto capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
     if(capacity > (1ull << 31)){
         // TODO: error
     }
-    return gc::esl_make_gc<rt_arr_store>(capacity * sizeof(Value), capacity, init);
+    auto store = gc::esl_make_gc<rt_arr_store>(capacity * sizeof(Value), capacity);
+    auto s = store->get_data();
+    constexpr auto step = copy_chunk / sizeof(Value);
+    for (size_t i = has_obj ? 0 : init.size(); i < s.size(); i += step) {
+        memset(&s[i], 0, std::min(step, s.size() - i) * sizeof(Value));
+        gc::poll();
+    }
+    if (!has_obj) {
+        copy_bytes((char*)s.data(), (const char*)init.data(), init.size()*sizeof(Value));
+        return store;
+    }
+    store->set_has_obj();
+    for (size_t i = 0; i < init.size(); i++) {
+        auto val = gc::read_ref(init[i]);
+        gc::store_ref(s[i], val);
+        if (isObj(val)) gc::write_b(decodeObj(val));
+        if (i % fill_chunk == 0) gc::poll();
+    }
+    return store;
 }
 
 rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY, false) {
@@ -148,7 +169,7 @@ static void zero_slots(rt_arr_store* store, uint32_t from, uint32_t cnt) {
 rt_arr_store* rt_arr::reserve(uint32_t min_cap) {
     auto store = get_store();
     if (min_cap <= store->get_data().size()) return store;
-    auto _new = rt_arr_store::alloc(min_cap, store->get_data().first(_size));
+    auto _new = rt_arr_store::alloc(min_cap, store->get_data().first(_size), store->has_obj());
     gc::store_ref(_storage, _new);
     gc::write_b(_new);
     return _new;
@@ -354,10 +375,12 @@ void rt_hashmap::rehash(uint32_t new_cap) {
     auto new_slots = rt_arr_store::alloc(new_cap * 2, {});
     new_slots->set_has_obj();
     auto nc = new_ctrl->get_data().data();
+    size_t n = 0;
     for_each([&](Value key, Value val) {
         auto k = asString(key);
         auto hash = hash_key(k);
         fill_slot(nc, new_slots, find_insert_slot(nc, new_cap, hash), hash, k, val);
+        if (++n % fill_chunk == 0) gc::poll();
     });
     gc::store_ref(_ctrl, new_ctrl);
     gc::store_ref(_slots, new_slots);
