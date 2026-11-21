@@ -211,6 +211,16 @@ void ASTTransformer::visitUnaryExpr(AST::UnaryExpr* expr) {
         case TokenType::DECREMENT: op = expr->isPrefix ? CFG::UnaryOp::DEC_PRE : CFG::UnaryOp::DEC_POST; break;
     }
     auto dbg = AST::UnaryExprDebugInfo(expr->op);
+    if((op == CFG::UnaryOp::INC_POST || op == CFG::UnaryOp::DEC_POST) && rhs->type == CFG::NodeType::COLLECTION_GET){
+        auto get = std::reinterpret_pointer_cast<CFG::CollectionGet>(rhs);
+        auto one = std::make_shared<CFG::LiteralExpr>(1.0, AST::LiteralDebugInfo(expr->op));
+        auto setTy = op == CFG::UnaryOp::INC_POST ? CFG::SetType::INC_POST : CFG::SetType::DEC_POST;
+        returnedExpr = std::make_shared<CFG::CollectionSet>(
+            get->collection, get->field, one, setTy,
+            AST::CollectionSetDebugInfo(get->dbgInfo.accessor, expr->op)
+        );
+        return;
+    }
     returnedExpr = std::make_shared<CFG::UnaryExpr>(rhs, op, dbg);
 }
 
@@ -515,18 +525,24 @@ void ASTTransformer::visitClassDecl(AST::ClassDecl* decl) {
         str = (method.isPublic ? str : ("priv." + str));
 
         // Creates new type for each method(if it's an override then just override the field in classTy)
-        auto methodTy = std::make_shared<types::FunctionType>(method.method->args.size(),
-                                                              getBasicType(types::TypeFlag::ANY), false);
+        auto methodTy = std::make_shared<types::FunctionType>(
+            method.method->args.size(), getBasicType(types::TypeFlag::ANY), false
+        );
         methodTys.push_back(methodTy);
 
 
+        // An override takes the inherited method's slot, the class type is the map that has inherited methods
         int methodArrIndex = currentClass->classTy->methods.size();
-        if(currentClass->methods.contains(str)){
+        if(currentClass->classTy->methods.contains(str)){
             methodArrIndex = currentClass->classTy->methods[str].second;
+            for(auto p = currentClass->parent; p; p = p->parent)
+                p->classTy->overridden.insert(str);
         }
 
         classTy->methods.insert_or_assign(str, std::make_pair(methodTy, methodArrIndex));
     }
+    auto ownCtor = decl->getName().getLexeme();
+    classTy->ctor = classTy->methods.contains(ownCtor) ? ownCtor : (currentClass->parent ? currentClass->parent->classTy->ctor : "");
 
     // Process the methods after forward declaring the fields
     processMethods(decl->getName().getLexeme(), decl->methods, methodTys);
@@ -637,11 +653,11 @@ void ASTTransformer::visitForStmt(AST::ForStmt* stmt) {
 }
 void ASTTransformer::visitBreakStmt(AST::BreakStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::BREAK, dbg)};
+    nodesToReturn = {current->set_antecedents(std::make_shared<CFG::UncondJump>(CFG::JumpType::BREAK, dbg))};
 }
 void ASTTransformer::visitContinueStmt(AST::ContinueStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::CONTINUE, dbg)};
+    nodesToReturn = {current->set_antecedents(std::make_shared<CFG::UncondJump>(CFG::JumpType::CONTINUE, dbg))};
 }
 
 vector<std::variant<double, bool, void*, string>> ASTTransformer::getCaseConstants(vector<Token>& constants){
@@ -707,7 +723,7 @@ void ASTTransformer::visitCaseStmt(AST::CaseStmt* _case) {
 }
 void ASTTransformer::visitAdvanceStmt(AST::AdvanceStmt* stmt) {
     auto dbg = AST::UncondJmpDebugInfo(stmt->keyword);
-    nodesToReturn = {std::make_shared<CFG::UncondJump>(CFG::JumpType::ADVANCE, dbg)};
+    nodesToReturn = {current->set_antecedents(std::make_shared<CFG::UncondJump>(CFG::JumpType::ADVANCE, dbg))};
 }
 
 void ASTTransformer::visitReturnStmt(AST::ReturnStmt* stmt) {

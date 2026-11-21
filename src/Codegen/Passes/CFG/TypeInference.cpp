@@ -205,7 +205,7 @@ class VariableTypeFinder : CFG::CFGVisitor {
         return ret_target(visit_antecedents(stmt));
     }
     void visitUncondJump(CFG::UncondJump* stmt) override {
-        // Should never be reached
+        return ret_target(visit_antecedents(stmt));
     }
     void visitIfStmt(CFG::IfStmt* stmt) override {
         if (auto tmp = extract_type(stmt->cond); !typeFlagMatch(tmp, TypeFlag::UNKNOWN)) {

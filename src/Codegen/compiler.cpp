@@ -10,8 +10,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Constants.h"
 
-#include <iostream>
-
 using namespace compileCore;
 
 // Numbers, bools and nil are never references to a managed object
@@ -50,7 +48,8 @@ llvm::orc::ThreadSafeModule Compiler::compile(std::shared_ptr<CFG::Function> _co
             stmt->codegen(this); // Codegen of statements returns nullptr, so we can safely discard it
         }
     }catch(CompilerError err){
-        std::cout<<fmt::format("Compiler exited because of error: '{}'.", err.reason);
+        errHandler.displayErrors();
+        exit(64);
     }
     // Get all string constants into gc
     pastAllocas([this](auto& tb)  {
@@ -515,28 +514,35 @@ llvm::Value* Compiler::visitInvokeExpr(CFG::InvokeExpr* expr) {
 llvm::Value* Compiler::visitNewExpr(CFG::NewExpr* expr) {
     debugEmitter.emitNewLocation(builder, expr->dbgInfo.keyword);
     Class& klass = classes[expr->className];
-    string name = expr->className.substr(expr->className.rfind(".")+1, expr->className.size()-1);
     // The runtime sizes the instance from the class' field count and memcpys the already nulled
     // field template in, so instantiation doesn't have to write each field.
     llvm::Value* raw = builder.CreateCall(safeGetFunc("create_inst"),
                                           {klass.classPtr, klass.fieldTemplatePtr}, "inst");
     llvm::Value* inst = RtInst::from_raw(_bridge, raw).to_val();
-    // If there is a constructor declared in this class, call it, else just return instance
+    // The constructor's argCount counts 'this'
+    size_t params = 0;
+    if (klass.ty->methods.contains(klass.ty->ctor))
+        params = std::reinterpret_pointer_cast<types::FunctionType>(klass.ty->methods[klass.ty->ctor].first)->argCount - 1;
+    if(params != expr->args.size()){
+        errHandler.reportError(fmt::format("Constructor expects {} parameters, got {} arguments.", params, expr->args.size()),
+                               expr->dbgInfo.paren1);
+        throw CompilerError("Incorrect number of arguments passed");
+    }
+    if(!klass.ty->methods.contains(klass.ty->ctor)) return inst;
 
-    if(!klass.ty->methods.contains(name)) return inst;
-
-    std::pair<types::tyPtr, uInt64> fnty = klass.ty->methods[name];
-    auto fn  = _tyhelp.ty_to_fn(fnty.first);
+    auto [m_ty, m_idx] = klass.ty->methods[klass.ty->ctor];
+    auto fn  = _tyhelp.ty_to_fn(m_ty);
     // Methods live inline in the class' method array, so the slot address is the closure; tag it
     auto ptr = _ct.constObjToVal(
-        llvm::ConstantExpr::getInBoundsGetElementPtr(_bridge.sty(bridge_ty::rt_closure_aligned),
-                                                     klass.methodArrPtr, builder.getInt32(fnty.second)),
-        RtClosure::tag);
+        llvm::ConstantExpr::getInBoundsGetElementPtr(
+                _bridge.sty(bridge_ty::rt_closure_aligned),
+                klass.methodArrPtr, builder.getInt32(m_idx)
+            ),
+        RtClosure::tag
+    );
     std::vector<llvm::Value*> args = { ptr, inst };
     for(const auto& arg : expr->args) args.push_back(arg->codegen(this));
     return builder.CreateCall(fn, args);
-    // TODO: error if there are arguments passed when the constructor doesn't exist
-
 }
 
 //TODO: create a wrapper function that takes a single argument(param) in an array and then calls the function with them
@@ -1254,8 +1260,10 @@ llvm::Value* Compiler::decoupleSetOperation(llvm::Value* storedVal, llvm::Value*
     auto num2 = _tyhelp.ESLValTo(newVal, builder.getDoubleTy());
     switch(opTy){
         case CFG::SetType::ADD_SET:
+        case CFG::SetType::INC_POST:
             return builder.CreateFAdd(num1, num2);
         case CFG::SetType::SUB_SET:
+        case CFG::SetType::DEC_POST:
             return builder.CreateFSub(num1, num2);
         case CFG::SetType::MUL_SET:
             return builder.CreateFMul(num1, num2);
@@ -1335,7 +1343,7 @@ llvm::Value* Compiler::setArrElement(llvm::Value* arr, llvm::Value* index, llvm:
 
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     elem.store(val);
-    return val;
+    return opTy == CFG::SetType::INC_POST || opTy == CFG::SetType::DEC_POST ? storedVal : val;
 }
 llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm::Value* val, bool optIdx, bool optVal,
                                      CFG::SetType opTy, Token dbg){
@@ -1364,7 +1372,7 @@ llvm::Value* Compiler::setMapElement(llvm::Value* map, llvm::Value* field, llvm:
 
     val = _tyhelp.CastToESLVal(decoupleSetOperation(storedVal, val, opTy, dbg));
     builder.CreateCall(safeGetFunc("hashmap_set"), {map, field, val});
-    return val;
+    return opTy == CFG::SetType::INC_POST || opTy == CFG::SetType::DEC_POST ? storedVal : val;
 }
 
 // Switch stmt stuff

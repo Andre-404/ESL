@@ -492,6 +492,8 @@ namespace CFG{
         AND_SET,
         OR_SET,
         XOR_SET,
+        INC_POST,
+        DEC_POST,
     };
     class CollectionSet : public TypedExpr{
     public:
@@ -731,7 +733,8 @@ namespace CFG{
         CONTINUE,
         ADVANCE
     };
-    class UncondJump : public CFGNode{
+    // A statement so that type inference can walk back through it to what ran before the jump
+    class UncondJump : public CFGStmt{
     public:
         JumpType jmpType;
         AST::UncondJmpDebugInfo dbgInfo;

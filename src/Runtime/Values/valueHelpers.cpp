@@ -9,7 +9,12 @@ using namespace valueHelpers;
 string valueHelpers::toString(Value x, std::shared_ptr<ankerl::unordered_dense::set<object::rt_obj*>> stack){
     switch(getType(x)){
         case ValueType::NUMBER:
-            if(isInt(x)) return std::to_string(static_cast<int64_t>(round(decodeNumber(x))));
+            if(isInt(x)) {
+                // int64_t can't hold integral doubles from 2^63 up, fmt prints those (slower)
+                // + 0.0 makes -0 print as 0
+                double r = round(decodeNumber(x)) + 0.0;
+                return std::abs(r) < 9223372036854775808.0 ? std::to_string(int64_t(r)) : fmt::format("{:.0f}", r);
+            }
             return std::to_string(decodeNumber(x));
         case ValueType::BOOL:
             return (decodeBool(x)) ? "true" : "false";

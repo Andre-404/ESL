@@ -1,4 +1,5 @@
 #pragma once
+#include <limits>
 #include "../Objects/objects.h"
 #include "valueHelpers.h"
 
@@ -15,7 +16,11 @@ static ValueType getType(Value x){
     return ValueType::NIL;
 }
 
-inline Value encodeNumber(double x){ return *reinterpret_cast<Value*>(&x); }
+// A NaN's payload could hold any tag, so NaNs from outside jitted code all become the canonical one
+inline Value encodeNumber(double x){
+    if (x != x) x = std::numeric_limits<double>::quiet_NaN();
+    return *reinterpret_cast<Value*>(&x);
+}
 inline Value encodeBool(bool x){ return mask_signature_bool | x; }
 inline Value encodeObj(object::rt_obj* x){ return mask_signature_obj | reinterpret_cast<Value>(x) | +x->type(); }
 inline Value encodeNil(){ return mask_signature_null; }

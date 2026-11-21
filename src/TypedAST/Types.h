@@ -1,6 +1,7 @@
 #pragma once
 #include "../common.h"
 #include <memory>
+#include <unordered_set>
 
 namespace types{
     enum class TypeFlag{
@@ -72,7 +73,11 @@ namespace types{
         // Privates are prefixed with "priv."
         std::unordered_map<string, std::pair<tyPtr, uInt64>> fields;
         std::unordered_map<string, std::pair<tyPtr, uInt64>> methods;
+        // Methods some subclass overrides, calls to them have to look at the instance's own class
+        std::unordered_set<string> overridden;
         string name;
+        // Key in methods of the constructor new calls: the class' own, else the closest ancestor's
+        string ctor;
 
         // Fields and methods get filled up from the outside
         ClassType(){

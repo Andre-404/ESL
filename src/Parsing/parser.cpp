@@ -22,14 +22,13 @@ namespace AST {
             case TokenType::NEW:{
                 // new keyword is followed by a call to the class that is being instantiated, class must be an identifier
                 // or module access to identifier
-                // TODO: fix this so it only works with types, no need to call expression
-                auto call = parser->expression(+Precedence::CALL - 1);
-                if(call->type != ASTType::CALL) throw parser->error(token, "Expected a call to class.");
-                auto castCall = std::static_pointer_cast<CallExpr>(call);
-                auto type = castCall->callee->type;
-                if(!(type == AST::ASTType::LITERAL || type == AST::ASTType::MODULE_ACCESS)) {
+                // Only the class and one argument list, so `new C(x).m()` calls m on the new instance
+                auto callee = parser->expression(+Precedence::CALL);
+                if(!(callee->type == AST::ASTType::LITERAL || callee->type == AST::ASTType::MODULE_ACCESS)) {
                     throw parser->error(token, "Expected a class identifier or module access to class identifier.");
                 }
+                Token paren = parser->consume(TokenType::LEFT_PAREN, "Expected a call to class.");
+                auto castCall = std::static_pointer_cast<CallExpr>(parseCall(parser, callee, paren));
                 return make_shared<NewExpr>(castCall, token);
             }
             default: {

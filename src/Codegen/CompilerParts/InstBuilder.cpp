@@ -25,6 +25,8 @@ llvm::Constant* InstBuilder::constMethodVal(llvm::Constant* vtable, uint64_t met
 
 llvm::Value* InstBuilder::optimizeInstGet(known_access access_data, llvm::Constant* vtable) const {
     auto& [inst, field, ty] = access_data;
+    if(ty.overridden.contains(field))
+        return _bridge.inst(inst).klass().method(_b.getInt32(ty.methods.at(field).second)).to_val();
     if(ty.methods.contains(field))
         return constMethodVal(vtable, ty.methods.at(field).second);
     
@@ -119,6 +121,11 @@ llvm::Value* InstBuilder::optimizeInvoke(
     known_access access_data, llvm::Constant* vtable, uint8_t argc, const callback& cb
 ) const {
     auto& [inst, field, ty] = access_data;
+    if(ty.overridden.contains(field)){
+        auto method = _bridge.inst(inst).klass().method(_b.getInt32(ty.methods.at(field).second)).to_val();
+        auto arr = std::array<llvm::Value*, 2>{ method, inst };
+        return cb(_rt.createUnoptFunCall(method, argc + 1), arr);
+    }
     if(ty.methods.contains(field)){
         auto closure = constMethodVal(vtable, ty.methods.at(field).second);
         auto fn = _tyhelp.ty_to_fn(ty.methods.at(field).first);

@@ -105,6 +105,7 @@ void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
 void collector::stw_prune(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::sweep);
     mutate_all(owned, role, prune_pgs_fn());
+    _gate.arrive_and_wait();
 }
 
 size_t collector::stw(std::span<tcb*> owned, stw_role role) {
