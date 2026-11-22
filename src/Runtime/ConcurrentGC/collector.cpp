@@ -66,7 +66,7 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
     if (role == stw_role::collector) {
         // Safe to scan roots because all mutators are stopped
         for (auto [tcb, sp] : _temp_roots)
-            _marker.scan_temp(sp, get_obj_base());
+            _marker.scan_words({ sp }, true, get_obj_base());
         _marker.scan_globals(_roots);
         snapshot = _alloc_sz.load();
         // Every thread has stopped at this point so this is safe to do
@@ -207,7 +207,7 @@ void collector::concurrent_loop() {
     rpmalloc_thread_finalize(1);
 }
 
-// Stw only registers us as waiters and flushes the cache, then _synchronizer will ack for us
+// For op_stw this thread joins the gate, and stw_enter acks once it has flushed its caches
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {

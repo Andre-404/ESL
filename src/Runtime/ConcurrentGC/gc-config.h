@@ -20,7 +20,8 @@ namespace gc {
             for(std::size_t i = 0; i < med_sz_classes; i++){
                 arr[small_sz_classes+i] = (i+1)*med_granularity + small_sz_classes*small_granularity;
             }
-            // Small optimizations for branchless code in pg_meta, is it safe?
+            // Large runs read 1: pg_meta::block_idx divides by it without a branch, and a large
+            // run's only block sits at offset 0
             arr[szclass_cnt] = 1;
             return arr;
         }();
@@ -63,7 +64,7 @@ namespace gc {
         static_assert(total_pages % chunk_pages == 0);
         static_assert(total_pages % (chunk_pages * commit_granule) == 0);
 
-        // size of pg_meta, used by dual_bitmap since it has no access to pg_meta
+        // sizeof(pg_meta), which config can't see; pg-meta.h asserts they match
         constexpr std::size_t hdr_entry_sz = 16;
         constexpr std::size_t hdr_region_sz = total_pages * hdr_entry_sz;
 

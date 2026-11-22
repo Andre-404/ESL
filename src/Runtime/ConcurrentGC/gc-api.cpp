@@ -17,7 +17,7 @@ namespace gc {
     void end_gc() {
         GC->stop();
     }
-    [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt) {
+    tcb_handle* create_tcb(void* start_args, size_t arg_cnt) {
         return GC->create_tcb(static_cast<size_t*>(start_args), arg_cnt);
     }
     void init_thd(tcb_handle* handle, void* stack_start) {
@@ -30,7 +30,7 @@ namespace gc {
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
 
-    [[nodiscard]] managed* detail::alloc(size_t sz, bool pinned, tcb_handle* handle) {
+    managed* detail::alloc(size_t sz, bool pinned, tcb_handle* handle) {
         return GC->alloc(sz, pinned, t(handle));
     }
 
@@ -44,8 +44,6 @@ namespace gc {
         if (tcb->load_state() != detail::thd_state::has_pending) return;
         GC->process_pending(tcb);
     }
-    // These 2 functions exists because the common check for them will be inlined into llvm
-    // In the interest of having a complete gc the above functions are also provided which do the check + action
     void exec_at_safepoint(tcb_handle* handle) { GC->process_pending(t(handle)); }
     void push_wbbuf(tcb_handle* handle) { GC->flush_wbbuf(t(handle)); }
 }

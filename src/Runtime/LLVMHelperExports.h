@@ -157,7 +157,11 @@ EXPORT void create_new_thd(wrapper llvmWrapper, int64_t* alloca, int64_t argc){
     memcpy(mem, alloca, argc*sizeof(Value));
     auto tcb = gc::create_tcb(mem, argc);
     pthread_t p;
-    pthread_create(&p, nullptr, llvmWrapper, tcb);
+    // The tcb is already registered, and a thread that never runs would hold up every later pause
+    if (auto err = pthread_create(&p, nullptr, llvmWrapper, tcb)) {
+        fmt::print(stderr, "Failed to create a thread: {}\n", std::strerror(err));
+        std::abort();
+    }
 }
 
 EXPORT void thd_init(uintptr_t* frameAddr, gc::tcb_handle* handle){

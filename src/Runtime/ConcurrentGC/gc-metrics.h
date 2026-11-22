@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include "../../Includes/fmt/core.h"
 
@@ -107,35 +108,22 @@ namespace gc::detail {
             return { concurrent + (pause - stw) + mark, collect(phase::compact) };
         }
 
-        double last_pause_ms() const { return to_ms(get(phase::pause).last); }
-        double mark_pause_ms() const { return to_ms(get(phase::mark).last); }
-        double copy_pause_ms() const { return to_ms(get(phase::copy).last); }
-        double sweep_pause_ms() const { return to_ms(get(phase::sweep).last); }
-
         double max_ms(phase p) const { return to_ms(get(p).max); }
         double avg_ms(phase p) const {
             auto& s = get(p);
             return s.samples ? to_ms(s.total) / s.samples : 0.0;
         }
-        ns last(phase p) const { return get(p).last; }
         size_t cycles() const { return get(phase::pause).samples; }
 
         std::string report() const {
-            return fmt::format(
-                "GC pause metrics over {} cycle(s) (last / max / avg ms):\n"
-                "  pause  {:.3f} / {:.3f} / {:.3f}\n"
-                "  ttsp   {:.3f} / {:.3f} / {:.3f}\n"
-                "  stw    {:.3f} / {:.3f} / {:.3f}\n"
-                "  mark   {:.3f} / {:.3f} / {:.3f}\n"
-                "  copy   {:.3f} / {:.3f} / {:.3f}\n"
-                "  sweep  {:.3f} / {:.3f} / {:.3f}\n",
-                cycles(),
-                last_pause_ms(), max_ms(phase::pause), avg_ms(phase::pause),
-                to_ms(last(phase::ttsp)), max_ms(phase::ttsp), avg_ms(phase::ttsp),
-                to_ms(last(phase::stw)), max_ms(phase::stw), avg_ms(phase::stw),
-                mark_pause_ms(), max_ms(phase::mark), avg_ms(phase::mark),
-                copy_pause_ms(), max_ms(phase::copy), avg_ms(phase::copy),
-                sweep_pause_ms(), max_ms(phase::sweep), avg_ms(phase::sweep));
+            static constexpr std::pair<phase, const char*> rows[] = {
+                { phase::pause, "pause" }, { phase::ttsp, "ttsp" }, { phase::stw, "stw" },
+                { phase::mark, "mark" }, { phase::copy, "copy" }, { phase::sweep, "sweep" },
+            };
+            auto out = fmt::format("GC pause metrics over {} cycle(s) (last / max / avg ms):\n", cycles());
+            for (auto [p, name] : rows)
+                out += fmt::format("  {:<6} {:.3f} / {:.3f} / {:.3f}\n", name, to_ms(get(p).last), max_ms(p), avg_ms(p));
+            return out;
         }
     };
 }

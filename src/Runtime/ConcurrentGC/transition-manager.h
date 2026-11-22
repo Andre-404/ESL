@@ -10,7 +10,7 @@ namespace gc::detail {
         post_manager() : _unack(0) {}
 
         // Returns handshaked threads so that work can be done on them
-        // [possible transitions]: running -> running_pending, blocked -> handshaking (neither safe)
+        // [possible transitions]: running -> has_pending, blocked -> handshaking (neither safe)
         std::vector<tcb*> post(auto snapshot, uint8_t opcode) {
             assert(_unack == 0);
             // Must set size here since some threads could complete their pending tasks while we're still iterating
@@ -38,7 +38,7 @@ namespace gc::detail {
                         ack();
                         break;
                     }
-                    // To be able to post unack has to be 0, so a thread in running_pending has acked and is ready for a new task
+                    // To be able to post unack has to be 0, so a thread in has_pending has acked and is ready for a new task
                     // its just lagging behind in some thread local work it needs to do so we wait for it to finish
                     if (state == thd_state::has_pending) {
                         t->wait_transition(thd_state::has_pending);
@@ -70,17 +70,17 @@ namespace gc::detail {
             }
         }
         // Check if we need to run should happen outside
-        // [possible transitions]: running_pending -> running(safe)
+        // [possible transitions]: has_pending -> running(safe)
         template<typename F>
         void execute_pending(tcb* t, F exec) {
             assert(t->load_state() == thd_state::has_pending);
-            // transition to running_pending has release so opcode is surely visible
+            // transition to has_pending has release so opcode is surely visible
             exec(t);
             t->set_opcode(0); // reset opcode for sanity
             t->transition(thd_state::running);
         }
 
-        // [possible transitions]: running_pending -> running (safe), running -> blocked (not safe)
+        // [possible transitions]: has_pending -> running (safe), running -> blocked (not safe)
         template<typename F>
         void enter_blocked(tcb* t, F&& exec) {
             while (true) {
@@ -90,7 +90,7 @@ namespace gc::detail {
                     execute_pending(t, std::forward<F>(exec));
                     continue;
                 }
-                // Only way to enter this function is from running_pending or running, everything else violates invariant
+                // Only way to enter this function is from has_pending or running, everything else violates invariant
                 assert(state == thd_state::running);
                 if (t->try_transition(thd_state::running, thd_state::blocked)) break;
             }
@@ -112,7 +112,7 @@ namespace gc::detail {
             }
         }
 
-        // [possible transitions]: running_pending -> running (safe), running -> dead (not safe)
+        // [possible transitions]: has_pending -> running (safe), running -> dead (not safe)
         template<typename F>
         void thread_exit(tcb* t, F&& exec) {
             t->get_mark_info().untrack_stack();

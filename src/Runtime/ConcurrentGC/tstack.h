@@ -42,17 +42,7 @@ namespace gc::detail {
     public:
         tstack() : _head(nullptr) {}
 
-        void lfpush(T* node) {
-            auto ref = std::atomic_ref { _head };
-            auto old_head = ref.load(std::memory_order_relaxed);
-            T* new_head;
-
-            do {
-                auto [ptr, cnt] = unpack_node(old_head);
-                node->link(ptr);
-                new_head = pack_node(node, cnt + 1);
-            } while (!ref.compare_exchange_weak(old_head, new_head, std::memory_order_release, std::memory_order_relaxed));
-        }
+        void lfpush(T* node) { lfpush_range(node, node); }
         T* lfpop() {
             auto ref = std::atomic_ref { _head };
             auto old_head = ref.load(std::memory_order_acquire);
