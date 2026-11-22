@@ -18,6 +18,7 @@
 using namespace gc;
 using namespace gc::detail;
 using gc::test::test_page;
+using gc::test::for_each_marked;
 
 namespace {
     constexpr size_t kBlock = 64;
@@ -78,7 +79,7 @@ namespace {
             auto out = std::map<uint8_t*, uint8_t*> {};
             size_t g = 0;
             for (auto* p : pages)
-                p->pg()->for_each_marked([&](uint16_t b) {
+                for_each_marked(p->pg(), [&](uint16_t b) {
                     out[p->slot_addr(b)] = pages[g / kCap]->slot_addr(uint16_t(g % kCap));
                     ++g;
                 });
@@ -269,7 +270,7 @@ TEST_F(CopierTest, BlocksThatArentAPowerOfTwoForwardToTheirNewHome) {
     auto want = std::map<uint8_t*, uint8_t*> {};
     size_t g = 0;
     for (auto* p : runs)
-        p->pg()->for_each_marked([&](uint16_t b) {
+        for_each_marked(p->pg(), [&](uint16_t b) {
             want[p->slot_addr(b)] = runs[g / cap]->slot_addr(uint16_t(g % cap));
             ++g;
         });
@@ -299,7 +300,7 @@ TEST_F(CopierTest, BigBlocksForwardToTheirNewHome) {
     auto want = std::map<uint8_t*, uint8_t*> {};
     size_t g = 0;
     for (auto* p : runs)
-        p->pg()->for_each_marked([&](uint16_t b) {
+        for_each_marked(p->pg(), [&](uint16_t b) {
             want[p->slot_addr(b)] = runs[g / cap]->slot_addr(uint16_t(g % cap));
             ++g;
         });
@@ -360,7 +361,7 @@ TEST_F(CopierTest, KeptRunsAreMarkedFromTheFrontAndTheTailIsEmpty) {
     EXPECT_FALSE(sorted[2]->pg()->is_active()) << "the emptied tail is retired";
     // Marked from the front: every marked block comes before every unmarked one
     size_t blk = 0;
-    sorted[1]->pg()->for_each_marked([&](uint16_t b) { EXPECT_EQ(b, blk++) << "block " << b; });
+    for_each_marked(sorted[1]->pg(), [&](uint16_t b) { EXPECT_EQ(b, blk++) << "block " << b; });
     EXPECT_EQ(blk, total - kCap);
 }
 
@@ -483,7 +484,7 @@ TEST_F(CopierTest, APlanThatFreesNothingIsKeptForItsHoles) {
     for (uint16_t b = 0; b < kCap * 8 / 10; b += 2) stamp(*holey, b);
     auto* dense = run_n(kCap * 45 / 100);
     auto old = std::vector<uint8_t*> {};
-    holey->pg()->for_each_marked([&](uint16_t b) { old.push_back(holey->slot_addr(b)); });
+    for_each_marked(holey->pg(), [&](uint16_t b) { old.push_back(holey->slot_addr(b)); });
 
     copier c { 0.85 };
     c.gather(chain({ sparse, holey, dense }));

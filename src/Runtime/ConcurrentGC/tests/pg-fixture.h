@@ -55,4 +55,12 @@ namespace gc::test {
         // Hands the page a fresh mark bitmap, the way the pruner does between cycles
         void next_cycle() { _pg->next_cycle(bits().mark_bits(_pg->block_cnt()).data()); }
     };
+
+    // Calls fn with the index of every marked block, in ascending order
+    template<typename F>
+    void for_each_marked(const detail::pg_meta* pg, F&& fn) {
+        auto words = pg->mark_words();
+        for (size_t w = 0; w < words.size(); ++w)
+            for (auto m = words[w]; m; m &= m - 1) fn(uint16_t(w * 64 + std::countr_zero(m)));
+    }
 }

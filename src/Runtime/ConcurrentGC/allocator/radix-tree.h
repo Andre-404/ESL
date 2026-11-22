@@ -82,7 +82,6 @@ namespace gc::detail {
         constexpr uint32_t start()   const { return field(0); }
         constexpr uint32_t max()     const { return field(field_bits); }
         constexpr uint32_t end()     const { return field(2 * field_bits); }
-        constexpr uint64_t raw()     const { return _data; }
 
         constexpr bool operator==(const summary&) const = default;
 
@@ -291,8 +290,6 @@ namespace gc::detail {
         }
 
     public:
-        using geometry = Geom;
-
         radix_tree_t() : _sums(nullptr), _alloc(), _dirty_lo(~std::size_t(0)), _dirty_hi(0) {}
         radix_tree_t(summary* sums, uint64_t* words) : _sums(sums), _alloc(words), _dirty_lo(~std::size_t(0)), _dirty_hi(0) {
             init_all_free();

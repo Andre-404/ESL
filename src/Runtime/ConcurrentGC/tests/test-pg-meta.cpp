@@ -9,10 +9,11 @@
 using namespace gc;
 using namespace gc::detail;
 using gc::test::test_page;
+using gc::test::for_each_marked;
 
 static std::vector<uint16_t> marked(pg_meta* pg) {
     auto out = std::vector<uint16_t> {};
-    pg->for_each_marked([&](uint16_t b) { out.push_back(b); });
+    for_each_marked(pg, [&](uint16_t b) { out.push_back(b); });
     return out;
 }
 

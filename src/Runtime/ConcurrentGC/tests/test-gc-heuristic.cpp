@@ -50,7 +50,6 @@ TEST(GcHeuristicsTest, InitialHeapIsConfigurable) {
 TEST(GcHeuristicsTest, DefaultLiveSizeIsZero) {
     gc_heuristics h;
     EXPECT_EQ(h.live_size(), 0u);
-    EXPECT_EQ(h.cycles(), 0u);
 }
 
 // ---------------------------------------------------------------- publication
@@ -60,7 +59,6 @@ TEST(GcHeuristicsTest, EndCyclePublishesLiveSize) {
     gc_heuristics h { {}, clk.now() };
     h.end_cycle(clk.advance(20ms), plain_cycle(1000, 5000));
     EXPECT_EQ(h.live_size(), 5000u);
-    EXPECT_EQ(h.cycles(), 1u);
 }
 
 TEST(GcHeuristicsTest, EndCycleRevisesTriggerAwayFromInitialHeap) {
@@ -231,13 +229,14 @@ TEST(GcHeuristicsTest, ABigLiveSetLeavesTheWholeBudget) {
 
 TEST(GcHeuristicsTest, CopyRateLearnsFromTheBytesTheCompactionMoved) {
     fake_clock clk;
-    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6 }, clk.now() };
+    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms }, clk.now() };
     auto s = plain_cycle(MB, MB);
     s.copied_bytes = 4 * MB;
     s.compact_time = 1ms;
     s.evac_move_bytes = 1;   // the estimate must not be what the rate is measured on
     settle(h, clk, s, 100ms);
-    EXPECT_NEAR(h.copy_rate(), 4.0 * MB / 1e-3, 0.01 * 4.0 * MB / 1e-3);
+    // 4 MB per ms, so the 10 ms budget moves 40 MB
+    EXPECT_NEAR(double(h.copy_budget_bytes()), 40.0 * MB, 0.4 * MB);
 }
 
 TEST(GcHeuristicsTest, CopyingIsOnlyWantedWhenTheEstimateClearsTheMinimumGain) {

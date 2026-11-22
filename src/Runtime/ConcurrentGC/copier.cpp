@@ -200,7 +200,6 @@ namespace {
     size_t move(const pg_meta* run, size_t b, uint64_t live, uint8_t* to) {
         size_t moved = 0;
         auto bsz = run->block_sz();
-        auto data = run->get_data();
         for (; live; live &= live - 1, to += bsz) {
             auto from = run->get_data() + (b + std::countr_zero(live)) * bsz;
             assert(to <= from);

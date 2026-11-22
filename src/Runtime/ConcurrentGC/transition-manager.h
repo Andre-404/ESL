@@ -146,6 +146,4 @@ namespace gc::detail {
             }
         }
     };
-    // Will get inlined into llvm code
-    inline bool needs_safepoint(tcb* t) { return t->load_state() == thd_state::has_pending; }
 }

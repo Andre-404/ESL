@@ -162,13 +162,6 @@ namespace gc::detail {
             for (auto w : _bits.mark_bits(block_cnt())) n += std::popcount(w);
             return n;
         }
-        // Calls fn with the index of every marked block, in ascending order, a word at a time
-        template<typename F>
-        void for_each_marked(F&& fn) const {
-            auto words = _bits.mark_bits(block_cnt());
-            for (size_t w = 0; w < words.size(); ++w)
-                for (auto m = words[w]; m; m &= m - 1) fn(uint16_t(w * 64 + std::countr_zero(m)));
-        }
         std::span<const size_t> mark_words() const { return _bits.mark_bits(block_cnt()); }
         // Leaves exactly the first n blocks marked
         void mark_prefix(size_t n) {

@@ -47,7 +47,6 @@ namespace gc::detail {
         double _peak_live;                            // decaying max of recent live sets
         size_t _evac_gain;                            // what the last cycle estimated a copy would free
         gc_clock::time_point _cycle_start;
-        size_t _cycles = 0;
 
         // The only members a mutator may touch.
         std::atomic<size_t> _trigger;
@@ -78,8 +77,6 @@ namespace gc::detail {
 
         size_t heap_trigger() const { return _trigger.load(std::memory_order_relaxed); }
         size_t live_size()    const { return _live_size.load(std::memory_order_relaxed); }
-        size_t cycles()       const { return _cycles; }
-        double copy_rate()    const { return _copy_rate; }
         size_t copy_budget_bytes() const { return size_t(_copy_rate * secs(_cfg.copy_budget)); }
         size_t min_copy_gain() const {
             return std::max(_cfg.min_copy_bytes, size_t(_cfg.min_copy_gain * double(live_size())));
@@ -105,7 +102,6 @@ namespace gc::detail {
             _live_size.store(s.live_bytes, std::memory_order_relaxed);
             _trigger.store(next_trigger(live_set, s.live_bytes, s.black_bytes),
                            std::memory_order_release);
-            ++_cycles;
         }
     };
 }

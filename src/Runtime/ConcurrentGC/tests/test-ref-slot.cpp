@@ -87,7 +87,7 @@ TEST(RefSlotTest, ConcurrentReadersOnlySeeStoredValues) {
 namespace {
     // r14 holds the good color, a thread local under UNIT_TESTS
     struct colored : ::testing::Test {
-        void TearDown() override { detail::platform::write_color(0); }
+        void TearDown() override { platform::write_color(0); }
     };
 }
 
@@ -95,12 +95,12 @@ TEST_F(colored, StoreAddsTheGoodColorAndReadStripsIt) {
     node target;
     managed* ptr = nullptr;
 
-    detail::platform::write_color(config::color_bit);
+    platform::write_color(config::color_bit);
     store_ref(ptr, &target);
     EXPECT_EQ((size_t)load_raw(ptr), (size_t)&target | config::color_bit);
     EXPECT_EQ(read_ref(ptr), &target);
 
-    detail::platform::write_color(0);
+    platform::write_color(0);
     store_ref(ptr, &target);
     EXPECT_EQ(load_raw(ptr), &target);
     EXPECT_EQ(read_ref(ptr), &target);
@@ -110,12 +110,12 @@ TEST_F(colored, NullReadsBackAsNullInEitherColor) {
     node target;
     managed* ptr = &target;
 
-    detail::platform::write_color(config::color_bit);
+    platform::write_color(config::color_bit);
     store_ref(ptr, nullptr);
     EXPECT_EQ((size_t)load_raw(ptr), config::color_bit);
     EXPECT_EQ(read_ref(ptr), nullptr);
 
-    detail::platform::write_color(0);
+    platform::write_color(0);
     store_ref(ptr, nullptr);
     EXPECT_EQ(load_raw(ptr), nullptr);
     EXPECT_EQ(read_ref(ptr), nullptr);

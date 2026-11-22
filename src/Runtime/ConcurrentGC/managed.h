@@ -21,9 +21,6 @@ namespace gc {
         move_state state() {
             return sref().load(std::memory_order_acquire);
         }
-        void set_state(move_state val) {
-            sref().store(val, std::memory_order_release);
-        }
 
         uint8_t get_type_id() const { return _type_id; }
     };

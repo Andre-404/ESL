@@ -107,7 +107,6 @@ namespace gc::detail {
             return { concurrent + (pause - stw) + mark, collect(phase::compact) };
         }
 
-        double max_pause_ms() const { return to_ms(get(phase::pause).max); }
         double last_pause_ms() const { return to_ms(get(phase::pause).last); }
         double mark_pause_ms() const { return to_ms(get(phase::mark).last); }
         double copy_pause_ms() const { return to_ms(get(phase::copy).last); }

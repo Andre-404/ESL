@@ -12,6 +12,5 @@ namespace gc {
     bool obj_traceable(managed* obj);
     // Loads every slot with read_ref(slot, std::memory_order_acquire) to heal them
     void obj_trace(managed* obj, function_ref<void(managed*)> trace);
-    void obj_destroy(managed* obj);
     // Unpinned objects are moved as raw bytes, a whole block at a time
 }

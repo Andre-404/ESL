@@ -286,12 +286,3 @@ TEST(PostManagerTest, AckEventuallyReleasesWaiter) {
     EXPECT_TRUE(wait_until([&]{ return returned.load(); }));
     waiter.join();
 }
-
-TEST(PostManagerTest, NeedsSafepointIsTrueOnlyForHasPending) {
-    tcb t{nullptr, 0};
-    EXPECT_FALSE(needs_safepoint(&t));
-    t.transition(thd_state::has_pending);
-    EXPECT_TRUE(needs_safepoint(&t));
-    t.transition(thd_state::blocked);
-    EXPECT_FALSE(needs_safepoint(&t));
-}

@@ -513,7 +513,7 @@ namespace {
         // What generated code does between operations. Without it a thread never reaches a
         // safepoint, the collector blocks forever in wait_on_all_ack, and no cycle can finish.
         void poll(tcb* t) {
-            if (needs_safepoint(t)) gc->process_pending(t);
+            if (t->load_state() == thd_state::has_pending) gc->process_pending(t);
         }
 
         // A mutator's load of a word slot, for the raw pointer words of the test hooks. Only
