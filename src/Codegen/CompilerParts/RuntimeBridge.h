@@ -68,7 +68,7 @@ public:
     RtArrStore arr_store(llvm::Value* rawPtr) const;
 
     // The gc::managed header as a constant, for compiler-emitted objects.
-    llvm::Constant* const_header(gc::move_state state, object::rt_type type) const;
+    llvm::Constant* const_header(object::rt_type type) const;
 
     // The flag the collector raises to ask threads to take the slow path. Handed to gc_init and
     // read by the write barrier; goes through here so the name only exists in one place.

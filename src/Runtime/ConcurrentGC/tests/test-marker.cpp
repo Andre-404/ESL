@@ -56,14 +56,17 @@ TEST_F(MarkerTest, FlushWbbufMarksEveryValueOfAFullBuffer) {
     m.push_buf(buf);
 }
 
-TEST_F(MarkerTest, ScanGlobalsSkipsUnmanagedObjects) {
+TEST_F(MarkerTest, ScanGlobalsSkipsObjectsOutsideTheHeap) {
     test_page rp{64};
-    rp.construct(0, 1, move_state::unmanaged);
+    // Like a constant the compiler emitted into the program
+    alignas(16) static unsigned char constant[16];
+    auto* obj = new (constant) managed(1);
 
     marker m;
-    size_t addr = reinterpret_cast<size_t>(rp.slot(0));
+    size_t addr = reinterpret_cast<size_t>(obj);
     std::vector<size_t*> roots = { &addr };
     m.scan_globals(roots);
+    EXPECT_EQ(m.trace_n(1 << 20), 0u) << "nothing was pushed to trace";
     EXPECT_EQ(rp.pg()->compute_live(), 0u);
 }
 
@@ -124,18 +127,22 @@ TEST_F(MarkerTest, AliasedRootsAreDeduplicatedByRecordMark) {
     EXPECT_EQ(rp.pg()->compute_live(), 1u);
 }
 
-TEST_F(MarkerTest, PinnedStateObjectSetsPagePinned) {
-    // push_obj passes (state != none) as is_pinned to record_mark.
-    test_page rp{64};
-    rp.construct(0, 1, move_state::pinned);
+TEST_F(MarkerTest, PinnedTypeSetsPagePinned) {
+    int asked = 0;
+    test_custom::hooks.obj_is_pinned = [&](managed* m) { ++asked; return m->get_type_id() == 2; };
+    test_page pinned{64}, loose{64};
+    pinned.construct(0, 2);
+    loose.construct(0, 1);
 
     marker m;
-    size_t a = reinterpret_cast<size_t>(rp.slot(0));
-    std::vector<size_t*> roots = { &a };
+    size_t a = reinterpret_cast<size_t>(pinned.slot(0)), b = reinterpret_cast<size_t>(loose.slot(0));
+    std::vector<size_t*> roots = { &a, &a, &b };
     m.scan_globals(roots);
 
-    EXPECT_EQ(rp.pg()->compute_live(), 1u);
-    EXPECT_TRUE(rp.pg()->has_pinned());
+    EXPECT_EQ(pinned.pg()->compute_live(), 1u);
+    EXPECT_TRUE(pinned.pg()->has_pinned());
+    EXPECT_FALSE(loose.pg()->has_pinned());
+    EXPECT_EQ(asked, 2) << "only the mark that wins reads the object";
 }
 
 TEST_F(MarkerTest, ScanGlobalsAcrossManyBuffersStillMarksAll) {
@@ -169,7 +176,7 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
 
 TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
     test_page rp{64};
-    managed* obj = rp.construct(0, 1, move_state::none);
+    managed* obj = rp.construct(0, 1);
 
     // Fake stack: one word containing the object's address.
     std::vector<size_t> stack_words = { reinterpret_cast<size_t>(obj) };
@@ -183,12 +190,11 @@ TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
 
     EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_TRUE(rp.pg()->has_pinned());
-    EXPECT_EQ(obj->state(), move_state::none) << "the pin lives on the page, not in the object";
 }
 
-TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
+TEST_F(MarkerTest, ScanStackWithoutPinLeavesPageUnpinned) {
     test_page rp{64};
-    managed* obj = rp.construct(0, 1, move_state::none);
+    managed* obj = rp.construct(0, 1);
 
     std::vector<size_t> stack_words = { reinterpret_cast<size_t>(obj) };
     thd_mark_info info;
@@ -201,12 +207,11 @@ TEST_F(MarkerTest, ScanStackWithoutPinLeavesObjectStateUnchanged) {
 
     EXPECT_EQ(rp.pg()->compute_live(), 1u);
     EXPECT_FALSE(rp.pg()->has_pinned());
-    EXPECT_EQ(obj->state(), move_state::none);
 }
 
 TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
     test_page rp{64};
-    managed* obj = rp.construct(0, 1, move_state::none);
+    managed* obj = rp.construct(0, 1);
 
     std::vector<size_t> stack_words = { reinterpret_cast<size_t>(obj) };
     thd_mark_info info;
@@ -223,7 +228,6 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
-    EXPECT_EQ(obj->state(), move_state::none) << "the pin lives on the page, not in the object";
     EXPECT_TRUE(rp.pg()->has_pinned()) << "page pinned bit updates even on marked objects";
 }
 

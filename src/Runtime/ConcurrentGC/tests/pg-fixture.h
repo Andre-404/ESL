@@ -38,8 +38,8 @@ namespace gc::test {
 
         uint8_t* slot_addr(uint16_t i) const { return _pg->get_data() + i * _pg->block_sz(); }
         managed* slot(uint16_t i) const { return (managed*)slot_addr(i); }
-        managed* construct(uint16_t i, uint8_t type_id = 1, move_state st = move_state::none) {
-            return new (slot_addr(i)) managed(type_id, st);
+        managed* construct(uint16_t i, uint8_t type_id = 1) {
+            return new (slot_addr(i)) managed(type_id);
         }
 
         bool mark(uint16_t i, bool pinned = false) { return _pg->record_mark(slot(i), pinned); }

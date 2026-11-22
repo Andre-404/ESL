@@ -134,6 +134,7 @@ namespace gc::detail {
             return heap + (this - heap_layout::hdrs(heap)) * config::page_sz;
         }
         bool has_pinned() const { return test_flag(f_pinned); }
+        void pin() { set_flag(f_pinned); }
 
         void next_cycle(uint64_t* new_mark) {
             clear_flag(f_pinned);
@@ -143,7 +144,7 @@ namespace gc::detail {
         // Marking stuff
         [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
             // Pin regardless of the fact that the mark bit is set or not
-            if (is_pinned) set_flag(f_pinned);
+            if (is_pinned) pin();
 
             auto [word, in_word] = mark_at(block_idx(ptr));
             if (word.load(std::memory_order_relaxed) & in_word) return false;

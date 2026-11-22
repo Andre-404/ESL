@@ -103,7 +103,6 @@ protected:
     // NaN-boxes this pointer with `tag`
     llvm::Value* encode(object::rt_type tag) const;
 public:
-    field_ref state() const;    // gc::managed::_state
     field_ref type_id() const;  // gc::managed::_type_id
 };
 

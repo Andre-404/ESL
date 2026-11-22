@@ -9,7 +9,7 @@ using namespace gc;
 namespace {
 
     struct node : managed {
-        node() : managed(0, move_state::none) {}
+        node() : managed(0) {}
     };
     struct unmanaged {};
 

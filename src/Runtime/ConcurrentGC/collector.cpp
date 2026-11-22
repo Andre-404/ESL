@@ -297,15 +297,15 @@ void collector::register_root(size_t *root) {
     _roots.push_back(root);
 }
 
-managed *collector::alloc(size_t sz, bool pinned, tcb * t) {
+managed *collector::alloc(size_t sz, tcb * t) {
     auto& arena = t->get_arena();
     auto res = arena.alloc(sz, _pg_manager);
     if (!res) [[unlikely]] {
         force_collection(sz, t);
-        return alloc(sz, pinned, t);
+        return alloc(sz, t);
     }
     if (!state_is(gc_state::none))
-        pg_meta::head_from_ptr(res)->record_mark(res, pinned);
+        pg_meta::head_from_ptr(res)->record_mark(res, false);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
     if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);

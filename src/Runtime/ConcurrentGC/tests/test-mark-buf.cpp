@@ -15,7 +15,7 @@ using namespace gc::detail;
 namespace {
 
     managed* make_managed(uint8_t id = 0) {
-        return new managed(id, move_state::none);
+        return new managed(id);
     }
 
     class RpmallocEnvironment : public testing::Environment {

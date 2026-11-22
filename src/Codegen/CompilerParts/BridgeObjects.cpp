@@ -81,8 +81,7 @@ field_ref rt_ref::trailing(bridge_ty ty, llvm::Type* elem, llvm::Value* idx, con
 // gc_obj_ref
 // ---------------------------------------------------------------------------------------------
 
-field_ref gc_obj_ref::state() const { return at(bridge_ty::rt_obj, 0, "obj.state"); }
-field_ref gc_obj_ref::type_id() const { return at(bridge_ty::rt_obj, 1, "obj.type"); }
+field_ref gc_obj_ref::type_id() const { return at(bridge_ty::rt_obj, 0, "obj.type"); }
 
 llvm::Value* gc_obj_ref::encode(object::rt_type tag) const {
     return br().call("encode_obj", { ptr(), b().getInt64(+tag) }, "encoded.obj");
@@ -106,7 +105,7 @@ llvm::Value* RtString::str() const {
 
 llvm::Constant* RtString::const_build(runtime_bridge& br, const std::string& str) {
     auto obj = llvm::ConstantStruct::get(br.sty(layout), {
-        br.const_header(gc::move_state::unmanaged, tag),
+        br.const_header(tag),
         br.b().getInt32(str.size())
     });
     // String is stored directly after the header
@@ -165,7 +164,7 @@ llvm::Constant* RtClosure::const_build(
     runtime_bridge& br, uint8_t arity, uint8_t env_cnt, llvm::Constant* fn, llvm::Constant* name
 ) {
     return llvm::ConstantStruct::get(br.sty(layout), {
-        br.const_header(gc::move_state::unmanaged, tag),
+        br.const_header(tag),
         br.b().getInt8(arity),
         br.b().getInt8(env_cnt),
         fn,

@@ -44,7 +44,7 @@ namespace gc {
 
     template<typename T, typename... Args>
     [[nodiscard]] T* esl_make_gc(size_t extra_bytes, Args&&... args) {
-        return make_gc<T>(read_tcb(), T::pinned, extra_bytes, std::forward<Args>(args)...);
+        return make_gc<T>(read_tcb(), extra_bytes, std::forward<Args>(args)...);
     }
 
     template<typename F>

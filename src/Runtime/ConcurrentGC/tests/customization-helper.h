@@ -15,6 +15,8 @@ namespace gc::detail::test_custom {
                 = [](managed*) { return size_t{64}; };
         std::function<void(managed*, std::function<void(managed*)>&)>              obj_trace
                 = [](managed*, auto&) {};
+        std::function<bool(managed*)>                                              obj_is_pinned
+                = [](managed*) { return false; };
 
         // Words are raw pointers, either color
         std::function<managed*(size_t)>                                            to_accurate_ptr

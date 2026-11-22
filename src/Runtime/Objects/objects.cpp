@@ -104,7 +104,7 @@ uint64_t rt_string::hash::operator()(const rt_string* str) const noexcept{
 #pragma region ObjArray
 
 rt_arr_store::rt_arr_store(uint32_t cap)
-    : rt_obj(rt_type::ARRAY_STORAGE_HEADER, false), _contains_obj(0), _capacity(cap) {}
+    : rt_obj(rt_type::ARRAY_STORAGE_HEADER), _contains_obj(0), _capacity(cap) {}
 
 rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, bool has_obj){
     auto capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
@@ -132,7 +132,7 @@ rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, b
     return store;
 }
 
-rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY, false) {
+rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY) {
     _size = size;
     _storage = nullptr;
 }
@@ -280,7 +280,7 @@ static void fill_slot(byte* ctrl, rt_arr_store* store, uint32_t i, uint64_t hash
 }
 
 rt_hashmap::rt_hashmap(uint32_t expected)
-    : rt_obj(rt_type::HASH_MAP, false), _count(0), _growth_left(0), _capacity(cap_for(expected)),
+    : rt_obj(rt_type::HASH_MAP), _count(0), _growth_left(0), _capacity(cap_for(expected)),
       _ctrl(nullptr), _slots(nullptr) {}
 
 void rt_hashmap::gc_init() {

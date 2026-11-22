@@ -52,7 +52,7 @@ static_assert(
     "mark_buf layout moved; gc_write_barrier follows automatically"
 );
 
-static_assert(sizeof(object::rt_obj) == 2, "the object header must stay 2 bytes");
+static_assert(sizeof(object::rt_obj) == 1, "the object header must stay 1 byte");
 static_assert(
     sizeof(object::comp_class) % 16 == 0,
     "comp_class must be a multiple of 16 bytes: the method array sits directly behind it and those "
@@ -127,7 +127,7 @@ void runtime_bridge::create_types() {
     };
 
     make(bridge_ty::rt_obj, "rt_obj",
-        { i8, i8 }
+        { i8 }
     );
     auto obj = _types[+bridge_ty::rt_obj];
 
@@ -250,10 +250,8 @@ void runtime_bridge::verify_layouts() const {
     }
 }
 
-llvm::Constant* runtime_bridge::const_header(gc::move_state state, object::rt_type type) const {
-    return llvm::ConstantStruct::get(
-        _types[+bridge_ty::rt_obj], { _b.getInt8(+state), _b.getInt8(+type) }
-    );
+llvm::Constant* runtime_bridge::const_header(object::rt_type type) const {
+    return llvm::ConstantStruct::get(_types[+bridge_ty::rt_obj], { _b.getInt8(+type) });
 }
 
 // -------------------------------------------------------------------------------------------------

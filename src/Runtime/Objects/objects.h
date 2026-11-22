@@ -29,8 +29,7 @@ namespace object {
 
     class rt_obj : public gc::managed {
     public:
-        static constexpr bool pinned = false;
-        rt_obj(rt_type type, bool is_pinned) : gc::managed(+type, is_pinned ? gc::move_state::pinned : gc::move_state::none) {}
+        rt_obj(rt_type type) : gc::managed(+type) {}
 
         rt_type type() { return static_cast<rt_type>(get_type_id()); }
         size_t get_sz();
@@ -52,7 +51,7 @@ namespace object {
         };
         
         // The bytes are copied in after construction, which can't poll (see objects.cpp)
-        explicit rt_string(uint32_t sz) : rt_obj(rt_type::STRING, false), _size(sz) {
+        explicit rt_string(uint32_t sz) : rt_obj(rt_type::STRING), _size(sz) {
             get_str()[sz] = '\0';
         }
 
@@ -129,7 +128,7 @@ namespace object {
     class rt_buffer : public rt_obj {
         uint32_t _size;
     public:
-        rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER, false), _size(size) {
+        rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER), _size(size) {
             memset(get_data().data(), fill, size);
         }
 
@@ -150,7 +149,7 @@ namespace object {
         char* _name;
     public:
         rt_closure(byte arity, byte env_cnt, compiled_fn f, char* name) 
-            : rt_obj(rt_type::CLOSURE, false), _arity(arity),
+            : rt_obj(rt_type::CLOSURE), _arity(arity),
             _env_cnt(env_cnt), _func(f), _name(name) {}
 
         std::span<Value> get_env() { return {reinterpret_cast<Value *>(this + 1), _env_cnt }; }
@@ -179,7 +178,7 @@ namespace object {
     class rt_inst : public rt_obj {
         comp_class* _klass;
     public:
-        rt_inst(comp_class* klass, Value* field_init) : rt_obj(rt_type::INSTANCE, false), _klass(klass) {
+        rt_inst(comp_class* klass, Value* field_init) : rt_obj(rt_type::INSTANCE), _klass(klass) {
             memcpy(get_fields().data(), field_init, get_fields().size() * sizeof(Value));
         }
 

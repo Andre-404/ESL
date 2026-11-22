@@ -39,6 +39,7 @@ namespace gc {
             || type == +rt_type::INSTANCE
             || type == +rt_type::HASH_MAP;
     }
+    bool obj_is_pinned(managed*) { return false; }
     size_t obj_size(managed* m) {
         auto obj = reinterpret_cast<object::rt_obj*>(m);
         return obj->get_sz();

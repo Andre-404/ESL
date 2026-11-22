@@ -10,11 +10,13 @@ namespace gc::detail {
 
         // Returns true if buf is full
         [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj, bool force_pin = false) {
-            auto state = obj->state();
-            if (state == move_state::unmanaged) [[unlikely]] return false;
+            // Constants compiled into the program live outside the heap
+            if (!heap_layout::in_heap(obj)) [[unlikely]] return false;
 
             auto pg = pg_meta::head_from_ptr(obj);
-            auto won = pg->record_mark(obj, force_pin || state != move_state::none);
+            auto won = pg->record_mark(obj, force_pin);
+            // Only a won mark reads the object
+            if (won && obj_is_pinned(obj)) [[unlikely]] pg->pin();
             if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
 
             return buf->push(obj);

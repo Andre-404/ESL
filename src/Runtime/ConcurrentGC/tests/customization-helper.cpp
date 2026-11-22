@@ -5,6 +5,7 @@ namespace gc {
     using namespace detail;
     bool   obj_traceable(managed* m)        { return test_custom::hooks.obj_traceable(m); }
     size_t obj_size(managed* m)             { return test_custom::hooks.obj_size(m); }
+    bool   obj_is_pinned(managed* m)        { return test_custom::hooks.obj_is_pinned(m); }
     managed* to_accurate_ptr(size_t w)      { return test_custom::hooks.to_accurate_ptr(w); }
     uint8_t* to_possible_ptr(size_t w)      { return test_custom::hooks.to_possible_ptr(w); }
     size_t ptr_to_word(managed* p)          { return test_custom::hooks.ptr_to_word(p); }

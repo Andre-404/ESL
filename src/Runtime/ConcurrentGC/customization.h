@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 
 #include "managed.h"
 #include "support.h"
@@ -12,5 +13,6 @@ namespace gc {
     bool obj_traceable(managed* obj);
     // Loads every slot with read_ref(slot, std::memory_order_acquire) to heal them
     void obj_trace(managed* obj, function_ref<void(managed*)> trace);
+    bool obj_is_pinned(managed* obj);
     // Unpinned objects are moved as raw bytes, a whole block at a time
 }
