@@ -32,6 +32,7 @@ namespace gc::detail {
         // Master copy of the good pointer color, every thread caches it in r14
         std::atomic<uint64_t> _good_color { 0 };
         collection_request _collection_req;
+        bool _express = false;
 
         sync_point _gate;
         std::mutex _root_mtx;
@@ -63,7 +64,7 @@ namespace gc::detail {
         // Page mutators, shared by mutator and worker stw functions. Both tolerate a null
         // list, which is what an arena with no pages of a given size class hands them.
         auto gather_fn() {
-            return [this](pg_meta* start) { _copier.gather(start); return start; };
+            return [this](pg_meta* start) { _copier.gather(start, !_express); return start; };
         }
         auto prune_pgs_fn() {
             return [this](pg_meta* start) {
@@ -103,7 +104,7 @@ namespace gc::detail {
         void handle_pending(tcb* handle);
 
         [[gnu::cold, clang::noinline]] void alloc_update(tcb* t, size_t debt);
-        [[gnu::cold, clang::noinline]] void force_collection(int64_t sz, tcb* handle);
+        [[gnu::cold, clang::noinline]] managed* force_collection(size_t sz, tcb* handle);
 
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 

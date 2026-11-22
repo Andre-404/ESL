@@ -136,61 +136,33 @@ TEST(PrunerTest, AlternatingInUseAndEmptyProducesCleanChains) {
     EXPECT_TRUE(empty_set.count(d.pg()));
 }
 
-// The per size class fragmentation table is private now; estimate_evacuation is the only way
-// out of the pruner, so the fragmentation it accumulates is asserted through what compaction
-// would gain and what it would have to move.
+// The per size class fragmentation table is private; evac_gain_bytes is the only way out of the
+// pruner, so the fragmentation it accumulates is asserted through what compaction would gain. It
+// counts only stranded runs, so each page first goes through a sweep with no allocator on it
+// (next_cycle).
 TEST(PrunerTest, HalfFullPagesYieldHalfTheirBytesBack) {
     constexpr auto run_sz = config::small_obj_pgs * config::page_sz;
     pruner p;
-    // Four half full pages pack into two, so two pages worth comes back and the live half
-    // of all four has to move.
+    // Four half full pages pack into two, so two pages worth comes back
     test_page a{64}, b{64}, c{64}, d{64};
     auto cap  = a.pg()->block_cnt();
     auto half = cap / 2;
-    for (auto* tp : { &a, &b, &c, &d }) tp->mark_n(half);
+    for (auto* tp : { &a, &b, &c, &d }) { tp->next_cycle(); tp->mark_n(half); }
     a.pg()->link(b.pg()); b.pg()->link(c.pg()); c.pg()->link(d.pg());
 
     prune(p, a.pg());
 
-    auto live_frac = (double)half / cap;
-    auto e = p.estimate_evacuation();
-    EXPECT_EQ(e.gain_bytes, (4 - (size_t)std::ceil(4 * live_frac)) * run_sz);
-    EXPECT_EQ(e.move_bytes, (size_t)(4 * live_frac * run_sz));
-}
-
-// The estimate used to charge compaction for the *free* part of a page, which made the copy
-// decision most pessimistic exactly where compaction pays best. Sparse pages must report far
-// less to move than they hand back.
-TEST(PrunerTest, MovableBytesAreTheLivePartNotTheFreePart) {
-    constexpr auto run_sz = config::small_obj_pgs * config::page_sz;
-    pruner p;
-    std::vector<std::unique_ptr<test_page>> pages;
-    for (int i = 0; i < 10; ++i) pages.push_back(std::make_unique<test_page>(64));
-    auto cap = pages[0]->pg()->block_cnt();
-    // ~10% live, so ~90% fragmented.
-    for (auto& tp : pages) tp->mark_n(cap / 10);
-    for (size_t i = 0; i + 1 < pages.size(); ++i) pages[i]->pg()->link(pages[i + 1]->pg());
-
-    prune(p, pages[0]->pg());
-
-    auto e = p.estimate_evacuation();
-    EXPECT_GT(e.gain_bytes, 0u);
-    EXPECT_LT(e.move_bytes, e.gain_bytes)
-        << "at ~90% fragmentation there is far less live data to move than there is to reclaim";
-    // The live tenth of ten pages, not the dead nine tenths.
-    EXPECT_LT(e.move_bytes, 2 * run_sz);
+    EXPECT_EQ(p.evac_gain_bytes(), 2 * run_sz);
 }
 
 TEST(PrunerTest, FullyMarkedPageYieldsNothingToReclaim) {
-    constexpr auto run_sz = config::small_obj_pgs * config::page_sz;
     pruner p;
     test_page tp{64};
+    tp.next_cycle();
     tp.mark_n(tp.pg()->block_cnt());
 
     prune(p, tp.pg());
-    auto e = p.estimate_evacuation();
-    EXPECT_EQ(e.gain_bytes, 0u) << "a full page cannot be compacted away";
-    EXPECT_EQ(e.move_bytes, run_sz);
+    EXPECT_EQ(p.evac_gain_bytes(), 0u) << "a full page cannot be compacted away";
 }
 
 TEST(PrunerTest, EmptyPagesDoNotContributeToFragmentationStats) {
@@ -198,9 +170,7 @@ TEST(PrunerTest, EmptyPagesDoNotContributeToFragmentationStats) {
     test_page tp{64};
     prune(p, tp.pg());
 
-    auto e = p.estimate_evacuation();
-    EXPECT_EQ(e.gain_bytes, 0u);
-    EXPECT_EQ(e.move_bytes, 0u) << "an empty page is freed outright, it is not compaction's business";
+    EXPECT_EQ(p.evac_gain_bytes(), 0u) << "an empty page is freed outright, it is not compaction's business";
 }
 
 TEST(PrunerTest, LargePagesContributeToLiveSizeButNotFrag) {
@@ -213,9 +183,7 @@ TEST(PrunerTest, LargePagesContributeToLiveSizeButNotFrag) {
 
     // A large page's block is its whole run, so the run is what it costs
     EXPECT_EQ(p.live_bytes(), config::page_sz);
-    auto e = p.estimate_evacuation();
-    EXPECT_EQ(e.gain_bytes, 0u);
-    EXPECT_EQ(e.move_bytes, 0u) << "large pages are never evacuation candidates";
+    EXPECT_EQ(p.evac_gain_bytes(), 0u) << "large pages are never evacuation candidates";
 }
 
 TEST(PrunerTest, FragStatsAccumulateAcrossMultiplePruneCalls) {
@@ -223,18 +191,16 @@ TEST(PrunerTest, FragStatsAccumulateAcrossMultiplePruneCalls) {
     pruner p;
     test_page a{64}, b{64};
     auto cap = a.pg()->block_cnt();
-    a.mark_n(cap / 4);
-    b.mark_n(cap / 4);
+    for (auto* tp : { &a, &b }) { tp->next_cycle(); tp->mark_n(cap / 4); }
 
     prune(p, a.pg());
-    auto after_one = p.estimate_evacuation();
+    auto after_one = p.evac_gain_bytes();
     prune(p, b.pg());
-    auto after_two = p.estimate_evacuation();
+    auto after_two = p.evac_gain_bytes();
 
     // Two quarter full pages pack into one, which a single page on its own cannot do.
-    EXPECT_EQ(after_one.gain_bytes, 0u);
-    EXPECT_EQ(after_two.gain_bytes, run_sz);
-    EXPECT_GT(after_two.move_bytes, after_one.move_bytes) << "the second page's live data must be counted too";
+    EXPECT_EQ(after_one, 0u);
+    EXPECT_EQ(after_two, run_sz);
 }
 
 TEST(PrunerTest, LiveSizeAccumulatesAcrossMultiplePruneCalls) {
@@ -251,18 +217,18 @@ TEST(PrunerTest, LiveSizeAccumulatesAcrossMultiplePruneCalls) {
 
 TEST(PrunerTest, EndCycleZeroesLiveSizeAndAllFragSlots) {
     pruner p;
-    test_page tp{64};
-    tp.mark_n(5);
-    prune(p, tp.pg());
+    // Two nearly empty pages hold more than a run of free space between them
+    test_page a{64}, b{64};
+    for (auto* tp : { &a, &b }) { tp->next_cycle(); tp->mark_n(5); }
+    a.pg()->link(b.pg());
+    prune(p, a.pg());
     ASSERT_GT(p.live_bytes(), 0);
-    ASSERT_GT(p.estimate_evacuation().move_bytes, 0u);
+    ASSERT_GT(p.evac_gain_bytes(), 0u);
 
     (void)p.end_cycle();
 
     EXPECT_EQ(p.live_bytes(), 0u);
-    auto e = p.estimate_evacuation();
-    EXPECT_EQ(e.gain_bytes, 0u);
-    EXPECT_EQ(e.move_bytes, 0u);
+    EXPECT_EQ(p.evac_gain_bytes(), 0u);
 }
 
 TEST(PrunerTest, PostPruneAllPagesHaveNoLiveBlocks) {

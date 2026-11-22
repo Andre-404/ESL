@@ -653,7 +653,8 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
 // Nothing rewrites pointers in the pause: a copy only flips the color, and every reference left
 // from before it, in a root or inside an object, is forwarded by its next load or by the next
 // mark, which then lets the reloc tables go. Half the chains are only ever walked at the end, so
-// they rely on the marker alone, across several copies
+// they rely on the marker alone, across several copies. Only stranded runs are copied, so the churn
+// stays out of the chains' size class, and the chains grow after the first copy to strand more
 namespace {
     // Copies at the few KB these tests keep live, which the default floor never allows
     struct CopyingCycleTest : CollectorCycleTest {
@@ -667,7 +668,7 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
         managed* next;
         explicit node(uint64_t i) : managed(1), id(i), next(nullptr) {}
     };
-    constexpr int kChains = 16, kLen = 4;
+    constexpr int kChains = 16, kLen = 48;   // three runs of 64 B blocks, a quarter of them live
     test_custom::hooks.obj_trace = [](managed* m, std::function<void(managed*)>& cb) {
         if (auto next = read_ref(static_cast<node*>(m)->next, std::memory_order_acquire)) cb(next);
     };
@@ -679,34 +680,44 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
     auto thd = std::thread { [&, t] {
         gc->thd_prologue(t);
         // Every block is a node, garbage too: the marker may trace whatever the stack scan finds
-        auto make = [&](uint64_t id) { return new (gc->alloc(64, t)) node(id); };
-        // Garbage between the nodes, so the runs they end up in are sparse
-        for (int c = 0; c < kChains; ++c) {
-            node* prev = nullptr;
-            for (int k = 0; k < kLen; ++k) {
-                auto* n = make(c * kLen + k);
-                if (prev) store_ref(prev->next, (managed*)n); else roots[c] = ptr_to_word(n);
-                prev = n;
-                for (int g = 0; g < 3; ++g) make(~0ull);
+        auto make = [&](uint64_t id, size_t sz = 64) { return new (gc->alloc(sz, t)) node(id); };
+        // Garbage between the nodes, so the runs they end up in are sparse. No poll in here, so
+        // no copy moves prev
+        int len = 0;
+        auto grow = [&](int to) {
+            for (int c = 0; c < kChains; ++c) {
+                auto* prev = (node*)nullptr;
+                if (len) {
+                    prev = static_cast<node*>(read_word(roots[c]));
+                    for (int k = 1; k < len; ++k) prev = static_cast<node*>(read_ref(prev->next));
+                }
+                for (int k = len; k < to; ++k) {
+                    auto* n = make(c * kLen * 2 + k);
+                    if (prev) store_ref(prev->next, (managed*)n); else roots[c] = ptr_to_word(n);
+                    prev = n;
+                    for (int g = 0; g < 3; ++g) make(~0ull);
+                }
             }
-        }
+            len = to;
+        };
+        grow(kLen);
         ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
 
         auto walk = [&](int c) {
             auto* n = read_word(roots[c]);
-            for (int k = 0; k < kLen; ++k, n = read_ref(static_cast<node*>(n)->next)) {
+            for (int k = 0; k < len; ++k, n = read_ref(static_cast<node*>(n)->next)) {
                 ASSERT_NE(n, nullptr) << "chain " << c << " cut at " << k;
                 ASSERT_EQ(pg_meta::head_from_ptr(n)->from_interior((uint8_t*)n), n) << "chain " << c << " node " << k;
-                ASSERT_EQ(static_cast<node*>(n)->id, uint64_t(c * kLen + k)) << "chain " << c << " node " << k;
+                ASSERT_EQ(static_cast<node*>(n)->id, uint64_t(c * kLen * 2 + k)) << "chain " << c << " node " << k;
             }
         };
         auto color = platform::read_color();
         for (int i = 0; i < 400'000 && gc->metrics().cycles() < 20; ++i) {
-            make(~0ull);
+            make(~0ull, 128);
             poll(t);
             if (platform::read_color() == color) continue;
             color = platform::read_color();
-            flips++;
+            if (flips++ == 0) grow(2 * kLen);
             for (int c = 0; c < kChains; c += 2) walk(c);
         }
         for (int c = 0; c < kChains; ++c) walk(c);

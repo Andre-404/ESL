@@ -51,6 +51,8 @@ namespace gc::detail {
             // Role and state for the cycle in flight, reset by next_cycle
             f_pinned       = 1 << 2, // holds an object that must not move
             f_active       = 1 << 3, // This page is active
+            f_reached      = 1 << 4, // an allocator moved onto it this cycle
+            f_idle         = 1 << 5, // no allocator reached it last cycle, kept by next_cycle
         };
 
     private:
@@ -136,8 +138,14 @@ namespace gc::detail {
         bool has_pinned() const { return test_flag(f_pinned); }
         void pin() { set_flag(f_pinned); }
 
+        void reach() { set_flag(f_reached); }
+        // No allocator reached it this cycle or the last, so its free space is space nobody needs
+        bool stranded() const { return !test_flag(f_reached) && test_flag(f_idle); }
+
         void next_cycle(uint64_t* new_mark) {
+            if (test_flag(f_reached)) clear_flag(f_idle); else set_flag(f_idle);
             clear_flag(f_pinned);
+            clear_flag(f_reached);
             _bits.flip(new_mark);
         }
 

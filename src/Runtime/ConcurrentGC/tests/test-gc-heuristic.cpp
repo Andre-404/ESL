@@ -208,18 +208,34 @@ TEST(GcHeuristicsTest, RateAlphaControlsResponsiveness) {
     EXPECT_LT(h_fast.heap_trigger(), h_slow.heap_trigger());
 }
 
+// Bug 29: the mark rate started at a 200 MB/s guess and the allocation rate at 0, and the first
+// cycles were blended with them
+TEST(GcHeuristicsTest, TheFirstCycleSetsTheRates) {
+    fake_clock clk;
+    gc_heuristics h { {}, clk.now() };
+    // Marks 2 GB/s, allocates 0.6 GB/s. Pressure 0.3 gives headroom 0.75 - 0.3 * 0.4875, so the
+    // trigger is 1.604x live. Blended with the mark guess it was ~1.355x, with the 0 ~1.706x
+    h.end_cycle(clk.advance(300ms), plain_cycle(180 * MB, 100 * MB, 50ms));
+    EXPECT_NEAR(double(h.heap_trigger()), 160.375 * MB, 0.5 * MB);
+}
+
 // ---------------------------------------------------------------- copying
 
-TEST(GcHeuristicsTest, CopyBudgetIsWhatTheRateMovesInTheBudget) {
+TEST(GcHeuristicsTest, UntilACopyIsTimedTheBudgetIsTheByteCap) {
     fake_clock clk;
-    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms }, clk.now() };
-    EXPECT_EQ(h.copy_budget_bytes(), 1'000'000u);
+    gc_heuristics h { gc_tuning { .initial_copy_bytes = 3 * MB }, clk.now() };
+    EXPECT_EQ(h.copy_budget_bytes(), 3 * MB);
+    auto s = plain_cycle(MB, MB);
+    s.copied_bytes = MB;
+    s.compact_time = 1ms;
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_EQ(h.copy_budget_bytes(), 3 * MB) << "a 1 MB copy is mostly fixed costs";
 }
 
 // Bug 13: the budget used to pay for a pointer walk over the live set, so nothing over ~40MB copied
 TEST(GcHeuristicsTest, ABigLiveSetLeavesTheWholeBudget) {
     fake_clock clk;
-    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms, .min_copy_gain = 0.1 }, clk.now() };
+    gc_heuristics h { gc_tuning { .initial_copy_bytes = 1'000'000, .min_copy_gain = 0.1 }, clk.now() };
     auto s = plain_cycle(MB, 1024 * MB);
     s.evac_gain_bytes = 200 * MB;
     h.end_cycle(clk.advance(100ms), s);
@@ -229,14 +245,16 @@ TEST(GcHeuristicsTest, ABigLiveSetLeavesTheWholeBudget) {
 
 TEST(GcHeuristicsTest, CopyRateLearnsFromTheBytesTheCompactionMoved) {
     fake_clock clk;
-    gc_heuristics h { gc_tuning { .initial_copy_rate = 100e6, .copy_budget = 10ms }, clk.now() };
+    gc_heuristics h { gc_tuning { .copy_budget = 10ms }, clk.now() };
     auto s = plain_cycle(MB, MB);
     s.copied_bytes = 4 * MB;
     s.compact_time = 1ms;
-    s.evac_move_bytes = 1;   // the estimate must not be what the rate is measured on
-    settle(h, clk, s, 100ms);
-    // 4 MB per ms, so the 10 ms budget moves 40 MB
+    h.end_cycle(clk.advance(100ms), s);
+    // 4 MB per ms, so the 10 ms budget moves 40 MB: the first timed copy replaces the cap
     EXPECT_NEAR(double(h.copy_budget_bytes()), 40.0 * MB, 0.4 * MB);
+    s.copied_bytes = 8 * MB;
+    h.end_cycle(clk.advance(100ms), s);
+    EXPECT_NEAR(double(h.copy_budget_bytes()), 52.0 * MB, 0.5 * MB) << "later ones blend in";
 }
 
 TEST(GcHeuristicsTest, CopyingIsOnlyWantedWhenTheEstimateClearsTheMinimumGain) {

@@ -17,7 +17,6 @@ namespace gc::detail {
         size_t allocated_bytes = 0;   // mutator allocation since the previous cycle
         size_t live_bytes      = 0;
         size_t evac_gain_bytes = 0;   // whole pages compaction would hand back
-        size_t evac_move_bytes = 0;   // live bytes compaction would have to move
         // Tracked so we don't give more headroom than there are actual live objects
         size_t black_bytes = 0;
     };
@@ -30,20 +29,20 @@ namespace gc::detail {
         // Half-life of the live-set peak the trigger is sized against
         double live_peak_halflife = 5.0;
         double rate_alpha        = 0.3;
-        double initial_mark_rate = 200e6;   // replaced by the first real measurement
-        double initial_copy_rate = 2e9;     // the slowest compaction the benchmarks measured (2-9 GB/s)
+        size_t initial_copy_bytes = 16u << 20;
+        // Smaller copies are mostly fixed costs, so they don't teach the copy rate
+        size_t min_rate_sample_bytes = 4u << 20;
         // Compaction in a pause aims to fit in this, the rest of the copy phase takes well under 1ms
         std::chrono::nanoseconds copy_budget = std::chrono::milliseconds(10);
-        // A copy flips the color and every live slot heals once after it, so it has to hand back
-        // this fraction of the live set to be worth it
-        double min_copy_gain = 0.2;
+        // (G1's G1HeapWastePercent)
+        double min_copy_gain = 0.05;
         // Below this a copying cycle's fixed costs in the pause outweigh what it frees
         size_t min_copy_bytes = 1u << 20;
     };
 
     class gc_heuristics {
         gc_tuning _cfg;
-        double _alloc_rate, _mark_rate, _copy_rate;   // bytes/second, collector-private
+        double _alloc_rate, _mark_rate, _copy_rate;   // bytes/second, collector-private, 0 until measured
         double _peak_live;                            // decaying max of recent live sets
         size_t _evac_gain;                            // what the last cycle estimated a copy would free
         gc_clock::time_point _cycle_start;
@@ -59,6 +58,8 @@ namespace gc::detail {
         }
         void blend(double& est, double s) const { est = (1.0 - _cfg.rate_alpha) * est + _cfg.rate_alpha * s; }
 
+        void learn(double& est, double s) const { if (est > 0) blend(est, s); else est = s; }
+
         // According to the generational hypothesis most of the recently allocated objects will die
         // because of that we don't count black allocate objects into the headroom for the next trigger
         // (since they are most likely already dead or will be by the start of the next cycle)
@@ -72,25 +73,28 @@ namespace gc::detail {
         }
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
-            : _cfg(cfg), _alloc_rate(0), _mark_rate(cfg.initial_mark_rate), _copy_rate(cfg.initial_copy_rate),
+            : _cfg(cfg), _alloc_rate(0), _mark_rate(0), _copy_rate(0),
               _peak_live(0), _evac_gain(0), _cycle_start(now), _trigger(cfg.initial_heap), _live_size(0) {}
 
         size_t heap_trigger() const { return _trigger.load(std::memory_order_relaxed); }
         size_t live_size()    const { return _live_size.load(std::memory_order_relaxed); }
-        size_t copy_budget_bytes() const { return size_t(_copy_rate * secs(_cfg.copy_budget)); }
+        size_t copy_budget_bytes() const {
+            return _copy_rate > 0 ? size_t(_copy_rate * secs(_cfg.copy_budget)) : _cfg.initial_copy_bytes;
+        }
         size_t min_copy_gain() const {
             return std::max(_cfg.min_copy_bytes, size_t(_cfg.min_copy_gain * double(live_size())));
         }
+        size_t min_copy_bytes() const { return _cfg.min_copy_bytes; }
         // From the last cycle's estimate
         bool wants_copy() const { return _evac_gain >= min_copy_gain(); }
 
         void end_cycle(gc_clock::time_point now, const cycle_stats& s) {
             auto wall = now - _cycle_start;
             _cycle_start = now;
-            blend(_alloc_rate, sample(s.allocated_bytes, wall,        _alloc_rate));
-            blend(_mark_rate,  sample(s.live_bytes,      s.mark_time, _mark_rate));
-            if (s.compact_time > std::chrono::nanoseconds::zero())
-                blend(_copy_rate, sample(s.copied_bytes, s.compact_time, _copy_rate));
+            learn(_alloc_rate, sample(s.allocated_bytes, wall,        _alloc_rate));
+            learn(_mark_rate,  sample(s.live_bytes,      s.mark_time, _mark_rate));
+            if (s.compact_time > std::chrono::nanoseconds::zero() && s.copied_bytes >= _cfg.min_rate_sample_bytes)
+                learn(_copy_rate, sample(s.copied_bytes, s.compact_time, _copy_rate));
             _evac_gain = s.evac_gain_bytes;
 
             auto live_set = s.live_bytes - std::min(s.black_bytes, s.live_bytes);

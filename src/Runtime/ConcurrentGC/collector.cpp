@@ -26,19 +26,18 @@ std::vector<tcb *> collector::post_with_state(uint8_t flags, uint8_t op)  {
     return blocked;
 }
 
-[[gnu::cold, clang::noinline]] void collector::force_collection(int64_t sz, tcb* t) {
+[[gnu::cold, clang::noinline]] managed* collector::force_collection(size_t sz, tcb* t) {
     for (int attempt = 0; attempt < 2; attempt++) {
         _collection_req.request_express();
 
-        int64_t snapshot = _heuristic.live_size() + _alloc_sz;
         set_paused(t);
         _collection_req.await_express_served();
         set_resumed(t);
-        if (snapshot - (int64_t)_heuristic.live_size() > sz) return;
+        if (auto res = t->get_arena().alloc(sz, _pg_manager)) return res;
     }
 
     std::cerr << "Thread " << std::this_thread::get_id()
-        << fmt::format(" failed to allocate {} bytes, heap size is {}, exiting...\n", sz, _alloc_sz);
+        << fmt::format(" failed to allocate {} bytes with {} bytes live, exiting...\n", sz, _heuristic.live_size());
     std::abort();
 }
 
@@ -86,8 +85,9 @@ void collector::stw_copy(std::span<tcb*> owned, stw_role role) {
     _gate.arrive_and_wait();
 
     if (role == stw_role::collector) {
-        auto min_gain = _collection_req.is_express() ? 1 : _heuristic.min_copy_gain();
-        _copier.select(_heuristic.copy_budget_bytes(), min_gain, _gate.expected());
+        // An express collection has a mutator blocked out of memory, so it takes all gather found
+        auto budget = _express ? SIZE_MAX : _heuristic.copy_budget_bytes();
+        _copier.select(budget, _express ? 1 : _heuristic.min_copy_bytes(), _gate.expected());
     }
     _gate.arrive_and_wait();
     if (!_copier.has_plans()) return;
@@ -115,8 +115,7 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
     auto snapshot = stw_mark(owned, role);
     // Marking has healed every pointer into the last copy's old pages
     if (role == stw_role::collector) _pg_manager.relocs().clear();
-    // Only the collector changes the heuristic, and only outside a pause, so every thread agrees
-    if (_heuristic.wants_copy()) [[unlikely]] stw_copy(owned, role);
+    if (_heuristic.wants_copy() || _express) [[unlikely]] stw_copy(owned, role);
     stw_prune(owned, role);
     return snapshot;
 }
@@ -141,6 +140,7 @@ void collector::concurrent_mark() {
 
 size_t collector::worker_stw() {
     auto _ = _metrics.time(gc_metrics::phase::pause);
+    _express = _collection_req.is_express();
     auto blocked = post_with_state(uint8_t(gc_state::stw), op_stw);
     auto snapshot = stw(blocked, stw_role::collector);
     _tcb_registry.with_snapshot([&](auto& thds){
@@ -165,9 +165,7 @@ uint64_t* collector::end_cycle(size_t alloc_snapshot) {
     _cycle.allocated_bytes = alloc_snapshot;
     _cycle.live_bytes      = _pruner.live_bytes();
     _cycle.black_bytes     = alloc_snapshot > _mark_alloc_start ? alloc_snapshot - _mark_alloc_start : 0;
-    auto evac = _pruner.estimate_evacuation();
-    _cycle.evac_gain_bytes = evac.gain_bytes;
-    _cycle.evac_move_bytes = evac.move_bytes;
+    _cycle.evac_gain_bytes = _pruner.evac_gain_bytes();
     _heuristic.end_cycle(gc_clock::now(), _cycle);
     return _pruner.end_cycle();
 }
@@ -299,10 +297,7 @@ void collector::register_root(size_t *root) {
 managed *collector::alloc(size_t sz, tcb * t) {
     auto& arena = t->get_arena();
     auto res = arena.alloc(sz, _pg_manager);
-    if (!res) [[unlikely]] {
-        force_collection(sz, t);
-        return alloc(sz, t);
-    }
+    if (!res) [[unlikely]] res = force_collection(sz, t);
     if (!state_is(gc_state::none))
         pg_meta::head_from_ptr(res)->record_mark(res);
     // Only add size when allocation goes through

@@ -47,7 +47,7 @@ namespace gc::detail {
     public:
         explicit copier(double evac_threshold) : _evac_threshold(evac_threshold), _clists(), _plans(), _moved(0) {}
 
-        void gather(pg_meta* list);
+        void gather(pg_meta* list, bool stranded_only = false);
         size_t select(size_t budget, size_t min_gain = 1, size_t threads = 1);
         // Taking plans doesn't change the answer because the vector is never emptied concurrently
         bool has_plans() const { return !_plans.empty(); }

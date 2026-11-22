@@ -21,14 +21,14 @@ using namespace gc::detail;
     return starts ? starts - 1 : 0;
 }
 
-void copier::gather(pg_meta* list) {
+void copier::gather(pg_meta* list, bool stranded_only) {
     if (!list || list->szclass() == config::large_class) return;
 
     auto cap = list->block_cnt();
     auto local = list_cands {};
     size_t free_blocks = 0;
     for (auto pg = list; pg; pg = pg->next()) {
-        if (!pg->is_active() || pg->has_pinned()) continue;
+        if (!pg->is_active() || pg->has_pinned() || (stranded_only && !pg->stranded())) continue;
         auto live = pg->compute_live();
         auto holes = count_holes(pg->mark_words());
         // Empty runs are retired by the pruner anyway, dense ones aren't worth moving

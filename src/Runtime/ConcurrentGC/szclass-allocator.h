@@ -11,6 +11,7 @@ namespace gc::detail {
         bool find_next_free() {
             auto pg = cur()->next();
             if (!pg) return false;
+            pg->reach();
             _allocator = obj_allocator { *pg };
             return true;
         }
@@ -40,6 +41,7 @@ namespace gc::detail {
             // Dont break an existing link
             assert(!(cur() && cur()->next()));
             pg->unlink(); // Sanity check
+            pg->reach();
             if (cur()) cur()->link(pg);
             else _start = pg;
             _allocator = obj_allocator { *pg };
@@ -52,7 +54,7 @@ namespace gc::detail {
         template<typename F>
         void mutate(F&& mutator) {
             _start = mutator(_start);
-            if (_start) _allocator = obj_allocator { *_start };
+            if (_start) { _allocator = obj_allocator { *_start }; _start->reach(); }
             else _allocator = obj_allocator {};
         }
     };
