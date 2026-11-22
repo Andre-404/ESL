@@ -80,21 +80,23 @@ namespace gc::detail {
             t->transition(thd_state::running);
         }
 
-        // [possible transitions]: has_pending -> running (safe), running -> blocked (not safe)
+        // [possible transitions]: has_pending -> running (safe), running -> <to> (not safe)
         template<typename F>
-        void enter_blocked(tcb* t, F&& exec) {
+        void leave_running(tcb* t, thd_state to, F& exec) {
             while (true) {
                 auto state = t->load_state();
                 // GC cycles are rare compared to the number of time we will be doing something blocking
                 if (state == thd_state::has_pending) [[unlikely]] {
-                    execute_pending(t, std::forward<F>(exec));
+                    execute_pending(t, exec);
                     continue;
                 }
                 // Only way to enter this function is from has_pending or running, everything else violates invariant
                 assert(state == thd_state::running);
-                if (t->try_transition(thd_state::running, thd_state::blocked)) break;
+                if (t->try_transition(thd_state::running, to)) break;
             }
         }
+        template<typename F>
+        void enter_blocked(tcb* t, F&& exec) { leave_running(t, thd_state::blocked, exec); }
 
         // Could be moved outside but i'd rather keep everything in one spot
         // [possible transitions]: blocked -> running (not safe)
@@ -112,18 +114,10 @@ namespace gc::detail {
             }
         }
 
-        // [possible transitions]: has_pending -> running (safe), running -> dead (not safe)
         template<typename F>
         void thread_exit(tcb* t, F&& exec) {
             t->get_mark_info().untrack_stack();
-            while (true) {
-                auto state = t->load_state();
-                if (state == thd_state::has_pending) [[unlikely]] {
-                    execute_pending(t, std::forward<F>(exec));
-                    continue;
-                }
-                if (t->try_transition(thd_state::running, thd_state::dead)) break;
-            }
+            leave_running(t, thd_state::dead, exec);
         }
 
         void prologue(tcb* t) const {

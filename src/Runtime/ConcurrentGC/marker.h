@@ -8,24 +8,25 @@ namespace gc::detail {
     class marker {
         mark_buf_manager _bufs;
 
-        // Returns true if buf is full
-        [[gnu::always_inline, gnu::hot, nodiscard]] bool push_obj(mark_buf* buf, managed* obj, bool force_pin = false) {
+        // True when obj won its mark and has slots to trace
+        [[gnu::always_inline, gnu::hot]] bool mark_obj(managed* obj, bool force_pin = false) {
             // Constants compiled into the program live outside the heap
             if (!heap_layout::in_heap(obj)) [[unlikely]] return false;
 
             auto pg = pg_meta::head_from_ptr(obj);
-            auto won = pg->record_mark(obj, force_pin);
+            auto won = pg->record_mark(obj);
             // Only a won mark reads the object
-            if (won && obj_is_pinned(obj)) [[unlikely]] pg->pin();
-            if (__builtin_unpredictable(!won || !obj_traceable(obj))) return false;
-
-            return buf->push(obj);
+            if (force_pin || (won && obj_is_pinned(obj))) [[unlikely]] pg->pin();
+            return !__builtin_unpredictable(!won || !obj_traceable(obj));
         }
-        [[nodiscard]] mark_buf* replace_buf(mark_buf* buf) {
-            if (!buf->empty()) _bufs.push_full(buf);
-            else return buf;
-
-            return _bufs.pop_empty();
+        // Swaps buf for an empty one once it fills
+        [[gnu::always_inline, gnu::hot]] void push_obj(mark_buf*& buf, managed* obj, bool force_pin = false) {
+            auto cur = buf;
+            if (!mark_obj(obj, force_pin)) return;
+            if (cur->push(obj)) [[unlikely]] {
+                _bufs.push_full(cur);
+                buf = _bufs.pop_empty();
+            }
         }
     public:
         marker() : _bufs() {}
@@ -50,8 +51,7 @@ namespace gc::detail {
             auto buf = _bufs.pop_empty();
             for (auto words : parts)
                 for (auto word : words)
-                    if (auto obj = get_base(to_possible_ptr(word)); obj && push_obj(buf, obj, pin))
-                        buf = replace_buf(buf);
+                    if (auto obj = get_base(to_possible_ptr(word))) push_obj(buf, obj, pin);
             push_buf(buf);
         }
 

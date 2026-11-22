@@ -42,10 +42,10 @@ namespace gc::test {
             return new (slot_addr(i)) managed(type_id);
         }
 
-        bool mark(uint16_t i, bool pinned = false) { return _pg->record_mark(slot(i), pinned); }
+        bool mark(uint16_t i) { return _pg->record_mark(slot(i)); }
         // What a mark phase would have left behind: the first n slots built and marked
-        void mark_n(int n, bool pinned = false) {
-            for (int i = 0; i < n; ++i) { construct(i); mark(i, pinned); }
+        void mark_n(int n) {
+            for (int i = 0; i < n; ++i) { construct(i); mark(i); }
         }
         // The alloc bit obj_allocator's cache flush publishes for a real allocation. Pages built
         // by hand otherwise carry an empty alloc bitmap, which hides what evacuation does to them.

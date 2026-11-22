@@ -23,7 +23,6 @@ namespace gc::detail {
             : _relocs(_layout.relocs(), _layout.reloc_units()), _tables(_layout.hdrs(), _relocs), _spans(_layout.heap()),
             _scavenger(_spans, policy), _bits(_layout.bits()) {}
 
-        uint8_t* heap_base() const { return _layout.heap(); }
         pg_meta* meta_base() const { return _layout.hdrs(); }
         // The alloc/mark bitmap arena the headers point into; the collector drives its flip.
         gc_bits& bits() { return _bits; }

@@ -47,7 +47,7 @@ TEST_F(MarkerTest, FlushWbbufMarksEveryValueOfAFullBuffer) {
     marker m;
     auto buf = m.get_buf();
     uint16_t n = 0;
-    while (!buf->full()) (void)buf->push(held.construct(n++, 1));
+    while (!buf->push(held.construct(n++, 1))) {}
 
     m.flush_wbbuf(buf);
 
@@ -174,7 +174,7 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
     EXPECT_EQ(rp.pg()->compute_live(), 0u);
 }
 
-TEST_F(MarkerTest, ScanStackWithPinSetsTempPinnedAndPagePinned) {
+TEST_F(MarkerTest, ScanStackWithPinSetsPagePinned) {
     test_page rp{64};
     managed* obj = rp.construct(0, 1);
 

@@ -263,7 +263,6 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
 
 void collector::delete_tcb(tcb *t) {
     auto& mark_info = t->get_mark_info();
-    mark_info.capture_ctx();
     flush_wbbuf(t);
     // Invariant: every live object must be reachable by the GC at all times - via
     // a pending request to a running thread or by reading a blocked thread's
@@ -305,7 +304,7 @@ managed *collector::alloc(size_t sz, tcb * t) {
         return alloc(sz, t);
     }
     if (!state_is(gc_state::none))
-        pg_meta::head_from_ptr(res)->record_mark(res, false);
+        pg_meta::head_from_ptr(res)->record_mark(res);
     // Only add size when allocation goes through
     auto debt = arena.get_debt();
     if (debt > config::debt_trigger) [[unlikely]] alloc_update(t, debt);

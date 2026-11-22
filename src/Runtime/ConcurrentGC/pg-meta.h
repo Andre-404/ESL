@@ -142,10 +142,7 @@ namespace gc::detail {
         }
 
         // Marking stuff
-        [[gnu::hot]] bool record_mark(managed* ptr, bool is_pinned) {
-            // Pin regardless of the fact that the mark bit is set or not
-            if (is_pinned) pin();
-
+        [[gnu::hot]] bool record_mark(managed* ptr) {
             auto [word, in_word] = mark_at(block_idx(ptr));
             if (word.load(std::memory_order_relaxed) & in_word) return false;
             return (word.fetch_or(in_word, std::memory_order_relaxed) & in_word) == 0;

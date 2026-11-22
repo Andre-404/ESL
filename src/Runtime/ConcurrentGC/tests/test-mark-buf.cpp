@@ -50,7 +50,6 @@ namespace {
 TEST(MarkBufTest, NewBufIsEmpty) {
     auto buf = mark_buf {};
     EXPECT_TRUE(buf.empty());
-    EXPECT_FALSE(buf.full());
     EXPECT_EQ(buf.pop(), nullptr);
 }
 
@@ -63,7 +62,6 @@ TEST(MarkBufTest, PushReturnsFalseUntilFull) {
     }
     owned.emplace_back(make_managed(127));
     EXPECT_TRUE(buf.push(owned.back().get())) << "128th push should signal full";
-    EXPECT_TRUE(buf.full());
     EXPECT_FALSE(buf.empty());
 }
 
@@ -79,13 +77,11 @@ TEST(MarkBufTest, FillThenDrainRestoresEmpty) {
     auto items = std::array<managed*, 128> {};
     for (auto& p : items) p = make_managed();
     for (auto* p : items) buf.push(p);
-    ASSERT_TRUE(buf.full());
 
     auto popped = 0;
     while (buf.pop()) ++popped;
     EXPECT_EQ(popped, 128);
     EXPECT_TRUE(buf.empty());
-    EXPECT_FALSE(buf.full());
 
     for (auto* p : items) delete p;
 }

@@ -8,16 +8,13 @@ using namespace gc::detail;
 void marker::flush_wbbuf(mark_buf* buf) {
     if (buf->empty()) return;
     auto to_send = _bufs.pop_empty();
-    while (auto val = buf->pop())
-        (void)push_obj(to_send, val);
+    // to_send holds as many as buf, so it never fills before the last one
+    while (auto val = buf->pop()) if (mark_obj(val)) (void)to_send->push(val);
     push_buf(to_send);
 }
 
 void marker::scan_globals(std::span<size_t*> roots)  {
     auto buf = _bufs.pop_empty();
-    auto mark = [&](managed* obj) {
-        if (push_obj(buf, obj)) [[unlikely]] buf = replace_buf(buf);
-    };
     // Runs alongside the mutators, which keep storing to their globals, and push_obj reads the
     // object behind the root, hence acquire (see load_raw)
     for (auto root : roots) {
@@ -25,7 +22,7 @@ void marker::scan_globals(std::span<size_t*> roots)  {
         auto ptr = to_accurate_ptr(word);
         if (!ptr) continue;
         if ((word ^ good_color()) & config::color_bit) ptr = to_accurate_ptr(heal_word(root, word));
-        mark(ptr);
+        push_obj(buf, ptr);
     }
 
     push_buf(buf);
@@ -35,9 +32,7 @@ void marker::scan_globals(std::span<size_t*> roots)  {
     auto main = _bufs.pop_full();
     if (!main) return 0;
 
-    auto mark = [&](managed* obj) {
-        if (push_obj(main, obj)) [[unlikely]] main = replace_buf(main);
-    };
+    auto mark = [&](managed* obj) { push_obj(main, obj); };
 
     size_t cnt = 0;
     while (cnt < bytes) {

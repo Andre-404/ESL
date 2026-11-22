@@ -9,7 +9,7 @@ pg_meta* pg_allocator::alloc_pg(size_t block_sz, size_t num_pgs, bool aligned) {
     auto* page = aligned ? _spans.alloc_aligned(num_pgs, num_pgs) : _spans.alloc(num_pgs);
     if (!page) [[unlikely]] return nullptr;
 
-    auto pg_off = ((uint8_t*)page - heap_base()) / config::page_sz;
+    auto pg_off = heap_layout::page_idx(page);
     if (!_tables.ensure(pg_off, num_pgs)) [[unlikely]] {
         _spans.begin_free().add(page, num_pgs);
         return nullptr;

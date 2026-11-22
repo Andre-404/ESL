@@ -9,9 +9,8 @@ namespace gc::detail {
         obj_allocator _allocator;
 
         bool find_next_free() {
-            auto pg = cur();
-            if (!pg->next()) return false;
-            pg = pg->next();
+            auto pg = cur()->next();
+            if (!pg) return false;
             _allocator = obj_allocator { *pg };
             return true;
         }
@@ -31,7 +30,7 @@ namespace gc::detail {
         szclass_allocator() : _start(nullptr) {};
 
         [[nodiscard, gnu::hot, gnu::always_inline]] managed* alloc() {
-            if (!_allocator.get_pg()) [[unlikely]] return nullptr;
+            if (!cur()) [[unlikely]] return nullptr;
 
             if (auto res = _allocator.allocate()) [[likely]] return res;
             return alloc_slow();
@@ -39,25 +38,20 @@ namespace gc::detail {
 
         void push_pg(pg_meta* pg) {
             // Dont break an existing link
-            assert(!(_allocator.get_pg() && _allocator.get_pg()->next()));
+            assert(!(cur() && cur()->next()));
             pg->unlink(); // Sanity check
-            if (_allocator.get_pg()) {
-                cur()->link(pg);
-                _allocator = obj_allocator { *pg };
-                return;
-            }
-            _start = pg;
-            _allocator = obj_allocator { *_start };
+            if (cur()) cur()->link(pg);
+            else _start = pg;
+            _allocator = obj_allocator { *pg };
         }
 
         void flush_alloc_cache() {
-            if (_allocator.get_pg()) _allocator.flush_cache();
+            if (cur()) _allocator.flush_cache();
         }
 
         template<typename F>
         void mutate(F&& mutator) {
-            auto new_start = mutator(_start);
-            _start = new_start;
+            _start = mutator(_start);
             if (_start) _allocator = obj_allocator { *_start };
             else _allocator = obj_allocator {};
         }

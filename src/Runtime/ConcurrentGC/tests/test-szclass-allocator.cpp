@@ -114,7 +114,7 @@ TEST(SzclassAllocatorTest, MutateReceivesCurrentStart) {
 namespace {
     managed* alloc_and_mark(szclass_allocator& s) {
         managed* m = s.alloc();
-        if (m) pg_meta::head_from_ptr(m)->record_mark(m, false);
+        if (m) pg_meta::head_from_ptr(m)->record_mark(m);
         return m;
     }
 }
@@ -133,7 +133,7 @@ TEST(SzclassAllocatorTest, FullPageIsSkippedToNextPage) {
         managed* m = s.alloc();
         ASSERT_NE(m, nullptr) << "alloc #" << i;
         EXPECT_EQ(pg_meta::head_from_ptr(m), a_pg.pg());
-        a_pg.pg()->record_mark(m, false);
+        a_pg.pg()->record_mark(m);
     }
     ASSERT_EQ(a_pg.pg()->compute_live(), a_pg.pg()->block_cnt());
 

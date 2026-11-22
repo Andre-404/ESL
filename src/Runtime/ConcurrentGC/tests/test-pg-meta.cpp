@@ -65,7 +65,7 @@ TEST(PgMetaTest, NextCycleAdoptsTheMarkBitmapAsAlloc) {
 TEST(PgFlagsTest, PinnedStartsClear) {
     test_page p{64};
     EXPECT_FALSE(p->has_pinned());
-    p.mark(0, true);
+    p->pin();
     EXPECT_TRUE(p->has_pinned());
 }
 
@@ -77,7 +77,7 @@ TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
     ASSERT_EQ(p->num_pages(), 3u);
     ASSERT_EQ(pg_meta::head_from_ptr(p->get_data() + config::page_sz * 2 + 8), p.pg());
 
-    p.mark(0, true);
+    p->pin();
     p.next_cycle();
 
     EXPECT_EQ(p->num_pages(), 3u);
@@ -89,7 +89,7 @@ TEST(PgFlagsTest, NextCycleKeepsTheShapeBits) {
 // A single page has no continuation bit set, and the cycle bits must not fabricate one
 TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
     test_page p{64};
-    p.mark(0, true);
+    p->pin();
     EXPECT_EQ(p->num_pages(), config::small_obj_pgs);
     EXPECT_EQ(p->block_sz(), 64u);
 }
@@ -98,7 +98,7 @@ TEST(PgFlagsTest, CycleFlagsDoNotCreateAContinuation) {
 // mark bitmap. A bit that survived would silently describe the wrong cycle.
 TEST(PgFlagsTest, NextCycleClearsPinned) {
     test_page p{64};
-    p.mark(0, true);
+    p->pin();
     ASSERT_TRUE(p->has_pinned());
 
     p.next_cycle();
@@ -147,19 +147,6 @@ TEST(RecordMarkTest, DuplicateMarkReturnsFalseAndLeavesLiveUnchanged) {
     ASSERT_TRUE(p.mark(3));
     EXPECT_FALSE(p.mark(3)) << "marking the same slot twice must not re-count it";
     EXPECT_EQ(p->compute_live(), 1u);
-}
-
-TEST(RecordMarkTest, IsPinnedTrueSetsHasPinned) {
-    test_page p{64};
-    p.mark(0, true);
-    EXPECT_TRUE(p->has_pinned());
-}
-
-TEST(RecordMarkTest, IsPinnedFalseDoesNotClearPreviouslySetPinned) {
-    test_page p{64};
-    p.mark(0, true);
-    p.mark(1, false);
-    EXPECT_TRUE(p->has_pinned());
 }
 
 TEST(RecordMarkTest, MarkingAllSlotsBringsLiveToBlockCnt) {

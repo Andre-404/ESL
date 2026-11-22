@@ -127,7 +127,7 @@ TEST_F(CopierTest, DenseRunsAreNotCandidates) {
 TEST_F(CopierTest, PinnedRunsAreNotCandidates) {
     auto* a = run_n(kCap / 10);
     auto* b = run_n(kCap / 10);
-    b->mark(0, true);
+    b->pg()->pin();
     copier c { 0.85 };
     c.gather(chain({ a, b }));
     EXPECT_EQ(c.select(kUnlimited), 0u) << "with b pinned, a is alone and frees nothing";

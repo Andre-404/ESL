@@ -20,9 +20,6 @@ namespace gc::detail {
             return _data[--_cnt];
         }
 
-        bool full() const {
-            return _cnt == _data.size();
-        }
         bool empty() const {
             return _cnt == 0;
         }
