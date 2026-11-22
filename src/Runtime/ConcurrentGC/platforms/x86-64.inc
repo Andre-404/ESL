@@ -30,8 +30,12 @@ inline void write_color(uint64_t c) {
     asm volatile("mov %0, %%r14" : : "r"(c));
 }
 
-__attribute__((noinline)) inline void* read_tcb() {
+inline void* read_tcb() {
     void *sp;
     asm volatile("mov %%r15, %0" : "=r"(sp));
     return sp;
+}
+
+inline void set_tcb(void* handle) {
+    __asm__ volatile("mov %0, %%r15" : : "r" (handle));
 }

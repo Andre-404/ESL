@@ -15,7 +15,7 @@
 //   read_ref, store_ref  a mutator's access (gc-api.h), strips and adds the color. Only works for pointer slots
 namespace gc {
     // The color bit a good reference carries in its slot, r14 holds it as is
-    [[gnu::always_inline]] inline size_t good_color() { return detail::platform::read_color(); }
+    [[gnu::always_inline]] inline size_t good_color() { return platform::read_color(); }
 
     template<typename T>
     concept managed_ptr = std::is_pointer_v<T> && std::is_base_of_v<managed, std::remove_pointer_t<T>>;

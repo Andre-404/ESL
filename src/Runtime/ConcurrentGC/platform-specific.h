@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstring>
 
-namespace gc::detail::platform {
+namespace gc::platform {
 #ifdef UNIT_TESTS
     #include "platforms/testing.inc"
 #elif __x86_64
