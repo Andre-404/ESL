@@ -103,21 +103,27 @@ uint64_t rt_string::hash::operator()(const rt_string* str) const noexcept{
 
 #pragma region ObjArray
 
-rt_arr_store::rt_arr_store(uint32_t cap)
-    : rt_obj(rt_type::ARRAY_STORAGE_HEADER), _contains_obj(0), _capacity(cap) {}
-
-rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, bool has_obj){
-    auto capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
-    if(capacity > (1ull << 31)){
-        // TODO: error
-    }
-    auto store = gc::esl_make_gc<rt_arr_store>(capacity * sizeof(Value), capacity);
-    auto s = store->get_data();
+// Polls between chunks, the GC reads no slot until set_has_obj
+rt_arr_store::rt_arr_store(uint32_t cap, uint32_t zero_start)
+    : rt_obj(rt_type::ARRAY_STORAGE_HEADER), _contains_obj(0), _capacity(cap) {
+    auto s = get_data();
     constexpr auto step = copy_chunk / sizeof(Value);
-    for (size_t i = has_obj ? 0 : init.size(); i < s.size(); i += step) {
+    for (size_t i = zero_start; i < s.size(); i += step) {
         memset(&s[i], 0, std::min(step, s.size() - i) * sizeof(Value));
         gc::poll();
     }
+}
+
+rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, bool has_obj){
+    auto capacity = std::bit_ceil(static_cast<uint64_t>(desiredSize));
+    if(capacity > (1ull << 31)) {
+        // TODO: error
+    }
+    // Small optimization for non obj storing arrays, so that we dont write to the same memory twice
+    auto store = gc::esl_make_gc<rt_arr_store>(
+        capacity * sizeof(Value), capacity, has_obj ? 0 : init.size()
+    );
+    auto s = store->get_data();
     if (!has_obj) {
         copy_bytes((char*)s.data(), (const char*)init.data(), init.size()*sizeof(Value));
         return store;
@@ -135,9 +141,6 @@ rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, b
 rt_arr::rt_arr(size_t size) : rt_obj(rt_type::ARRAY) {
     _size = size;
     _storage = nullptr;
-}
-
-void rt_arr::gc_init() {
     auto store = rt_arr_store::alloc(_size, {});
     gc::store_ref(_storage, store);
     gc::write_b(store);
@@ -281,9 +284,7 @@ static void fill_slot(byte* ctrl, rt_arr_store* store, uint32_t i, uint64_t hash
 
 rt_hashmap::rt_hashmap(uint32_t expected)
     : rt_obj(rt_type::HASH_MAP), _count(0), _growth_left(0), _capacity(cap_for(expected)),
-      _ctrl(nullptr), _slots(nullptr) {}
-
-void rt_hashmap::gc_init() {
+      _ctrl(nullptr), _slots(nullptr) {
     auto ctrl_buf = rt_buffer::alloc(_capacity, ctrl_empty);
     gc::store_ref(_ctrl, ctrl_buf);
     gc::write_b(ctrl_buf);

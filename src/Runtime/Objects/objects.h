@@ -50,6 +50,8 @@ namespace object {
             }
         };
         
+        static constexpr bool needs_zeroing = false;
+
         // The bytes are copied in after construction, which can't poll (see objects.cpp)
         explicit rt_string(uint32_t sz) : rt_obj(rt_type::STRING), _size(sz) {
             get_str()[sz] = '\0';
@@ -73,7 +75,10 @@ namespace object {
         uint32_t _capacity;
 
     public:
-        explicit rt_arr_store(uint32_t cap);
+        // The constructor zeroes the slots
+        static constexpr bool needs_zeroing = false;
+
+        explicit rt_arr_store(uint32_t cap, uint32_t zero_start);
 
         std::span<Value> get_data() { return { (Value*)((this+1)), _capacity }; }
         void set_has_obj() {
@@ -98,8 +103,6 @@ namespace object {
         rt_arr_store* reserve(uint32_t min_cap);
     public:
         rt_arr(size_t size);
-
-        void gc_init();
 
         std::span<Value> get_data() { return { get_store()->get_data().data(), _size }; }
         rt_arr_store* get_store() { return gc::read_ref(_storage); }
@@ -128,6 +131,7 @@ namespace object {
     class rt_buffer : public rt_obj {
         uint32_t _size;
     public:
+        static constexpr bool needs_zeroing = false;
         rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER), _size(size) {
             memset(get_data().data(), fill, size);
         }
@@ -148,9 +152,13 @@ namespace object {
         compiled_fn _func;
         char* _name;
     public:
+        // LLVM code fills env
+        static constexpr bool needs_zeroing = false;
+
         rt_closure(byte arity, byte env_cnt, compiled_fn f, char* name) 
-            : rt_obj(rt_type::CLOSURE), _arity(arity),
-            _env_cnt(env_cnt), _func(f), _name(name) {}
+            : rt_obj(rt_type::CLOSURE), _arity(arity), _env_cnt(env_cnt), _func(f), _name(name) {
+                if (_env_cnt > 0) memset(get_env().data(), 0, env_cnt*sizeof(Value));
+            }
 
         std::span<Value> get_env() { return {reinterpret_cast<Value *>(this + 1), _env_cnt }; }
         
@@ -178,6 +186,10 @@ namespace object {
     class rt_inst : public rt_obj {
         comp_class* _klass;
     public:
+        // The whole instance is overwritten with a memcpy after its memory has been allocated
+        // Nothing polls in between
+        static constexpr bool needs_zeroing = false;
+
         rt_inst(comp_class* klass, Value* field_init) : rt_obj(rt_type::INSTANCE), _klass(klass) {
             memcpy(get_fields().data(), field_init, get_fields().size() * sizeof(Value));
         }
@@ -246,8 +258,6 @@ namespace object {
     public:
         // Capacity is sized so that expected entries fit without a rehash
         rt_hashmap(uint32_t expected = 0);
-
-        void gc_init();
 
         uint32_t size() const { return _count; }
         uint32_t capacity() const { return _capacity; }

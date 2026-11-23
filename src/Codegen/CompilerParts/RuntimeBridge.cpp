@@ -295,6 +295,16 @@ void runtime_bridge::declare_runtime_functions() {
         f->addRetAttr(llvm::Attribute::NoUndef);
     };
 
+    auto fresh_ret = [&](llvm::Function* f, uint64_t size) {
+        llvm::AttrBuilder ab(c);
+        ab.addAlignmentAttr(16);
+        ab.addDereferenceableAttr(size);
+        ab.addAttribute(llvm::Attribute::NoAlias);
+        ab.addAttribute(llvm::Attribute::NonNull);
+        ab.addAttribute(llvm::Attribute::NoUndef);
+        f->addRetAttrs(ab);
+    };
+
     // TODO: dllimport is only meaningful on windows
     auto declare = [&](
         const char* name, llvm::Type* ret, std::initializer_list<llvm::Type*> args,
@@ -356,19 +366,7 @@ void runtime_bridge::declare_runtime_functions() {
 
     auto* mkInst = declare("create_inst", ptr, { ptr, ptr }, may_gc_fn);
     mkInst->addFnAttr(llvm::Attribute::NoRecurse);
-    {
-        llvm::AttrBuilder ab(c);
-        // 16 rather than 8: the result gets NaN-boxed, which needs the low 4 bits free
-        ab.addAlignmentAttr(16);
-        mkInst->addRetAttr(ab.getAttribute(llvm::Attribute::Alignment));
-        ab.addDereferenceableAttr(sizeof(object::rt_inst));
-        mkInst->addRetAttr(ab.getAttribute(llvm::Attribute::Dereferenceable));
-    }
-    // A fresh instance can't alias anything that existed before the call, so the field stores the
-    // constructor emits right after don't have to be treated as clobbering unrelated loads
-    mkInst->addRetAttr(llvm::Attribute::NoAlias);
-    mkInst->addRetAttr(llvm::Attribute::NonNull);
-    mkInst->addRetAttr(llvm::Attribute::NoUndef);
+    fresh_ret(mkInst, sizeof(object::rt_inst));
     // The class is stored into the instance, so it is captured. The field template is only copied out of
     mkInst->addParamAttr(0, llvm::Attribute::NonNull);
     mkInst->addParamAttr(0, llvm::Attribute::ReadOnly);
@@ -376,10 +374,11 @@ void runtime_bridge::declare_runtime_functions() {
     mkInst->addParamAttr(1, llvm::Attribute::ReadOnly);
     mkInst->addParamAttr(1, no_capture(c));
 
+    // fn ptr, arity, name, freevar count. The env comes back zeroed
+    fresh_ret(declare("create_closure", ptr, { ptr, i8, ptr, i32 }, may_gc_fn), sizeof(object::rt_closure));
+    
     // First arg is the field count, followed by that many {Value(string), Value} pairs
     boxed_ret(declare("create_hashmap", val, { i32 }, may_gc_fn, true));
-    // fn ptr, arity, name, freevar count, then that many freevars
-    boxed_ret(declare("create_closure", val, { ptr, i8, ptr, i32 }, may_gc_fn, true));
     // Only probes the table and reads the value out with read_ref, it never allocates
     declare("hashmap_get", val, { ptr, ptr }, total_fn)->setOnlyReadsMemory();
     declare("hashmap_set", voidTy, { ptr, ptr, val }, may_gc_fn);

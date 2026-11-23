@@ -84,7 +84,7 @@ EXPORT Value str_cmp(Value lhs, Value rhs){
 }
 
 EXPORT Value alloc_arr(uint32_t arrSize){
-    // gc_init() sizes the storage to bit_ceil(arrSize), so the caller can safely write arrSize elements
+    // The constructor sizes the storage to bit_ceil(arrSize), so the caller can safely write arrSize elements
     return encodeObj(gc::esl_make_gc<rt_arr>(0, arrSize));
 }
 
@@ -107,17 +107,9 @@ EXPORT Value create_hashmap(int nFields, ...){
     return encodeObj(map);
 }
 
-EXPORT Value create_closure(void* fn, uint8_t arity, char* name, int upvalCount, ...){
-    auto ptr = gc::esl_make_gc<rt_closure>(upvalCount*sizeof(Value), arity, upvalCount, fn, name);
-    va_list ap;
-    va_start(ap, upvalCount);
-    for (auto& slot : ptr->get_env()) {
-        auto v = va_arg(ap, Value);
-        gc::store_ref(slot, v);
-        if (isObj(v)) gc::write_b(decodeObj(v));
-    }
-    va_end(ap);
-    return encodeObj(ptr);
+// The env comes back zeroed, the jitted caller fills it
+EXPORT rt_closure* create_closure(void* fn, uint8_t arity, char* name, int upvalCount){
+    return gc::esl_make_gc<rt_closure>(upvalCount*sizeof(Value), arity, upvalCount, fn, name);
 }
 
 EXPORT void gc_add_root(Value* ptr){

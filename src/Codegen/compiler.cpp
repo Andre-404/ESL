@@ -625,20 +625,29 @@ llvm::Value* Compiler::visitCreateClosureExpr(CFG::CreateClosureExpr* expr) {
 
     // Every function is converted to a closure(if even it has 0 freevars for ease of use when calling)
     // If expr->freevars.size() is 0 then no array for freevars is allocated
-    vector<llvm::Value*> closureConstructorArgs = {
-        llvm::ConstantExpr::getBitCast(lambda, builder.getPtrTy()), builder.getInt8(expr->fn->args.size()),
-        _ct.createConstStr(expr->fn->name), builder.getInt32(expr->freevars.size())
-    };
+    auto closure = RtClosure::from_raw(
+        _bridge,
+        builder.CreateCall(safeGetFunc("create_closure"), {
+            llvm::ConstantExpr::getBitCast(lambda, builder.getPtrTy()),
+            builder.getInt8(expr->fn->args.size()),
+            _ct.createConstStr(expr->fn->name),
+            builder.getInt32(expr->freevars.size())
+        },
+        "closure"
+    ));
 
+    // The env comes back zeroed
     // Freevars are gathered after switching to the enclosing function
     for(int i = 0; i < expr->freevars.size(); i++){
         auto& freevar = expr->freevars[i];
-        closureConstructorArgs.push_back(builder.CreateLoad(_tyhelp.getESLValType(), variables.at(freevar.first->uuid)));
+        // Freevars are on the stack so a plain load is fine
+        auto val = builder.CreateLoad(_tyhelp.getESLValType(), variables.at(freevar.first->uuid));
+        closure.env(i).store(val);
+        _bridge.call("gc_write_barrier", { val });
         // Removes the freevars uuid from the variable pool since compilation for this function is done and this won't be used again
         variables.erase(freevar.second->uuid);
     }
-    // Create the closure and put the freevars in it, createClosure is a vararg function
-    return builder.CreateCall(safeGetFunc("create_closure"), closureConstructorArgs);
+    return closure.to_val();
 }
 
 llvm::Value* Compiler::visitFuncDecl(CFG::FuncDecl* stmt) {

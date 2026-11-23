@@ -1,4 +1,6 @@
 #include "gc-api.h"
+#include <algorithm>
+#include <cstring>
 #include "collector.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 
@@ -30,8 +32,15 @@ namespace gc {
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
 
-    managed* detail::alloc(size_t sz, tcb_handle* handle) {
-        return GC->alloc(sz, t(handle));
+    managed* detail::alloc(size_t sz, tcb_handle* handle, bool zero) {
+        auto res = GC->alloc(sz, t(handle));
+        if (!zero) return res;
+        constexpr size_t chunk = 256 * 1024;
+        for (size_t i = 0; i < sz; i += chunk) {
+            if (i) poll_safepoint(handle);
+            std::memset((uint8_t*)res + i, 0, std::min(chunk, sz - i));
+        }
+        return res;
     }
 
     void write_barrier(tcb_handle* handle, managed* obj) {
