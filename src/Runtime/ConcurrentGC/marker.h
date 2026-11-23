@@ -17,7 +17,7 @@ namespace gc::detail {
             auto won = pg->record_mark(obj);
             // Only a won mark reads the object
             if (force_pin || (won && obj_is_pinned(obj))) [[unlikely]] pg->pin();
-            return !__builtin_unpredictable(!won || !obj_traceable(obj));
+            return __builtin_unpredictable(won && obj_traceable(obj));
         }
         // Swaps buf for an empty one once it fills
         [[gnu::always_inline, gnu::hot]] void push_obj(mark_buf*& buf, managed* obj, bool force_pin = false) {
