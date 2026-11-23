@@ -32,7 +32,7 @@ EXPORT Value input(void*){
     gc::run_blocking([&]() {
         std::getline(std::cin, in);
     });
-    return encodeObj(rt_string::create((char*)in.c_str()));
+    return encodeObj(rt_string::create(in));
 }
 
 EXPORT Value random_num(void*){
@@ -56,7 +56,7 @@ EXPORT Value as_number(void*, Value num){
 
 EXPORT Value to_string(void*, Value val) {
     auto str = valueHelpers::toString(val);
-    return encodeObj(rt_string::create((char*)str.c_str()));
+    return encodeObj(rt_string::create(str));
 }
 
 // doggy?

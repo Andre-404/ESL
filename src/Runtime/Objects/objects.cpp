@@ -69,7 +69,7 @@ static constexpr size_t fill_chunk = 16 * 1024;
 static void copy_bytes(char* dst, const char* src, size_t n) {
     for (size_t i = 0; i < n; i += copy_chunk) {
         std::memcpy(dst + i, src + i, std::min(copy_chunk, n - i));
-        gc::poll();
+        if (i) gc::poll();
     }
 }
 
@@ -89,10 +89,9 @@ rt_string* rt_string::concat(rt_string* other) {
     return object::string_interner::get().check_interned(ptr);
 }
 
-rt_string* rt_string::create(char* str){
-    auto sz = std::strlen(str);
-    auto ptr = gc::esl_make_gc<rt_string>(sz + 1, sz);
-    copy_bytes(ptr->get_str(), str, sz);
+rt_string* rt_string::create(std::string_view sv){
+    auto ptr = gc::esl_make_gc<rt_string>(sv.size() + 1, sv.size());
+    copy_bytes(ptr->get_str(), sv.data(), sv.size());
     return object::string_interner::get().check_interned(ptr);
 }
 
@@ -110,7 +109,7 @@ rt_arr_store::rt_arr_store(uint32_t cap, uint32_t zero_start)
     constexpr auto step = copy_chunk / sizeof(Value);
     for (size_t i = zero_start; i < s.size(); i += step) {
         memset(&s[i], 0, std::min(step, s.size() - i) * sizeof(Value));
-        gc::poll();
+        if (i != zero_start) gc::poll();
     }
 }
 
@@ -133,7 +132,7 @@ rt_arr_store* rt_arr_store::alloc(uint32_t desiredSize, std::span<Value> init, b
         auto val = gc::read_ref(init[i]);
         gc::store_ref(s[i], val);
         if (isObj(val)) gc::write_b(decodeObj(val));
-        if (i % fill_chunk == 0) gc::poll();
+        if (i && i % fill_chunk == 0) gc::poll();
     }
     return store;
 }
@@ -240,6 +239,13 @@ void rt_arr::clear(){
 #pragma endregion
 
 #pragma region ObjBuffer
+
+rt_buffer::rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER), _size(size) {
+    for (size_t i = 0; i < size; i += copy_chunk) {
+        memset(get_data().data() + i, fill, std::min(copy_chunk, size - i));
+        if (i) gc::poll();
+    }
+}
 rt_buffer* rt_buffer::alloc(uint32_t size, byte fill) {
     return gc::esl_make_gc<rt_buffer>(size, size, fill);
 }
@@ -396,10 +402,13 @@ void rt_hashmap::in_place_rehash() {
     auto store = get_slots();
     auto s = store->get_data().data();
 
-    for (uint32_t g = 0; g < _capacity / group_sz; g++)
+    for (uint32_t g = 0; g < _capacity / group_sz; g++) {
         set_group(c, g, reset_group(load_group(c, g)));
+        if (g && g % fill_chunk == 0) gc::poll();
+    }
 
     for (uint32_t i = 0; i < _capacity; i++) {
+        if (i && i % fill_chunk == 0) gc::poll();
         if (c[i] != ctrl_deleted) continue;
 
         auto key = gc::read_ref(s[2 * i]);

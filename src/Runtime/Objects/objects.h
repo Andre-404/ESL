@@ -52,7 +52,6 @@ namespace object {
         
         static constexpr bool needs_zeroing = false;
 
-        // The bytes are copied in after construction, which can't poll (see objects.cpp)
         explicit rt_string(uint32_t sz) : rt_obj(rt_type::STRING), _size(sz) {
             get_str()[sz] = '\0';
         }
@@ -66,7 +65,7 @@ namespace object {
 
         rt_string* concat(rt_string* other);
 
-        static rt_string* create(char* str);
+        static rt_string* create(std::string_view sv);
 
     };
 
@@ -132,9 +131,7 @@ namespace object {
         uint32_t _size;
     public:
         static constexpr bool needs_zeroing = false;
-        rt_buffer(uint32_t size, byte fill) : rt_obj(rt_type::BUFFER), _size(size) {
-            memset(get_data().data(), fill, size);
-        }
+        rt_buffer(uint32_t size, byte fill);
 
         std::span<byte> get_data() { return { (byte*)(this + 1), _size }; }
         uint32_t size() const { return _size; }
