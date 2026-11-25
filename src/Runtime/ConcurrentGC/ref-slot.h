@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <type_traits>
 
+#include "gc-config.h"
 #include "managed.h"
 #include "platform-specific.h"
 
@@ -12,7 +13,7 @@
 // only ever loaded and stored atomically. A plain access that races lets the compiler load the
 // slot twice and act on two different values, or split a store.
 //   load_raw, store_raw  the collector's own access, sees the color bit
-//   read_ref, store_ref  a mutator's access (gc-api.h), strips and adds the color. Only works for pointer slots
+//   read_ref, store_ref  a mutator's access, strips and adds the color. Only works for pointer slots
 namespace gc {
     // The color bit a good reference carries in its slot, r14 holds it as is
     [[gnu::always_inline]] inline size_t good_color() { return platform::read_color(); }
@@ -42,4 +43,21 @@ namespace gc {
     // Leaves with preserve_all, so callers keep their registers across them
     [[gnu::cold, clang::preserve_all]] size_t heal_ptr(size_t* slot, size_t seen);
     [[gnu::cold, clang::preserve_all]] size_t heal_word(size_t* slot, size_t seen);
+
+    // Same thing as gc_read_ptr in jitted code (runtime_bridge::build_ir_helpers). obj_trace loads
+    // through it with acquire (see load_raw), which is how a mark heals every slot
+    template<managed_ptr T>
+    [[gnu::always_inline]] inline T read_ref(T& slot, std::memory_order order = relaxed) {
+        auto w = (size_t)load_raw(slot, order);
+        auto x = w ^ good_color();
+        if (x & config::color_bit) [[unlikely]] return (T)heal_ptr((size_t*)&slot, w);
+        return (T)x;
+    }
+
+    // Same thing as gc_store_ptr
+    // A null gets the color too, it reads back as null either way
+    template<managed_ptr T>
+    [[gnu::always_inline]] inline void store_ref(T& slot, std::type_identity_t<T> value) {
+        store_raw(slot, (T)((size_t)value | good_color()));
+    }
 }

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -512,9 +513,7 @@ namespace {
 
         // What generated code does between operations. Without it a thread never reaches a
         // safepoint, the collector blocks forever in wait_on_all_ack, and no cycle can finish.
-        void poll(tcb* t) {
-            if (t->load_state() == thd_state::has_pending) gc->process_pending(t);
-        }
+        void poll(tcb* t) { gc->poll(t); }
 
         // A mutator's load of a word slot, for the raw pointer words of the test hooks. Only
         // right on a mutator thread, whose r14 is reloaded after every pause
@@ -751,4 +750,190 @@ TEST_F(CollectorCycleTest, CyclesWithoutFragmentationNeverCopy) {
 
     ASSERT_GT(gc->metrics().cycles(), 3u);
     EXPECT_EQ(gc->metrics().max_ms(gc_metrics::phase::compact), 0.0);
+}
+
+// add_cleanup end to end. Objects are seeded on a thread that exits, so no stack keeps them alive.
+// The hooks read what they get: a block that churn reused has fresh's type 1 instead of 7
+namespace {
+    struct tagged : managed {
+        uint64_t id;
+        explicit tagged(uint64_t i) : managed(7), id(i) {}
+    };
+    uint64_t tag_of(size_t word) {
+        auto obj = reinterpret_cast<tagged*>(word);
+        return obj->get_type_id() == 7 ? obj->id : ~0ull;
+    }
+}
+
+TEST_F(CollectorCycleTest, CleanupRunsOnceOnTheRunnerAfterItsObjectDies) {
+    std::atomic<int> calls { 0 };
+    std::atomic<bool> rooted { true }, ran_while_rooted { false }, runner_running { false };
+    std::atomic<uint64_t> got { 0 };
+    test_custom::hooks.invoke_cleanup = [&](tcb_handle* thd, size_t cleanup, size_t arg) {
+        if (rooted) ran_while_rooted = true;
+        runner_running = static_cast<tcb*>(thd)->load_state() == thd_state::running;
+        got = tag_of(cleanup) * 1000 + tag_of(arg);
+        calls++;
+    };
+    size_t root = 0, kept = 0;
+    gc->register_root(&root);
+    gc->register_root(&kept);
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        auto make = [&](uint64_t id) { return ptr_to_word(new (gc->alloc(64, t)) tagged(id)); };
+        root = make(1);
+        gc->add_cleanup(to_accurate_ptr(root), make(2), make(3));
+        // Alive when the collector goes away
+        kept = make(4);
+        gc->add_cleanup(to_accurate_ptr(kept), make(5), make(6));
+        gc->delete_tcb(t);
+    } }.join();
+    ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+
+    churn_until_cycles(3);
+    EXPECT_EQ(calls.load(), 0);
+    rooted = false;
+    store_raw(root, size_t(0));
+    // A mark may have read the root just before, so the object can live one more cycle
+    churn_until_cycles(gc->metrics().cycles() + 3);
+    for (int i = 0; i < 100 && !calls; ++i) std::this_thread::sleep_for(10ms);
+
+    EXPECT_EQ(calls.load(), 1);
+    EXPECT_FALSE(ran_while_rooted.load());
+    EXPECT_TRUE(runner_running.load()) << "the runner pops and runs only while running";
+    EXPECT_EQ(got.load(), 2003u) << "the cleanup and arg survived on the registry's roots alone";
+    delete gc;
+    gc = nullptr;
+    EXPECT_EQ(calls.load(), 1) << "the cleanup of an object alive at the end never runs";
+}
+
+// Copies move tracked objects and args. A tracked slot left from before a copy is healed by the next
+// pause's queue_dead, a strong one by the next mark or by the runner's pop
+TEST_F(CopyingCycleTest, CleanupsFollowTheirObjectsAcrossCopies) {
+    constexpr int kEntries = 96;   // 9 garbage blocks each, so a quarter of the 64 B blocks stay live
+    std::vector<size_t> roots(kEntries, 0), tracked(kEntries), args(kEntries);
+    for (auto& r : roots) gc->register_root(&r);
+    std::mutex mtx;
+    std::vector<int> runs(kEntries, 0);
+    int moved_args = 0, bad = 0;
+    std::atomic<int> calls { 0 };
+    std::atomic<bool> rooted { true }, ran_while_rooted { false };
+    test_custom::hooks.invoke_cleanup = [&](tcb_handle*, size_t cleanup, size_t arg) {
+        if (rooted) ran_while_rooted = true;
+        auto i = tag_of(cleanup) - 1000;
+        auto _ = std::scoped_lock { mtx };
+        if (i >= kEntries || tag_of(arg) != 2000 + i) bad++;
+        else { runs[i]++; moved_args += arg != args[i]; }
+        calls++;
+    };
+    // Each phase on a thread of its own, so no stack keeps a tracked object alive
+    auto run = [&](auto body) {
+        auto* t = make_tcb();
+        std::thread { [&, t] { gc->thd_prologue(t); body(t); gc->delete_tcb(t); } }.join();
+    };
+    run([&](tcb* t) {
+        auto make = [&](uint64_t id) { return ptr_to_word(new (gc->alloc(64, t)) tagged(id)); };
+        for (int i = 0; i < kEntries; ++i) {
+            roots[i] = tracked[i] = make(i);
+            args[i] = make(2000 + i);
+            gc->add_cleanup(to_accurate_ptr(tracked[i]), make(1000 + i), args[i]);
+            for (int g = 0; g < 9; ++g) make(~0ull);
+        }
+    });
+    ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+
+    // Churn stays out of the 64 B class, which leaves its runs stranded and copied
+    auto churn = [&](auto done) {
+        run([&](tcb* t) {
+            for (int i = 0; i < 400'000 && gc->metrics().cycles() < 40 && !done(); ++i) {
+                new (gc->alloc(128, t)) tagged(~0ull);
+                poll(t);
+            }
+        });
+    };
+    // On to a pause after the copy with the roots still set, whose queue_dead must heal the tracked slots
+    size_t flips = 0, flip_cycle = 0;
+    auto color = ~0ull;
+    churn([&] {
+        auto c = platform::read_color();
+        if (color != ~0ull && c != color && !flips++) flip_cycle = gc->metrics().cycles();
+        color = c;
+        return flips && gc->metrics().cycles() >= flip_cycle + 2;
+    });
+    int moved_tracked = 0;
+    run([&](tcb*) { for (int i = 0; i < kEntries; ++i) moved_tracked += (size_t)read_word(roots[i]) != tracked[i]; });
+    rooted = false;
+    for (auto& r : roots) store_raw(r, size_t(0));
+    churn([&] { return calls >= kEntries; });
+    for (int i = 0; i < 100 && calls < kEntries; ++i) std::this_thread::sleep_for(10ms);
+
+    ASSERT_GE(flips, 1u) << "nothing was copied";
+    EXPECT_GT(moved_tracked, 0) << "no tracked object moved, queue_dead's heal went untested";
+    EXPECT_GT(moved_args, 0) << "no arg moved, the strong slots' heal went untested";
+    EXPECT_FALSE(ran_while_rooted.load());
+    EXPECT_EQ(bad, 0) << "a cleanup got a stale address";
+    for (int i = 0; i < kEntries; ++i) EXPECT_EQ(runs[i], 1) << "entry " << i;
+}
+
+// A cleanup is ordinary mutator code on the runner: it allocates, polls and takes part in the pauses
+// it causes, while another thread churns
+TEST_F(CollectorCycleTest, CleanupsMayAllocateAndPollOnTheRunner) {
+    constexpr int kEntries = 8;
+    std::mutex mtx;
+    std::vector<int> runs(kEntries, 0);
+    std::atomic<int> calls { 0 };
+    test_custom::hooks.invoke_cleanup = [&](tcb_handle* thd, size_t, size_t arg) {
+        auto rt = static_cast<tcb*>(thd);
+        for (int i = 0; i < 20'000; ++i) { EXPECT_NE(fresh(64, rt), nullptr); poll(rt); }
+        auto i = tag_of(arg) - 2000;
+        { auto _ = std::scoped_lock { mtx }; if (i < kEntries) runs[i]++; }
+        calls++;
+    };
+    auto* s = make_tcb();
+    std::thread { [&, t = s] {
+        gc->thd_prologue(t);
+        auto make = [&](uint64_t id) { return ptr_to_word(new (gc->alloc(64, t)) tagged(id)); };
+        for (int i = 0; i < kEntries; ++i) gc->add_cleanup(to_accurate_ptr(make(i)), make(1000 + i), make(2000 + i));
+        gc->delete_tcb(t);
+    } }.join();
+
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        for (size_t i = 0; i < 4'000'000 && calls < kEntries; ++i) { EXPECT_NE(fresh(64 + 64 * (i % 4), t), nullptr); poll(t); }
+        gc->delete_tcb(t);
+    } }.join();
+    for (int i = 0; i < 100 && calls < kEntries; ++i) std::this_thread::sleep_for(10ms);
+
+    EXPECT_EQ(calls.load(), kEntries);
+    for (int i = 0; i < kEntries; ++i) EXPECT_EQ(runs[i], 1) << "entry " << i;
+    EXPECT_GT(gc->metrics().cycles(), 4u) << "the cleanups' allocation drove cycles";
+}
+
+// Exit waits for every cleanup queued when it starts, and keeps collecting meanwhile, since they allocate
+TEST_F(CollectorCycleTest, StopWaitsForTheCleanupsAlreadyQueued) {
+    constexpr int kEntries = 5;
+    std::atomic<int> calls { 0 };
+    test_custom::hooks.invoke_cleanup = [&](tcb_handle* thd, size_t, size_t) {
+        auto rt = static_cast<tcb*>(thd);
+        std::this_thread::sleep_for(50ms);
+        for (int i = 0; i < 2'000; ++i) { EXPECT_NE(fresh(64, rt), nullptr); poll(rt); }
+        calls++;
+    };
+    auto* s = make_tcb();
+    std::thread { [&, t = s] {
+        gc->thd_prologue(t);
+        auto make = [&](uint64_t id) { return ptr_to_word(new (gc->alloc(64, t)) tagged(id)); };
+        for (int i = 0; i < kEntries; ++i) gc->add_cleanup(to_accurate_ptr(make(i)), make(1000 + i), make(2000 + i));
+        gc->delete_tcb(t);
+    } }.join();
+    ASSERT_EQ(gc->metrics().cycles(), 0u);
+
+    // The first pause queues them all
+    churn_until_cycles(2);
+    EXPECT_LT(calls.load(), kEntries) << "all of them ran before stop, which then had nothing to wait for";
+    // This thread has no tcb, as stop's caller must
+    gc->stop();
+    EXPECT_EQ(calls.load(), kEntries);
 }

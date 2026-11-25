@@ -1,10 +1,27 @@
 #pragma once
+#include <ranges>
+
 #include "mark-buf.h"
 #include "customization.h"
 #include "pg-meta.h"
+#include "ref-slot.h"
 #include "TCB.h"
 
 namespace gc::detail {
+    // Mutators may be storing to root and the marker reads the object behind it, hence acquire
+    // Heals a bad color, returns the object or null
+    inline managed* read_root(size_t& root) {
+        auto word = load_raw(root, std::memory_order_acquire);
+        auto obj = to_accurate_ptr(word);
+        if (obj && ((word ^ good_color()) & config::color_bit)) obj = to_accurate_ptr(heal_word(&root, word));
+        return obj;
+    }
+    // This stores ANY word to the root
+    // Doesn't matter if its a pointer or not BUT pointers get color tagged
+    inline void store_root(size_t& root, size_t word) {
+        store_raw(root, to_accurate_ptr(word) ? word | good_color() : word);
+    }
+
     class marker {
         mark_buf_manager _bufs;
 
@@ -42,7 +59,16 @@ namespace gc::detail {
 
         void flush_wbbuf(mark_buf* buf);
 
-        void scan_globals(std::span<size_t*> globals);
+        // roots are references to words so that marker can heal
+        void scan_roots(auto&& roots) {
+            auto buf = _bufs.pop_empty();
+            for (size_t& root : roots)
+                if (auto obj = read_root(root)) push_obj(buf, obj);
+            push_buf(buf);
+        }
+        void scan_globals(std::span<size_t*> globals) {
+            scan_roots(globals | std::views::transform([](size_t* g) -> size_t& { return *g; }));
+        }
 
         // Conservative, every word is 8 byte aligned. With pin, an object found here is pinned
         // whether or not it was already marked

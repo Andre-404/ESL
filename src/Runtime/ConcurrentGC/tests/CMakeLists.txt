@@ -40,6 +40,7 @@ add_library(gc_under_test STATIC
         ../allocator/scavenger.cpp
         ../pg-manager.cpp
         ../collector.cpp
+        ../cleanups.cpp
         ../gc-api.cpp
         ../../../Includes/format.cc
         customization-helper.cpp
@@ -79,6 +80,7 @@ add_executable(run_tests
         test-gc-bits.cpp
         test-gc-heuristic.cpp
         test-collector.cpp
+        test-cleanups.cpp
         test-ref-slot.cpp
         test-gc-api.cpp
 )

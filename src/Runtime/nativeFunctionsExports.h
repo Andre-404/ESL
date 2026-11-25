@@ -4,6 +4,7 @@
 #include "Values/valueHelpers.h"
 #include "Values/valueHelpersInline.h"
 #include "esl-gc-helpers.h"
+#include "LLVMHelperExports.h"
 #include <iostream>
 
 using namespace object;
@@ -67,6 +68,40 @@ EXPORT Value cpu_clock(void*){
 // doggy?
 EXPORT Value clocks_per_sec(void*){
     return encodeNumber(CLOCKS_PER_SEC);
+}
+
+static void type_check(bool ok, const char* msg, Value v) {
+    if (!ok) rt_error(msg, +runtimeErrorType::WRONG_TYPE, v, 0, 0);
+}
+
+// cleanup(arg) runs on the cleanup runner some time after tracked becomes unreachable
+EXPORT Value add_cleanup(void*, Value tracked, Value cleanup, Value arg) {
+    type_check(isObj(tracked), "Expected an object to track, got '{}'.", tracked);
+    type_check(isClosure(cleanup), "Expected a function as the cleanup, got '{}'.", cleanup);
+    if (asClosure(cleanup)->arity() != 1)
+        rt_error("Cleanup {} takes {} arguments, it must take {}.", +runtimeErrorType::ARG_CNT, cleanup, 1, 0);
+    auto captures = arg == tracked;
+    for (auto& slot : asClosure(cleanup)->get_env()) captures |= gc::read_ref(slot) == tracked;
+    type_check(!captures, "A cleanup and its argument can't hold the object they clean up, it would never be collected.", tracked);
+    gc::add_cleanup(decodeObj(tracked), cleanup, arg);
+    return encodeNil();
+}
+
+EXPORT Value mtx_new(void*) {
+    return encodeObj(gc::esl_make_gc<rt_mutex>(0));
+}
+
+EXPORT Value mtx_lock(void*, Value m) {
+    type_check(isMutex(m), "Expected a mutex, got '{}'.", m);
+    auto& mtx = asMutex(m)->get();
+    if (!mtx.try_lock()) gc::run_blocking([&] { mtx.lock(); });
+    return encodeNil();
+}
+
+EXPORT Value mtx_unlock(void*, Value m) {
+    type_check(isMutex(m), "Expected a mutex, got '{}'.", m);
+    asMutex(m)->get().unlock();
+    return encodeNil();
 }
 
 #undef EXPORT

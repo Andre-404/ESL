@@ -50,7 +50,7 @@ string valueHelpers::typeToStr(Value x) {
                 case rt_type::INSTANCE: return "<instance: " + string(asInstance(x)->get_class()->name) + ">";
                 case rt_type::STRING: return "<string>";
                 case rt_type::HASH_MAP: return "<hash map>";
-                case rt_type::FILE: return "<file>";
+                case rt_type::FILE_HANDLE: return "<file>";
                 case rt_type::MUTEX: return "<mutex>";
             }
     }

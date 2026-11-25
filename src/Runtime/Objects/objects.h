@@ -4,6 +4,7 @@
 #include <atomic>
 #include <bit>
 #include <cstring>
+#include <mutex>
 #include <span>
 #include "../esl-gc-helpers.h"
 #include "../ConcurrentGC/support.h"
@@ -11,19 +12,26 @@
 namespace object {
     using trace_fn = function_ref<void(gc::managed*)>;
 
+    // Right now we are limited to 16 objects that can be exposed to ESL because of how we encode
+    // objects into NaN boxed values (low 4 bits are used to encode the obj type)
     enum class rt_type : uint8_t {
         STRING,
         CLOSURE,
         INSTANCE,
         ARRAY,
-        ARRAY_STORAGE_HEADER,
         HASH_MAP,
         BUFFER,
-        FILE,
         MUTEX,
         CHANNEL,
         WAIT_GROUP,
-        SOCKET
+        FILE_HANDLE,
+        SOCKET_HANDLE,
+
+        // heap objects that the user of ESL can never see are placed above the first 16
+        // so that they dont use the limited space we have for ESL exposed objects
+        ARRAY_STORAGE_HEADER,
+        FILE_STATE,
+        SOCKET_STATE
     };
     inline constexpr unsigned operator+ (rt_type const val) { return static_cast<byte>(val); }
 
@@ -161,8 +169,18 @@ namespace object {
         
         char* name() { return _name; }
         byte arity() { return _arity; }
+        compiled_fn fn() { return _func; }
 
         void gc_trace(trace_fn cb);
+    };
+
+    class rt_mutex : public rt_obj {
+        static_assert(std::is_trivially_destructible_v<std::mutex>);
+        std::mutex _mtx;
+    public:
+        rt_mutex() : rt_obj(rt_type::MUTEX) {}
+
+        std::mutex& get() { return _mtx; }
     };
 
     // Never created at runtime, only emitted by the compiler.

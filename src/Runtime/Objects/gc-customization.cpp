@@ -39,7 +39,7 @@ namespace gc {
             || type == +rt_type::INSTANCE
             || type == +rt_type::HASH_MAP;
     }
-    bool obj_is_pinned(managed*) { return false; }
+    bool obj_is_pinned(managed* m) { return m->get_type_id() == +rt_type::MUTEX; }
     size_t obj_size(managed* m) {
         auto obj = reinterpret_cast<object::rt_obj*>(m);
         return obj->get_sz();
@@ -55,6 +55,10 @@ namespace gc {
     }
     size_t ptr_to_word(managed* p) {
         return encodeObj((object::rt_obj*)p);
+    }
+    void invoke_cleanup(tcb_handle* thd, size_t cleanup, size_t arg) {
+        set_tcb(thd);
+        reinterpret_cast<Value (*)(Value, Value)>(asClosure(cleanup)->fn())(cleanup, arg);
     }
 
     void obj_trace(managed* m, function_ref<void(managed*)> cb) {

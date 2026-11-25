@@ -1363,5 +1363,9 @@ void ASTTransformer::declareNativeFunctions(){
     createNativeFn("cpu_clock", 0, getBasicType(types::TypeFlag::NUMBER));
     createNativeFn("clocks_per_sec", 0, getBasicType(types::TypeFlag::NUMBER));
     createNativeFn("random_num", 0, getBasicType(types::TypeFlag::NUMBER));
+    createNativeFn("add_cleanup", 3, getBasicType(types::TypeFlag::NIL));
+    createNativeFn("mtx_new", 0, getBasicType(types::TypeFlag::MUTEX));
+    createNativeFn("mtx_lock", 1, getBasicType(types::TypeFlag::NIL));
+    createNativeFn("mtx_unlock", 1, getBasicType(types::TypeFlag::NIL));
 }
 #pragma endregion

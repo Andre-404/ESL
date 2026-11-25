@@ -23,6 +23,8 @@ size_t rt_obj::get_sz(){
             return sizeof(rt_hashmap);
         case rt_type::BUFFER:
             return sizeof(rt_buffer) + ((rt_buffer*)this)->size();
+        case rt_type::MUTEX:
+            return sizeof(rt_mutex);
         default: std::cout<<"getsize called with nonvalid obj type\n";
     }
     __builtin_unreachable();
@@ -43,6 +45,7 @@ string rt_obj::to_str(std::shared_ptr<ankerl::unordered_dense::set<object::rt_ob
         }
         case rt_type::CLOSURE: return "<" + string(reinterpret_cast<rt_closure*>(this)->name()) + ">";
         case rt_type::INSTANCE: return "<" + string(reinterpret_cast<rt_inst*>(this)->get_class()->name) + " instance>";
+        case rt_type::MUTEX: return "<mutex>";
         case rt_type::HASH_MAP:{
             auto map = reinterpret_cast<rt_hashmap*>(this);
             string str = "{";

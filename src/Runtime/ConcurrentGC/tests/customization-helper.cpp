@@ -9,6 +9,7 @@ namespace gc {
     managed* to_accurate_ptr(size_t w)      { return test_custom::hooks.to_accurate_ptr(w); }
     uint8_t* to_possible_ptr(size_t w)      { return test_custom::hooks.to_possible_ptr(w); }
     size_t ptr_to_word(managed* p)          { return test_custom::hooks.ptr_to_word(p); }
+    void invoke_cleanup(tcb_handle* t, size_t cleanup, size_t arg) { test_custom::hooks.invoke_cleanup(t, cleanup, arg); }
 
     // obj_trace receives the mark callback by reference so the marker can
     // observe child-pushes mid-trace. The hooks still take a std::function&, so wrap the

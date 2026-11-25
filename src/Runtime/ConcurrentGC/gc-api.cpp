@@ -31,6 +31,7 @@ namespace gc {
     void register_root(size_t* root) { GC->register_root(root); }
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
+    void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { GC->add_cleanup(tracked, cleanup, arg); }
 
     managed* detail::alloc(size_t sz, tcb_handle* handle, bool zero) {
         auto res = GC->alloc(sz, t(handle));
@@ -48,11 +49,7 @@ namespace gc {
         auto tcb = t(handle);
         if (tcb->get_mark_info().get_wbbuf()->push(obj)) GC->flush_wbbuf(tcb);
     }
-    void poll_safepoint(tcb_handle* handle) {
-        auto tcb = t(handle);
-        if (tcb->load_state() != detail::thd_state::has_pending) return;
-        GC->process_pending(tcb);
-    }
+    void poll_safepoint(tcb_handle* handle) { GC->poll(t(handle)); }
     void exec_at_safepoint(tcb_handle* handle) { GC->process_pending(t(handle)); }
     void push_wbbuf(tcb_handle* handle) { GC->flush_wbbuf(t(handle)); }
 }

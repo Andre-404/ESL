@@ -155,6 +155,10 @@ namespace gc::detail {
             if (word.load(std::memory_order_relaxed) & in_word) return false;
             return (word.fetch_or(in_word, std::memory_order_relaxed) & in_word) == 0;
         }
+        bool is_marked(managed* ptr) const {
+            auto [word, in_word] = mark_at(block_idx(ptr));
+            return word.load(std::memory_order_relaxed) & in_word;
+        }
         // Precondition: interior is in the page
         managed* from_interior(uint8_t* interior) const {
             auto data = get_data();

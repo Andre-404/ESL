@@ -25,6 +25,8 @@ namespace gc::detail::test_custom {
                 = [](size_t w) { return reinterpret_cast<uint8_t*>(w & ~config::color_bit); };
         std::function<size_t(managed*)>                                            ptr_to_word
                 = [](managed* p) { return reinterpret_cast<size_t>(p); };
+        std::function<void(tcb_handle*, size_t, size_t)>                           invoke_cleanup
+                = [](tcb_handle*, size_t, size_t) {};
 
         void reset() { *this = hook_set{}; }
     };

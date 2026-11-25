@@ -67,6 +67,7 @@ size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
         for (auto [tcb, sp] : _temp_roots)
             _marker.scan_words({ sp }, true, get_obj_base());
         _marker.scan_globals(_roots);
+        _marker.scan_roots(_cleanups.keepalive_slots());
         snapshot = _alloc_sz.load();
         // Every thread has stopped at this point so this is safe to do
         _gc_flag.store((uint8_t)gc_state::none, std::memory_order_release);
@@ -113,8 +114,13 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
     // Every thread has stopped, the pause before this is the wait for them
     auto _ = _metrics.time(gc_metrics::phase::stw);
     auto snapshot = stw_mark(owned, role);
-    // Marking has healed every pointer into the last copy's old pages
-    if (role == stw_role::collector) _pg_manager.relocs().clear();
+    // Must run before relocs are cleared (need to update tracked)
+    // And must also run before we try to copy (copy pass can potentially overwrite mark bit of dead obj)
+    if (role == stw_role::collector) {
+        _cleanups.queue_dead();
+        _pg_manager.relocs().clear();
+    }
+    _gate.arrive_and_wait();
     if (_heuristic.wants_copy() || _express) [[unlikely]] stw_copy(owned, role);
     stw_prune(owned, role);
     return snapshot;
@@ -134,7 +140,8 @@ void collector::concurrent_mark() {
         auto _ = std::scoped_lock { _root_mtx };
         _marker.scan_globals(_roots);
     }
-    
+    _marker.scan_roots(_cleanups.keepalive_slots());
+
     while (_marker.trace_n(config::trace_batch) && !_collection_req.is_express()) {}
 }
 
@@ -253,7 +260,6 @@ tcb *collector::create_tcb(size_t *start_args, uint8_t args_cnt) {
             _temp_roots.insert_or_assign(t, std::span<size_t>{ start_args, args_cnt });
         }
 
-        // TODO: this is kinda inefficient, can we do better?
         t->get_mark_info().set_wbbuf(_marker.get_buf());
     });
     return t;

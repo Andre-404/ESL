@@ -42,7 +42,7 @@ inline bool isArray(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_t
 inline bool isClosure(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::CLOSURE; }
 inline bool isInstance(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::INSTANCE; }
 inline bool isHashMap(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::HASH_MAP; }
-inline bool isFile(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::FILE; }
+inline bool isFile(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::FILE_HANDLE; }
 inline bool isMutex(Value x) { return isObj(x) && (x&mask_payload_type) == +rt_type::MUTEX; }
 
 inline bool isFalsey(Value x) { return (isBool(x) && !decodeBool(x)) || isNil(x); }
@@ -53,6 +53,7 @@ inline rt_arr* asArray(Value x) { return reinterpret_cast<rt_arr*>(decodeObj(x))
 inline rt_closure* asClosure(Value x) { return reinterpret_cast<rt_closure*>(decodeObj(x)); }
 inline rt_inst* asInstance(Value x) { return reinterpret_cast<rt_inst*>(decodeObj(x)); }
 inline rt_hashmap* asHashMap(Value x) { return reinterpret_cast<rt_hashmap*>(decodeObj(x)); }
+inline rt_mutex* asMutex(Value x) { return reinterpret_cast<rt_mutex*>(decodeObj(x)); }
 
 inline bool equals(Value x, Value y){
     ValueType type = getType(x);

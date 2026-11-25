@@ -13,6 +13,7 @@
 #include "gc-heuristic.h"
 #include "gc-metrics.h"
 #include "collection-request.h"
+#include "cleanups.h"
 
 namespace gc::detail {
     enum class gc_state : uint8_t {
@@ -41,6 +42,7 @@ namespace gc::detail {
 
         marker _marker;
         copier _copier;
+        cleanups _cleanups;
 
         gc_heuristics _heuristic;
         gc_metrics    _metrics;
@@ -112,11 +114,16 @@ namespace gc::detail {
             _heuristic(tuning)
         {
             _worker = std::thread { &collector::concurrent_loop, this };
+            _cleanups.run(*this);
         }
-        ~collector() { stop(); }
-        // Ends collection and prints the report, mutators may keep running against the collector after it
+        ~collector() {
+            stop();
+        }
+        // Waits for the cleanups already queued, then ends collection and prints the report. Mutators may
+        // keep running against the collector after it, the runner too
         void stop() {
             if (!_worker.joinable()) return;
+            _cleanups.drain();
             _collection_req.shutdown();
             _worker.join();
             printf("%s\n", _metrics.report().c_str());
@@ -129,10 +136,14 @@ namespace gc::detail {
 
         void flush_wbbuf(tcb* handle);
         void register_root(size_t* root);
+        void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { _cleanups.add(tracked, cleanup, arg); }
 
         managed* alloc(size_t sz, tcb* handle);
 
         void process_pending(tcb* handle);
+        void poll(tcb* handle) {
+            if (handle->load_state() == thd_state::has_pending) process_pending(handle);
+        }
 
         bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
 
