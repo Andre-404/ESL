@@ -2,7 +2,6 @@
 #include <chrono>
 #include <cmath>
 #include "../gc-heuristic.h"
-#include "../gc-config.h"
 
 using namespace gc;
 using namespace gc::detail;
@@ -169,11 +168,21 @@ TEST(GcHeuristicsTest, LiveSizeStaysTheOccupancy) {
     EXPECT_GE(h.heap_trigger(), live + black) << "and the trigger has to cover it";
 }
 
-TEST(GcHeuristicsTest, TriggerCappedAtHalfMaxHeap) {
+TEST(GcHeuristicsTest, TriggerCappedAtSoftLimit) {
     fake_clock clk;
-    gc_heuristics h { {}, clk.now() };
-    h.end_cycle(clk.advance(1ms), plain_cycle(1, 1ull << 50, 1ms));
-    EXPECT_LE(h.heap_trigger(), gc::config::heap_max_sz / 2);
+    gc_heuristics h { { .soft_limit = 100 * MB }, clk.now() };
+    // Full headroom would put the trigger at 140 MB
+    h.end_cycle(clk.advance(1s), plain_cycle(1024, 80 * MB, 1ms));
+    EXPECT_EQ(h.heap_trigger(), 100 * MB);
+}
+
+// Bug 38: past the limit the trigger sat under live, so every alloc_update requested a cycle
+TEST(GcHeuristicsTest, TriggerKeepsHeadroomAboveLivePastTheLimit) {
+    constexpr size_t live = 200 * MB;
+    fake_clock clk;
+    gc_heuristics h { { .soft_limit = 100 * MB }, clk.now() };
+    h.end_cycle(clk.advance(1s), plain_cycle(1024, live, 1ms));
+    EXPECT_NEAR(double(h.heap_trigger()), live * 1.05, 1.0);
 }
 
 // ---------------------------------------------------------------- smoothing

@@ -11,7 +11,9 @@
 namespace gc {
     struct gc_tuning {
         size_t initial_heap = 20u << 20;
-        size_t max_heap     = config::heap_max_sz;
+        size_t soft_limit   = config::heap_max_sz / 2;   // the trigger stays under this while the live set leaves room
+        // Past the limit a cycle still waits for this share of live in new allocation, so cycles can't run back to back
+        double limit_headroom = 0.05;
         double max_headroom = 0.75;    // trigger = live * (1 + headroom)
         double min_headroom = 0.2625;
         // Half-life of the live-set peak the trigger is sized against
@@ -70,10 +72,10 @@ namespace gc::detail {
         size_t next_trigger(size_t live, size_t occupancy, size_t black) const {
             double pressure = std::clamp(_alloc_rate / std::max(_mark_rate, 1.0), 0.0, 1.0);
             double headroom = std::lerp(_cfg.max_headroom, _cfg.min_headroom, pressure);
-            double floor    = double(std::max<size_t>(_cfg.initial_heap, occupancy));
+            double floor    = double(_cfg.initial_heap);
             double basis    = std::max(double(live), _peak_live);
-            return size_t(std::min(std::max(basis * (1.0 + headroom) + double(black), floor),
-                                   _cfg.max_heap / 2.0));
+            auto want = std::max(basis * (1.0 + headroom) + double(black), floor);
+            return size_t(std::max(std::min(want, double(_cfg.soft_limit)), double(occupancy) * (1.0 + _cfg.limit_headroom)));
         }
     public:
         explicit gc_heuristics(gc_tuning cfg = {}, gc_clock::time_point now = gc_clock::now())
