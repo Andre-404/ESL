@@ -47,6 +47,8 @@ namespace gc::detail {
         gc_heuristics _heuristic;
         gc_metrics    _metrics;
         cycle_stats   _cycle;
+        std::mutex    _stats_mtx;
+        gc_stats      _stats;
 
         pruner _pruner;
         
@@ -100,6 +102,7 @@ namespace gc::detail {
         size_t worker_stw();
         void mutator_stw(tcb* handle);
         void collect_metrics();
+        void publish_stats();
         uint64_t* end_cycle(size_t alloc_snapshot);
 
         void concurrent_loop();
@@ -111,7 +114,7 @@ namespace gc::detail {
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
             : _gc_flag(flag), _mark_alloc_start(0),_copier(config::copy_evac_threshold),
-            _heuristic(tuning)
+            _heuristic(tuning), _pg_manager(tuning.scavenge)
         {
             _worker = std::thread { &collector::concurrent_loop, this };
             _cleanups.run(*this);
@@ -119,14 +122,13 @@ namespace gc::detail {
         ~collector() {
             stop();
         }
-        // Waits for the cleanups already queued, then ends collection and prints the report. Mutators may
-        // keep running against the collector after it, the runner too
+        // Waits for the cleanups already queued, then ends collection. Mutators may keep running against
+        // the collector after it, the runner too
         void stop() {
             if (!_worker.joinable()) return;
             _cleanups.drain();
             _collection_req.shutdown();
             _worker.join();
-            printf("%s\n", _metrics.report().c_str());
         }
         void thd_prologue(tcb* handle);
         void set_paused(tcb* handle);
@@ -136,6 +138,8 @@ namespace gc::detail {
 
         void flush_wbbuf(tcb* handle);
         void register_root(size_t* root);
+        // Blocks until a cycle completes, the one already running counts
+        void collect(tcb* handle);
         void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { _cleanups.add(tracked, cleanup, arg); }
 
         managed* alloc(size_t sz, tcb* handle);
@@ -147,6 +151,6 @@ namespace gc::detail {
 
         bool wb_active() const { return _gc_flag.load(std::memory_order_acquire) > 0; }
 
-        const gc_metrics& metrics() const { return _metrics; }
+        gc_stats stats();
     };
 }

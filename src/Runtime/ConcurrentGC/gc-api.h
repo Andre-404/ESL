@@ -4,11 +4,13 @@
 
 #include "TCB.h"
 #include "customization.h"
+#include "gc-heuristic.h"
+#include "gc-metrics.h"
 #include "pg-meta.h"
 #include "ref-slot.h"
 
 namespace gc {
-    void init_gc(uint8_t& flag);
+    void init_gc(uint8_t& flag, gc_tuning tuning = {});
     void end_gc();
     [[nodiscard]] tcb_handle* create_tcb(void* start_args, size_t arg_cnt);
     void init_thd(tcb_handle* handle, void* stack_start);
@@ -17,6 +19,9 @@ namespace gc {
     void register_root(size_t* root);
     void enter_blocked(tcb_handle* handle);
     void exit_blocked(tcb_handle* handle);
+    // Blocks until a cycle completes, the one already running counts
+    void collect(tcb_handle* handle);
+    gc_stats stats();
     // cleanup and arg are kept alive until tracked dies if they are objects, so they must not point to
     // tracked or it never dies
     void add_cleanup(managed* tracked, size_t cleanup, size_t arg);

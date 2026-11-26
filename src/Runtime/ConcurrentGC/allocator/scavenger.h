@@ -7,9 +7,7 @@
 #include <stop_token>
 #include <thread>
 
-namespace gc::detail {
-    class span_allocator;
-
+namespace gc {
     struct scavenge_policy {
         double headroom      = 0.0625; // keep demand*(1+headroom) resident before scavenging
         double thrash_gain   = 0.5;    // widen the band by this * observed refault rate
@@ -25,6 +23,10 @@ namespace gc::detail {
         std::chrono::nanoseconds idle_sleep{ std::chrono::milliseconds(50) };
         std::chrono::nanoseconds max_sleep{ std::chrono::seconds(1) };
     };
+}
+
+namespace gc::detail {
+    class span_allocator;
 
     // Paces the background scavenger: on each wake it decides how many commit granules to
     // hand back to the OS, and how long to sleep afterwards

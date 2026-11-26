@@ -12,6 +12,7 @@ namespace gc::detail {
             end     = 3   // shut the collector down
         };
         std::atomic<type> _req { type::none };
+        std::atomic<size_t> _cycles_completed { 0 };
 
     public:
         // ---- mutator side ----
@@ -40,6 +41,12 @@ namespace gc::detail {
             _req.wait(type::express);
         }
 
+        void await_cycle() {
+            auto seen = _cycles_completed.load(std::memory_order_acquire);
+            if (!request_normal() && _req.load(std::memory_order_acquire) == type::end) return;
+            _cycles_completed.wait(seen, std::memory_order_acquire);
+        }
+
         // ---- collector side ----
 
         // Block until any request arrives. Returns true if it was a shutdown.
@@ -57,12 +64,18 @@ namespace gc::detail {
             auto expected = served_express ? type::express : type::normal;
             if (_req.compare_exchange_strong(expected, type::none, std::memory_order_release, std::memory_order_relaxed))
                 _req.notify_all();
+            // After the CAS, so a collect woken here can request the next cycle
+            _cycles_completed.fetch_add(1, std::memory_order_release);
+            _cycles_completed.notify_all();
         }
 
         // Request shutdown and wake the worker.
         void shutdown() {
             _req.store(type::end);
             _req.notify_all();
+            // Releases collect, which may be waiting for a cycle that never runs
+            _cycles_completed.fetch_add(1, std::memory_order_release);
+            _cycles_completed.notify_all();
         }
     };
 }

@@ -6,21 +6,9 @@
 #include <atomic>
 
 #include "gc-config.h"
+#include "allocator/scavenger.h"
 
-namespace gc::detail {
-    using gc_clock = std::chrono::steady_clock;
-
-    struct cycle_stats {
-        std::chrono::nanoseconds mark_time { 0 };  // request accepted -> end of STW marking
-        std::chrono::nanoseconds compact_time { 0 };  // zero when the cycle did not copy
-        size_t copied_bytes    = 0;   // bytes the compaction moved
-        size_t allocated_bytes = 0;   // mutator allocation since the previous cycle
-        size_t live_bytes      = 0;
-        size_t evac_gain_bytes = 0;   // whole pages compaction would hand back
-        // Tracked so we don't give more headroom than there are actual live objects
-        size_t black_bytes = 0;
-    };
-
+namespace gc {
     struct gc_tuning {
         size_t initial_heap = 20u << 20;
         size_t max_heap     = config::heap_max_sz;
@@ -38,6 +26,22 @@ namespace gc::detail {
         double min_copy_gain = 0.05;
         // Below this a copying cycle's fixed costs in the pause outweigh what it frees
         size_t min_copy_bytes = 1u << 20;
+        scavenge_policy scavenge;
+    };
+}
+
+namespace gc::detail {
+    using gc_clock = std::chrono::steady_clock;
+
+    struct cycle_stats {
+        std::chrono::nanoseconds mark_time { 0 };  // request accepted -> end of STW marking
+        std::chrono::nanoseconds compact_time { 0 };  // zero when the cycle did not copy
+        size_t copied_bytes    = 0;   // bytes the compaction moved
+        size_t allocated_bytes = 0;   // mutator allocation since the previous cycle
+        size_t live_bytes      = 0;
+        size_t evac_gain_bytes = 0;   // whole pages compaction would hand back
+        // Tracked so we don't give more headroom than there are actual live objects
+        size_t black_bytes = 0;
     };
 
     class gc_heuristics {

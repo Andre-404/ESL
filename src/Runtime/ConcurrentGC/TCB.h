@@ -64,6 +64,8 @@ namespace gc {
             uint8_t get_opcode() const { return _opcode; }
 
             thd_state load_state() const { return _thd_state.load(std::memory_order_acquire); }
+
+            bool is_running() const { auto s = load_state(); return s == thd_state::running || s == thd_state::has_pending; }
             void wait_transition(thd_state old) const { _thd_state.wait(old); }
             void transition(thd_state new_state) {
                 _thd_state.store(new_state, std::memory_order_release);

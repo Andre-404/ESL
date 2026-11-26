@@ -71,7 +71,7 @@ namespace gc::detail {
             }
         };
     public:
-        pg_manager() : _buckets(), _partial() {}
+        explicit pg_manager(scavenge_policy policy = {}) : _allocator(policy), _buckets(), _partial() {}
 
         // Can't use head_from_ptr immediatelly since ptr might land outside of allocated meta array
         pg_meta* pg_from_ptr(void* ptr) {

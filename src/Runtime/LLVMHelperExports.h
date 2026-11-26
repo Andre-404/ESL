@@ -176,6 +176,13 @@ EXPORT void flush_wb() {
 // destructors and the JIT teardown, which would pull memory out from under them
 EXPORT void end_program() {
     gc::end_gc();
+    auto s = gc::stats();
+    fmt::print("GC pause metrics over {} cycle(s) (last / max / avg ms):\n", s.cycles);
+    std::pair<const char*, gc::phase_stats> rows[] = { { "pause", s.pause }, { "ttsp", s.ttsp }, { "stw", s.stw },
+                                                       { "mark", s.mark }, { "copy", s.copy }, { "sweep", s.sweep } };
+    for (auto [name, p] : rows)
+        fmt::print("  {:<6} {:.3f} / {:.3f} / {:.3f}\n", name, p.last_ms, p.max_ms, p.avg_ms);
+    fmt::print("\n");
     // Not fflush(nullptr): that locks every stream, and a thread blocked in input() holds stdin's
     std::fflush(stdout);
     std::_Exit(0);

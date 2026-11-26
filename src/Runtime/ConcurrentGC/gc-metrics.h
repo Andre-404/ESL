@@ -5,10 +5,17 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
-#include <string>
-#include <utility>
 
-#include "../../Includes/fmt/core.h"
+namespace gc {
+    struct phase_stats { double last_ms = 0, max_ms = 0, avg_ms = 0; };
+    // live_bytes and heap_trigger are current, the rest is as of the last cycle's end
+    struct gc_stats {
+        size_t cycles = 0;
+        size_t live_bytes = 0, heap_trigger = 0;
+        size_t copied_bytes = 0;
+        phase_stats pause, ttsp, stw, mark, copy, sweep;
+    };
+}
 
 namespace gc::detail {
     class gc_metrics {
@@ -108,22 +115,10 @@ namespace gc::detail {
             return { concurrent + (pause - stw) + mark, collect(phase::compact) };
         }
 
-        double max_ms(phase p) const { return to_ms(get(p).max); }
-        double avg_ms(phase p) const {
+        phase_stats summary(phase p) const {
             auto& s = get(p);
-            return s.samples ? to_ms(s.total) / s.samples : 0.0;
+            return { to_ms(s.last), to_ms(s.max), s.samples ? to_ms(s.total) / s.samples : 0.0 };
         }
         size_t cycles() const { return get(phase::pause).samples; }
-
-        std::string report() const {
-            static constexpr std::pair<phase, const char*> rows[] = {
-                { phase::pause, "pause" }, { phase::ttsp, "ttsp" }, { phase::stw, "stw" },
-                { phase::mark, "mark" }, { phase::copy, "copy" }, { phase::sweep, "sweep" },
-            };
-            auto out = fmt::format("GC pause metrics over {} cycle(s) (last / max / avg ms):\n", cycles());
-            for (auto [p, name] : rows)
-                out += fmt::format("  {:<6} {:.3f} / {:.3f} / {:.3f}\n", name, to_ms(get(p).last), max_ms(p), avg_ms(p));
-            return out;
-        }
     };
 }

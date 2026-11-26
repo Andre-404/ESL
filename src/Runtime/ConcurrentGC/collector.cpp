@@ -167,6 +167,26 @@ void collector::collect_metrics() {
     _cycle.compact_time = t.compact;
 }
 
+void collector::publish_stats() {
+    using enum gc_metrics::phase;
+    auto _ = std::scoped_lock { _stats_mtx };
+    _stats.cycles = _metrics.cycles();
+    _stats.copied_bytes += _cycle.copied_bytes;
+    _stats.pause = _metrics.summary(pause);
+    _stats.ttsp = _metrics.summary(ttsp);
+    _stats.stw = _metrics.summary(stw);
+    _stats.mark = _metrics.summary(mark);
+    _stats.copy = _metrics.summary(copy);
+    _stats.sweep = _metrics.summary(sweep);
+}
+
+gc_stats collector::stats() {
+    auto s = [&] { auto _ = std::scoped_lock { _stats_mtx }; return _stats; }();
+    s.live_bytes = _heuristic.live_size();
+    s.heap_trigger = _heuristic.heap_trigger();
+    return s;
+}
+
 uint64_t* collector::end_cycle(size_t alloc_snapshot) {
     _alloc_sz -= alloc_snapshot;
     _cycle.allocated_bytes = alloc_snapshot;
@@ -204,6 +224,7 @@ void collector::concurrent_loop() {
             assert(_gc_flag.load(std::memory_order_acquire) == 0);
             _marker.remove_empty();
         });
+        publish_stats();
 
         // If threads are waiting because they request an express collection,
         // wake them after pages have been freed
@@ -302,7 +323,14 @@ void collector::register_root(size_t *root) {
     _roots.push_back(root);
 }
 
+void collector::collect(tcb* t) {
+    set_paused(t);
+    _collection_req.await_cycle();
+    set_resumed(t);
+}
+
 managed *collector::alloc(size_t sz, tcb * t) {
+    assert(t->is_running() && "a blocked thread can't touch the heap");
     auto& arena = t->get_arena();
     auto res = arena.alloc(sz, _pg_manager);
     if (!res) [[unlikely]] res = force_collection(sz, t);

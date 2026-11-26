@@ -461,6 +461,20 @@ TEST_F(CollectorTest, ConcurrentAllocsAndPauseResumeUnderPressure) {
     EXPECT_EQ(alloc_ok.load(), kThreads * kIters);
 }
 
+// The default heap never triggers here, so every cycle is one a collect asked for
+TEST_F(CollectorTest, EachCollectRunsACycleOfItsOwn) {
+    auto* t = make_tcb();
+    auto thd = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        for (size_t i = 1; i <= 3; ++i) {
+            gc->collect(t);
+            EXPECT_EQ(gc->stats().cycles, i);
+        }
+        gc->delete_tcb(t);
+    } };
+    thd.join();
+}
+
 // ---------------------------------------------------------------------------------------
 // Whole-cycle tests.
 //
@@ -543,7 +557,7 @@ namespace {
                 roots[i] = ptr_to_word(obj);
                 for (int k = 0; k < garbage_per_root; ++k) ASSERT_NE(fresh(64, t), nullptr);
             }
-            ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+            ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
         }
 
         // Churns garbage on its own thread until at least `want` cycles have completed.
@@ -551,7 +565,7 @@ namespace {
             auto* t = make_tcb();
             auto thd = std::thread { [&, t] {
                 gc->thd_prologue(t);
-                for (size_t i = 0; i < max_allocs && gc->metrics().cycles() < want; ++i) {
+                for (size_t i = 0; i < max_allocs && gc->stats().cycles < want; ++i) {
                     ASSERT_NE(fresh(64 + 64 * (i % 4), t), nullptr) << "allocation " << i << " failed";
                     poll(t);
                 }
@@ -564,24 +578,23 @@ namespace {
 
 TEST_F(CollectorCycleTest, CyclesRunToCompletionUnderChurn) {
     churn_until_cycles(5);
-    EXPECT_GE(gc->metrics().cycles(), 5u) << "a small heap plus steady garbage must drive real cycles";
+    EXPECT_GE(gc->stats().cycles, 5u) << "a small heap plus steady garbage must drive real cycles";
 }
 
 // A pause is the wait for every thread to stop (ttsp) followed by the stop itself (stw), both
-// inside the pause's interval. Maxima, since a cycle may still be publishing its numbers
+// inside the pause's interval, so neither maximum can pass the pause's
 TEST_F(CollectorCycleTest, PauseSplitsIntoTimeToSafepointAndStw) {
     churn_until_cycles(3);
-    using phase = gc_metrics::phase;
-    auto& m = gc->metrics();
-    EXPECT_GT(m.max_ms(phase::ttsp), 0.0);
-    EXPECT_GT(m.max_ms(phase::stw), 0.0);
-    EXPECT_LE(m.max_ms(phase::ttsp), m.max_ms(phase::pause));
-    EXPECT_LE(m.max_ms(phase::stw), m.max_ms(phase::pause));
+    auto s = gc->stats();
+    EXPECT_GT(s.ttsp.max_ms, 0.0);
+    EXPECT_GT(s.stw.max_ms, 0.0);
+    EXPECT_LE(s.ttsp.max_ms, s.pause.max_ms);
+    EXPECT_LE(s.stw.max_ms, s.pause.max_ms);
 }
 
 TEST_F(CollectorCycleTest, ManyCyclesLeaveTheCollectorUsable) {
     churn_until_cycles(20);
-    ASSERT_GE(gc->metrics().cycles(), 20u);
+    ASSERT_GE(gc->stats().cycles, 20u);
 
     // The collector has to still hand out memory after all that mark/copy/prune/free traffic.
     auto* t = make_tcb();
@@ -613,7 +626,7 @@ TEST_F(CollectorCycleTest, ConcurrentThreadsSurviveManyCycles) {
     for (auto& th : threads) th.join();
 
     EXPECT_EQ(ok.load(), kThreads * kAllocs);
-    EXPECT_GT(gc->metrics().cycles(), 0u) << "this much allocation must have collected at least once";
+    EXPECT_GT(gc->stats().cycles, 0u) << "this much allocation must have collected at least once";
 }
 
 // Objects reachable from a registered root have to survive every cycle, and have to still be
@@ -630,7 +643,7 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
         gc->thd_prologue(t);
         seed_roots(roots, 3, t);
         // Enough garbage to run cycles over and over while the roots stay reachable.
-        for (int i = 0; i < 200'000 && gc->metrics().cycles() < 10; ++i) {
+        for (int i = 0; i < 200'000 && gc->stats().cycles < 10; ++i) {
             ASSERT_NE(fresh(64, t), nullptr);
             poll(t);
         }
@@ -646,7 +659,7 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
     } };
     thd.join();
 
-    ASSERT_GE(gc->metrics().cycles(), 1u);
+    ASSERT_GE(gc->stats().cycles, 1u);
 }
 
 // Nothing rewrites pointers in the pause: a copy only flips the color, and every reference left
@@ -700,7 +713,7 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
             len = to;
         };
         grow(kLen);
-        ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+        ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
 
         auto walk = [&](int c) {
             auto* n = read_word(roots[c]);
@@ -711,7 +724,7 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
             }
         };
         auto color = platform::read_color();
-        for (int i = 0; i < 400'000 && gc->metrics().cycles() < 20; ++i) {
+        for (int i = 0; i < 400'000 && gc->stats().cycles < 20; ++i) {
             make(~0ull, 128);
             poll(t);
             if (platform::read_color() == color) continue;
@@ -725,6 +738,7 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
     thd.join();
 
     EXPECT_GE(flips, 2u) << "fewer than two copies ran, the marker's healing went untested";
+    EXPECT_GT(gc->stats().copied_bytes, 0u);
 }
 
 // Reclamation has to keep up: allocating many times the heap trigger only works if dead pages
@@ -739,7 +753,7 @@ TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
     } };
     thd.join();
 
-    EXPECT_GT(gc->metrics().cycles(), 10u);
+    EXPECT_GT(gc->stats().cycles, 10u);
 }
 
 // Each thread stays under debt_trigger and exits, so only delete_tcb can count what it allocated
@@ -756,8 +770,8 @@ TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
         thd.join();
     }
     // No mutator is left to hold a cycle up
-    for (int i = 0; i < 200 && gc->metrics().cycles() == 0; ++i) std::this_thread::sleep_for(10ms);
-    EXPECT_GT(gc->metrics().cycles(), 0u);
+    for (int i = 0; i < 200 && gc->stats().cycles == 0; ++i) std::this_thread::sleep_for(10ms);
+    EXPECT_GT(gc->stats().cycles, 0u);
 }
 
 // Churn of 64-256 byte garbage leaves nothing worth packing. What it allocates black during a mark
@@ -766,8 +780,8 @@ TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
 TEST_F(CollectorCycleTest, CyclesWithoutFragmentationNeverCopy) {
     churn_until_cycles(4);
 
-    ASSERT_GT(gc->metrics().cycles(), 3u);
-    EXPECT_EQ(gc->metrics().max_ms(gc_metrics::phase::compact), 0.0);
+    ASSERT_GT(gc->stats().cycles, 3u);
+    EXPECT_EQ(gc->stats().copied_bytes, 0u);
 }
 
 // add_cleanup end to end. Objects are seeded on a thread that exits, so no stack keeps them alive.
@@ -807,14 +821,14 @@ TEST_F(CollectorCycleTest, CleanupRunsOnceOnTheRunnerAfterItsObjectDies) {
         gc->add_cleanup(to_accurate_ptr(kept), make(5), make(6));
         gc->delete_tcb(t);
     } }.join();
-    ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+    ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
 
     churn_until_cycles(3);
     EXPECT_EQ(calls.load(), 0);
     rooted = false;
     store_raw(root, size_t(0));
     // A mark may have read the root just before, so the object can live one more cycle
-    churn_until_cycles(gc->metrics().cycles() + 3);
+    churn_until_cycles(gc->stats().cycles + 3);
     for (int i = 0; i < 100 && !calls; ++i) std::this_thread::sleep_for(10ms);
 
     EXPECT_EQ(calls.load(), 1);
@@ -859,12 +873,12 @@ TEST_F(CopyingCycleTest, CleanupsFollowTheirObjectsAcrossCopies) {
             for (int g = 0; g < 9; ++g) make(~0ull);
         }
     });
-    ASSERT_EQ(gc->metrics().cycles(), 0u) << "a cycle ran during seeding";
+    ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
 
     // Churn stays out of the 64 B class, which leaves its runs stranded and copied
     auto churn = [&](auto done) {
         run([&](tcb* t) {
-            for (int i = 0; i < 400'000 && gc->metrics().cycles() < 40 && !done(); ++i) {
+            for (int i = 0; i < 400'000 && gc->stats().cycles < 40 && !done(); ++i) {
                 new (gc->alloc(128, t)) tagged(~0ull);
                 poll(t);
             }
@@ -875,9 +889,9 @@ TEST_F(CopyingCycleTest, CleanupsFollowTheirObjectsAcrossCopies) {
     auto color = ~0ull;
     churn([&] {
         auto c = platform::read_color();
-        if (color != ~0ull && c != color && !flips++) flip_cycle = gc->metrics().cycles();
+        if (color != ~0ull && c != color && !flips++) flip_cycle = gc->stats().cycles;
         color = c;
-        return flips && gc->metrics().cycles() >= flip_cycle + 2;
+        return flips && gc->stats().cycles >= flip_cycle + 2;
     });
     int moved_tracked = 0;
     run([&](tcb*) { for (int i = 0; i < kEntries; ++i) moved_tracked += (size_t)read_word(roots[i]) != tracked[i]; });
@@ -926,7 +940,7 @@ TEST_F(CollectorCycleTest, CleanupsMayAllocateAndPollOnTheRunner) {
 
     EXPECT_EQ(calls.load(), kEntries);
     for (int i = 0; i < kEntries; ++i) EXPECT_EQ(runs[i], 1) << "entry " << i;
-    EXPECT_GT(gc->metrics().cycles(), 4u) << "the cleanups' allocation drove cycles";
+    EXPECT_GT(gc->stats().cycles, 4u) << "the cleanups' allocation drove cycles";
 }
 
 // Exit waits for every cleanup queued when it starts, and keeps collecting meanwhile, since they allocate
@@ -946,7 +960,7 @@ TEST_F(CollectorCycleTest, StopWaitsForTheCleanupsAlreadyQueued) {
         for (int i = 0; i < kEntries; ++i) gc->add_cleanup(to_accurate_ptr(make(i)), make(1000 + i), make(2000 + i));
         gc->delete_tcb(t);
     } }.join();
-    ASSERT_EQ(gc->metrics().cycles(), 0u);
+    ASSERT_EQ(gc->stats().cycles, 0u);
 
     // The first pause queues them all
     churn_until_cycles(2);
@@ -984,4 +998,13 @@ TEST(CollectionRequestTest, ExpressIsNeverLostToANormalCycleEnding) {
     stop = true;
     cycles.join();
     EXPECT_EQ(lost, 0);
+}
+
+TEST(CollectionRequestTest, EndReleasesCollectWaiters) {
+    collection_request req;
+    auto waiter = std::thread { [&] { req.await_cycle(); } };
+    req.shutdown();
+    EXPECT_TRUE(req.await_request());
+    waiter.join();
+    req.await_cycle();
 }

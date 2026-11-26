@@ -11,9 +11,9 @@ namespace gc {
             return reinterpret_cast<detail::tcb*>(handle);
         }
     }
-    void init_gc(uint8_t& flag) {
+    void init_gc(uint8_t& flag, gc_tuning tuning) {
         rpmalloc_initialize();
-        GC = new detail::collector { flag };
+        GC = new detail::collector { flag, tuning };
     }
     // Never freed: threads that haven't finished keep polling and allocating into it until the process exits
     void end_gc() {
@@ -31,6 +31,8 @@ namespace gc {
     void register_root(size_t* root) { GC->register_root(root); }
     void enter_blocked(tcb_handle* handle) { GC->set_paused(t(handle)); }
     void exit_blocked(tcb_handle* handle) { GC->set_resumed(t(handle)); }
+    void collect(tcb_handle* handle) { GC->collect(t(handle)); }
+    gc_stats stats() { return GC->stats(); }
     void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { GC->add_cleanup(tracked, cleanup, arg); }
 
     managed* detail::alloc(size_t sz, tcb_handle* handle, bool zero) {
@@ -45,8 +47,9 @@ namespace gc {
     }
 
     void write_barrier(tcb_handle* handle, managed* obj) {
-        if (!GC->wb_active()) return;
         auto tcb = t(handle);
+        assert(tcb->is_running() && "a blocked thread can't touch the heap");
+        if (!GC->wb_active()) return;
         if (tcb->get_mark_info().get_wbbuf()->push(obj)) GC->flush_wbbuf(tcb);
     }
     void poll_safepoint(tcb_handle* handle) { GC->poll(t(handle)); }
