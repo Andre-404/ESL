@@ -993,3 +993,35 @@ TEST(CollectionRequestTest, EndReleasesCollectWaiters) {
     waiter.join();
     req.await_cycle();
 }
+
+// The cycle running at the call may have marked what the caller just dropped, so it doesn't count
+TEST(CollectionRequestTest, CollectWaitsForACycleThatStartsAfterIt) {
+    collection_request req;
+    req.request_normal();
+    ASSERT_FALSE(req.await_request());
+    std::atomic<bool> done { false };
+    auto waiter = std::jthread { [&] { req.await_cycle(); done = true; } };
+    // Lets the waiter block on the running cycle
+    std::this_thread::sleep_for(20ms);
+    req.clear(false);
+    std::this_thread::sleep_for(20ms);
+    ASSERT_FALSE(done) << "the cycle running at the call counted";
+    EXPECT_FALSE(req.await_request()) << "the waiter requests the next cycle";
+    req.clear(false);
+    waiter.join();
+    EXPECT_TRUE(done);
+}
+
+TEST(CollectionRequestTest, ShutdownMidCycleReleasesCollect) {
+    collection_request req;
+    req.request_normal();
+    ASSERT_FALSE(req.await_request());
+    auto waiter = std::thread { [&] { req.await_cycle(); } };
+    std::this_thread::sleep_for(20ms);
+    req.shutdown();
+    waiter.join();
+    // The running cycle still ends with its clear
+    req.clear(false);
+    EXPECT_TRUE(req.await_request());
+    req.await_cycle();
+}

@@ -138,7 +138,7 @@ namespace gc::detail {
 
         void flush_wbbuf(tcb* handle);
         void register_root(size_t* root);
-        // Blocks until a cycle completes, the one already running counts
+        // Blocks until a cycle that starts after the call completes
         void collect(tcb* handle);
         void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { _cleanups.add(tracked, cleanup, arg); }
 

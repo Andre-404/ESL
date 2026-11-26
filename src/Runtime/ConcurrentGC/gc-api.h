@@ -19,7 +19,7 @@ namespace gc {
     void register_root(size_t* root);
     void enter_blocked(tcb_handle* handle);
     void exit_blocked(tcb_handle* handle);
-    // Blocks until a cycle completes, the one already running counts
+    // Blocks until a cycle that starts after the call completes
     void collect(tcb_handle* handle);
     gc_stats stats();
     // cleanup and arg are kept alive until tracked dies if they are objects, so they must not point to
