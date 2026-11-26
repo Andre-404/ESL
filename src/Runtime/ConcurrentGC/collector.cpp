@@ -207,7 +207,7 @@ void collector::concurrent_loop() {
 
         // If threads are waiting because they request an express collection,
         // wake them after pages have been freed
-        _collection_req.clear();
+        _collection_req.clear(_express);
     }
     rpmalloc_thread_finalize(1);
 }
@@ -274,6 +274,8 @@ void collector::delete_tcb(tcb *t) {
     // we hand any live objects off to global storage before the transition.
     auto& arena = t->get_arena();
     arena.flush_alloc_caches();
+    // Debt under debt_trigger would die with the thread, and short-lived threads would never trigger a cycle
+    if (auto debt = arena.get_debt(); debt > 0) alloc_update(t, debt);
     arena.mutate_owned([&](pg_meta* start) {
         _pg_manager.transfer_ownership(start);
         return nullptr;

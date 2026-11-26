@@ -28,14 +28,12 @@ namespace gc::detail {
         // The caller is expected to block until express is served
         // Refuses to request express if end is posted
         void request_express() {
-            auto expected = type::none;
-            if (_req.compare_exchange_strong(expected, type::express, std::memory_order_acq_rel)) {
-                _req.notify_all();
-            }
-            expected = type::normal;
-            if (_req.compare_exchange_strong(expected, type::express, std::memory_order_acq_rel)) {
-                _req.notify_all();
-            }
+            auto cur = _req.load(std::memory_order_relaxed);
+            while (cur != type::express && cur != type::end)
+                if (_req.compare_exchange_weak(cur, type::express, std::memory_order_acq_rel)) {
+                    _req.notify_all();
+                    return;
+                }
         }
 
         void await_express_served() {
@@ -55,12 +53,10 @@ namespace gc::detail {
             return _req.load(std::memory_order_acquire) == type::express;
         }
 
-        // CAS so that we don't overwrite end request
-        void clear() {
-            auto expected = _req.load(std::memory_order_relaxed);
-            if (expected == type::end) return;
-            _req.compare_exchange_strong(expected, type::none, std::memory_order_release);
-            _req.notify_all();
+        void clear(bool served_express) {
+            auto expected = served_express ? type::express : type::normal;
+            if (_req.compare_exchange_strong(expected, type::none, std::memory_order_release, std::memory_order_relaxed))
+                _req.notify_all();
         }
 
         // Request shutdown and wake the worker.

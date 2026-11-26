@@ -742,6 +742,24 @@ TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
     EXPECT_GT(gc->metrics().cycles(), 10u);
 }
 
+// Each thread stays under debt_trigger and exits, so only delete_tcb can count what it allocated
+TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
+    constexpr size_t kThreads = 16, kAllocs = 1000;   // 64 KB each, 1 MB in all against a 256 KB trigger
+    static_assert(kAllocs * 64 < size_t(config::debt_trigger));
+    for (size_t i = 0; i < kThreads; ++i) {
+        auto* t = make_tcb();
+        auto thd = std::thread { [&, t] {
+            gc->thd_prologue(t);
+            for (size_t k = 0; k < kAllocs; ++k) { ASSERT_NE(fresh(64, t), nullptr); poll(t); }
+            gc->delete_tcb(t);
+        } };
+        thd.join();
+    }
+    // No mutator is left to hold a cycle up
+    for (int i = 0; i < 200 && gc->metrics().cycles() == 0; ++i) std::this_thread::sleep_for(10ms);
+    EXPECT_GT(gc->metrics().cycles(), 0u);
+}
+
 // Churn of 64-256 byte garbage leaves nothing worth packing. What it allocates black during a mark
 // can spread over a few runs, but never past the minimum gain's floor (bug 17), so nothing moves.
 // Compaction itself is covered in test-copier.cpp, which builds the runs directly.
@@ -936,4 +954,34 @@ TEST_F(CollectorCycleTest, StopWaitsForTheCleanupsAlreadyQueued) {
     // This thread has no tcb, as stop's caller must
     gc->stop();
     EXPECT_EQ(calls.load(), kEntries);
+}
+
+// collection_request alone. A cycle reads the request in worker_stw and clears only what it served
+TEST(CollectionRequestTest, ExpressPostedAfterTheCycleReadItOutlivesItsClear) {
+    collection_request req;
+    req.request_normal();
+    // The cycle has read normal, then a mutator runs out of memory
+    req.request_express();
+    req.clear(false);
+    EXPECT_TRUE(req.is_express()) << "the next cycle has to serve it";
+    req.clear(true);
+    EXPECT_FALSE(req.is_express());
+}
+
+// A normal cycle that ends while a mutator posts express must not drop the request
+TEST(CollectionRequestTest, ExpressIsNeverLostToANormalCycleEnding) {
+    collection_request req;
+    std::atomic<bool> stop { false };
+    auto cycles = std::thread { [&] {
+        while (!stop.load(std::memory_order_relaxed)) { req.request_normal(); req.clear(false); }
+    } };
+    int lost = 0;
+    for (int i = 0; i < 200'000; ++i) {
+        req.request_express();
+        lost += !req.is_express();
+        req.clear(true);
+    }
+    stop = true;
+    cycles.join();
+    EXPECT_EQ(lost, 0);
 }

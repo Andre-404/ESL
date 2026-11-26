@@ -154,6 +154,7 @@ EXPORT void create_new_thd(wrapper llvmWrapper, int64_t* alloca, int64_t argc){
         fmt::print(stderr, "Failed to create a thread: {}\n", std::strerror(err));
         std::abort();
     }
+    pthread_detach(p);
 }
 
 EXPORT void thd_init(uintptr_t* frameAddr, gc::tcb_handle* handle){
