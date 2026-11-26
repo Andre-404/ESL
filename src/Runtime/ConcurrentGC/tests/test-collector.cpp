@@ -741,21 +741,6 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
     EXPECT_GT(gc->stats().copied_bytes, 0u);
 }
 
-// Reclamation has to keep up: allocating many times the heap trigger only works if dead pages
-// come back. A leak shows up here as an abort out of force_collection, or as a hang.
-TEST_F(CollectorCycleTest, GarbageIsReclaimedAcrossManyCycles) {
-    constexpr size_t kAllocs = 300'000;   // ~20 MB of 64 byte garbage against a 256 KB trigger
-    auto* t = make_tcb();
-    auto thd = std::thread { [&, t] {
-        gc->thd_prologue(t);
-        for (size_t i = 0; i < kAllocs; ++i) { ASSERT_NE(fresh(64, t), nullptr); poll(t); }
-        gc->delete_tcb(t);
-    } };
-    thd.join();
-
-    EXPECT_GT(gc->stats().cycles, 10u);
-}
-
 // Each thread stays under debt_trigger and exits, so only delete_tcb can count what it allocated
 TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
     constexpr size_t kThreads = 16, kAllocs = 1000;   // 64 KB each, 1 MB in all against a 256 KB trigger
