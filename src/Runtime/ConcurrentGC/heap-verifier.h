@@ -23,7 +23,6 @@ namespace gc::detail {
 
         void poison();
     public:
-        // Fills every dead small block, type byte included
         static constexpr uint8_t poison_byte = 0xDB;
 
         heap_verifier(bool on, pg_manager& pgs) : _on(on), _pgs(pgs) {}

@@ -12,6 +12,7 @@
 #include "../platform-specific.h"
 #include "customization-helper.h"
 #include "pg-fixture.h"
+#include "../TCB.h"
 
 using namespace gc;
 using namespace gc::detail;

@@ -114,5 +114,5 @@ TEST_F(HeapVerifierTest, AfterMarkPoisonsTheDeadSmallBlocks) {
     EXPECT_EQ(count_bytes(dead, 64, heap_verifier::poison_byte), 64u);
     EXPECT_EQ(count_bytes(live, 64, heap_verifier::poison_byte), 0u);
     EXPECT_EQ(count_bytes(never_allocated, 64, heap_verifier::poison_byte), 0u);
-    EXPECT_EQ(count_bytes(big, 64 * 1024, heap_verifier::poison_byte), 0u) << "large runs aren't filled";
+    EXPECT_EQ(count_bytes(big, 64 * 1024, heap_verifier::poison_byte), 64 * 1024);
 }
