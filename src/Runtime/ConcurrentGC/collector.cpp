@@ -239,10 +239,20 @@ void collector::handle_pending(tcb* t) {
         assert(false && "Unreachable");
 }
 
+void collector::request_if_over(size_t alloc) {
+    if (alloc + _cleanups.external() + _heuristic.live_size() > _heuristic.heap_trigger())
+        _collection_req.request_normal();
+}
+
 [[gnu::cold, clang::noinline]] void collector::alloc_update(tcb* t, size_t debt) {
-    auto heap_sz = _alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt + _heuristic.live_size();
-    if (heap_sz > _heuristic.heap_trigger()) _collection_req.request_normal();
+    request_if_over(_alloc_sz.fetch_add(debt, std::memory_order_relaxed) + debt);
     t->get_arena().remove_debt(debt);
+}
+
+int64_t collector::add_cleanup(managed* tracked, size_t cleanup, size_t arg, size_t external) {
+    auto id = _cleanups.add(tracked, cleanup, arg, external);
+    if (id && external) request_if_over(_alloc_sz.load(std::memory_order_relaxed));
+    return id;
 }
 
 void collector::thd_prologue(tcb *t) {

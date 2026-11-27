@@ -6,16 +6,32 @@
 
 using namespace gc::detail;
 
-void cleanups::add(managed* tracked, size_t cleanup, size_t arg) {
+int64_t cleanups::add(managed* tracked, size_t cleanup, size_t arg, size_t external) {
     assert(tracked);
     // Constants compiled into the program live outside the heap and never die
     if (_state.load(std::memory_order_acquire) == state::drain || !heap_layout::in_heap(tracked))
-        return;
+        return 0;
     auto _ = std::scoped_lock { _live_mtx };
     auto& e = _live.emplace_back();
     store_ref(e.tracked, tracked);
     store_root(e.cleanup, cleanup);
     store_root(e.arg, arg);
+    e.id = _next_id++;
+    e.external = external;
+    _external.fetch_add(external, std::memory_order_relaxed);
+    return e.id;
+}
+
+// _live is in id order. Leaves a tombstone, erasing would move the vector under the lock on every close
+bool cleanups::remove(int64_t id) {
+    auto _ = std::scoped_lock { _live_mtx };
+    auto it = std::ranges::lower_bound(_live, id, {}, &entry::id);
+    if (it == _live.end() || it->id != id || !read_ref(it->tracked)) return false;
+    store_ref(it->tracked, nullptr);
+    store_raw(it->cleanup, size_t(0));
+    store_raw(it->arg, size_t(0));
+    _external.fetch_sub(it->external, std::memory_order_relaxed);
+    return true;
 }
 
 std::generator<size_t&> cleanups::keepalive_slots() {
@@ -28,16 +44,19 @@ std::generator<size_t&> cleanups::keepalive_slots() {
 }
 
 // Runs in the stw pause, the locks are for count
+// Must keep _live in order, remove's search depends on it
 void cleanups::queue_dead() {
     auto _ = std::scoped_lock { _live_mtx, _pending_mtx };
-    size_t kept = 0;
+    _external.store(0, std::memory_order_relaxed);
+    size_t kept = 0, queued = _pending.size();
     for (auto& e : _live) {
         auto obj = read_ref(e.tracked);
+        if (!obj) continue;
         if (!pg_meta::head_from_ptr(obj)->is_marked(obj)) _pending.push_back(e);
         else _live[kept++] = e;
     }
-    if (kept == _live.size()) return;
     _live.resize(kept);
+    if (_pending.size() == queued) return;
     auto expected = state::none;
     if (_state.compare_exchange_strong(expected, state::queued, std::memory_order_release, std::memory_order_relaxed))
         _state.notify_one();

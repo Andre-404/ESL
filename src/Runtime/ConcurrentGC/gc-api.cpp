@@ -32,7 +32,10 @@ namespace gc {
     void run_blocked(tcb_handle* handle, function_ref<void() const> f) { GC->run_blocked(t(handle), f); }
     void collect(tcb_handle* handle) { GC->collect(t(handle)); }
     gc_stats stats() { return GC->stats(); }
-    void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { GC->add_cleanup(tracked, cleanup, arg); }
+    int64_t add_cleanup(managed* tracked, size_t cleanup, size_t arg, size_t external_bytes) {
+        return GC->add_cleanup(tracked, cleanup, arg, external_bytes);
+    }
+    bool remove_cleanup(int64_t id) { return GC->remove_cleanup(id); }
 
     managed* detail::alloc(size_t sz, tcb_handle* handle, bool zero) {
         auto res = GC->alloc(sz, t(handle));

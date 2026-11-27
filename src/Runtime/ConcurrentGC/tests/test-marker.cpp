@@ -161,7 +161,7 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
 
     thd_mark_info info;   // no track_stack -> get_stack is empty
     marker m;
-    m.scan_stack(info, false, [](uint8_t* p) {
+    m.scan_words({info.get_stack()}, false, [](uint8_t* p) {
         return reinterpret_cast<managed*>(p);
     });
     EXPECT_EQ(rp.pg()->compute_live(), 0u);
@@ -177,7 +177,7 @@ TEST_F(MarkerTest, ScanStackWithPinSetsPagePinned) {
     fake_stack fs(info, stack_words);
 
     marker m;
-    m.scan_stack(info, true, [&](uint8_t* p) -> managed* {
+    m.scan_words({info.get_stack()}, true, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
@@ -194,7 +194,7 @@ TEST_F(MarkerTest, ScanStackWithoutPinLeavesPageUnpinned) {
     fake_stack fs(info, stack_words);
 
     marker m;
-    m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
+    m.scan_words({info.get_stack()}, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
@@ -210,14 +210,14 @@ TEST_F(MarkerTest, ScanStackPinsEvenForAlreadyMarkedObject) {
     thd_mark_info info;
     fake_stack fs(info, stack_words);
     marker m;
-    m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
+    m.scan_words({info.get_stack()}, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
     ASSERT_EQ(rp.pg()->compute_live(), 1u);
     ASSERT_FALSE(rp.pg()->has_pinned());
 
-    m.scan_stack(info, true, [&](uint8_t* p) -> managed* {
+    m.scan_words({info.get_stack()}, true, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
 
@@ -234,7 +234,7 @@ TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
     fake_stack fs(info, stack_words);
 
     marker m;
-    m.scan_stack(info, false, [&](uint8_t* p) -> managed* {
+    m.scan_words({info.get_stack()}, false, [&](uint8_t* p) -> managed* {
         return reinterpret_cast<managed*>(p) == obj ? obj : nullptr;
     });
     EXPECT_EQ(rp.pg()->compute_live(), 1u);

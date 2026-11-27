@@ -108,6 +108,8 @@ namespace gc::detail {
         // Pushes the callee-saved registers, sets the stack end below them and runs f
         void with_stack_end(tcb* handle, function_ref<void() const> f);
 
+        // Requests a cycle once alloc, the external cost and the live set pass the trigger
+        void request_if_over(size_t alloc);
         [[gnu::cold, clang::noinline]] void alloc_update(tcb* t, size_t debt);
         [[gnu::cold, clang::noinline]] managed* force_collection(size_t sz, tcb* handle);
 
@@ -143,7 +145,8 @@ namespace gc::detail {
         void register_root(size_t* root);
         // Blocks until a cycle that starts after the call completes
         void collect(tcb* handle);
-        void add_cleanup(managed* tracked, size_t cleanup, size_t arg) { _cleanups.add(tracked, cleanup, arg); }
+        int64_t add_cleanup(managed* tracked, size_t cleanup, size_t arg, size_t external = 0);
+        bool remove_cleanup(int64_t id) { return _cleanups.remove(id); }
 
         managed* alloc(size_t sz, tcb* handle);
 

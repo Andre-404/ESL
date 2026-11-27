@@ -25,7 +25,12 @@ namespace gc {
     gc_stats stats();
     // cleanup and arg are kept alive until tracked dies if they are objects, so they must not point to
     // tracked or it never dies
-    void add_cleanup(managed* tracked, size_t cleanup, size_t arg);
+    // Returns the cleanup's id, 0 if it isn't registered (tracked lives outside the heap, or the GC is stopping).
+    // external_bytes is what tracked holds outside the heap (an fd, a socket): it counts toward triggering the
+    // next collection, and remove_cleanup takes it back
+    int64_t add_cleanup(managed* tracked, size_t cleanup, size_t arg, size_t external_bytes = 0);
+    // True if the cleanup was registered and now never runs. Finds only cleanups whose object is alive
+    bool remove_cleanup(int64_t id);
     namespace detail {
         [[nodiscard]] managed* alloc(size_t sz, tcb_handle* handle, bool zero);
     }

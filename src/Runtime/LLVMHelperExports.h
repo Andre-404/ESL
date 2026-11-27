@@ -24,7 +24,8 @@ enum class runtimeErrorType : uint8_t{
     WRONG_TYPE_BINARY,
     ARG_CNT,
     INST_FIELD,
-    OUT_OF_BOUNDS
+    OUT_OF_BOUNDS,
+    PLAIN    // msg is printed as is
 };
 inline constexpr unsigned operator+ (runtimeErrorType const val) { return static_cast<byte>(val); }
 // A bit hacky, but we only ever need a maximum of 3 values for errors, what does values are(ESL "Value"s, char ptrs..)

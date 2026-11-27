@@ -1098,6 +1098,43 @@ TEST_F(CollectorCycleTest, StopWaitsForTheCleanupsAlreadyQueued) {
     EXPECT_EQ(calls.load(), kEntries);
 }
 
+// The 1 MiB passes the 256 KiB trigger on its own. The thread waits blocked, because exit flushes its
+// debt through the trigger check, which would also see the cost
+TEST_F(CollectorCycleTest, ExternalCostAloneDrivesACycle) {
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        EXPECT_GT(gc->add_cleanup(fresh(64, t), 0, 0, 1u << 20), 0);
+        gc->run_blocked(t, [&] { for (int i = 0; i < 100 && !gc->stats().cycles; ++i) std::this_thread::sleep_for(10ms); });
+        EXPECT_GE(gc->stats().cycles, 1u);
+        gc->delete_tcb(t);
+    } }.join();
+}
+
+// Both objects die, only the cleanup that wasn't removed runs
+TEST_F(CollectorCycleTest, RemovedCleanupNeverRuns) {
+    std::atomic<int> calls { 0 };
+    std::atomic<uint64_t> got { 0 };
+    test_custom::hooks.invoke_cleanup = [&](tcb_handle*, size_t cleanup, size_t) { got = tag_of(cleanup); calls++; };
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        auto make = [&](uint64_t id) { return ptr_to_word(new (gc->alloc(64, t)) tagged(id)); };
+        auto id = gc->add_cleanup(to_accurate_ptr(make(0)), make(1), 0);
+        gc->add_cleanup(to_accurate_ptr(make(0)), make(2), 0);
+        EXPECT_TRUE(gc->remove_cleanup(id));
+        gc->delete_tcb(t);
+    } }.join();
+    ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
+
+    churn_until_cycles(3);
+    for (int i = 0; i < 100 && !calls; ++i) std::this_thread::sleep_for(10ms);
+    churn_until_cycles(gc->stats().cycles + 2);
+    EXPECT_EQ(calls.load(), 1);
+    EXPECT_EQ(got.load(), 2u);
+    EXPECT_EQ(gc->stats().cleanups_registered, 0u) << "a pause dropped the removed entry";
+}
+
 // collection_request alone. A cycle reads the request in worker_stw and clears only what it served
 TEST(CollectionRequestTest, ExpressPostedAfterTheCycleReadItOutlivesItsClear) {
     collection_request req;
