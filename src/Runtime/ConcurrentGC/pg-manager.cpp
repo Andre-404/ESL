@@ -32,8 +32,12 @@ static size_t compute_idx(pg_meta* pg, pg_meta* base) {
 std::generator<pg_meta*> pg_manager::runs() {
     auto hdrs = _allocator.meta_base();
     for (size_t i = 0, n = _allocator.committed(); i < n;) {
-        if (hdrs[i].is_active()) co_yield hdrs + i;
-        i += hdrs[i].num_pages();
+        if (hdrs[i].is_active())  {
+            co_yield hdrs + i;
+            i += hdrs[i].num_pages();
+        } else {
+            i++;
+        }
     }
 }
 

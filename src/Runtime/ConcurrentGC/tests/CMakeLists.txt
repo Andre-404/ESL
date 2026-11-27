@@ -43,6 +43,7 @@ add_library(gc_under_test STATIC
         ../pg-manager.cpp
         ../collector.cpp
         ../cleanups.cpp
+        ../heap-verifier.cpp
         ../gc-api.cpp
         ${GC_ABI_SOURCE}
         ../../../Includes/format.cc
@@ -85,6 +86,7 @@ add_executable(run_tests
         test-cleanups.cpp
         test-ref-slot.cpp
         test-gc-api.cpp
+        test-heap-verifier.cpp
 )
 target_link_libraries(run_tests
         PRIVATE
