@@ -39,6 +39,8 @@ namespace gc::detail {
             return true;
         }
 
+        std::size_t committed() const { return _committed.load(std::memory_order_acquire); }
+
         bool pg_active(pg_meta* pg) const {
             auto off = pg - _hdrs;
             if (off < 0 || (std::size_t)off >= _committed.load(std::memory_order_acquire)) return false;

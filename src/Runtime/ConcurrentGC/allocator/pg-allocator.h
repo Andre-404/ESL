@@ -28,6 +28,8 @@ namespace gc::detail {
         gc_bits& bits() { return _bits; }
         reloc_hdrs& relocs() { return _relocs; }
         bool pg_active(pg_meta* pg) { return _tables.pg_active(pg); }
+        // Headers [0, committed) can be read
+        size_t committed() const { return _tables.committed(); }
         size_t in_use_bytes() const { return _spans.in_use() * config::granule_bytes; }
         size_t resident_bytes() const { return _spans.resident() * config::granule_bytes; }
 

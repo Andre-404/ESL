@@ -14,6 +14,7 @@
 #include "gc-metrics.h"
 #include "collection-request.h"
 #include "cleanups.h"
+#include "heap-verifier.h"
 
 namespace gc::detail {
     enum class gc_state : uint8_t {
@@ -43,6 +44,7 @@ namespace gc::detail {
         marker _marker;
         copier _copier;
         cleanups _cleanups;
+        heap_verifier _verifier;
 
         gc_heuristics _heuristic;
         gc_metrics    _metrics;
@@ -116,7 +118,7 @@ namespace gc::detail {
     public:
         explicit collector(uint8_t& flag, gc_tuning tuning = {}) 
             : _gc_flag(flag), _mark_alloc_start(0),_copier(config::copy_evac_threshold),
-            _heuristic(tuning), _pg_manager(tuning.scavenge)
+            _verifier(tuning.verify_heap, _pg_manager), _heuristic(tuning), _pg_manager(tuning.scavenge)
         {
             _worker = std::thread { &collector::concurrent_loop, this };
             _cleanups.run(*this);

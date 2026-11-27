@@ -89,6 +89,7 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Runtime/ConcurrentGC/marker.cpp
         src/Runtime/ConcurrentGC/collector.cpp
         src/Runtime/ConcurrentGC/cleanups.cpp
+        src/Runtime/ConcurrentGC/heap-verifier.cpp
         src/Runtime/ConcurrentGC/gc-api.cpp
         ${GC_ABI_SOURCE}
         src/Runtime/Objects/gc-customization.cpp

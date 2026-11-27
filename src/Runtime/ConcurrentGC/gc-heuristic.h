@@ -29,6 +29,8 @@ namespace gc {
         // Below this a copying cycle's fixed costs in the pause outweigh what it frees
         size_t min_copy_bytes = 1u << 20;
         scavenge_policy scavenge;
+        // Checks the heap in every pause and poisons what died
+        bool verify_heap = false;
     };
 }
 

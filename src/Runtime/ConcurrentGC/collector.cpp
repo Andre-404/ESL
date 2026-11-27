@@ -117,6 +117,7 @@ size_t collector::stw(std::span<tcb*> owned, stw_role role) {
     // Must run before relocs are cleared (need to update tracked)
     // And must also run before we try to copy (copy pass can potentially overwrite mark bit of dead obj)
     if (role == stw_role::collector) {
+        _verifier.after_mark();
         _cleanups.queue_dead();
         _pg_manager.relocs().clear();
     }

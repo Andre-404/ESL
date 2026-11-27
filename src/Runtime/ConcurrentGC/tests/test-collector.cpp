@@ -483,9 +483,9 @@ namespace {
     class CollectorCycleTest : public ::testing::Test {
     protected:
         // Small enough that a few hundred KB of garbage drives a cycle, instead of the 20 MB
-        // the default tuning wants.
+        // the default tuning wants. Every pause runs the heap verifier
         static constexpr size_t kInitialHeap = 256u << 10;
-        virtual gc_tuning tuning() const { return { .initial_heap = kInitialHeap }; }
+        virtual gc_tuning tuning() const { return { .initial_heap = kInitialHeap, .verify_heap = true }; }
 
         collector* gc      = nullptr;
         uint8_t*   gc_flag = nullptr;
@@ -716,7 +716,7 @@ TEST_F(CollectorCycleTest, RootedObjectsSurviveAndStayAllocated) {
 namespace {
     // Copies at the few KB these tests keep live, which the default floor never allows
     struct CopyingCycleTest : CollectorCycleTest {
-        gc_tuning tuning() const override { return { .initial_heap = kInitialHeap, .min_copy_bytes = 0 }; }
+        gc_tuning tuning() const override { return { .initial_heap = kInitialHeap, .min_copy_bytes = 0, .verify_heap = true }; }
 
         // Three runs of 64 B blocks, a quarter of them live. The held object is left alone mid-run, so its run
         // is the sparsest and every split of the copy into plans takes it, and compacting would move it.
@@ -947,6 +947,84 @@ TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
     // No mutator is left to hold a cycle up
     for (int i = 0; i < 200 && gc->stats().cycles == 0; ++i) std::this_thread::sleep_for(10ms);
     EXPECT_GT(gc->stats().cycles, 0u);
+}
+
+// The pause that finds a block dead fills it, so a dangling read sees the poison rather than a new tenant.
+// No allocation follows the collect, so nothing has reused the block when it's read
+TEST_F(CollectorCycleTest, VerifierPoisonsWhatDied) {
+    size_t root = 0;
+    gc->register_root(&root);
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        auto* kept = (uint8_t*)fresh(64, t);
+        auto* dropped = (uint8_t*)fresh(64, t);
+        std::memset(kept + 8, 0xab, 56);
+        std::memset(dropped + 8, 0xab, 56);
+        root = ptr_to_word((managed*)kept);
+        gc->collect(t);
+        EXPECT_EQ(std::count(dropped, dropped + 64, heap_verifier::poison_byte), 64);
+        EXPECT_EQ(std::count(kept + 8, kept + 64, 0xab), 56);
+        gc->delete_tcb(t);
+    } }.join();
+}
+
+// A planted missed barrier: once the mark has traced H, and before it traces Y, the mutator moves X's only
+// reference from Y into H without write_barrier. X is never marked, and the pause has to abort on H -> X.
+// Neither of the test's threads tracks its stack, so no conservative scan can find X
+using CollectorCycleDeathTest = CollectorCycleTest;
+TEST_F(CollectorCycleDeathTest, VerifierAbortsOnAStoreThatSkippedTheBarrier) {
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    struct holder : managed {
+        managed* a = nullptr;
+        managed* b = nullptr;
+        holder() : managed(1) {}
+    };
+    holder* y = nullptr;
+    // 1: Y's trace waits, 2: X has moved. Y is traced by the concurrent mark, on the worker
+    std::atomic<int> step { 0 };
+    test_custom::hooks.obj_trace = [&](managed* m, std::function<void(managed*)>& cb) {
+        auto h = static_cast<holder*>(m);
+        if (m == y && step == 0) { step = 1; step.notify_all(); step.wait(1); }
+        if (auto r = read_ref(h->a, std::memory_order_acquire)) cb(r);
+        if (auto r = read_ref(h->b, std::memory_order_acquire)) cb(r);
+    };
+    size_t root = 0;
+    gc->register_root(&root);
+
+    auto plant = [&] {
+        std::atomic<bool> ready { false }, done { false };
+        auto* m = make_tcb();
+        auto* c = make_tcb();
+        std::thread mut { [&, t = m] {
+            gc->thd_prologue(t);
+            auto make = [&] { return new (gc->alloc(sizeof(holder), t)) holder(); };
+            auto h = make(), x = make();
+            y = make();
+            store_ref(h->a, (managed*)y);
+            store_ref(y->a, (managed*)x);
+            root = ptr_to_word(h);
+            ready = true;
+            ready.notify_one();
+            while (step != 1) poll(t);
+            store_ref(h->b, read_ref(y->a));
+            store_ref(y->a, (managed*)nullptr);
+            step = 2;
+            step.notify_all();
+            while (!done) poll(t);
+            gc->delete_tcb(t);
+        } };
+        std::thread col { [&, t = c] {
+            gc->thd_prologue(t);
+            ready.wait(false);
+            gc->collect(t);
+            done = true;
+            gc->delete_tcb(t);
+        } };
+        mut.join();
+        col.join();
+    };
+    EXPECT_DEATH(plant(), "heap verifier: 0x[0-9a-f]+ -> 0x[0-9a-f]+: unmarked");
 }
 
 // Churn of 64-256 byte garbage leaves nothing worth packing. What it allocates black during a mark

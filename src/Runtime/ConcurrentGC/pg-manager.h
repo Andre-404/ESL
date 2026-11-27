@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <atomic>
 #include <cstring>
+#include <generator>
 #include <utility>
 
 #include "gc-config.h"
@@ -97,6 +98,8 @@ namespace gc::detail {
         }
 
         void free_pgs();
+        // Every active run head, from the headers alone. Only while nothing allocates or frees runs
+        std::generator<pg_meta*> runs();
 
         gc_bits& bits() { return _allocator.bits(); }
         reloc_hdrs& relocs() { return _allocator.relocs(); }

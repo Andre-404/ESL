@@ -29,6 +29,14 @@ static size_t compute_idx(pg_meta* pg, pg_meta* base) {
     return offset * gc::config::page_sz / gc::config::free_batch_sz;
 }
 
+std::generator<pg_meta*> pg_manager::runs() {
+    auto hdrs = _allocator.meta_base();
+    for (size_t i = 0, n = _allocator.committed(); i < n;) {
+        if (hdrs[i].is_active()) co_yield hdrs + i;
+        i += hdrs[i].num_pages();
+    }
+}
+
 void pg_manager::free_pgs() {
     auto wl = _pending_free.lf_reset_head(nullptr);
     size_t lo = ~size_t(0), hi = 0;
