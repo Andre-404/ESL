@@ -240,6 +240,29 @@ TEST_F(MarkerTest, ScanStackIgnoresWordsGetBaseRejects) {
     EXPECT_EQ(rp.pg()->compute_live(), 1u);
 }
 
+// A word at a block's start also takes the object before it, but only if that object ends there
+TEST_F(MarkerTest, ScanStackTakesTheObjectThatEndsAtAWord) {
+    test_page rp{64};
+    managed* fills = rp.construct(0, 1);
+    managed* shorter = rp.construct(2, 2);
+    rp.allocate(0);
+    rp.allocate(2);
+    test_custom::hooks.obj_size = [](managed* m) { return m->get_type_id() == 1 ? size_t{64} : size_t{48}; };
+    std::vector<size_t> stack_words = { (size_t)rp.slot_addr(1), (size_t)rp.slot_addr(3) };
+    thd_mark_info info;
+    fake_stack fs(info, stack_words);
+
+    auto* data = rp->get_data();
+    marker m;
+    m.scan_words({info.get_stack()}, true, [&](uint8_t* p) -> managed* {
+        return p >= data && p < data + rp->block_cnt() * rp.block_sz() ? rp->from_interior(p) : nullptr;
+    });
+    EXPECT_TRUE(rp->is_marked(fills));
+    EXPECT_FALSE(rp->is_marked(shorter)) << "the word is 16 bytes past its end";
+    EXPECT_EQ(rp.pg()->compute_live(), 1u);
+    EXPECT_TRUE(rp.pg()->has_pinned());
+}
+
 TEST_F(MarkerTest, TraceNReturnsZeroWhenNoWorkAvailable) {
     marker m;
     EXPECT_EQ(m.trace_n(1024), 0u);

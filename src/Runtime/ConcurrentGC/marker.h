@@ -5,7 +5,6 @@
 #include "customization.h"
 #include "pg-meta.h"
 #include "ref-slot.h"
-#include "TCB.h"
 
 namespace gc::detail {
     // Mutators may be storing to root and the marker reads the object behind it, hence acquire
@@ -71,13 +70,21 @@ namespace gc::detail {
         }
 
         // Conservative, every word is 8 byte aligned. With pin, an object found here is pinned
-        // whether or not it was already marked
+        // whether or not it was already marked. Also handles one-past-end pointers
         template<typename F>
         void scan_words(std::initializer_list<std::span<size_t>> parts, bool pin, F&& get_base) {
             auto buf = _bufs.pop_empty();
             for (auto words : parts)
-                for (auto word : words)
-                    if (auto obj = get_base(to_possible_ptr(word))) push_obj(buf, obj, pin);
+                for (auto word : words) {
+                    auto p = to_possible_ptr(word);
+                    auto obj = get_base(p);
+                    auto prev = p ? get_base(p - 1) : nullptr;
+
+                    if (obj) push_obj(buf, obj, pin);
+                    // prev + size to help filter out atleast some false reports
+                    if (prev && prev != obj && (uint8_t*)prev + obj_size(prev) == p)
+                        push_obj(buf, prev, pin);
+                }
             push_buf(buf);
         }
 

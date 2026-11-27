@@ -880,6 +880,57 @@ TEST_F(CopyingCycleTest, WhatABlockedClosureCapturedIsNotCopied) {
 // still binds, through its conversion to a function pointer, but it has nothing to move
 static_assert(!std::is_constructible_v<function_ref<void() const>, decltype([x = 0]() mutable { ++x; })>);
 
+// A blocked frame holds only the address one past an object that fills its 64 B block, which is where
+// the next block starts. The object must survive the cycles, not the next block in its place
+TEST_F(CollectorCycleTest, AnObjectHeldOnlyPastItsEndSurvives) {
+    size_t root = 0;
+    gc->register_root(&root);
+    // On this thread, which no pause scans, and written by one that exits
+    uint8_t* end = nullptr;
+    auto* s = make_tcb();
+    std::thread { [&, t = s] {
+        gc->thd_prologue(t);
+        // The rooted block before keeps the run in use, the garbage after is what the scan used to take
+        root = ptr_to_word(fresh(64, t));
+        end = (uint8_t*)fresh(64, t) + 64;
+        ASSERT_EQ((uint8_t*)fresh(64, t), end) << "the blocks weren't handed out in order";
+        gc->delete_tcb(t);
+    } }.join();
+    ASSERT_EQ(gc->stats().cycles, 0u) << "a cycle ran during seeding";
+
+    std::atomic<bool> parked { false }, done { false };
+    auto* t = make_tcb();
+    auto holder = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        t->get_mark_info().track_stack((size_t)__builtin_frame_address(0));
+        auto* held = end;
+        gc->run_blocked(t, [&] {
+            (void)held;
+            parked = true;
+            parked.notify_one();
+            done.wait(false);
+        });
+        auto* obj = (managed*)(held - 64);
+        EXPECT_EQ(pg_meta::head_from_ptr(obj)->from_interior((uint8_t*)obj), obj) << "the object was freed";
+        gc->delete_tcb(t);
+    } };
+    parked.wait(false);
+    // Out of the 64 B class, so no allocation can take over the block if it is freed
+    auto* c = make_tcb();
+    std::thread { [&, t = c] {
+        gc->thd_prologue(t);
+        for (int i = 0; i < 400'000 && gc->stats().cycles < 3; ++i) {
+            ASSERT_NE(fresh(128, t), nullptr);
+            poll(t);
+        }
+        gc->delete_tcb(t);
+    } }.join();
+    EXPECT_GE(gc->stats().cycles, 3u);
+    done = true;
+    done.notify_one();
+    holder.join();
+}
+
 // Each thread stays under debt_trigger and exits, so only delete_tcb can count what it allocated
 TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {
     constexpr size_t kThreads = 16, kAllocs = 1000;   // 64 KB each, 1 MB in all against a 256 KB trigger
