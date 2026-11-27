@@ -57,6 +57,8 @@ endif()
 
 if(ESL_BUILD_COMPILER)
 
+# rpmalloc 2 replaces the process's malloc unless told not to, and ESL only calls it directly
+set_source_files_properties(src/Includes/rpmalloc/rpmalloc.c PROPERTIES COMPILE_DEFINITIONS ENABLE_OVERRIDE=0)
 add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.cpp src/ErrorHandling/errorHandler.h src/ErrorHandling/errorHandler.cpp src/Runtime/Objects/objects.h src/Runtime/Objects/objects.cpp src/AST/ASTDefs.h src/AST/ASTProbe.h src/AST/ASTProbe.cpp src/Parsing/parser.h src/Parsing/parser.cpp src/Preprocessing/scanner.h src/Preprocessing/scanner.cpp src/Preprocessing/preprocessor.h src/Preprocessing/preprocessor.cpp src/Includes/format.cc src/Includes/format.cc src/Includes/format.cc src/Includes/fmt/color.h src/Includes/fmt/ostream.h src/Includes/fmt/std.h src/Runtime/oldNativeFunctions.h src/Runtime/oldNativeFunctions.cpp src/Parsing/macroExpander.h src/Parsing/macroExpander.cpp src/Runtime/Values/valueHelpers.cpp src/Includes/unorderedDense.h src/Codegen/Passes/AST/closureConverter.h src/Codegen/Passes/AST/closureConverter.cpp src/SemanticAnalysis/semanticAnalyzer.h src/SemanticAnalysis/semanticAnalyzer.cpp src/Runtime/JIT/JIT.h src/Runtime/LLVMHelperExports.h src/TypedAST/Types.h src/TypedAST/Types.cpp src/TypedAST/TypedASTDefs.h src/Codegen/Passes/AST/ASTToTypedAST.h src/Codegen/Passes/AST/ASTToTypedAST.cpp
         src/Codegen/Passes/computeClassHierarchy.cpp
         src/Includes/rpmalloc/rpmalloc.c

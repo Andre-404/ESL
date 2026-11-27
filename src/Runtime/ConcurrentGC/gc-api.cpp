@@ -12,7 +12,7 @@ namespace gc {
         }
     }
     void init_gc(uint8_t& flag, gc_tuning tuning) {
-        rpmalloc_initialize();
+        rpmalloc_initialize(nullptr);
         GC = new detail::collector { flag, tuning };
     }
     // Never freed: threads that haven't finished keep polling and allocating into it until the process exits

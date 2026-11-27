@@ -222,7 +222,7 @@ void collector::concurrent_loop() {
         // wake them after pages have been freed
         _collection_req.clear(_express);
     }
-    rpmalloc_thread_finalize(1);
+    rpmalloc_thread_finalize();
 }
 
 // For op_stw this thread joins the gate, and stw_enter acks once it has flushed its caches
@@ -302,7 +302,7 @@ void collector::delete_tcb(tcb *t) {
     });
     // Safe to do since we removed it under lock
     rpfree(t);
-    rpmalloc_thread_finalize(1);
+    rpmalloc_thread_finalize();
 }
 
 void collector::flush_wbbuf(tcb *t) {

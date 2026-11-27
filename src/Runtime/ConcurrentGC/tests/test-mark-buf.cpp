@@ -21,11 +21,11 @@ namespace {
     class RpmallocEnvironment : public testing::Environment {
     public:
         void SetUp() override {
-            rpmalloc_initialize();
+            rpmalloc_initialize(nullptr);
             rpmalloc_thread_initialize();
         }
         void TearDown() override {
-            rpmalloc_thread_finalize(1);
+            rpmalloc_thread_finalize();
             rpmalloc_finalize();
         }
     };
@@ -37,7 +37,7 @@ namespace {
             rpmalloc_thread_initialize();
         }
         ~RpmallocThreadInitializer() {
-            rpmalloc_thread_finalize(1);
+            rpmalloc_thread_finalize();
         }
     };
 

@@ -33,7 +33,8 @@ add_library(gc_under_test STATIC
         ../marker.cpp
         ../copier.cpp
         ../ref-slot.cpp
-        ../allocator/os-memory.cpp
+        ../os/os-memory.cpp
+        ../os/os-time.cpp
         ../allocator/gc-bits.cpp
         ../allocator/span-allocator.cpp
         ../allocator/pg-allocator.cpp
@@ -48,6 +49,8 @@ add_library(gc_under_test STATIC
 )
 target_include_directories(gc_under_test PUBLIC ../../../Includes/)
 target_link_libraries(gc_under_test PUBLIC Threads::Threads)
+# As in the top-level CMakeLists: no malloc override
+set_source_files_properties(../../../Includes/rpmalloc/rpmalloc.c PROPERTIES COMPILE_DEFINITIONS ENABLE_OVERRIDE=0)
 
 # PUBLIC, and on the library rather than the executable. platform-specific.h
 # selects platforms/testing.inc on this define, and TCB.h sizes a member array

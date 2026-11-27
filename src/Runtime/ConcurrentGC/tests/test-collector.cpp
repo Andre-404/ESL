@@ -26,7 +26,7 @@ namespace {
             rpmalloc_thread_initialize();
         }
         ~RpmallocThreadInitializer() {
-            rpmalloc_thread_finalize(1);
+            rpmalloc_thread_finalize();
         }
     };
 
@@ -790,6 +790,64 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
     thd.join();
 
     EXPECT_GE(flips, 2u) << "fewer than two copies ran, the marker's healing went untested";
+    EXPECT_GT(gc->stats().copied_bytes, 0u);
+    // Only a cycle that copied flips the color
+    EXPECT_GE(gc->stats().copying_cycles, flips);
+}
+
+// Every pause scans a blocked thread with pin, so the run a pointer in its frame points into stays put,
+// payload included, while the list's other runs are copied. testing.inc captures no registers, so a
+// pointer held only in a register isn't covered (bug 39)
+TEST_F(CopyingCycleTest, WhatABlockedThreadPointsIntoIsNotCopied) {
+    // Three runs of 64 B blocks, a quarter of them live. The held object is left alone mid-run, so its run is
+    // the sparsest and every split of the copy into plans takes it, and compacting would move it
+    constexpr int kRoots = 768, kHeld = kRoots / 6;
+    std::vector<size_t> roots(kRoots, 0);
+    for (auto& r : roots) gc->register_root(&r);
+    // On a thread that exits, so only the holder's stack points into the runs
+    auto* s = make_tcb();
+    std::thread { [&, t = s] { gc->thd_prologue(t); seed_roots(roots, 3, t); gc->delete_tcb(t); } }.join();
+    auto* run = pg_meta::head_from_ptr((void*)roots[kHeld]);
+    for (int i = 0; i < kRoots; ++i)
+        if (i != kHeld && pg_meta::head_from_ptr((void*)roots[i]) == run) roots[i] = 0;
+    auto orig = roots;
+
+    std::atomic<bool> parked { false }, copied { false };
+    auto* t = make_tcb();
+    auto holder = std::thread { [&, t] {
+        gc->thd_prologue(t);
+        t->get_mark_info().track_stack((size_t)__builtin_frame_address(0));
+        // Into the payload, like a native's buf->get_data().data()
+        auto* data = (uint8_t*)read_word(roots[kHeld]) + 8;
+        std::memset(data, 0xab, 56);
+        gc->set_paused(t);
+        parked = true;
+        parked.notify_one();
+        copied.wait(false);
+        gc->set_resumed(t);
+
+        EXPECT_EQ((uint8_t*)read_word(roots[kHeld]) + 8, data) << "the held object moved";
+        EXPECT_EQ(std::count(data, data + 56, 0xab), 56);
+        int moved = 0;
+        for (int i = 0; i < kRoots; ++i) moved += (size_t)read_word(roots[i]) != orig[i];
+        EXPECT_GT(moved, 0) << "nothing moved, so nothing shows the pin is what kept the held object";
+        gc->delete_tcb(t);
+    } };
+    parked.wait(false);
+    // Churn stays out of the 64 B class, which leaves its runs stranded and copied
+    auto* c = make_tcb();
+    std::thread { [&, t = c] {
+        gc->thd_prologue(t);
+        for (int i = 0; i < 400'000 && gc->stats().cycles < 40 && !gc->stats().copied_bytes; ++i) {
+            ASSERT_NE(fresh(128, t), nullptr);
+            poll(t);
+        }
+        gc->delete_tcb(t);
+    } }.join();
+    copied = true;
+    copied.notify_one();
+    holder.join();
+
     EXPECT_GT(gc->stats().copied_bytes, 0u);
 }
 
