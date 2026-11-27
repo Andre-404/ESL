@@ -47,11 +47,8 @@ namespace gc {
         return make_gc<T>(read_tcb(), extra_bytes, std::forward<Args>(args)...);
     }
 
-    // func must not touch the heap: its frames aren't scanned and a pause can run meanwhile
-    template<typename F>
-    inline void run_blocking(F func) {
-        gc::enter_blocked(read_tcb());
-        func();
-        gc::exit_blocked(read_tcb());
+    // func must not touch the heap: its frames aren't scanned and a pause can run meanwhile (see gc::run_blocked)
+    inline void run_blocking(function_ref<void() const> func) {
+        gc::run_blocked(read_tcb(), func);
     }
 }

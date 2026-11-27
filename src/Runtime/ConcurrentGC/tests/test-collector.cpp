@@ -188,13 +188,12 @@ TEST_F(CollectorTest, TCBDeathReusePages) {
     EXPECT_EQ(pg_meta::head_from_ptr(o), pg_meta::head_from_ptr(o2));
 }
 
-TEST_F(CollectorTest, SetPausedAndResumed) {
+TEST_F(CollectorTest, BlockedAndResumed) {
     auto* t = make_tcb();
     auto thd = std::thread { [&]() {
         gc->thd_prologue(t);
         gc->alloc(64, t);
-        gc->set_paused(t);
-        gc->set_resumed(t);
+        gc->run_blocked(t, [] {});
         auto* obj_after_resume = gc->alloc(64, t);
         EXPECT_NE(obj_after_resume, nullptr);
         gc->delete_tcb(t);
@@ -208,8 +207,7 @@ TEST_F(CollectorTest, RepeatedPauseResumeCycles) {
         gc->thd_prologue(t);
         for (int i = 0; i < 20; ++i) {
             gc->alloc(64, t);
-            gc->set_paused(t);
-            gc->set_resumed(t);
+            gc->run_blocked(t, [] {});
         }
         SUCCEED();
         gc->delete_tcb(t);
@@ -355,7 +353,7 @@ TEST_F(CollectorTest, ConcurrentBigAllocsAreImmuneToRecycledFullPageBug) {
 }
 
 TEST_F(CollectorTest, MixedAllocAndBlockingPatternLightLoad) {
-    // Half the threads weave set_paused / set_resumed into their loops,
+    // Half the threads weave run_blocked into their loops,
     // each thread stays under one page worth of allocs.
     constexpr int kThreads = 4;
     constexpr int kAllocs  = 20;
@@ -367,10 +365,7 @@ TEST_F(CollectorTest, MixedAllocAndBlockingPatternLightLoad) {
         threads.emplace_back([&, t, tcb]{
             gc->thd_prologue(tcb);
             for (int i = 0; i < kAllocs; ++i) {
-                if (t % 2 == 0 && i % 5 == 0) {
-                    gc->set_paused(tcb);
-                    gc->set_resumed(tcb);
-                }
+                if (t % 2 == 0 && i % 5 == 0) gc->run_blocked(tcb, [] {});
                 if (gc->alloc(64, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
             }
             gc->delete_tcb(tcb);
@@ -451,8 +446,7 @@ TEST_F(CollectorTest, ConcurrentAllocsAndPauseResumeUnderPressure) {
             gc->thd_prologue(tcb);
             for (int i = 0; i < kIters; ++i) {
                 if (gc->alloc(64, tcb)) alloc_ok.fetch_add(1, std::memory_order_relaxed);
-                gc->set_paused(tcb);
-                gc->set_resumed(tcb);
+                gc->run_blocked(tcb, [] {});
             }
             gc->delete_tcb(tcb);
         });
@@ -723,6 +717,68 @@ namespace {
     // Copies at the few KB these tests keep live, which the default floor never allows
     struct CopyingCycleTest : CollectorCycleTest {
         gc_tuning tuning() const override { return { .initial_heap = kInitialHeap, .min_copy_bytes = 0 }; }
+
+        // Three runs of 64 B blocks, a quarter of them live. The held object is left alone mid-run, so its run
+        // is the sparsest and every split of the copy into plans takes it, and compacting would move it.
+        // hold(t, root, park) runs on the only thread whose stack is scanned, and must call park from inside
+        // gc->run_blocked(t, ...) while it holds root's object. The run must stay put, payload included, while
+        // the list's other runs are copied
+        template<typename F> void expect_held_run_stays(F hold) {
+            constexpr int kRoots = 768, kHeld = kRoots / 6;
+            std::vector<size_t> roots(kRoots, 0);
+            for (auto& r : roots) gc->register_root(&r);
+            // On a thread that exits, so only the holder's stack points into the runs. data lives on this
+            // thread, which no pause scans
+            uint8_t* data = nullptr;
+            auto* s = make_tcb();
+            std::thread { [&, t = s] {
+                gc->thd_prologue(t);
+                seed_roots(roots, 3, t);
+                data = (uint8_t*)read_word(roots[kHeld]) + 8;
+                std::memset(data, 0xab, 56);
+                gc->delete_tcb(t);
+            } }.join();
+            auto* run = pg_meta::head_from_ptr((void*)roots[kHeld]);
+            for (int i = 0; i < kRoots; ++i)
+                if (i != kHeld && pg_meta::head_from_ptr((void*)roots[i]) == run) roots[i] = 0;
+            auto orig = roots;
+
+            std::atomic<bool> parked { false }, copied { false };
+            auto park = [&] {
+                parked = true;
+                parked.notify_one();
+                copied.wait(false);
+            };
+            auto* t = make_tcb();
+            auto holder = std::thread { [&, t] {
+                gc->thd_prologue(t);
+                t->get_mark_info().track_stack((size_t)__builtin_frame_address(0));
+                hold(t, roots[kHeld], park);
+
+                EXPECT_EQ((uint8_t*)read_word(roots[kHeld]) + 8, data) << "the held object moved";
+                EXPECT_EQ(std::count(data, data + 56, 0xab), 56);
+                int moved = 0;
+                for (int i = 0; i < kRoots; ++i) moved += (size_t)read_word(roots[i]) != orig[i];
+                EXPECT_GT(moved, 0) << "nothing moved, so nothing shows the pin is what kept the held object";
+                gc->delete_tcb(t);
+            } };
+            parked.wait(false);
+            // Churn stays out of the 64 B class, which leaves its runs stranded and copied
+            auto* c = make_tcb();
+            std::thread { [&, t = c] {
+                gc->thd_prologue(t);
+                for (int i = 0; i < 400'000 && gc->stats().cycles < 40 && !gc->stats().copied_bytes; ++i) {
+                    ASSERT_NE(fresh(128, t), nullptr);
+                    poll(t);
+                }
+                gc->delete_tcb(t);
+            } }.join();
+            copied = true;
+            copied.notify_one();
+            holder.join();
+
+            EXPECT_GT(gc->stats().copied_bytes, 0u);
+        }
     };
 }
 
@@ -796,60 +852,33 @@ TEST_F(CopyingCycleTest, ChainsSurviveCopiesWithoutAPointerUpdate) {
 }
 
 // Every pause scans a blocked thread with pin, so the run a pointer in its frame points into stays put,
-// payload included, while the list's other runs are copied. testing.inc captures no registers, so a
-// pointer held only in a register isn't covered (bug 39)
+// payload included, while the list's other runs are copied. At -O0 the pointer is in the frame;
+// PlatformTest covers one in a register
 TEST_F(CopyingCycleTest, WhatABlockedThreadPointsIntoIsNotCopied) {
-    // Three runs of 64 B blocks, a quarter of them live. The held object is left alone mid-run, so its run is
-    // the sparsest and every split of the copy into plans takes it, and compacting would move it
-    constexpr int kRoots = 768, kHeld = kRoots / 6;
-    std::vector<size_t> roots(kRoots, 0);
-    for (auto& r : roots) gc->register_root(&r);
-    // On a thread that exits, so only the holder's stack points into the runs
-    auto* s = make_tcb();
-    std::thread { [&, t = s] { gc->thd_prologue(t); seed_roots(roots, 3, t); gc->delete_tcb(t); } }.join();
-    auto* run = pg_meta::head_from_ptr((void*)roots[kHeld]);
-    for (int i = 0; i < kRoots; ++i)
-        if (i != kHeld && pg_meta::head_from_ptr((void*)roots[i]) == run) roots[i] = 0;
-    auto orig = roots;
-
-    std::atomic<bool> parked { false }, copied { false };
-    auto* t = make_tcb();
-    auto holder = std::thread { [&, t] {
-        gc->thd_prologue(t);
-        t->get_mark_info().track_stack((size_t)__builtin_frame_address(0));
+    expect_held_run_stays([&](tcb* t, size_t& root, auto& park) {
         // Into the payload, like a native's buf->get_data().data()
-        auto* data = (uint8_t*)read_word(roots[kHeld]) + 8;
-        std::memset(data, 0xab, 56);
-        gc->set_paused(t);
-        parked = true;
-        parked.notify_one();
-        copied.wait(false);
-        gc->set_resumed(t);
-
-        EXPECT_EQ((uint8_t*)read_word(roots[kHeld]) + 8, data) << "the held object moved";
-        EXPECT_EQ(std::count(data, data + 56, 0xab), 56);
-        int moved = 0;
-        for (int i = 0; i < kRoots; ++i) moved += (size_t)read_word(roots[i]) != orig[i];
-        EXPECT_GT(moved, 0) << "nothing moved, so nothing shows the pin is what kept the held object";
-        gc->delete_tcb(t);
-    } };
-    parked.wait(false);
-    // Churn stays out of the 64 B class, which leaves its runs stranded and copied
-    auto* c = make_tcb();
-    std::thread { [&, t = c] {
-        gc->thd_prologue(t);
-        for (int i = 0; i < 400'000 && gc->stats().cycles < 40 && !gc->stats().copied_bytes; ++i) {
-            ASSERT_NE(fresh(128, t), nullptr);
-            poll(t);
-        }
-        gc->delete_tcb(t);
-    } }.join();
-    copied = true;
-    copied.notify_one();
-    holder.join();
-
-    EXPECT_GT(gc->stats().copied_bytes, 0u);
+        auto* data = (uint8_t*)read_word(root) + 8;
+        gc->run_blocked(t, [&] { (void)data; park(); });
+    });
 }
+
+// The same when the only pointer on the stack is one f captured by value. run_blocked passes f on as a
+// function_ref, so the closure stays in the caller's frame, which the pause scans. sole_ref empties its
+// source when moved, so nothing else on the stack keeps the object
+TEST_F(CopyingCycleTest, WhatABlockedClosureCapturedIsNotCopied) {
+    struct sole_ref {
+        uint8_t* p;
+        explicit sole_ref(uint8_t* p) : p(p) {}
+        sole_ref(sole_ref&& o) noexcept : p(std::exchange(o.p, nullptr)) {}
+    };
+    expect_held_run_stays([&](tcb* t, size_t& root, auto& park) {
+        gc->run_blocked(t, [&park, held = sole_ref { (uint8_t*)read_word(root) + 8 }] { (void)held; park(); });
+    });
+}
+
+// f is called as const, so it can't move out of what it captured by value. A lambda without captures
+// still binds, through its conversion to a function pointer, but it has nothing to move
+static_assert(!std::is_constructible_v<function_ref<void() const>, decltype([x = 0]() mutable { ++x; })>);
 
 // Each thread stays under debt_trigger and exits, so only delete_tcb can count what it allocated
 TEST_F(CollectorCycleTest, ThreadsThatExitUnderTheDebtTriggerStillDriveCycles) {

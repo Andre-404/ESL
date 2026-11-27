@@ -20,17 +20,10 @@ using gc::test::test_page;
 namespace {
     class fake_stack {
     public:
-        fake_stack(thd_mark_info& info, std::span<size_t> words)
-                : _saved_override(platform::read_stack_override) {
-            platform::read_stack_override = reinterpret_cast<size_t>(words.data());
+        fake_stack(thd_mark_info& info, std::span<size_t> words) {
             info.track_stack(reinterpret_cast<size_t>(words.data() + words.size()));
-            info.capture_ctx();
+            info.set_stack_end(words.data());
         }
-        ~fake_stack() { platform::read_stack_override = _saved_override; }
-        fake_stack(const fake_stack&) = delete;
-        fake_stack& operator=(const fake_stack&) = delete;
-    private:
-        size_t _saved_override;
     };
 
     class MarkerTest : public ::testing::Test {
@@ -166,7 +159,7 @@ TEST_F(MarkerTest, ScanStackOnUntrackedThreadDoesNothing) {
     test_page rp{64};
     rp.construct(0, 1);
 
-    thd_mark_info info;   // no track_stack -> get_ctx returns empty spans
+    thd_mark_info info;   // no track_stack -> get_stack is empty
     marker m;
     m.scan_stack(info, false, [](uint8_t* p) {
         return reinterpret_cast<managed*>(p);

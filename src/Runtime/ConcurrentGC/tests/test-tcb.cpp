@@ -1,10 +1,60 @@
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <array>
+#include <vector>
 #include "../TCB.h"
 #include "../mark-buf.h"
+#include "../platform-specific.h"
 
 using namespace gc;
 using namespace gc::detail;
+
+#ifdef __x86_64__
+// What the asm below leaves for the checks: the caller's sp at the call and its rbp, then rbx and r12-r15
+// once the call has returned. Named in the asm, so it needs no operand registers
+extern "C" { size_t platform_test_out[7]; }
+
+namespace {
+    std::vector<size_t> pushed;
+    void record_pushed(void*, size_t* sp) {
+        auto* call_sp = reinterpret_cast<size_t*>(platform_test_out[0]);
+        if (sp < call_sp && call_sp - sp < 64) pushed.assign(sp, call_sp);
+    }
+}
+
+// A frame that waits keeps values in callee-saved registers, which a pause only sees if they are between
+// the sp fn gets and the caller's frame. Each must also be back as it was once the call returns
+TEST(PlatformTest, X86WithRegsPushedPutsEveryCalleeSavedRegisterAboveSp) {
+    void* arg = nullptr;
+    auto* fn = &record_pushed;
+    auto* entry = &platform::with_regs_pushed;
+    asm volatile(
+        "movq $0xb0, %%rbx\n\t"
+        "movq $0x12, %%r12\n\t"
+        "movq $0x13, %%r13\n\t"
+        "movq $0x14, %%r14\n\t"
+        "movq $0x15, %%r15\n\t"
+        "movq %%rsp, platform_test_out(%%rip)\n\t"
+        "movq %%rbp, platform_test_out+8(%%rip)\n\t"
+        "call *%%rax\n\t"
+        "movq %%rbx, platform_test_out+16(%%rip)\n\t"
+        "movq %%r12, platform_test_out+24(%%rip)\n\t"
+        "movq %%r13, platform_test_out+32(%%rip)\n\t"
+        "movq %%r14, platform_test_out+40(%%rip)\n\t"
+        "movq %%r15, platform_test_out+48(%%rip)"
+        : "+D"(arg), "+S"(fn), "+a"(entry)
+        :
+        : "rbx", "r12", "r13", "r14", "r15", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc", "memory",
+          "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    size_t rbp = platform_test_out[1];
+    for (size_t reg : { size_t(0xb0), rbp, size_t(0x12), size_t(0x13), size_t(0x14), size_t(0x15) })
+        EXPECT_NE(std::ranges::find(pushed, reg), pushed.end()) << std::hex << reg << " isn't above sp";
+    std::array<size_t, 5> after;
+    std::copy_n(platform_test_out + 2, 5, after.begin());
+    EXPECT_EQ(after, (std::array<size_t, 5> { 0xb0, 0x12, 0x13, 0x14, 0x15 })) << "a register changed across the call";
+}
+#endif
 
 
 TEST(TcbHandleTest, TakeStartArgsReturnsConstructorValuesAndClears) {
@@ -21,36 +71,27 @@ TEST(TcbHandleTest, TakeStartArgsReturnsConstructorValuesAndClears) {
 }
 
 
-TEST(ThdMarkInfoTest, DefaultGetCtxIsEmpty) {
+TEST(ThdMarkInfoTest, DefaultGetStackIsEmpty) {
     thd_mark_info info;
-    auto [stack, regs] = info.get_ctx();
-    EXPECT_TRUE(stack.empty());
-    // regs span is still empty (untracked stack short-circuits the function).
-    EXPECT_TRUE(regs.empty());
+    EXPECT_TRUE(info.get_stack().empty());
 }
 
-TEST(ThdMarkInfoTest, TrackAndCaptureGivesNonEmptyContext) {
+TEST(ThdMarkInfoTest, GetStackSpansFromTheEndToTheStart) {
     thd_mark_info info;
-    // Use a "high" stack address so that _stack_start - _stack_end is positive.
-    // We pick something well above whatever read_stack() will return.
-    size_t fake_top = reinterpret_cast<size_t>(__builtin_frame_address(0)) + 1024;
-    info.track_stack(fake_top);
-    info.capture_ctx();
-
-    auto [stack, regs] = info.get_ctx();
-    EXPECT_FALSE(stack.empty()) << "stack span should cover [stack_end, stack_start)";
-    EXPECT_EQ(regs.size(), platform::regs_to_store());
+    std::array<size_t, 8> stack {};
+    info.track_stack(reinterpret_cast<size_t>(stack.data() + stack.size()));
+    info.set_stack_end(stack.data() + 2);
+    EXPECT_EQ(info.get_stack().data(), stack.data() + 2);
+    EXPECT_EQ(info.get_stack().size(), 6u);
 }
 
 TEST(ThdMarkInfoTest, UntrackStackRestoresEmptyContext) {
     thd_mark_info info;
-    info.track_stack(reinterpret_cast<size_t>(__builtin_frame_address(0)) + 1024);
-    info.capture_ctx();
+    std::array<size_t, 8> stack {};
+    info.track_stack(reinterpret_cast<size_t>(stack.data() + stack.size()));
+    info.set_stack_end(stack.data());
     info.untrack_stack();
-
-    auto [stack, regs] = info.get_ctx();
-    EXPECT_TRUE(stack.empty());
-    EXPECT_TRUE(regs.empty());
+    EXPECT_TRUE(info.get_stack().empty());
 }
 
 TEST(ThdMarkInfoTest, WbBufGetSet) {

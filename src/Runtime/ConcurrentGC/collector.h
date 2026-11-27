@@ -104,6 +104,9 @@ namespace gc::detail {
 
         void concurrent_loop();
         void handle_pending(tcb* handle);
+        void block(tcb* handle);
+        // Pushes the callee-saved registers, sets the stack end below them and runs f
+        void with_stack_end(tcb* handle, function_ref<void() const> f);
 
         [[gnu::cold, clang::noinline]] void alloc_update(tcb* t, size_t debt);
         [[gnu::cold, clang::noinline]] managed* force_collection(size_t sz, tcb* handle);
@@ -128,8 +131,11 @@ namespace gc::detail {
             _worker.join();
         }
         void thd_prologue(tcb* handle);
-        void set_paused(tcb* handle);
-        void set_resumed(tcb* handle);
+        // Runs f with the thread blocked: pauses don't wait for it, stack/reg info is frozen on the stack
+        // and scanned by the marker in the event of a gc cycle
+        // For this reason f must not access any references on the heap since they might be moved,
+        // and what it uses must stay reachable from the calling frames (see gc::run_blocked)
+        void run_blocked(tcb* handle, function_ref<void() const> f);
         tcb* create_tcb(size_t* start_args, uint8_t args_cnt);
         void delete_tcb(tcb* handle);
 

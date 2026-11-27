@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(ESL CXX C)
+project(ESL CXX C ASM)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ESLBuildOptions)
@@ -59,6 +59,7 @@ if(ESL_BUILD_COMPILER)
 
 # rpmalloc 2 replaces the process's malloc unless told not to, and ESL only calls it directly
 set_source_files_properties(src/Includes/rpmalloc/rpmalloc.c PROPERTIES COMPILE_DEFINITIONS ENABLE_OVERRIDE=0)
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime/ConcurrentGC/platforms/abi/abi.cmake)
 add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.cpp src/ErrorHandling/errorHandler.h src/ErrorHandling/errorHandler.cpp src/Runtime/Objects/objects.h src/Runtime/Objects/objects.cpp src/AST/ASTDefs.h src/AST/ASTProbe.h src/AST/ASTProbe.cpp src/Parsing/parser.h src/Parsing/parser.cpp src/Preprocessing/scanner.h src/Preprocessing/scanner.cpp src/Preprocessing/preprocessor.h src/Preprocessing/preprocessor.cpp src/Includes/format.cc src/Includes/format.cc src/Includes/format.cc src/Includes/fmt/color.h src/Includes/fmt/ostream.h src/Includes/fmt/std.h src/Runtime/oldNativeFunctions.h src/Runtime/oldNativeFunctions.cpp src/Parsing/macroExpander.h src/Parsing/macroExpander.cpp src/Runtime/Values/valueHelpers.cpp src/Includes/unorderedDense.h src/Codegen/Passes/AST/closureConverter.h src/Codegen/Passes/AST/closureConverter.cpp src/SemanticAnalysis/semanticAnalyzer.h src/SemanticAnalysis/semanticAnalyzer.cpp src/Runtime/JIT/JIT.h src/Runtime/LLVMHelperExports.h src/TypedAST/Types.h src/TypedAST/Types.cpp src/TypedAST/TypedASTDefs.h src/Codegen/Passes/AST/ASTToTypedAST.h src/Codegen/Passes/AST/ASTToTypedAST.cpp
         src/Codegen/Passes/computeClassHierarchy.cpp
         src/Includes/rpmalloc/rpmalloc.c
@@ -89,11 +90,12 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Runtime/ConcurrentGC/collector.cpp
         src/Runtime/ConcurrentGC/cleanups.cpp
         src/Runtime/ConcurrentGC/gc-api.cpp
+        ${GC_ABI_SOURCE}
         src/Runtime/Objects/gc-customization.cpp
         src/Runtime/stub.cpp
 )
 target_compile_features(ESL PRIVATE cxx_std_23)
-# r15 holds the TCB pointer and r14 the good pointer color; see ConcurrentGC/platforms/x86-64.inc.
+# r15 holds the TCB pointer and r14 the good pointer color; see ConcurrentGC/platforms/x86-64.h.
 target_compile_options(ESL PRIVATE -ffixed-r15 -ffixed-r14)
 target_link_libraries(ESL ${ESL_LLVM_LIBS})
 

@@ -73,18 +73,12 @@ namespace gc::detail {
         // Conservative, every word is 8 byte aligned. With pin, an object found here is pinned
         // whether or not it was already marked
         template<typename F>
-        void scan_words(std::initializer_list<std::span<size_t>> parts, bool pin, F get_base) {
+        void scan_words(std::initializer_list<std::span<size_t>> parts, bool pin, F&& get_base) {
             auto buf = _bufs.pop_empty();
             for (auto words : parts)
                 for (auto word : words)
                     if (auto obj = get_base(to_possible_ptr(word))) push_obj(buf, obj, pin);
             push_buf(buf);
-        }
-
-        template<typename F>
-        void scan_stack(thd_mark_info& info, bool pin, F get_base) {
-            auto [stack, regs] = info.get_ctx();
-            scan_words({ stack, regs }, pin, get_base);
         }
 
         [[gnu::hot]] size_t trace_n(size_t bytes);

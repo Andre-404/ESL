@@ -71,9 +71,7 @@ void cleanups::runner(collector& gc) {
     t->get_mark_info().track_stack((size_t)__builtin_frame_address(0));
     gc.thd_prologue(t);
     while (true) {
-        gc.set_paused(t);
-        _state.wait(state::none, std::memory_order_acquire);
-        gc.set_resumed(t);
+        gc.run_blocked(t, [&] { _state.wait(state::none, std::memory_order_acquire); });
         auto _ = state::queued;
         _state.compare_exchange_strong(_, state::none, std::memory_order_relaxed);
         while (auto e = pop()) {

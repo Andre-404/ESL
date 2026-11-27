@@ -7,7 +7,7 @@
 #include "gc-heuristic.h"
 #include "gc-metrics.h"
 #include "pg-meta.h"
-#include "ref-slot.h"
+#include "ref-slot.h"  // IWYU pragma: export
 
 namespace gc {
     void init_gc(uint8_t& flag, gc_tuning tuning = {});
@@ -17,8 +17,9 @@ namespace gc {
     void delete_tcb(tcb_handle* handle);
     // Must be done once at the start of the program from a single thread
     void register_root(size_t* root);
-    void enter_blocked(tcb_handle* handle);
-    void exit_blocked(tcb_handle* handle);
+    // Runs f with the thread blocked: pauses don't wait for it, and scan the frames that called this but
+    // not f's own, so f must not touch the heap. f must never move or clear its captures
+    void run_blocked(tcb_handle* handle, function_ref<void() const> f);
     // Blocks until a cycle that starts after the call completes
     void collect(tcb_handle* handle);
     gc_stats stats();

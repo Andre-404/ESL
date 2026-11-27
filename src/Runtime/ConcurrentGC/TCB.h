@@ -3,7 +3,6 @@
 #include <span>
 
 #include "mark-buf.h"
-#include "platform-specific.h"
 #include "arena.h"
 
 namespace gc {
@@ -26,19 +25,15 @@ namespace gc {
             mark_buf* _wbbuf;
             size_t* _stack_start;
             size_t* _stack_end;
-            std::array<size_t, platform::regs_to_store()> _regs;
         public:
-            thd_mark_info() : _wbbuf(nullptr), _stack_start(nullptr), _stack_end(nullptr), _regs() {}
+            thd_mark_info() : _wbbuf(nullptr), _stack_start(nullptr), _stack_end(nullptr) {}
 
             void track_stack(size_t start) { _stack_start = (size_t*)start; }
             void untrack_stack() { _stack_start = nullptr; }
-            void capture_ctx() {
-                _stack_end = (size_t*)platform::read_stack();
-                platform::store_regs(_regs.data());
-            }
-            std::pair<std::span<size_t>, std::span<size_t>> get_ctx() {
-                if (!_stack_start) return { {}, {} };
-                return { { _stack_end, (size_t)(_stack_start - _stack_end) }, { (size_t*)_regs.data(), _regs.size() } };
+            void set_stack_end(size_t* end) { _stack_end = end; }
+            std::span<size_t> get_stack() {
+                if (!_stack_start) return {};
+                return { _stack_end, (size_t)(_stack_start - _stack_end) };
             }
 
             void set_wbbuf(mark_buf* wbbuf) { _wbbuf = wbbuf; }

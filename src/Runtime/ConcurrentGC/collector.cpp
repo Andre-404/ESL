@@ -9,6 +9,7 @@
 #include "../../Includes/fmt/core.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
 #include "gc-heuristic.h"
+#include "platform-specific.h"
 
 using namespace gc;
 using namespace detail;
@@ -31,9 +32,7 @@ std::vector<tcb *> collector::post_with_state(uint8_t flags, uint8_t op)  {
     for (int attempt = 0; attempt < 2; attempt++) {
         _collection_req.request_express();
 
-        set_paused(t);
-        _collection_req.await_express_served();
-        set_resumed(t);
+        run_blocked(t, [&] { _collection_req.await_express_served(); });
         if (auto res = t->get_arena().alloc(sz, _pg_manager)) return res;
     }
 
@@ -60,7 +59,7 @@ void collector::stw_enter(std::span<tcb*> owned, stw_role role) {
 size_t collector::stw_mark(std::span<tcb*> owned, stw_role role) {
     auto _ = _metrics.time(gc_metrics::phase::mark);
     for (auto t : owned)
-        _marker.scan_stack(t->get_mark_info(), true, get_obj_base());
+        _marker.scan_words({ t->get_mark_info().get_stack() }, true, get_obj_base());
 
     size_t snapshot = 0;
     if (role == stw_role::collector) {
@@ -132,7 +131,7 @@ void collector::concurrent_mark() {
     auto blocked = post_with_state(uint8_t(gc_state::marking), op_mark_stack);
     _mark_alloc_start = _alloc_sz.load(std::memory_order_relaxed);
     for (auto t : blocked)
-        _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
+        _marker.scan_words({ t->get_mark_info().get_stack() }, false, get_obj_base());
     _thd_state_mngr.complete_handshake(blocked);
     _thd_state_mngr.wait_on_all_ack();
     // Must be under lock because we can be adding global variables dynamically
@@ -229,7 +228,7 @@ void collector::concurrent_loop() {
 void collector::handle_pending(tcb* t) {
     auto op = t->get_opcode();
     if (op == op_mark_stack) {
-         _marker.scan_stack(t->get_mark_info(), false, get_obj_base());
+         _marker.scan_words({ t->get_mark_info().get_stack() }, false, get_obj_base());
         _thd_state_mngr.ack();
     } else if (op == op_stw) {
         _gate.register_waiter();
@@ -253,14 +252,28 @@ void collector::thd_prologue(tcb *t) {
     reload_color();
 }
 
-void collector::set_paused(tcb *t) {
-    t->get_mark_info().capture_ctx();
+void collector::block(tcb *t) {
     flush_wbbuf(t);
     _thd_state_mngr.enter_blocked(t, [&](tcb* thd) { handle_pending(thd); });
 }
 
-void collector::set_resumed(tcb *t) {
-    _thd_state_mngr.exit_blocked(t);
+void collector::run_blocked(tcb *t, function_ref<void() const> f) {
+    with_stack_end(t, [&] {
+        block(t);
+        f();
+        _thd_state_mngr.exit_blocked(t);
+    });
+}
+
+void collector::with_stack_end(tcb *t, function_ref<void() const> f) {
+    struct call { tcb* t; function_ref<void() const> f; } c { t, f };
+    platform::with_regs_pushed(&c, [](void* arg, size_t* sp) {
+        auto& c = *static_cast<call*>(arg);
+        c.t->get_mark_info().set_stack_end(sp);
+        c.f();
+    });
+    // Right now we store the pointer color in a register so we have to do this dance
+    // to make sure the right color is in the register
     reload_color();
 }
 
@@ -316,9 +329,7 @@ void collector::register_root(size_t *root) {
 }
 
 void collector::collect(tcb* t) {
-    set_paused(t);
-    _collection_req.await_cycle();
-    set_resumed(t);
+    run_blocked(t, [&] { _collection_req.await_cycle(); });
 }
 
 managed *collector::alloc(size_t sz, tcb * t) {
@@ -335,10 +346,9 @@ managed *collector::alloc(size_t sz, tcb * t) {
 }
 
 void collector::process_pending(tcb *t) {
-    auto& mark_info = t->get_mark_info();
-    mark_info.capture_ctx();
-    t->get_arena().flush_alloc_caches();
-    flush_wbbuf(t);
-    _thd_state_mngr.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
-    reload_color();
+    with_stack_end(t, [&] {
+        t->get_arena().flush_alloc_caches();
+        flush_wbbuf(t);
+        _thd_state_mngr.execute_pending(t, [&](tcb* thd) { handle_pending(thd); });
+    });
 }

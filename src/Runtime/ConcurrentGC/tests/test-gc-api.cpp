@@ -63,9 +63,10 @@ TEST_F(GcApiTest, ABlockedThreadCantAllocateOrBarrier) {
         auto* h = create_tcb(nullptr, 0);
         init_thd(h, __builtin_frame_address(0));
         auto* o = make_gc<obj>(h, 0, uint8_t(1));
-        enter_blocked(h);
-        if (alloc) (void)make_gc<obj>(h, 0, uint8_t(1));
-        else write_barrier(h, o);
+        run_blocked(h, [&] {
+            if (alloc) (void)make_gc<obj>(h, 0, uint8_t(1));
+            else write_barrier(h, o);
+        });
     };
     EXPECT_DEATH(blocked(true), "blocked");
     EXPECT_DEATH(blocked(false), "blocked");
