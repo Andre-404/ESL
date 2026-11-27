@@ -12,7 +12,7 @@
 #include "../gc-config.h"
 #include "bump-allocator.h"
 #include "heap-layout.h"
-#include "os-memory.h"
+#include "../os/os-memory.h"
 
 namespace gc::detail {
     // Covers 64 blocks of an old run, the same 64 as a mark word: which of them survived, and where

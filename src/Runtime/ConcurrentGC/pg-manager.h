@@ -100,5 +100,7 @@ namespace gc::detail {
 
         gc_bits& bits() { return _allocator.bits(); }
         reloc_hdrs& relocs() { return _allocator.relocs(); }
+        size_t in_use_bytes() const { return _allocator.in_use_bytes(); }
+        size_t resident_bytes() const { return _allocator.resident_bytes(); }
     };
 }

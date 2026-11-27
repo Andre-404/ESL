@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-#include "os-memory.h"
+#include "../os/os-memory.h"
 #include "span-allocator.h"
 
 using namespace gc;
@@ -18,7 +18,6 @@ namespace {
                                      + heap_geometry::total_entries * sizeof(summary);
 
     constexpr auto G = config::commit_granule;
-    constexpr auto granule_bytes = G * config::page_sz;
     std::size_t granule_of(std::size_t page) { return page / G; }
     bool granule_all_free(std::size_t g, const radix_tree& tree) {
         return !tree.bits().any_set(g * G, G);
@@ -65,7 +64,7 @@ bool span_allocator::ensure_committed(std::size_t start, std::size_t n) {
         auto hi = lo;
         while (hi <= end && !_committed.test(hi)) ++hi;
 
-        if (!os::commit(_base + lo * granule_bytes, (hi - lo) * granule_bytes))
+        if (!os::commit(_base + lo * config::granule_bytes, (hi - lo) * config::granule_bytes))
             return false;
 
         _committed.set_range(lo, hi-lo);
@@ -112,7 +111,7 @@ std::size_t span_allocator::scavenge(std::size_t max_granules) {
         while (lo > 0 && can_free(lo - 1) && (hi - lo) < (max_granules - released)) --lo;
 
         auto n = hi - lo;
-        if (os::decommit(_base + lo * granule_bytes, n * granule_bytes)) {
+        if (os::decommit(_base + lo * config::granule_bytes, n * config::granule_bytes)) {
             released += n;
             _resident.fetch_sub(n, std::memory_order_relaxed);
             _committed.clear_range(lo, n);

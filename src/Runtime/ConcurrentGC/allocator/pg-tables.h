@@ -4,7 +4,7 @@
 #include <mutex>
 
 #include "../gc-config.h"
-#include "os-memory.h"
+#include "../os/os-memory.h"
 #include "../pg-meta.h"
 #include "reloc-hdrs.h"
 

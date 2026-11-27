@@ -27,8 +27,9 @@ std::generator<size_t&> cleanups::keepalive_slots() {
     for (auto& e : _pending) { co_yield e.cleanup; co_yield e.arg; }
 }
 
-// Doesn't need locks because it runs in the stw pause
+// Runs in the stw pause, the locks are for count
 void cleanups::queue_dead() {
+    auto _ = std::scoped_lock { _live_mtx, _pending_mtx };
     size_t kept = 0;
     for (auto& e : _live) {
         auto obj = read_ref(e.tracked);
@@ -51,6 +52,11 @@ std::optional<std::pair<size_t, size_t>> cleanups::pop() {
     auto res = std::pair { word(e.cleanup), word(e.arg) };
     _pending.pop_front();
     return res;
+}
+
+std::pair<size_t, size_t> cleanups::count() {
+    auto _ = std::scoped_lock { _live_mtx, _pending_mtx };
+    return { _live.size(), _pending.size() };
 }
 
 void cleanups::run(collector& gc) {

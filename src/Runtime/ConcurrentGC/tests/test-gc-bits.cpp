@@ -7,7 +7,7 @@
 #include <algorithm>
 
 #include "../allocator/gc-bits.h"
-#include "../allocator/os-memory.h"
+#include "../os/os-memory.h"
 
 using namespace gc;
 using namespace gc::detail;

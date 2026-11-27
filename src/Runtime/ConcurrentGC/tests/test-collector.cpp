@@ -592,6 +592,58 @@ TEST_F(CollectorCycleTest, PauseSplitsIntoTimeToSafepointAndStw) {
     EXPECT_LE(s.stw.max_ms, s.pause.max_ms);
 }
 
+// A collect's pause takes the debt of the thread blocked in it, so the total covers what it allocated.
+// Nothing stays live, so the heap is read while the thread still owns its pages
+TEST_F(CollectorCycleTest, StatsCountWhatTheCyclesDid) {
+    constexpr size_t kAllocs = 1000;
+    churn_until_cycles(3);
+    auto before = gc->stats();
+    gc_stats inside;
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        for (size_t i = 0; i < kAllocs; ++i) { ASSERT_NE(fresh(64, t), nullptr); poll(t); }
+        inside = gc->stats();
+        gc->collect(t);
+        gc->delete_tcb(t);
+    } }.join();
+    auto s = gc->stats();
+
+    EXPECT_GE(s.allocated_bytes, before.allocated_bytes + kAllocs * 64);
+    EXPECT_GT(inside.heap_in_use_bytes, 0u);
+    EXPECT_GE(inside.heap_resident_bytes, inside.heap_in_use_bytes);
+    EXPECT_EQ(inside.threads, s.threads + 1);
+    EXPECT_GT(s.concurrent_mark.max_ms, 0.0);
+    EXPECT_GT(s.collector_cpu_ms, before.collector_cpu_ms);
+}
+
+// Any thread may read the stats while cycles run. The cleanups die during the churn, so the pauses change
+// their counts. Run under tsan
+TEST_F(CollectorCycleTest, StatsCanBeReadWhileCyclesRun) {
+    std::atomic<bool> done { false };
+    auto reader = std::thread { [&] {
+        for (size_t last = 0; !done;) {
+            auto s = gc->stats();
+            EXPECT_GE(s.cycles, last);
+            last = s.cycles;
+        }
+    } };
+    auto* t = make_tcb();
+    std::thread { [&, t] {
+        gc->thd_prologue(t);
+        for (size_t i = 0; i < 2'000'000 && gc->stats().cycles < 5; ++i) {
+            auto* obj = fresh(64, t);
+            ASSERT_NE(obj, nullptr);
+            if (i % 64 == 0) gc->add_cleanup(obj, 0, 0);
+            poll(t);
+        }
+        gc->delete_tcb(t);
+    } }.join();
+    done = true;
+    reader.join();
+    EXPECT_GE(gc->stats().cycles, 5u);
+}
+
 TEST_F(CollectorCycleTest, ManyCyclesLeaveTheCollectorUsable) {
     churn_until_cycles(20);
     ASSERT_GE(gc->stats().cycles, 20u);
@@ -767,6 +819,7 @@ TEST_F(CollectorCycleTest, CyclesWithoutFragmentationNeverCopy) {
 
     ASSERT_GT(gc->stats().cycles, 3u);
     EXPECT_EQ(gc->stats().copied_bytes, 0u);
+    EXPECT_EQ(gc->stats().copying_cycles, 0u);
 }
 
 // add_cleanup end to end. Objects are seeded on a thread that exits, so no stack keeps them alive.
@@ -914,6 +967,7 @@ TEST_F(CollectorCycleTest, CleanupsMayAllocateAndPollOnTheRunner) {
         for (int i = 0; i < kEntries; ++i) gc->add_cleanup(to_accurate_ptr(make(i)), make(1000 + i), make(2000 + i));
         gc->delete_tcb(t);
     } }.join();
+    EXPECT_EQ(gc->stats().cleanups_registered, size_t(kEntries));
 
     auto* t = make_tcb();
     std::thread { [&, t] {
@@ -926,6 +980,8 @@ TEST_F(CollectorCycleTest, CleanupsMayAllocateAndPollOnTheRunner) {
     EXPECT_EQ(calls.load(), kEntries);
     for (int i = 0; i < kEntries; ++i) EXPECT_EQ(runs[i], 1) << "entry " << i;
     EXPECT_GT(gc->stats().cycles, 4u) << "the cleanups' allocation drove cycles";
+    EXPECT_EQ(gc->stats().cleanups_registered, 0u);
+    EXPECT_EQ(gc->stats().cleanups_queued, 0u);
 }
 
 // Exit waits for every cleanup queued when it starts, and keeps collecting meanwhile, since they allocate

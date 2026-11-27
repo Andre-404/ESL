@@ -182,7 +182,10 @@ EXPORT void end_program() {
                                                        { "mark", s.mark }, { "copy", s.copy }, { "sweep", s.sweep } };
     for (auto [name, p] : rows)
         fmt::print("  {:<6} {:.3f} / {:.3f} / {:.3f}\n", name, p.last_ms, p.max_ms, p.avg_ms);
-    fmt::print("\n");
+    auto mb = [](size_t b) { return double(b) / (1 << 20); };
+    fmt::print("GC heap (MB): {:.2f} allocated, {:.2f} copied in {} cycle(s), {:.2f} live, {:.2f} in use, {:.2f} resident\n\n",
+               mb(s.allocated_bytes), mb(s.copied_bytes), s.copying_cycles, mb(s.live_bytes),
+               mb(s.heap_in_use_bytes), mb(s.heap_resident_bytes));
     // Not fflush(nullptr): that locks every stream, and a thread blocked in input() holds stdin's
     std::fflush(stdout);
     std::_Exit(0);

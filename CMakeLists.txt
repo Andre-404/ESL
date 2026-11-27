@@ -73,7 +73,8 @@ add_executable(ESL src/main.cpp src/files.h src/files.cpp src/Codegen/compiler.c
         src/Codegen/CompilerParts/BridgeObjects.cpp
         src/Codegen/CompilerParts/RuntimeBridge.cpp
         src/Codegen/CompilerParts/Optimizer.cpp
-        src/Runtime/ConcurrentGC/allocator/os-memory.cpp
+        src/Runtime/ConcurrentGC/os/os-memory.cpp
+        src/Runtime/ConcurrentGC/os/os-time.cpp
         src/Runtime/ConcurrentGC/allocator/gc-bits.cpp
         src/Runtime/ConcurrentGC/allocator/span-allocator.cpp
         src/Runtime/ConcurrentGC/allocator/pg-allocator.cpp

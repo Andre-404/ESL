@@ -35,5 +35,10 @@ namespace gc::detail {
             auto lk = std::lock_guard { _mtx };
             f();
         }
+
+        size_t size() {
+            auto lk = std::lock_guard { _mtx };
+            return _registry.size();
+        }
     };
 }

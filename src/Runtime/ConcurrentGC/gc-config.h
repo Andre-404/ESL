@@ -60,6 +60,7 @@ namespace gc {
         // Pages committed in one syscall, so the commit rate stays decoupled from page_sz.
         constexpr std::size_t commit_granule = 8;
         constexpr std::size_t commit_syscall_sz = 64ull << 10;
+        constexpr std::size_t granule_bytes = commit_granule * page_sz;
 
         static_assert(total_pages % chunk_pages == 0);
         static_assert(total_pages % (chunk_pages * commit_granule) == 0);

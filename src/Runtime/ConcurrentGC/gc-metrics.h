@@ -5,15 +5,25 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <mutex>
+
+#include "gc-heuristic.h"
+#include "os/os-time.h"
 
 namespace gc {
     struct phase_stats { double last_ms = 0, max_ms = 0, avg_ms = 0; };
-    // live_bytes and heap_trigger are current, the rest is as of the last cycle's end
+    // From live_bytes to cleanups_queued the numbers are current, the rest is as of the last cycle's end
     struct gc_stats {
-        size_t cycles = 0;
+        size_t cycles = 0, copying_cycles = 0;
         size_t live_bytes = 0, heap_trigger = 0;
-        size_t copied_bytes = 0;
-        phase_stats pause, ttsp, stw, mark, copy, sweep;
+        // Whole commit granules
+        size_t heap_in_use_bytes = 0, heap_resident_bytes = 0;
+        // The cleanup runner counts as a thread
+        size_t threads = 0, cleanups_registered = 0, cleanups_queued = 0;
+        size_t allocated_bytes = 0, copied_bytes = 0;
+        // The worker thread's alone, pause work done on mutators is in the pause times
+        double collector_cpu_ms = 0;
+        phase_stats pause, ttsp, stw, mark, copy, sweep, concurrent_mark, compact;
     };
 }
 
@@ -78,6 +88,8 @@ namespace gc::detail {
 
         std::array<stat, (size_t)phase::count> _stats {};
         std::array<span, (size_t)phase::count> _spans {};
+        std::mutex _published_mtx;
+        gc_stats _published;
 
         const stat& get(phase p) const { return _stats[(size_t)p]; }
         static double to_ms(ns d) { return std::chrono::duration<double, std::milli>(d).count(); }
@@ -119,6 +131,30 @@ namespace gc::detail {
             auto& s = get(p);
             return { to_ms(s.last), to_ms(s.max), s.samples ? to_ms(s.total) / s.samples : 0.0 };
         }
-        size_t cycles() const { return get(phase::pause).samples; }
+        // Worker only, once per cycle, after collect_cycle
+        void publish(const cycle_stats& c) {
+            using enum phase;
+            auto _ = std::scoped_lock { _published_mtx };
+            auto& s = _published;
+            s.cycles = get(pause).samples;
+            // Only a cycle that copied records a compact time
+            s.copying_cycles = get(compact).samples;
+            s.allocated_bytes += c.allocated_bytes;
+            s.copied_bytes += c.copied_bytes;
+            s.collector_cpu_ms = to_ms(os::thread_cpu_time());
+            s.pause = summary(pause);
+            s.ttsp = summary(ttsp);
+            s.stw = summary(stw);
+            s.mark = summary(mark);
+            s.copy = summary(copy);
+            s.sweep = summary(sweep);
+            s.concurrent_mark = summary(concurrent_mark);
+            s.compact = summary(compact);
+        }
+        // Any thread
+        gc_stats snapshot() {
+            auto _ = std::scoped_lock { _published_mtx };
+            return _published;
+        }
     };
 }

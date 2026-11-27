@@ -36,6 +36,8 @@ namespace gc::detail {
         void queue_dead();
         // (cleanup, arg) of the oldest queued entry, healed
         std::optional<std::pair<size_t, size_t>> pop();
+        // (registered, queued)
+        std::pair<size_t, size_t> count();
 
         void run(collector& gc);
         // Stops the runner once it has run everything queued, add ignores new entries from here on

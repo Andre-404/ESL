@@ -4,6 +4,7 @@
 #include <iostream>
 #include <mutex>
 #include <ranges>
+#include <tuple>
 
 #include "../../Includes/fmt/core.h"
 #include "../../Includes/rpmalloc/rpmalloc.h"
@@ -167,23 +168,14 @@ void collector::collect_metrics() {
     _cycle.compact_time = t.compact;
 }
 
-void collector::publish_stats() {
-    using enum gc_metrics::phase;
-    auto _ = std::scoped_lock { _stats_mtx };
-    _stats.cycles = _metrics.cycles();
-    _stats.copied_bytes += _cycle.copied_bytes;
-    _stats.pause = _metrics.summary(pause);
-    _stats.ttsp = _metrics.summary(ttsp);
-    _stats.stw = _metrics.summary(stw);
-    _stats.mark = _metrics.summary(mark);
-    _stats.copy = _metrics.summary(copy);
-    _stats.sweep = _metrics.summary(sweep);
-}
-
 gc_stats collector::stats() {
-    auto s = [&] { auto _ = std::scoped_lock { _stats_mtx }; return _stats; }();
+    auto s = _metrics.snapshot();
     s.live_bytes = _heuristic.live_size();
     s.heap_trigger = _heuristic.heap_trigger();
+    s.heap_in_use_bytes = _pg_manager.in_use_bytes();
+    s.heap_resident_bytes = _pg_manager.resident_bytes();
+    s.threads = _tcb_registry.size();
+    std::tie(s.cleanups_registered, s.cleanups_queued) = _cleanups.count();
     return s;
 }
 
@@ -224,7 +216,7 @@ void collector::concurrent_loop() {
             assert(_gc_flag.load(std::memory_order_acquire) == 0);
             _marker.remove_empty();
         });
-        publish_stats();
+        _metrics.publish(_cycle);
 
         // If threads are waiting because they request an express collection,
         // wake them after pages have been freed

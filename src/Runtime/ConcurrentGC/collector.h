@@ -47,8 +47,6 @@ namespace gc::detail {
         gc_heuristics _heuristic;
         gc_metrics    _metrics;
         cycle_stats   _cycle;
-        std::mutex    _stats_mtx;
-        gc_stats      _stats;
 
         pruner _pruner;
         
@@ -102,7 +100,6 @@ namespace gc::detail {
         size_t worker_stw();
         void mutator_stw(tcb* handle);
         void collect_metrics();
-        void publish_stats();
         uint64_t* end_cycle(size_t alloc_snapshot);
 
         void concurrent_loop();

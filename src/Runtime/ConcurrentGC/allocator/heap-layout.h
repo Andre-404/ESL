@@ -4,7 +4,7 @@
 #include <new>
 
 #include "../gc-config.h"
-#include "os-memory.h"
+#include "../os/os-memory.h"
 
 namespace gc::detail {
     class pg_meta;
